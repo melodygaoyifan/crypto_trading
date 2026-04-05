@@ -1,0 +1,82 @@
+{
+  "classic": {
+    "return_pct": 550.754,
+    "max_dd_pct": 2.457,
+    "mean_abs_exposure": 0.6394,
+    "trades": 15,
+    "turnover": 1294.24,
+    "flip_rate": 801,
+    "n_steps": 2736,
+    "final_equity": 650754.33,
+    "reward_breakdown": {
+      "pnl_component": 0.073427,
+      "dd_penalty": 0.0,
+      "turnover_penalty": -0.00117,
+      "ratio_bonus": 0.039749
+    }
+  },
+  "sharpe": {
+    "return_pct": 482.534,
+    "max_dd_pct": 2.671,
+    "mean_abs_exposure": 0.4606,
+    "trades": 44,
+    "turnover": 950.66,
+    "flip_rate": 765,
+    "n_steps": 2736,
+    "final_equity": 582533.63,
+    "reward_breakdown": {
+      "pnl_component": 0.088964,
+      "dd_penalty": 0.0,
+      "turnover_penalty": -0.000146,
+      "ratio_bonus": 0.045583
+    }
+  },
+  "sortino": {
+    "return_pct": 409.687,
+    "max_dd_pct": 2.664,
+    "mean_abs_exposure": 0.4689,
+    "trades": 26,
+    "turnover": 858.74,
+    "flip_rate": 659,
+    "n_steps": 2736,
+    "final_equity": 509686.92,
+    "reward_breakdown": {
+      "pnl_component": 0.054928,
+      "dd_penalty": 0.0,
+      "turnover_penalty": -5.1e-05,
+      "ratio_bonus": 0.036579
+    }
+  },
+  "classic_aug": {
+    "return_pct": 350.957,
+    "max_dd_pct": 7.008,
+    "mean_abs_exposure": 0.6138,
+    "trades": 16,
+    "turnover": 1064.89,
+    "flip_rate": 669,
+    "n_steps": 2736,
+    "final_equity": 450956.68,
+    "reward_breakdown": {
+      "pnl_component": -0.021602,
+      "dd_penalty": 0.0,
+      "turnover_penalty": -0.000497,
+      "ratio_bonus": 0.023397
+    }
+  },
+  "sharpe_aug": {
+    "return_pct": 351.837,
+    "max_dd_pct": 2.54,
+    "mean_abs_exposure": 0.4481,
+    "trades": 20,
+    "turnover": 661.26,
+    "flip_rate": 499,
+    "n_steps": 2736,
+    "final_equity": 451837.41,
+    "reward_breakdown": {
+      "pnl_component": 0.033864,
+      "dd_penalty": 0.0,
+      "turnover_penalty": -2.9e-05,
+      "ratio_bonus": 0.029589
+    }
+  }
+}

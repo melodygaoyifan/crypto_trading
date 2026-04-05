@@ -1,0 +1,58 @@
+{
+  "_description": "Paper-baseline overlay for Step 15. Lowers sample-collection thresholds without relaxing hard risk caps.",
+  "_created": "2026-03-06",
+  "risk_profile": "PAPER_BASELINE_5Y",
+  "alpha_gate": {
+    "_description": "Collect enough paper samples while preserving EV gating and existing leverage/exposure caps.",
+    "min_alpha_bps_default": 5,
+    "staged_schedule": [
+      {"stage": "PAPER_BASELINE", "min_alpha_bps": 5},
+      {"stage": "WEEK1", "min_alpha_bps": 5},
+      {"stage": "WEEK2_3", "min_alpha_bps": 4},
+      {"stage": "MONTH1", "min_alpha_bps": 3}
+    ],
+    "stage_selector": "PAPER_BASELINE",
+    "quiet_accum_min_direction": 0.20
+  },
+  "confidence_gate": {
+    "_description": "Slightly easier paper-stage confirmation to improve sample throughput. Does not change stop/risk controls.",
+    "min_confidence_default": 0.45,
+    "staged_schedule": [
+      {"stage": "PAPER_BASELINE", "min_confidence": 0.45},
+      {"stage": "WEEK1", "min_confidence": 0.45},
+      {"stage": "WEEK2_3", "min_confidence": 0.40}
+    ],
+    "stage_selector": "PAPER_BASELINE",
+    "min_aligned_agents": 2
+  },
+  "gambler": {
+    "_description": "Disable high-risk heavy-bet overrides during paper sample collection to avoid unrelated T1 vetoes.",
+    "enabled": false
+  },
+  "structure_gate": {
+    "_description": "Sample-collection paper runs can take reduced-size near-break entries instead of idling for every unbroken fractal.",
+    "soft_override_enabled": true,
+    "apply_in_system_modes": ["OPPORTUNITY"],
+    "apply_in_regimes": ["QUIET_ACCUMULATION", "WEAK_CONSOLIDATION"],
+    "max_gap_bps": 180,
+    "min_net_edge_bps": 6,
+    "min_abs_direction": 0.10,
+    "exposure_scale": 0.60
+  },
+  "weekend_manager": {
+    "_description": "Weekend paper-baseline favors sample throughput, but still keeps gross and per-asset weekend caps in place.",
+    "weekend_soft_veto_cap": 0.40,
+    "weekend_max_exposure": 0.40,
+    "per_asset_weekend_caps": {
+      "BTC": 0.20,
+      "ETH": 0.20,
+      "SOL": 0.25
+    },
+    "reduce_at_hours": 999,
+    "flatten_at_hours": 999,
+    "min_alpha_multiplier_weekend": 0.9,
+    "min_confidence_weekend": 0.45,
+    "opportunity_alpha_multiplier_weekend": 0.8,
+    "opportunity_confidence_weekend": 0.45
+  }
+}

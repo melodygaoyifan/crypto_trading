@@ -1,0 +1,62 @@
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+venv/
+venv_cuda/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Data (large/generated)
+data/diagnostics/
+data/shadow_ledger/
+data/detached_pid.json
+data/dashboard_state.json
+data/auto_phase1_transition_state.json
+data/auto_recovery_state.json
+
+# Models and data (binary, large)
+archive/models_drl_agents_old_jan29/
+archive/models_drl_old_jan29/
+archive/models_dt_old_jan28/
+archive/data_old/
+*.pkl
+*.zip
+*.npz
+*.parquet
+*.tfevents*
+*.pt
+*.pth
+*.onnx
+*.h5
+*.csv
+*.db
+*.bak*
+models/
+data/drl_training/
+data/calibration/*.csv
+training/models/
+training/training_data/
+
+# Logs
+logs/
+*.log
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Claude settings (local)
+.claude/settings.local.json

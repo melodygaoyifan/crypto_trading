@@ -1,0 +1,19 @@
+2026-01-26 21:54:10,041 | INFO | sanity.check_5_reconcile_sanity | ============================================================
+2026-01-26 21:54:10,041 | INFO | sanity.check_5_reconcile_sanity | CHECK 5: MINIMAL RECONCILE SANITY
+2026-01-26 21:54:10,041 | INFO | sanity.check_5_reconcile_sanity | ============================================================
+2026-01-26 21:54:10,041 | INFO | sanity.check_5_reconcile_sanity | 
+--- Case 5.1: Equity missing → NO_TRADE ---
+2026-01-26 21:54:10,041 | INFO | sanity.check_5_reconcile_sanity | PASS: Equity invalid, should trigger NO_TRADE
+2026-01-26 21:54:10,041 | INFO | sanity.check_5_reconcile_sanity | 
+--- Case 5.2: Existing positions → NO_TRADE warning ---
+2026-01-26 21:54:10,042 | INFO | sanity.check_5_reconcile_sanity | PASS: Detected 2 existing positions
+2026-01-26 21:54:10,042 | INFO | sanity.check_5_reconcile_sanity |   Total notional: $50,000.00
+2026-01-26 21:54:10,042 | INFO | sanity.check_5_reconcile_sanity |   System should require reconciliation before new trades
+2026-01-26 21:54:10,042 | INFO | sanity.check_5_reconcile_sanity | 
+--- Case 5.3: Fail-closed on account sync failure ---
+2026-01-26 21:54:10,042 | INFO | sanity.check_5_reconcile_sanity | PASS: Account sync failed - Mock refresh failure
+2026-01-26 21:54:10,042 | INFO | sanity.check_5_reconcile_sanity |   System should not proceed with trades
+2026-01-26 21:54:10,042 | INFO | sanity.check_5_reconcile_sanity | 
+============================================================
+2026-01-26 21:54:10,042 | INFO | sanity.check_5_reconcile_sanity | CHECK 5 RESULT: PASS
+2026-01-26 21:54:10,042 | INFO | sanity.check_5_reconcile_sanity | ============================================================

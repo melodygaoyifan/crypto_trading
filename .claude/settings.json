@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cmd /c \"cd /d c:\\\\Users\\\\melod\\\\Downloads\\\\hmats && venv\\\\Scripts\\\\python.exe -X utf8 main.py --mode verify\")"
+    ]
+  }
+}

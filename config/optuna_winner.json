@@ -1,0 +1,29 @@
+{
+  "extractor": "lstm_film_a",
+  "n_stack": 8,
+  "obs_dim": 126,
+  "reward_mode": "classic",
+  "augment": false,
+  "lr": 1.5255e-05,
+  "buffer_size": 1000000,
+  "learning_starts": 30000,
+  "n_quantiles": 24,
+  "dd_threshold": 0.0866,
+  "dd_penalty_mult": 2.8243,
+  "reward_clip": 20,
+  "regime_weight_min": 0.5962,
+  "regime_weight_max": 1.5697,
+  "ent_coef": 0.1,
+  "weight_decay": 0,
+  "batch_size": 256,
+  "grad_steps": 4,
+  "gamma": 0.99,
+  "tau": 0.005,
+  "n_critics": 2,
+  "top_quantiles_to_drop": 2,
+  "net_arch": [
+    384,
+    384,
+    256
+  ]
+}

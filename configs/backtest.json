@@ -1,0 +1,14 @@
+{
+    "mode": "BACKTEST",
+    "data_source": "data/historical",
+    "start_date": "2023-01-01",
+    "end_date": "2024-12-31",
+    "initial_capital": 10000,
+    "assets": ["BTC", "ETH", "SOL"],
+    "fees": {
+        "maker": 0.0002,
+        "taker": 0.0004
+    },
+    "slippage_model": "volume_based",
+    "slippage_bps": 5
+}

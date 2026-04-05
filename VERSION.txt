@@ -1,0 +1,27 @@
+VERSION: 6.5.1
+RELEASE: HOTPATH-WIRING-FIX
+DATE: 2026-02-28
+
+DESCRIPTION:
+Hot path wiring fix with external feeds + rich context integration.
+Builds on v6.5 macro-crowd integration with execution pipeline corrections.
+
+DEPENDENCIES:
+- v6.5: Macro-crowd integration
+- v6.4.2: Deterministic sentiment engine
+- v6.4.1: Profit-max P0/P1 constraints
+
+KEY FEATURES:
+- P0: FRED, Coinglass, LunarCrush, CryptoPanic feeds
+- P1: Trading Economics (optional)
+- Context contract: macro/crowd/sentiment
+- Profit-max integration (Step 9.5)
+- External feeds: Kraken Futures, CryptoCompare OnChain, Solana OnChain
+- No new vetos from macro/crowd
+
+API KEYS (ENV):
+- FRED_API_KEY (required for production)
+- COINGLASS_API_KEY (required)
+- LUNARCRUSH_API_KEY (required)
+- CRYPTOPANIC_API_KEY (required)
+- TRADING_ECONOMICS_API_KEY (optional)

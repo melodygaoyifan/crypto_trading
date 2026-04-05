@@ -1,0 +1,8 @@
+{
+    "model_name": "meta-llama/Meta-Llama-3-8B-Instruct",
+    "quantization": "awq",
+    "tensor_parallel_size": 1,
+    "max_model_len": 4096,
+    "gpu_memory_utilization": 0.5,
+    "download_instructions": "huggingface-cli download TheBloke/Llama-3-8B-Instruct-AWQ"
+}

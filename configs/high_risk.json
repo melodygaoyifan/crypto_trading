@@ -1,0 +1,228 @@
+{
+  "_description": "Explicit HIGH_RISK baseline overlay. Keeps cloud_production defaults while allowing launcher/profile selection by name.",
+  "_created": "2026-03-08",
+  "risk_profile": "HIGH_RISK",
+  "alpha_gate": {
+    "_description": "HIGH_RISK should still trade QUIET_ACCUMULATION setups when direction is meaningfully non-trivial instead of hard-blocking sub-0.35 signals.",
+    "min_alpha_bps_default": 10,
+    "min_alpha_bps_short_default": 8,
+    "_calibration_note": "理念1: 错过高确信度机会 > 可控亏损. Was 22bps (too conservative, blocked 50%+ trades). 10bps = covers fees while allowing more opportunities. Other risk controls (thesis budget, drawdown, time stop) handle downside.",
+    "staged_schedule": [
+      {"stage": "HIGH_RISK", "min_alpha_bps": 10},
+      {"stage": "WEEK1", "min_alpha_bps": 10},
+      {"stage": "WEEK2_3", "min_alpha_bps": 8},
+      {"stage": "MONTH1", "min_alpha_bps": 5}
+    ],
+    "staged_schedule_short": [
+      {"stage": "HIGH_RISK", "min_alpha_bps": 8},
+      {"stage": "WEEK1", "min_alpha_bps": 8},
+      {"stage": "WEEK2_3", "min_alpha_bps": 6},
+      {"stage": "MONTH1", "min_alpha_bps": 5}
+    ],
+    "stage_selector": "HIGH_RISK",
+    "quiet_accum_min_direction": 0.15,
+    "quiet_accum_min_direction_by_asset": {
+      "BTC": 0.04,
+      "ETH": 0.025
+    },
+    "quiet_accum_min_direction_short": 0.05,
+    "quiet_accum_min_direction_short_by_asset": {
+      "BTC": 0.03,
+      "ETH": 0.015
+    },
+    "opportunity_actionable_min_direction_short": 0.045,
+    "opportunity_actionable_min_direction_short_by_asset": {
+      "ETH": 0.015
+    },
+    "opportunity_actionable_min_exposure": 0.01,
+    "opportunity_actionable_min_exposure_by_asset": {
+      "ETH": 0.005
+    },
+    "normal_actionable_min_direction_short": 0.085,
+    "borderline_alpha_pass_epsilon_bps": 0.0,
+    "borderline_alpha_pass_epsilon_bps_by_asset": {
+      "BTC": 1.0,
+      "ETH": 4.5
+    },
+    "borderline_alpha_pass_epsilon_bps_short": 0.25,
+    "borderline_alpha_pass_epsilon_bps_short_by_asset": {
+      "BTC": 1.0,
+      "ETH": 4.5,
+      "SOL": 2.0
+    },
+    "suppress_model_alpha_long_context_in_quiet": true,
+    "pre_alpha_hold_volume_breakout_long_in_quiet": true,
+    "pre_alpha_hold_volume_breakout_long_max_direction": 0.05,
+    "regime_alpha_gate_relax": {
+      "QUIET_ACCUMULATION": 0.90,
+      "WEAK_CONSOLIDATION": 0.90
+    },
+    "regime_alpha_gate_relax_short": {
+      "QUIET_ACCUMULATION": 0.80,
+      "WEAK_CONSOLIDATION": 0.80
+    },
+    "profit_calibration_shadow": {
+      "enabled": true,
+      "min_closed_trades_per_side": 2,
+      "tighten_long_avg_bps_below": -10.0,
+      "tighten_long_total_pnl_usd_below": -20.0,
+      "keep_long_avg_bps_above": 10.0,
+      "relax_short_avg_bps_above": 15.0,
+      "relax_short_total_pnl_usd_above": 20.0
+    },
+    "profit_calibration_live": {
+      "enabled": true,
+      "min_closed_trades_per_side": 5,
+      "short_alpha_bps_relax": 1.0,
+      "short_structure_gap_bonus_bps": 20.0,
+      "short_structure_min_edge_relax_bps": 1.0,
+      "quiet_long_direction_tighten": 0.02
+    }
+  },
+  "signal_quality": {
+    "_description": "Keep global add-on quality high, but allow narrower BTC long pyramids once score clears the mid-50s.",
+    "min_score_for_add": 60.0,
+    "min_score_for_add_by_asset_side": {
+      "BTC:LONG": 55.0
+    }
+  },
+  "weekend_manager": {
+    "_description": "HIGH_RISK weekend stays active. Keep caps, but do not require the default 66bps hurdle for OPPORTUNITY entries.",
+    "weekend_soft_veto_cap": 0.50,
+    "weekend_max_exposure": 0.50,
+    "per_asset_weekend_caps": {
+      "BTC": 0.25,
+      "ETH": 0.25,
+      "SOL": 0.30
+    },
+    "reduce_at_hours": 999,
+    "flatten_at_hours": 999,
+    "min_alpha_multiplier_weekend": 1.0,
+    "min_confidence_weekend": 0.50,
+    "opportunity_alpha_multiplier_weekend": 0.45,
+    "opportunity_alpha_multiplier_weekend_by_asset": {
+      "BTC": 0.25,
+      "ETH": 0.15,
+      "SOL": 0.19
+    },
+    "opportunity_confidence_weekend_by_asset": {
+      "BTC": 0.30,
+      "SOL": 0.18
+    },
+    "opportunity_confidence_weekend": 0.45
+  },
+  "execution": {
+    "_description": "HIGH_RISK execution stays execution-only, but reprice loops are shorter and fast market conversion is allowed in OPPORTUNITY / high-quality shorts.",
+    "enable_maker_reprice": true,
+    "maker_reprice_max_attempts": 2,
+    "maker_reprice_wait_seconds": 8.0,
+    "maker_reprice_min_fill_ratio": 0.35,
+    "maker_reprice_improve_bps_schedule": [6, 3],
+    "fast_market_execution": {
+      "enabled": true,
+      "apply_in_system_modes": ["OPPORTUNITY"],
+      "require_aggressive_execution_mode": true,
+      "min_short_expected_net_alpha_bps": 10.0,
+      "min_short_abs_direction": 0.15
+    },
+    "advisory_activation": {
+      "enabled": true,
+      "min_session_fills": 2,
+      "min_asset_fills": 1,
+      "require_verified_fill_telemetry": true,
+      "max_latest_slippage_bps": 12.0,
+      "max_toxicity_rate": 0.60,
+      "min_side_closed_trades": 1,
+      "min_side_total_realized_pnl_usd": -25.0,
+      "min_side_avg_realized_pnl_bps": -15.0
+    }
+  },
+  "trade_gate": {
+    "_description": "HIGH_RISK should not let the execution-time TradeGate re-apply a generic edge multiple to BTC long setups that already passed the alpha gate. Keep the global default, but allow a narrow BTC long override.",
+    "min_edge_multiplier": 1.5,
+    "min_edge_multiplier_long_by_asset": {
+      "BTC": 1.0
+    }
+  },
+  "structure_gate": {
+    "_description": "HIGH_RISK prefers confirmed fractal breaks, but allows reduced-size entries when high-edge setups are already near the break. Longs and shorts may soft-override in NORMAL during quiet/weak/steady regimes at reduced size. Mean-revert strategy entries do not require fractal break (reversed signals).",
+    "soft_override_enabled": true,
+    "allow_no_fractal": true,
+    "apply_in_system_modes": ["NORMAL", "OPPORTUNITY"],
+    "apply_in_system_modes_long": ["NORMAL", "OPPORTUNITY"],
+    "apply_in_system_modes_short": ["NORMAL", "OPPORTUNITY"],
+    "apply_in_regimes_long": ["QUIET_ACCUMULATION", "WEAK_CONSOLIDATION", "STEADY_UPTREND", "NEUTRAL_DRIFT", "MOMENTUM_RALLY"],
+    "apply_in_regimes_short": ["QUIET_ACCUMULATION", "WEAK_CONSOLIDATION", "NEUTRAL_DRIFT", "EXTREME_VOLATILITY"],
+    "max_gap_bps_long": 500,
+    "max_gap_bps_short": 500,
+    "min_net_edge_bps_long": 8,
+    "min_net_edge_bps_short": 5,
+    "min_net_edge_bps_long_by_asset": {
+      "BTC": 2.0,
+      "ETH": -3.0
+    },
+    "min_net_edge_bps_short_by_asset": {
+      "ETH": 1.5,
+      "SOL": -2.0
+    },
+    "min_abs_direction": 0.10,
+    "min_abs_direction_long_by_asset": {
+      "BTC": 0.08,
+      "ETH": 0.05
+    },
+    "min_abs_direction_short_by_asset": {
+      "ETH": 0.085
+    },
+    "exposure_scale_long": 0.60,
+    "exposure_scale_short": 0.45,
+    "pre_veto_hold_short_enabled": true,
+    "pre_veto_hold_max_support_gap_bps_short": 30,
+    "pre_veto_hold_max_net_edge_bps_short": 1.5,
+    "btc_short_shadow_relax_enabled": true,
+    "btc_short_shadow_relax_apply_in_regimes": ["QUIET_ACCUMULATION"],
+    "btc_short_shadow_relax_max_support_gap_bps": 45,
+    "btc_short_shadow_relax_min_net_edge_bps": 2.0,
+    "btc_short_shadow_relax_max_vpin": 0.55,
+    "btc_short_shadow_relax_exposure_scale": 0.35,
+    "btc_short_shadow_relax_block_on_buy_whale": true,
+    "max_gap_bps_short_mean_revert": 75,
+    "exposure_scale_short_mean_revert": 0.45,
+    "short_mean_revert_strategies": ["mean_revert", "mean_reversion"]
+  },
+  "allocation": {
+    "_description": "Promote AggressiveAllocator into a bounded sizing amplifier. Concentration is allowed, but capped so the allocator does not drown out the base alpha core before we have stable fill evidence.",
+    "enabled": true,
+    "live_enabled": true,
+    "min_session_fills": 2,
+    "strong_threshold": 0.78,
+    "mid_threshold": 0.62,
+    "strong_weights": [0.65, 0.25, 0.10],
+    "mid_weights": [0.50, 0.30, 0.20],
+    "base_weights": [0.40, 0.33, 0.27]
+  },
+  "tranche": {
+    "_description": "HIGH_RISK keeps the heavier default tranche curve, but allows quieter weekend/Asia SOL setups to still enter T1 instead of being flattened by the generic 0.05 volume-collapse guard.",
+    "sizes_cumulative": {
+      "TRANCHE_1": 0.35,
+      "TRANCHE_2": 0.65,
+      "TRANCHE_3": 0.90,
+      "TRANCHE_4": 1.00
+    },
+    "t2_require_4h_close": true,
+    "t3_require_regime_aligned": true,
+    "entry_volume_collapse_threshold": 0.03,
+    "entry_volume_collapse_threshold_by_asset": {
+      "SOL": 0.015
+    }
+  },
+  "g6": {
+    "_description": "G6 should be true sizing authority in HIGH_RISK. Keep clamps bounded, but allow live concentration away from equal-weight.",
+    "enabled": true,
+    "shadow_mode": false,
+    "cold_start_prior_enabled": true,
+    "cold_start_prior_floor": 0.30,
+    "cold_start_prior_max_multiplier": 1.80,
+    "min_multiplier": 0.75,
+    "max_multiplier": 1.30
+  }
+}

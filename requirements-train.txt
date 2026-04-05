@@ -1,0 +1,73 @@
+# ================================================================================
+# HMATS v5.4.0 - Training & Development Dependencies
+# ================================================================================
+# Purpose: Additional dependencies for local training, backtesting, development
+# 
+# Install: pip install -r requirements.txt -r requirements-train.txt
+# ================================================================================
+
+# ------------------------------------------------------------------------------
+# Deep Learning Framework (DRL training)
+# ------------------------------------------------------------------------------
+torch>=2.0.0,<3.0.0           # PyTorch for DRL (training/crypto_drl_agent.py)
+torchvision>=0.15.0           # Image processing (if using visual features)
+
+# ------------------------------------------------------------------------------
+# Reinforcement Learning
+# ------------------------------------------------------------------------------
+stable-baselines3>=2.0.0      # RL algorithms (PPO, SAC)
+gymnasium>=0.29.0             # RL environments
+
+# ------------------------------------------------------------------------------
+# Additional ML Libraries
+# ------------------------------------------------------------------------------
+xgboost>=2.0.0                # Gradient boosting (optional feature engineering)
+lightgbm>=4.0.0               # Alternative boosting
+
+# ------------------------------------------------------------------------------
+# Visualization (for analysis and debugging)
+# ------------------------------------------------------------------------------
+matplotlib>=3.7.0,<4.0.0      # Plotting
+seaborn>=0.12.0               # Statistical visualization
+plotly>=5.15.0                # Interactive charts
+
+# ------------------------------------------------------------------------------
+# Dashboard Development
+# ------------------------------------------------------------------------------
+streamlit>=1.28.0,<2.0.0      # Dashboard UI
+
+# ------------------------------------------------------------------------------
+# GPU Acceleration (optional - comment out if no CUDA)
+# ------------------------------------------------------------------------------
+# cupy-cuda12x>=12.0.0        # GPU-accelerated numpy (requires CUDA 12.x)
+# cupy-cuda11x>=12.0.0        # GPU-accelerated numpy (requires CUDA 11.x)
+
+# ------------------------------------------------------------------------------
+# LLM Inference (optional - for sentiment analysis)
+# ------------------------------------------------------------------------------
+# vllm>=0.2.0                  # Fast LLM inference
+# transformers>=4.30.0         # Hugging Face transformers
+
+# ------------------------------------------------------------------------------
+# Development & Testing
+# ------------------------------------------------------------------------------
+pytest>=7.4.0                 # Testing framework
+pytest-asyncio>=0.21.0        # Async test support
+pytest-cov>=4.1.0             # Coverage reporting
+black>=23.0.0                 # Code formatting
+ruff>=0.1.0                   # Fast linter
+mypy>=1.5.0                   # Type checking
+rich>=13.0.0                  # Pretty terminal output
+
+# ------------------------------------------------------------------------------
+# Profiling & Debugging
+# ------------------------------------------------------------------------------
+line-profiler>=4.1.0          # Line-by-line profiling
+memory-profiler>=0.61.0       # Memory usage profiling
+py-spy>=0.3.0                 # Sampling profiler
+
+# ------------------------------------------------------------------------------
+# Jupyter Notebooks (for research)
+# ------------------------------------------------------------------------------
+jupyter>=1.0.0                # Jupyter notebook
+ipywidgets>=8.0.0             # Interactive widgets

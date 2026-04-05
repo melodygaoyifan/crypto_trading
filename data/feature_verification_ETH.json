@@ -1,0 +1,151 @@
+{
+  "timestamp": "2026-02-25T03:23:21.269926Z",
+  "asset": "ETH",
+  "sections": {
+    "DATA_FEEDS": [
+      {
+        "name": "Kraken OHLCV",
+        "status": "LIVE",
+        "detail": "price=$1,906.68"
+      },
+      {
+        "name": "Kraken Orderbook",
+        "status": "DEAD",
+        "detail": "depth_1pct=$0, imbalance=0.000"
+      },
+      {
+        "name": "Kraken Futures Feed",
+        "status": "LIVE",
+        "detail": "src=kraken_futures, funding=0.000026, OI=$34,618,107, premium=0.0"
+      },
+      {
+        "name": "Coinglass (OI+Liq)",
+        "status": "LIVE",
+        "detail": "liq_24h=$0, imbalance=0.000"
+      },
+      {
+        "name": "Fear & Greed Index",
+        "status": "LIVE",
+        "detail": "fg=0.11"
+      },
+      {
+        "name": "FRED Macro",
+        "status": "LIVE",
+        "detail": "status=available, risk=0.5"
+      },
+      {
+        "name": "LunarCrush (crowd)",
+        "status": "LIVE",
+        "detail": "status=available, attention=0.5, crowding=0.6"
+      },
+      {
+        "name": "CryptoPanic (sentiment)",
+        "status": "LIVE",
+        "detail": "status=available"
+      },
+      {
+        "name": "CryptoCompare OnChain",
+        "status": "LIVE",
+        "detail": "mock=False, active_addr=823,705"
+      },
+      {
+        "name": "Solana RPC + Jito",
+        "status": "LIVE",
+        "detail": "tps=3525, jito_pressure=0.220"
+      }
+    ],
+    "SIGNAL_PIPELINE": [
+      {
+        "name": "GMM Regime",
+        "status": "LIVE",
+        "detail": "regime=REGIME_2, conf=0.969"
+      },
+      {
+        "name": "Regime Navigator",
+        "status": "LIVE",
+        "detail": "init=True"
+      },
+      {
+        "name": "Lead-Lag",
+        "status": "LIVE",
+        "detail": "edge=-40.4bps, conf=0.515"
+      },
+      {
+        "name": "Sentiment L1 (F&G->zscore)",
+        "status": "LIVE",
+        "detail": "zscore=-2.340"
+      },
+      {
+        "name": "LLM Sentiment (SHADOW)",
+        "status": "LIVE",
+        "detail": "src=f&g"
+      },
+      {
+        "name": "Authority Fusion",
+        "status": "LIVE",
+        "detail": "dir=-0.704, conf=0.711"
+      },
+      {
+        "name": "Cash & Carry",
+        "status": "LIVE",
+        "detail": "init=True"
+      },
+      {
+        "name": "Short Bias Agent",
+        "status": "LIVE",
+        "detail": "dir=0.00"
+      },
+      {
+        "name": "Flow Integrator",
+        "status": "LIVE",
+        "detail": "init=True"
+      }
+    ],
+    "DECISION_GATES": [
+      {
+        "name": "P0 Safety Integrator",
+        "status": "LIVE",
+        "detail": ""
+      },
+      {
+        "name": "Trade Gate",
+        "status": "LIVE",
+        "detail": ""
+      },
+      {
+        "name": "Structure Analyzer",
+        "status": "LIVE",
+        "detail": "(currently blocking shorts \u2014 correct)"
+      },
+      {
+        "name": "Thesis Budget Governor",
+        "status": "LIVE",
+        "detail": ""
+      }
+    ],
+    "SAFETY_RISK": [
+      {
+        "name": "Shadow Ledger",
+        "status": "LIVE",
+        "detail": ""
+      },
+      {
+        "name": "Dead Man Switch",
+        "status": "LIVE",
+        "detail": ""
+      },
+      {
+        "name": "FastRiskTick (SHADOW)",
+        "status": "LIVE",
+        "detail": ""
+      }
+    ],
+    "INTENTIONALLY_OFF": [
+      {
+        "name": "DRL Agent",
+        "status": "LIVE",
+        "detail": "DISABLED (training in progress)"
+      }
+    ]
+  }
+}

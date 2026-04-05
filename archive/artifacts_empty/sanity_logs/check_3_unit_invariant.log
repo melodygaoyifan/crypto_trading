@@ -1,0 +1,29 @@
+2026-01-26 21:54:09,877 | INFO | sanity.check_3_unit_invariant | ============================================================
+2026-01-26 21:54:09,878 | INFO | sanity.check_3_unit_invariant | CHECK 3: UNIT INVARIANT BLACK-BOX
+2026-01-26 21:54:09,878 | INFO | sanity.check_3_unit_invariant | ============================================================
+2026-01-26 21:54:09,879 | INFO | sanity.check_3_unit_invariant | 
+--- Case 3.1: exposure=0.3, equity=100000, price=185 ---
+2026-01-26 21:54:09,879 | INFO | sanity.check_3_unit_invariant |   Exposure: 0.3
+2026-01-26 21:54:09,879 | INFO | sanity.check_3_unit_invariant |   Expected qty: 162.162162
+2026-01-26 21:54:09,879 | INFO | sanity.check_3_unit_invariant |   Actual qty:   162.162162
+2026-01-26 21:54:09,879 | INFO | sanity.check_3_unit_invariant |   Error: 0.0000%
+2026-01-26 21:54:09,879 | INFO | sanity.check_3_unit_invariant |   Notional: $30,000.00
+2026-01-26 21:54:09,880 | INFO | sanity.check_3_unit_invariant | PASS: qty within 0.5% tolerance
+2026-01-26 21:54:09,880 | INFO | sanity.check_3_unit_invariant | 
+--- Case 3.2: exposure=0.03 (10x smaller) ---
+2026-01-26 21:54:09,880 | INFO | sanity.check_3_unit_invariant |   Exposure: 0.03
+2026-01-26 21:54:09,880 | INFO | sanity.check_3_unit_invariant |   Expected qty: 16.216216
+2026-01-26 21:54:09,880 | INFO | sanity.check_3_unit_invariant |   Actual qty:   16.216216
+2026-01-26 21:54:09,880 | INFO | sanity.check_3_unit_invariant |   Scaling ratio: 10.0000 (expected 10.0)
+2026-01-26 21:54:09,880 | INFO | sanity.check_3_unit_invariant |   Ratio error: 0.0000%
+2026-01-26 21:54:09,880 | INFO | sanity.check_3_unit_invariant | PASS: Linear scaling verified
+2026-01-26 21:54:09,880 | INFO | sanity.check_3_unit_invariant | 
+--- Case 3.3: Notional alignment check ---
+2026-01-26 21:54:09,880 | INFO | sanity.check_3_unit_invariant |   Target notional: $30,000.00
+2026-01-26 21:54:09,880 | INFO | sanity.check_3_unit_invariant |   Actual notional: $30,000.00
+2026-01-26 21:54:09,880 | INFO | sanity.check_3_unit_invariant |   Alignment error: 0.0000%
+2026-01-26 21:54:09,881 | INFO | sanity.check_3_unit_invariant | PASS: Notional aligned with equity * exposure
+2026-01-26 21:54:09,881 | INFO | sanity.check_3_unit_invariant | 
+============================================================
+2026-01-26 21:54:09,881 | INFO | sanity.check_3_unit_invariant | CHECK 3 RESULT: PASS
+2026-01-26 21:54:09,881 | INFO | sanity.check_3_unit_invariant | ============================================================

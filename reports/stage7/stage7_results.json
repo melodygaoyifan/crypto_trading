@@ -1,0 +1,27 @@
+{
+  "classic": {
+    "best_eval": 642.498738,
+    "last_eval": 522.605695,
+    "n_evals": 40
+  },
+  "sharpe": {
+    "best_eval": 318.167586,
+    "last_eval": 317.84298,
+    "n_evals": 40
+  },
+  "sortino": {
+    "best_eval": 165.878948,
+    "last_eval": 157.054262,
+    "n_evals": 40
+  },
+  "classic_augment": {
+    "best_eval": 447.49533,
+    "last_eval": 369.068482,
+    "n_evals": 40
+  },
+  "sharpe_augment": {
+    "best_eval": 211.344776,
+    "last_eval": 211.344776,
+    "n_evals": 40
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "asset": "BTC",
+  "folds": {
+    "fold_1": {
+      "mean_reward": 211.34477622796476,
+      "std_reward": 0.0,
+      "train_time_minutes": 180.9917185584704,
+      "train_rows": 15527,
+      "val_rows": 2747
+    }
+  },
+  "weights": {
+    "fold_1": 1.0
+  },
+  "weighted_score": 211.34477622796476,
+  "best_fold": "fold_1",
+  "best_reward": 211.34477622796476
+}

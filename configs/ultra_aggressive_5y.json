@@ -1,0 +1,236 @@
+{
+    "_description": "ULTRA_AGGRESSIVE_5Y risk profile — 5-year horizon, maximise growth",
+    "_created": "2026-02-21",
+    "_WARNING": "This profile significantly relaxes risk limits. Use ONLY with a 5-year+ time horizon and full loss tolerance.",
+
+    "risk_profile": "ULTRA_AGGRESSIVE_5Y",
+
+    "risk": {
+        "hard_drawdown_halt": 0.25,
+        "correlation_crisis": 0.98,
+        "max_gross_exposure": 2.50,
+        "max_leverage": 3.0,
+        "max_single_asset_pct": 1.00,
+        "max_asset_exposure": 1.00,
+        "reduce_at_drawdown": 0.15,
+        "halt_at_drawdown": 0.25,
+        "critical_drawdown": 0.35
+    },
+
+    "leverage": {
+        "max_leverage": 3.0,
+        "max_position_notional_usd": 200000.0,
+        "max_total_notional_usd": 400000.0
+    },
+
+    "dynamic_limits": {
+        "_description": "P1-1D: Dynamic hard limits. Adjusts leverage/gross/single-asset caps by regime, volatility, confidence. Absolute caps are never exceeded.",
+        "enabled": true,
+        "base_max_leverage": 3.0,
+        "abs_max_leverage": 3.0,
+        "base_max_gross_exposure": 2.50,
+        "abs_max_gross_exposure": 3.0,
+        "base_max_single_asset": 1.0,
+        "correlation_limit": 0.98,
+        "regime_multipliers": {
+            "STRONG_TREND":  {"leverage": 1.25, "gross": 1.20},
+            "IGNITION":      {"leverage": 1.25, "gross": 1.20},
+            "EXPANSION":     {"leverage": 1.10, "gross": 1.10},
+            "DEFAULT":       {"leverage": 1.00, "gross": 1.00}
+        },
+        "confidence_multiplier_threshold": 0.80,
+        "confidence_multiplier": 1.10,
+        "volatility_high_threshold": 2.0,
+        "volatility_high_leverage_multiplier": 0.90
+    },
+
+    "regime_leverage": {
+        "VOLATILE_CHOP": 3.0,
+        "MOMENTUM_RALLY": 3.0,
+        "PANIC_SELLOFF": 3.0,
+        "WEAK_CONSOLIDATION": 2.0,
+        "QUIET_ACCUMULATION": 2.0,
+        "EXTREME_VOLATILITY": 1.0,
+        "STRONG_TREND": 3.0,
+        "TREND": 2.0,
+        "BULL_TREND": 2.0,
+        "BEAR_TREND": 1.0,
+        "UNCERTAIN": 1.0,
+        "MEAN_REVERT": 1.0,
+        "TRANSITION": 1.0,
+        "SIDEWAYS": 1.0,
+        "UNKNOWN": 1.0
+    },
+
+    "exposure_caps": {
+        "BTC": 0.60,
+        "ETH": 0.60,
+        "SOL": 0.80
+    },
+
+    "post_leverage_caps": {
+        "BTC": 0.50,
+        "ETH": 0.50,
+        "SOL": 0.60
+    },
+
+    "thesis_budget": {
+        "loss_budget_pct_nav": 0.025,
+        "loss_streak_limit": 6,
+        "cooldown_bars": 2,
+        "max_reentry_after_budget_hit": 2
+    },
+
+    "existence_fuse": {
+        "_description": "Relaxed existence fuse for 5-year horizon. Wider thresholds + auto-recovery after 72h cooldown.",
+        "pnl_threshold_pct": -0.15,
+        "equity_drawdown_threshold_pct": -0.20,
+        "allow_auto_recovery": true,
+        "suspension_cooldown_hours": 72
+    },
+
+    "tranche": {
+        "_description": "Accelerated pyramiding: bigger T1, faster escalation, relaxed gates",
+        "sizes_cumulative": {
+            "TRANCHE_1": 0.30,
+            "TRANCHE_2": 0.50,
+            "TRANCHE_3": 0.75,
+            "TRANCHE_4": 1.00
+        },
+        "t2_require_4h_close": false,
+        "t3_require_regime_aligned": false,
+        "t3_min_profit_bps": 0,
+        "t4_min_profit_bps": 25,
+        "t4_min_time_hours": 1.0,
+        "escalation_min_bars": {
+            "t1_to_t2": 0,
+            "t2_to_t3": 1,
+            "t3_to_t4": 2
+        }
+    },
+
+    "cascade_permissions": {
+        "_description": "More permissive tranche gating during liquidation cascades. EXHAUSTING stays locked (hard safety).",
+        "DETECTED":      {"T1": true, "T2": true, "T3": false, "T4": false},
+        "ACCELERATING":  {"T1": true, "T2": true, "T3": true,  "T4": true},
+        "EXHAUSTING":    {"T1": false, "T2": false, "T3": false, "T4": false}
+    },
+
+    "weekend_manager": {
+        "_description": "Relaxed weekend constraints: no forced reduction, higher exposure caps. Hard vetoes (data stale, exchange disconnect, correlation crisis) still apply.",
+        "weekend_soft_veto_cap": 1.00,
+        "weekend_max_exposure": 1.00,
+        "weekend_leverage_cap": 3.0,
+        "reduce_friday_evening": false,
+        "per_asset_weekend_caps": {
+            "BTC": 0.60,
+            "ETH": 0.60,
+            "SOL": 0.80
+        },
+        "reduce_at_hours": 999,
+        "flatten_at_hours": 999,
+        "min_alpha_multiplier_weekend": 1.0,
+        "min_confidence_weekend": 0.50
+    },
+
+    "execution": {
+        "_description": "Maker cancel-replace (chase) for post-only limit orders. Improves fill rate without taker fallback.",
+        "enable_maker_reprice": true,
+        "maker_reprice_max_attempts": 3,
+        "maker_reprice_wait_seconds": 20,
+        "maker_reprice_min_fill_ratio": 0.50,
+        "maker_reprice_improve_bps_schedule": [8, 5, 3]
+    },
+
+    "passive_aggressive": {
+        "_description": "P2-03: PA executor ACTIVE mode. Drives order type and price improvement based on VPIN/urgency/toxicity. Coordinates with P2-01 maker reprice and P2-02 timing engine.",
+        "mode": "ACTIVE",
+        "max_price_improve_bps": 8,
+        "min_price_improve_bps": 2,
+        "toxic_flow_abort_threshold": 0.85,
+        "abort_on_insufficient_edge": false
+    },
+
+    "timing_engine": {
+        "_description": "Fee-tier-aware execution timing. Free tier (<$10K/mo): taker is free, allow aggressive at lower urgency. Post-free-tier: maker 16bps vs taker 26bps, restrict taker to high urgency only.",
+        "enable_tier_aware_timing": true,
+        "free_tier_taker_upgrade_min_score": 0.60,
+        "free_tier_taker_upgrade_min_urgency": 0.40,
+        "post_tier_taker_min_urgency": 0.85,
+        "post_tier_default_mode": "PASSIVE_PREFERRED"
+    },
+
+    "auto_recovery": {
+        "_description": "Cautious auto-recovery from non-drawdown HALT reasons. DRAWDOWN_HALT never auto-recovers. Requires observation period + condition checks before resuming.",
+        "enabled": true,
+        "allowed_reasons": ["CORRELATION_CRISIS", "CORRELATION_COLLAPSE"],
+        "never_auto_recover": ["DRAWDOWN_HALT"],
+        "observation_hours": 48,
+        "correlation_recovery_threshold": 0.90,
+        "require_data_integrity_ok": true
+    },
+
+    "allocation": {
+        "_description": "P4-01: Dynamic concentration. Concentrates exposure on highest-scoring asset when conviction is high.",
+        "enabled": true,
+        "strong_threshold": 0.80,
+        "mid_threshold": 0.65,
+        "strong_weights": [1.0, 0.0, 0.0],
+        "mid_weights": [0.7, 0.3, 0.0],
+        "base_weights": [0.5, 0.3, 0.2]
+    },
+
+    "profit_max": {
+        "_description": "P1-2B: FalseBreakout SCALE instead of VETO. Halves exposure instead of blocking trade entirely.",
+        "false_breakout_action": "SCALE",
+        "false_breakout_scale": 0.5,
+        "false_breakout_urgency_penalty": 0.15
+    },
+
+    "alpha_gate": {
+        "_description": "P1-2A: Staged min alpha floor. Lowers the minimum alpha threshold over time. EV gate (friction * multiplier) still applies as stricter constraint in post-free-tier.",
+        "min_alpha_bps_default": 10,
+        "staged_schedule": [
+            {"stage": "WEEK1",   "min_alpha_bps": 10},
+            {"stage": "WEEK2_3", "min_alpha_bps": 8},
+            {"stage": "MONTH1",  "min_alpha_bps": 5}
+        ],
+        "stage_selector": "WEEK1"
+    },
+
+    "confidence_gate": {
+        "_description": "P1-2C: Staged confidence floor + min aligned agents. Lowers the minimum confidence and alignment thresholds for ULTRA. HIGH_RISK keeps 0.65/5 defaults.",
+        "min_confidence_default": 0.50,
+        "staged_schedule": [
+            {"stage": "WEEK1",   "min_confidence": 0.50},
+            {"stage": "WEEK2_3", "min_confidence": 0.45}
+        ],
+        "stage_selector": "WEEK1",
+        "min_aligned_agents": 3
+    },
+
+    "gambler": {
+        "_description": "P4-02: GamblerSizing — heavy-bet mode for OPPORTUNITY windows with strong regimes. Boosts target_exposure up to max_bet_pct_nav. Risk layer (RiskGovernor/LeverageGuard/P0) still vetoes after. In-memory cooldown resets on restart.",
+        "enabled": true,
+        "max_bet_pct_nav": 0.50,
+        "confidence_threshold": 0.70,
+        "allowed_modes": ["OPPORTUNITY"],
+        "allowed_regimes": ["STRONG_TREND", "IGNITION", "EXPANSION"],
+        "min_seconds_between_bets": 14400,
+        "max_bets_per_week": 3
+    },
+
+    "stop_order_failure_policy": "FREEZE_ENTRIES",
+    "stop_order_max_retries": 3,
+    "stop_order_backoff_ms": [200, 400, 800],
+
+    "short_control": {
+        "_description": "P5-01: Relaxed short constraints for ULTRA. Allows shorts in bull regimes, raises max short exposure. Squeeze protection + funding extreme protection preserved. Runs AFTER P0/V6 short blocks — overrides regime-only blocks, keeps safety blocks.",
+        "enabled": true,
+        "max_short_exposure": 1.00,
+        "allow_short_in_bull": true,
+        "squeeze_protection_enabled": true,
+        "squeeze_override_threshold": 0.60,
+        "funding_extreme_threshold": 0.003
+    }
+}

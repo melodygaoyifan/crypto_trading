@@ -1,0 +1,6 @@
+{
+  "pid": 110412,
+  "started_at": "2026-04-05T21:27:22.385437Z",
+  "command": "main.py --mode live --config c:\\Users\\melod\\Downloads\\hmats\\configs\\live_high_risk.json --confirm-live",
+  "config": "c:\\Users\\melod\\Downloads\\hmats\\configs\\live_high_risk.json"
+}

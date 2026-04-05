@@ -1,0 +1,73 @@
+{
+    "_description": "HMATS Live Phase 1 — Day 7: Half Position (50% allocation)",
+    "_deploy_date": "Day 7 after paper validation",
+    "mode": "LIVE",
+    "assets": ["BTC", "ETH", "SOL"],
+    "exchange": {
+        "kraken": {
+            "api_key_env": "KRAKEN_API_KEY",
+            "api_secret_env": "KRAKEN_API_SECRET",
+            "rate_limit": 15
+        }
+    },
+    "risk": {
+        "max_position_pct": 0.20,
+        "max_exposure_total": 0.50,
+        "max_drawdown": 0.10,
+        "daily_loss_limit": 0.03,
+        "per_asset_caps": {
+            "BTC": 0.20,
+            "ETH": 0.20,
+            "SOL": 0.12
+        },
+        "max_leverage": 2
+    },
+    "execution": {
+        "default_order_type": "LIMIT",
+        "post_only": true,
+        "limit_order_timeout_seconds": 180,
+        "market_fallback_enabled": true,
+        "prefer_limit_orders": true,
+        "enable_maker_reprice": true,
+        "maker_reprice_max_attempts": 5,
+        "maker_reprice_wait_seconds": 25.0,
+        "maker_reprice_min_fill_ratio": 0.40,
+        "maker_reprice_improve_bps_schedule": [8, 6, 4, 3, 2],
+        "_fee_optimization_notes": "timeout 120→180s, reprices 3→5, wait 20→25s, min_fill 0.50→0.40 — maximize maker fills"
+    },
+    "regime_leverage": {
+        "VOLATILE_CHOP": 2,
+        "MOMENTUM_RALLY": 2,
+        "PANIC_SELLOFF": 2,
+        "WEAK_CONSOLIDATION": 1,
+        "QUIET_ACCUMULATION": 1,
+        "EXTREME_VOLATILITY": 1
+    },
+    "drl": {
+        "mode": "ACTIVE",
+        "auto_demotion_enabled": true,
+        "consecutive_loss_threshold": 3,
+        "demotion_period_days": 3,
+        "_note": "DRL training complete + 30 shadow trades passed. FIX-DRL-AUTHORITY ensures DECIDE authority in fusion."
+    },
+    "sentiment": {
+        "layer1_enabled": true,
+        "fear_greed_source": "alternative_me"
+    },
+    "cash_and_carry": {
+        "enabled": false,
+        "_note": "Phase 1: disabled until Kraken Futures wired"
+    },
+    "dms_timeout_seconds": 60,
+    "stop_order_max_retries": 3,
+    "stop_order_backoff_ms": [200, 400, 800],
+    "stop_order_failure_policy": "RETRY_THEN_MARKET",
+    "single_exchange_mode": true,
+    "allowed_venues": ["kraken"],
+    "logging": {
+        "level": "INFO",
+        "file": "logs/live_phase1.log",
+        "rotation": "daily",
+        "retention_days": 90
+    }
+}

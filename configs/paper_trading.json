@@ -1,0 +1,32 @@
+{
+    "mode": "PAPER_TRADING",
+    "assets": ["BTC", "ETH", "SOL"],
+    "exchange": {
+        "kraken": {
+            "testnet": false,
+            "rate_limit": 1200,
+            "_note": "SINGLE_EXCHANGE_KRAKEN_ONLY — must match production"
+        }
+    },
+    "risk": {
+        "max_position_pct": 0.5,
+        "max_drawdown": 0.35,
+        "daily_loss_limit": 0.10,
+        "initial_capital": 10000
+    },
+    "execution": {
+        "default_order_type": "MARKET",
+        "simulated_slippage_bps": 5,
+        "simulated_latency_ms": 50
+    },
+    "dms_timeout_seconds": 60,
+    "stop_order_max_retries": 3,
+    "stop_order_backoff_ms": [200, 400, 800],
+    "stop_order_failure_policy": "ALERT_ONLY",
+    "single_exchange_mode": true,
+    "allowed_venues": ["kraken"],
+    "logging": {
+        "level": "DEBUG",
+        "file": "logs/paper_trading.log"
+    }
+}

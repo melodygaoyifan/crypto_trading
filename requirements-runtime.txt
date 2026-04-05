@@ -1,0 +1,45 @@
+# ================================================================================
+# HMATS v5.1.0 - Runtime Dependencies
+# ================================================================================
+# Purpose: Minimal dependencies for production runtime
+# Excludes: Training libraries (PyTorch, stable-baselines3, etc.)
+# ================================================================================
+
+# Core
+numpy>=1.24.0,<2.0.0
+pandas>=2.0.0,<3.0.0
+scipy>=1.10.0,<2.0.0
+
+# Async
+asyncio-throttle>=1.0.0
+aiohttp>=3.8.0,<4.0.0
+websockets>=11.0,<13.0
+
+# API Clients
+requests>=2.28.0,<3.0.0
+urllib3>=1.26.0,<3.0.0
+
+# Crypto Exchange (Kraken)
+krakenex>=2.1.0,<3.0.0
+
+# Data Validation
+pydantic>=2.0.0,<3.0.0
+
+# Configuration
+python-dotenv>=1.0.0,<2.0.0
+
+# Logging
+structlog>=23.0.0,<25.0.0
+
+# Time handling
+python-dateutil>=2.8.0,<3.0.0
+pytz>=2023.0
+
+# Optional: Dashboard (Streamlit)
+# streamlit>=1.28.0,<2.0.0
+
+# Optional: GPU acceleration (comment out if not using)
+# cupy-cuda12x>=12.0.0
+
+# Development/Debug (optional in production)
+# rich>=13.0.0,<14.0.0

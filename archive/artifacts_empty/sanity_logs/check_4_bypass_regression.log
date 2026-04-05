@@ -1,0 +1,35 @@
+2026-01-26 21:54:09,882 | INFO | sanity.check_4_bypass_regression | ============================================================
+2026-01-26 21:54:09,882 | INFO | sanity.check_4_bypass_regression | CHECK 4: BYPASS REGRESSION SCAN
+2026-01-26 21:54:09,882 | INFO | sanity.check_4_bypass_regression | ============================================================
+2026-01-26 21:54:10,039 | INFO | sanity.check_4_bypass_regression | 
+Total execution-related patterns found: 16
+2026-01-26 21:54:10,039 | INFO | sanity.check_4_bypass_regression | Active (potentially unsafe) hits: 4
+2026-01-26 21:54:10,039 | INFO | sanity.check_4_bypass_regression | 
+--- All Hits ---
+2026-01-26 21:54:10,039 | INFO | sanity.check_4_bypass_regression |   [⚠️ ACTIVE] main.py:858 - result = self.execution_manager.execute_order(
+2026-01-26 21:54:10,039 | INFO | sanity.check_4_bypass_regression |   [⚠️ ACTIVE] core/runtime_spine.py:1238 - result = self._execution_manager.execute_order(
+2026-01-26 21:54:10,039 | INFO | sanity.check_4_bypass_regression |   [SAFE] execution/execution_manager.py:146 - def execute_order(self,
+2026-01-26 21:54:10,039 | INFO | sanity.check_4_bypass_regression |   [SAFE] execution/execution_manager.py:234 - order = self.exchange.create_limit_order(
+2026-01-26 21:54:10,039 | INFO | sanity.check_4_bypass_regression |   [SAFE] execution/execution_manager.py:301 - order = self.exchange.create_market_order(
+2026-01-26 21:54:10,039 | INFO | sanity.check_4_bypass_regression |   [SAFE] execution/execution_manager.py:401 - order = self.exchange.create_order(
+2026-01-26 21:54:10,040 | INFO | sanity.check_4_bypass_regression |   [⚠️ ACTIVE] execution/execution_manager.py:517 - result = em.execute_order(
+2026-01-26 21:54:10,040 | INFO | sanity.check_4_bypass_regression |   [SAFE] execution/passive_aggressive.py:491 - def create_order(
+2026-01-26 21:54:10,040 | INFO | sanity.check_4_bypass_regression |   [SAFE] execution/passive_aggressive.py:875 - order = self.executor.create_order(decision, current_bid, cu
+2026-01-26 21:54:10,040 | INFO | sanity.check_4_bypass_regression |   [SAFE] execution/passive_aggressive.py:1005 - order = executor.create_order(decision, current_bid=194.8, c
+2026-01-26 21:54:10,040 | INFO | sanity.check_4_bypass_regression |   [SAFE] execution/simulator/lob_replay_engine.py:514 - self.submit_order(orders[order_idx])
+2026-01-26 21:54:10,040 | INFO | sanity.check_4_bypass_regression |   [SAFE] execution/simulator/lob_replay_engine.py:628 - self._engine.submit_order(order)
+2026-01-26 21:54:10,040 | INFO | sanity.check_4_bypass_regression |   [SAFE] execution/simulator/lob_replay_engine.py:643 - self._engine.submit_order(order)
+2026-01-26 21:54:10,040 | INFO | sanity.check_4_bypass_regression |   [SAFE] execution/simulator/lob_replay_engine.py:658 - self._engine.submit_order(order)
+2026-01-26 21:54:10,040 | INFO | sanity.check_4_bypass_regression |   [⚠️ ACTIVE] orchestration/p0_safe_execution.py:383 - exec_result = execution_manager.execute_order(
+2026-01-26 21:54:10,040 | INFO | sanity.check_4_bypass_regression |   [SAFE] orchestration/p0_safe_execution.py:473 - def execute_order(self, **kwargs):
+2026-01-26 21:54:10,040 | INFO | sanity.check_4_bypass_regression | 
+✓ Found expected main entry: main.py:858
+2026-01-26 21:54:10,040 | WARNING | sanity.check_4_bypass_regression | 
+⚠️ Found 3 unexpected active paths:
+2026-01-26 21:54:10,040 | WARNING | sanity.check_4_bypass_regression |   core/runtime_spine.py:1238 - result = self._execution_manager.execute_order(
+2026-01-26 21:54:10,040 | WARNING | sanity.check_4_bypass_regression |   execution/execution_manager.py:517 - result = em.execute_order(
+2026-01-26 21:54:10,040 | WARNING | sanity.check_4_bypass_regression |   orchestration/p0_safe_execution.py:383 - exec_result = execution_manager.execute_order(
+2026-01-26 21:54:10,040 | INFO | sanity.check_4_bypass_regression | 
+============================================================
+2026-01-26 21:54:10,040 | INFO | sanity.check_4_bypass_regression | CHECK 4 RESULT: PASS
+2026-01-26 21:54:10,040 | INFO | sanity.check_4_bypass_regression | ============================================================

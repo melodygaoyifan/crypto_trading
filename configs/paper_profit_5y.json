@@ -1,0 +1,74 @@
+{
+  "_description": "Paper-profit overlay for net-PnL validation. Separates profit-seeking paper runs from sample-collection runs.",
+  "_created": "2026-03-06",
+  "risk_profile": "PAPER_PROFIT_5Y",
+  "alpha_gate": {
+    "_description": "Profit profile keeps net-positive filtering but allows medium-edge paper intents instead of empty rounds.",
+    "min_alpha_bps_default": 8,
+    "staged_schedule": [
+      {"stage": "PAPER_PROFIT", "min_alpha_bps": 8},
+      {"stage": "WEEK1", "min_alpha_bps": 8},
+      {"stage": "WEEK2_3", "min_alpha_bps": 7},
+      {"stage": "MONTH1", "min_alpha_bps": 5}
+    ],
+    "stage_selector": "PAPER_PROFIT",
+    "quiet_accum_min_direction": 0.15,
+    "regime_alpha_gate_relax": {
+      "QUIET_ACCUMULATION": 0.90,
+      "WEAK_CONSOLIDATION": 0.85
+    }
+  },
+  "confidence_gate": {
+    "_description": "Still stricter than baseline, but no longer blocks medium-confidence paper profit setups by default.",
+    "min_confidence_default": 0.50,
+    "staged_schedule": [
+      {"stage": "PAPER_PROFIT", "min_confidence": 0.50},
+      {"stage": "WEEK1", "min_confidence": 0.50},
+      {"stage": "WEEK2_3", "min_confidence": 0.48},
+      {"stage": "MONTH1", "min_confidence": 0.45}
+    ],
+    "stage_selector": "PAPER_PROFIT",
+    "min_aligned_agents": 2
+  },
+  "drl": {
+    "_description": "Allow DRL to contribute to exits in profit-mode paper runs without granting entry authority.",
+    "paper_bootstrap_authority": "SHADOW",
+    "promotion_gate": {
+      "consecutive_loss_threshold": 4,
+      "drawdown_trigger_pct": 0.10,
+      "demote_to": "EXIT_ONLY",
+      "recovery_period_days": 2,
+      "max_demotions_before_disable": 3
+    }
+  },
+  "gambler": {
+    "_description": "Disable high-risk heavy-bet overrides in paper profit mode; keep paper fills driven by alpha/risk gates instead.",
+    "enabled": false
+  },
+  "structure_gate": {
+    "_description": "Keep fractal breakout as the preferred trigger, but allow reduced-size paper entries when an OPPORTUNITY setup is already close to the break and net edge is clearly positive.",
+    "soft_override_enabled": true,
+    "apply_in_system_modes": ["OPPORTUNITY"],
+    "apply_in_regimes": ["QUIET_ACCUMULATION", "WEAK_CONSOLIDATION"],
+    "max_gap_bps": 150,
+    "min_net_edge_bps": 10,
+    "min_abs_direction": 0.10,
+    "exposure_scale": 0.50
+  },
+  "weekend_manager": {
+    "_description": "Weekend paper-profit stays capped, but no longer hard-requires 66bps for every OPPORTUNITY entry.",
+    "weekend_soft_veto_cap": 0.40,
+    "weekend_max_exposure": 0.40,
+    "per_asset_weekend_caps": {
+      "BTC": 0.20,
+      "ETH": 0.20,
+      "SOL": 0.25
+    },
+    "reduce_at_hours": 999,
+    "flatten_at_hours": 999,
+    "min_alpha_multiplier_weekend": 1.0,
+    "min_confidence_weekend": 0.45,
+    "opportunity_alpha_multiplier_weekend": 0.90,
+    "opportunity_confidence_weekend": 0.45
+  }
+}

@@ -1,0 +1,984 @@
+{
+  "saved_at": "2026-04-05T20:50:39.779012+00:00Z",
+  "positions": {},
+  "cumulative_pnl": -366.72757778129437,
+  "peak_equity": 9999.170036321844,
+  "position_entry_times": {},
+  "existence_fuse_state": {
+    "state": "ACTIVE",
+    "suspended_at": null,
+    "suspension_reason": "",
+    "starting_equity": 9985.64865713471,
+    "consecutive_negative": 0,
+    "consecutive_positive": 208,
+    "consecutive_trade_losses": 3,
+    "evaluation_count": 301,
+    "pnl_history": [
+      {
+        "timestamp": "2026-03-17T03:16:41.307011+00:00",
+        "realized_pnl": 0.0,
+        "cumulative_pnl": 0.0,
+        "equity": 9994.96937206539,
+        "trade_count": 1
+      },
+      {
+        "timestamp": "2026-03-17T03:24:45.530139+00:00",
+        "realized_pnl": 0.0,
+        "cumulative_pnl": 0.0,
+        "equity": 9994.96937206539,
+        "trade_count": 1
+      },
+      {
+        "timestamp": "2026-03-17T03:25:08.384842+00:00",
+        "realized_pnl": 0.0,
+        "cumulative_pnl": 0.0,
+        "equity": 9994.96937206539,
+        "trade_count": 1
+      },
+      {
+        "timestamp": "2026-03-17T03:31:47.887769+00:00",
+        "realized_pnl": 0.0,
+        "cumulative_pnl": 0.0,
+        "equity": 9994.96937206539,
+        "trade_count": 1
+      },
+      {
+        "timestamp": "2026-03-17T03:45:26.162429+00:00",
+        "realized_pnl": 0.0,
+        "cumulative_pnl": 0.0,
+        "equity": 9994.96937206539,
+        "trade_count": 1
+      },
+      {
+        "timestamp": "2026-03-17T03:45:48.657401+00:00",
+        "realized_pnl": 0.0,
+        "cumulative_pnl": 0.0,
+        "equity": 9994.96937206539,
+        "trade_count": 1
+      },
+      {
+        "timestamp": "2026-03-17T03:48:27.967441+00:00",
+        "realized_pnl": 0.0,
+        "cumulative_pnl": 0.0,
+        "equity": 9994.96937206539,
+        "trade_count": 1
+      },
+      {
+        "timestamp": "2026-03-17T03:48:50.788966+00:00",
+        "realized_pnl": 0.0,
+        "cumulative_pnl": 0.0,
+        "equity": 9994.96937206539,
+        "trade_count": 1
+      },
+      {
+        "timestamp": "2026-03-17T03:52:15.531682+00:00",
+        "realized_pnl": 0.0,
+        "cumulative_pnl": 0.0,
+        "equity": 9993.064908312965,
+        "trade_count": 1
+      },
+      {
+        "timestamp": "2026-03-17T03:52:38.837513+00:00",
+        "realized_pnl": 0.0,
+        "cumulative_pnl": 0.0,
+        "equity": 9994.73246582627,
+        "trade_count": 1
+      },
+      {
+        "timestamp": "2026-03-17T04:02:43.107913+00:00",
+        "realized_pnl": 0.0,
+        "cumulative_pnl": 0.0,
+        "equity": 9996.814621970345,
+        "trade_count": 1
+      },
+      {
+        "timestamp": "2026-03-18T01:50:23.426844+00:00",
+        "realized_pnl": 0.0,
+        "cumulative_pnl": 0.0,
+        "equity": 9996.814621970345,
+        "trade_count": 1
+      },
+      {
+        "timestamp": "2026-03-18T01:50:45.584146+00:00",
+        "realized_pnl": 0.0,
+        "cumulative_pnl": 0.0,
+        "equity": 9994.446095187552,
+        "trade_count": 1
+      },
+      {
+        "timestamp": "2026-03-19T16:02:51.550294+00:00",
+        "realized_pnl": 10.73537050458243,
+        "cumulative_pnl": 10.73537050458243,
+        "equity": 9990.776571964423,
+        "trade_count": 1
+      },
+      {
+        "timestamp": "2026-03-19T20:02:44.169507+00:00",
+        "realized_pnl": 4.313801682272967,
+        "cumulative_pnl": 15.049172186855397,
+        "equity": 9999.170036321844,
+        "trade_count": 1
+      },
+      {
+        "timestamp": "2026-03-20T02:28:28.714830+00:00",
+        "realized_pnl": -31.10175771302887,
+        "cumulative_pnl": -16.052585526173473,
+        "equity": 9999.247430107005,
+        "trade_count": 1
+      },
+      {
+        "timestamp": "2026-03-20T02:58:17.330112+00:00",
+        "realized_pnl": -52.30000658161968,
+        "cumulative_pnl": -68.35259210779316,
+        "equity": 9968.145672393975,
+        "trade_count": 1
+      },
+      {
+        "timestamp": "2026-03-20T20:02:21.905480+00:00",
+        "realized_pnl": -5.06637915665628,
+        "cumulative_pnl": -73.41897126444944,
+        "equity": 9908.838767207493,
+        "trade_count": 1
+      },
+      {
+        "timestamp": "2026-03-21T05:07:25.662998+00:00",
+        "realized_pnl": -26.55455750196821,
+        "cumulative_pnl": -99.97352876641764,
+        "equity": 9903.772388050837,
+        "trade_count": 1
+      },
+      {
+        "timestamp": "2026-03-21T08:01:57.992315+00:00",
+        "realized_pnl": -26.93789563555416,
+        "cumulative_pnl": -126.9114244019718,
+        "equity": 9877.217830548869,
+        "trade_count": 1
+      },
+      {
+        "timestamp": "2026-03-21T16:02:10.908132+00:00",
+        "realized_pnl": -30.62164173099927,
+        "cumulative_pnl": -157.53306613297107,
+        "equity": 9850.279934913315,
+        "trade_count": 1
+      },
+      {
+        "timestamp": "2026-03-23T04:01:57.710600+00:00",
+        "realized_pnl": -5.701380716137132,
+        "cumulative_pnl": -163.2344468491082,
+        "equity": 9815.771114778983,
+        "trade_count": 1
+      },
+      {
+        "timestamp": "2026-03-23T04:02:20.604030+00:00",
+        "realized_pnl": -2.459554376854549,
+        "cumulative_pnl": -165.69400122596275,
+        "equity": 9808.982393233942,
+        "trade_count": 1
+      },
+      {
+        "timestamp": "2026-03-23T04:02:43.798918+00:00",
+        "realized_pnl": -4.722445356211139,
+        "cumulative_pnl": -170.41644658217388,
+        "equity": 9804.7068675698,
+        "trade_count": 1
+      },
+      {
+        "timestamp": "2026-03-23T08:01:54.534493+00:00",
+        "realized_pnl": -1.5251008684687628,
+        "cumulative_pnl": -171.94154745064264,
+        "equity": 9797.59586035184,
+        "trade_count": 1
+      },
+      {
+        "timestamp": "2026-03-23T08:02:11.922554+00:00",
+        "realized_pnl": -19.12711495241836,
+        "cumulative_pnl": -191.068662403061,
+        "equity": 9796.070759483371,
+        "trade_count": 1
+      },
+      {
+        "timestamp": "2026-03-23T08:02:30.791685+00:00",
+        "realized_pnl": -8.815332208284417,
+        "cumulative_pnl": -199.88399461134543,
+        "equity": 9776.943644530953,
+        "trade_count": 1
+      },
+      {
+        "timestamp": "2026-03-26T20:02:00.305165+00:00",
+        "realized_pnl": -25.33181769004665,
+        "cumulative_pnl": -225.21581230139208,
+        "equity": 9763.172714271866,
+        "trade_count": 1
+      },
+      {
+        "timestamp": "2026-03-26T20:02:27.674629+00:00",
+        "realized_pnl": -11.943647035208418,
+        "cumulative_pnl": -237.1594593366005,
+        "equity": 9737.84089658182,
+        "trade_count": 1
+      },
+      {
+        "timestamp": "2026-03-26T20:02:50.036903+00:00",
+        "realized_pnl": -15.06808364480158,
+        "cumulative_pnl": -252.22754298140208,
+        "equity": 9725.897249546611,
+        "trade_count": 1
+      },
+      {
+        "timestamp": "2026-03-26T22:34:19.955589+00:00",
+        "realized_pnl": -1.742008007148259,
+        "cumulative_pnl": -253.96955098855034,
+        "equity": 9709.489506955031,
+        "trade_count": 1
+      },
+      {
+        "timestamp": "2026-03-27T00:01:53.175158+00:00",
+        "realized_pnl": -1.7150238411162682,
+        "cumulative_pnl": -255.68457482966662,
+        "equity": 9707.747498947881,
+        "trade_count": 1
+      },
+      {
+        "timestamp": "2026-03-27T04:02:12.423307+00:00",
+        "realized_pnl": -2.111845737509643,
+        "cumulative_pnl": -257.79642056717626,
+        "equity": 9706.032475106766,
+        "trade_count": 1
+      },
+      {
+        "timestamp": "2026-03-28T08:02:28.309678+00:00",
+        "realized_pnl": 4.442236216430827,
+        "cumulative_pnl": -253.35418435074544,
+        "equity": 9703.920629369257,
+        "trade_count": 1
+      },
+      {
+        "timestamp": "2026-03-28T16:02:21.999462+00:00",
+        "realized_pnl": -14.228049195323269,
+        "cumulative_pnl": -267.5822335460687,
+        "equity": 9708.362865585686,
+        "trade_count": 1
+      },
+      {
+        "timestamp": "2026-03-29T00:02:47.458489+00:00",
+        "realized_pnl": 4.2672708058935225,
+        "cumulative_pnl": -263.3149627401752,
+        "equity": 9694.134816390364,
+        "trade_count": 1
+      },
+      {
+        "timestamp": "2026-03-29T04:01:58.379818+00:00",
+        "realized_pnl": -13.742124743827393,
+        "cumulative_pnl": -277.0570874840026,
+        "equity": 9698.402087196257,
+        "trade_count": 1
+      },
+      {
+        "timestamp": "2026-03-30T12:02:21.760956+00:00",
+        "realized_pnl": -34.60824296799127,
+        "cumulative_pnl": -311.66533045199384,
+        "equity": 9684.65996245243,
+        "trade_count": 1
+      },
+      {
+        "timestamp": "2026-03-30T16:02:05.452306+00:00",
+        "realized_pnl": -9.139131383105498,
+        "cumulative_pnl": -320.80446183509935,
+        "equity": 9650.05171948444,
+        "trade_count": 1
+      },
+      {
+        "timestamp": "2026-03-30T16:02:52.239541+00:00",
+        "realized_pnl": 10.912834917223261,
+        "cumulative_pnl": -309.89162691787607,
+        "equity": 9640.912588101333,
+        "trade_count": 1
+      },
+      {
+        "timestamp": "2026-03-31T04:02:23.735233+00:00",
+        "realized_pnl": -2.948648333164346,
+        "cumulative_pnl": -312.8402752510404,
+        "equity": 9651.825423018556,
+        "trade_count": 1
+      },
+      {
+        "timestamp": "2026-03-31T16:02:47.289096+00:00",
+        "realized_pnl": -1.0351122238111328,
+        "cumulative_pnl": -313.87538747485155,
+        "equity": 9648.876774685392,
+        "trade_count": 1
+      },
+      {
+        "timestamp": "2026-04-01T04:01:56.658670+00:00",
+        "realized_pnl": 0.014851925725789639,
+        "cumulative_pnl": -313.86053554912576,
+        "equity": 9647.841662461582,
+        "trade_count": 1
+      },
+      {
+        "timestamp": "2026-04-01T04:02:19.247528+00:00",
+        "realized_pnl": -8.949501664727062,
+        "cumulative_pnl": -322.8100372138528,
+        "equity": 9647.856514387307,
+        "trade_count": 1
+      },
+      {
+        "timestamp": "2026-04-01T08:01:53.797682+00:00",
+        "realized_pnl": -0.3776438871071445,
+        "cumulative_pnl": -323.18768110095994,
+        "equity": 9638.90701272258,
+        "trade_count": 1
+      },
+      {
+        "timestamp": "2026-04-01T16:01:54.820646+00:00",
+        "realized_pnl": -1.6185182526641542,
+        "cumulative_pnl": -324.8061993536241,
+        "equity": 9638.529368835472,
+        "trade_count": 1
+      },
+      {
+        "timestamp": "2026-04-01T20:02:46.888875+00:00",
+        "realized_pnl": 19.54240389723974,
+        "cumulative_pnl": -305.26379545638434,
+        "equity": 9636.910850582808,
+        "trade_count": 1
+      },
+      {
+        "timestamp": "2026-04-02T12:02:21.540669+00:00",
+        "realized_pnl": -3.7089906264780024,
+        "cumulative_pnl": -308.97278608286234,
+        "equity": 9656.453254480048,
+        "trade_count": 1
+      },
+      {
+        "timestamp": "2026-04-03T12:01:58.964699+00:00",
+        "realized_pnl": -13.782467289484607,
+        "cumulative_pnl": -322.75525337234694,
+        "equity": 9652.74426385357,
+        "trade_count": 1
+      },
+      {
+        "timestamp": "2026-04-04T00:02:00.553141+00:00",
+        "realized_pnl": -5.689374345380142,
+        "cumulative_pnl": -328.4446277177271,
+        "equity": 9638.961796564086,
+        "trade_count": 1
+      }
+    ]
+  },
+  "cascade_state": {
+    "phase": "NONE",
+    "phase_start": "2026-04-01T11:01:37.889370",
+    "cascade_start": null,
+    "blocks_count": 1,
+    "allows_count": 103,
+    "phase_transitions": [
+      {
+        "timestamp": "2026-03-31T22:55:24.345594",
+        "from_phase": "STOP",
+        "to_phase": "STOP",
+        "metrics": {
+          "timestamp": "2026-03-31T22:55:24.345420",
+          "liquidation_volume_1h": 7426224.639533955,
+          "liquidation_volume_4h": 29704898.55813582,
+          "liquidation_acceleration": -0.19120117021245853,
+          "price_change_1h_pct": -0.00040993930521820873,
+          "price_change_4h_pct": -0.001639757220872835,
+          "cascade_intensity": 1.0,
+          "exhaustion_signal": 0.5
+        }
+      },
+      {
+        "timestamp": "2026-03-31T23:01:36.851789",
+        "from_phase": "STOP",
+        "to_phase": "STOP",
+        "metrics": {
+          "timestamp": "2026-03-31T23:01:36.851710",
+          "liquidation_volume_1h": 1071416.840510777,
+          "liquidation_volume_4h": 4285667.362043108,
+          "liquidation_acceleration": -0.8557252315251783,
+          "price_change_1h_pct": 0.000239980801535872,
+          "price_change_4h_pct": 0.000959923206143488,
+          "cascade_intensity": 0.17142669448172432,
+          "exhaustion_signal": 0.5
+        }
+      },
+      {
+        "timestamp": "2026-03-31T23:01:58.990032",
+        "from_phase": "STOP",
+        "to_phase": "STOP",
+        "metrics": {
+          "timestamp": "2026-03-31T23:01:58.989927",
+          "liquidation_volume_1h": 9181805.84183118,
+          "liquidation_volume_4h": 36727223.36732472,
+          "liquidation_acceleration": 7.569779281660286,
+          "price_change_1h_pct": -1.8720405241734833e-05,
+          "price_change_4h_pct": -7.488162096693933e-05,
+          "cascade_intensity": 1.0,
+          "exhaustion_signal": 0.5
+        }
+      },
+      {
+        "timestamp": "2026-03-31T23:02:21.562721",
+        "from_phase": "STOP",
+        "to_phase": "STOP",
+        "metrics": {
+          "timestamp": "2026-03-31T23:02:21.562582",
+          "liquidation_volume_1h": 7426230.05547562,
+          "liquidation_volume_4h": 29704920.22190248,
+          "liquidation_acceleration": -0.19120158023352793,
+          "price_change_1h_pct": 0.00012018830294118845,
+          "price_change_4h_pct": 0.0004807532117647538,
+          "cascade_intensity": 1.0,
+          "exhaustion_signal": 0.5
+        }
+      },
+      {
+        "timestamp": "2026-03-31T23:24:28.744464",
+        "from_phase": "STOP",
+        "to_phase": "STOP",
+        "metrics": {
+          "timestamp": "2026-03-31T23:24:28.744321",
+          "liquidation_volume_1h": 1070036.1062607765,
+          "liquidation_volume_4h": 4280144.425043106,
+          "liquidation_acceleration": 0.0,
+          "price_change_1h_pct": 0.0003299736021118293,
+          "price_change_4h_pct": 0.0013198944084473173,
+          "cascade_intensity": 0.17120577700172424,
+          "exhaustion_signal": 0.5
+        }
+      },
+      {
+        "timestamp": "2026-03-31T23:24:52.965234",
+        "from_phase": "STOP",
+        "to_phase": "STOP",
+        "metrics": {
+          "timestamp": "2026-03-31T23:24:52.965169",
+          "liquidation_volume_1h": 9179432.487409852,
+          "liquidation_volume_4h": 36717729.94963941,
+          "liquidation_acceleration": 7.578619388356182,
+          "price_change_1h_pct": 0.00018390045149214778,
+          "price_change_4h_pct": 0.0007356018059685911,
+          "cascade_intensity": 1.0,
+          "exhaustion_signal": 0.5
+        }
+      },
+      {
+        "timestamp": "2026-03-31T23:25:15.345806",
+        "from_phase": "STOP",
+        "to_phase": "STOP",
+        "metrics": {
+          "timestamp": "2026-03-31T23:25:15.345747",
+          "liquidation_volume_1h": 7446160.921598461,
+          "liquidation_volume_4h": 29784643.686393846,
+          "liquidation_acceleration": -0.18882121178936476,
+          "price_change_1h_pct": 0.0009091471628420996,
+          "price_change_4h_pct": 0.0036365886513683985,
+          "cascade_intensity": 1.0,
+          "exhaustion_signal": 0.5
+        }
+      },
+      {
+        "timestamp": "2026-04-01T00:06:52.251245",
+        "from_phase": "STOP",
+        "to_phase": "STOP",
+        "metrics": {
+          "timestamp": "2026-04-01T00:06:52.251045",
+          "liquidation_volume_1h": 1075038.7346285407,
+          "liquidation_volume_4h": 4300154.938514163,
+          "liquidation_acceleration": 0.0,
+          "price_change_1h_pct": 0.00014998800095991467,
+          "price_change_4h_pct": 0.0005999520038396587,
+          "cascade_intensity": 0.1720061975405665,
+          "exhaustion_signal": 0.5
+        }
+      },
+      {
+        "timestamp": "2026-04-01T00:07:15.269414",
+        "from_phase": "STOP",
+        "to_phase": "STOP",
+        "metrics": {
+          "timestamp": "2026-04-01T00:07:15.269142",
+          "liquidation_volume_1h": 9360428.590827366,
+          "liquidation_volume_4h": 37441714.363309465,
+          "liquidation_acceleration": 7.7070616986295715,
+          "price_change_1h_pct": 0.00019858312226996228,
+          "price_change_4h_pct": 0.0007943324890798491,
+          "cascade_intensity": 1.0,
+          "exhaustion_signal": 0.5
+        }
+      },
+      {
+        "timestamp": "2026-04-01T00:07:37.289772",
+        "from_phase": "STOP",
+        "to_phase": "STOP",
+        "metrics": {
+          "timestamp": "2026-04-01T00:07:37.289696",
+          "liquidation_volume_1h": 7456475.988681588,
+          "liquidation_volume_4h": 29825903.954726353,
+          "liquidation_acceleration": -0.20340442573447248,
+          "price_change_1h_pct": 0.0008460780533779015,
+          "price_change_4h_pct": 0.003384312213511606,
+          "cascade_intensity": 1.0,
+          "exhaustion_signal": 0.5
+        }
+      },
+      {
+        "timestamp": "2026-04-01T00:15:11.376964",
+        "from_phase": "STOP",
+        "to_phase": "STOP",
+        "metrics": {
+          "timestamp": "2026-04-01T00:15:11.376872",
+          "liquidation_volume_1h": 1068827.5282447843,
+          "liquidation_volume_4h": 4275310.112979137,
+          "liquidation_acceleration": 0.0,
+          "price_change_1h_pct": 0.000719942404607616,
+          "price_change_4h_pct": 0.002879769618430464,
+          "cascade_intensity": 0.1710124045191655,
+          "exhaustion_signal": 0.5
+        }
+      },
+      {
+        "timestamp": "2026-04-01T00:15:36.047436",
+        "from_phase": "STOP",
+        "to_phase": "STOP",
+        "metrics": {
+          "timestamp": "2026-04-01T00:15:36.047231",
+          "liquidation_volume_1h": 9356885.385879891,
+          "liquidation_volume_4h": 37427541.543519564,
+          "liquidation_acceleration": 7.754345428626502,
+          "price_change_1h_pct": 0.0008941746503689235,
+          "price_change_4h_pct": 0.003576698601475694,
+          "cascade_intensity": 1.0,
+          "exhaustion_signal": 0.5
+        }
+      },
+      {
+        "timestamp": "2026-04-01T00:15:59.237923",
+        "from_phase": "STOP",
+        "to_phase": "STOP",
+        "metrics": {
+          "timestamp": "2026-04-01T00:15:59.237734",
+          "liquidation_volume_1h": 7445823.575156205,
+          "liquidation_volume_4h": 29783294.30062482,
+          "liquidation_acceleration": -0.20424123326417937,
+          "price_change_1h_pct": 0.0013220713323528024,
+          "price_change_4h_pct": 0.0052882853294112095,
+          "cascade_intensity": 1.0,
+          "exhaustion_signal": 0.5
+        }
+      },
+      {
+        "timestamp": "2026-04-01T03:01:37.786242",
+        "from_phase": "STOP",
+        "to_phase": "STOP",
+        "metrics": {
+          "timestamp": "2026-04-01T03:01:37.786081",
+          "liquidation_volume_1h": 1187351.6876175608,
+          "liquidation_volume_4h": 4749406.750470243,
+          "liquidation_acceleration": -0.8405345391771989,
+          "price_change_1h_pct": -5.9665871121706506e-05,
+          "price_change_4h_pct": -0.00023866348448682603,
+          "cascade_intensity": 0.18997627001880973,
+          "exhaustion_signal": 0.5
+        }
+      },
+      {
+        "timestamp": "2026-04-01T03:01:56.116160",
+        "from_phase": "STOP",
+        "to_phase": "STOP",
+        "metrics": {
+          "timestamp": "2026-04-01T03:01:56.115997",
+          "liquidation_volume_1h": 11064241.2430437,
+          "liquidation_volume_4h": 44256964.9721748,
+          "liquidation_acceleration": 8.318419604257494,
+          "price_change_1h_pct": 3.822902755548306e-05,
+          "price_change_4h_pct": 0.00015291611022193223,
+          "cascade_intensity": 1.0,
+          "exhaustion_signal": 0.5
+        }
+      },
+      {
+        "timestamp": "2026-04-01T03:02:14.196635",
+        "from_phase": "STOP",
+        "to_phase": "STOP",
+        "metrics": {
+          "timestamp": "2026-04-01T03:02:14.196484",
+          "liquidation_volume_1h": 8843308.3104716,
+          "liquidation_volume_4h": 35373233.2418864,
+          "liquidation_acceleration": -0.20073070387618702,
+          "price_change_1h_pct": 0.0001514312009315911,
+          "price_change_4h_pct": 0.0006057248037263644,
+          "cascade_intensity": 1.0,
+          "exhaustion_signal": 0.5
+        }
+      },
+      {
+        "timestamp": "2026-04-01T07:01:38.293779",
+        "from_phase": "STOP",
+        "to_phase": "STOP",
+        "metrics": {
+          "timestamp": "2026-04-01T07:01:38.293610",
+          "liquidation_volume_1h": 812848.7817338168,
+          "liquidation_volume_4h": 3251395.1269352674,
+          "liquidation_acceleration": -0.9080831795979226,
+          "price_change_1h_pct": -0.00011997600479901633,
+          "price_change_4h_pct": -0.00047990401919606533,
+          "cascade_intensity": 0.13005580507741069,
+          "exhaustion_signal": 0.5
+        }
+      },
+      {
+        "timestamp": "2026-04-01T07:02:01.623643",
+        "from_phase": "STOP",
+        "to_phase": "STOP",
+        "metrics": {
+          "timestamp": "2026-04-01T07:02:01.623487",
+          "liquidation_volume_1h": 8729545.356494462,
+          "liquidation_volume_4h": 34918181.42597785,
+          "liquidation_acceleration": 9.739445703386835,
+          "price_change_1h_pct": -7.097257910712855e-05,
+          "price_change_4h_pct": -0.0002838903164285142,
+          "cascade_intensity": 1.0,
+          "exhaustion_signal": 0.5
+        }
+      },
+      {
+        "timestamp": "2026-04-01T07:02:23.743809",
+        "from_phase": "STOP",
+        "to_phase": "STOP",
+        "metrics": {
+          "timestamp": "2026-04-01T07:02:23.743628",
+          "liquidation_volume_1h": 7633610.597198714,
+          "liquidation_volume_4h": 30534442.388794854,
+          "liquidation_acceleration": -0.1255431657137119,
+          "price_change_1h_pct": -8.90042300431692e-05,
+          "price_change_4h_pct": -0.0003560169201726768,
+          "cascade_intensity": 1.0,
+          "exhaustion_signal": 0.5
+        }
+      },
+      {
+        "timestamp": "2026-04-01T11:01:37.889372",
+        "from_phase": "STOP",
+        "to_phase": "NONE",
+        "metrics": {
+          "timestamp": "2026-04-01T11:01:37.889340",
+          "liquidation_volume_1h": 464026.45456967753,
+          "liquidation_volume_4h": 1856105.8182787101,
+          "liquidation_acceleration": -0.9392127160979419,
+          "price_change_1h_pct": -0.0003587658454915228,
+          "price_change_4h_pct": -0.0014350633819660912,
+          "cascade_intensity": 0.0742442327311484,
+          "exhaustion_signal": 0.5
+        }
+      }
+    ]
+  },
+  "failure_memory_state": {
+    "consecutive_failures": 2,
+    "consecutive_false_breakouts": 2,
+    "consecutive_wins": 0,
+    "in_caution_mode": false,
+    "caution_start_time": null,
+    "recovery_progress": 1.0,
+    "density_boost": 0.0,
+    "tranche_delay": 0
+  },
+  "confidence_scorer_state": {
+    "confidence": {
+      "mean_reversion": {
+        "strategy": "mean_reversion",
+        "confidence": 0.7,
+        "direction_accuracy": 0.5,
+        "pnl_vs_expected": 0.5,
+        "regime_accuracy": 0.5,
+        "sufficient_data": false,
+        "underperforming": false,
+        "outperforming": false,
+        "trend": "STABLE"
+      },
+      "volatility_breakout": {
+        "strategy": "volatility_breakout",
+        "confidence": 0.7,
+        "direction_accuracy": 0.5,
+        "pnl_vs_expected": 0.5,
+        "regime_accuracy": 0.5,
+        "sufficient_data": false,
+        "underperforming": false,
+        "outperforming": false,
+        "trend": "STABLE"
+      },
+      "rsi_divergence": {
+        "strategy": "rsi_divergence",
+        "confidence": 0.7,
+        "direction_accuracy": 0.5,
+        "pnl_vs_expected": 0.5,
+        "regime_accuracy": 0.5,
+        "sufficient_data": false,
+        "underperforming": false,
+        "outperforming": false,
+        "trend": "STABLE"
+      },
+      "trend_following": {
+        "strategy": "trend_following",
+        "confidence": 0.7,
+        "direction_accuracy": 0.5,
+        "pnl_vs_expected": 0.5,
+        "regime_accuracy": 0.5,
+        "sufficient_data": false,
+        "underperforming": false,
+        "outperforming": false,
+        "trend": "STABLE"
+      },
+      "momentum": {
+        "strategy": "momentum",
+        "confidence": 0.7,
+        "direction_accuracy": 0.5,
+        "pnl_vs_expected": 0.5,
+        "regime_accuracy": 0.5,
+        "sufficient_data": false,
+        "underperforming": false,
+        "outperforming": false,
+        "trend": "STABLE"
+      },
+      "obv_confirmation": {
+        "strategy": "obv_confirmation",
+        "confidence": 0.7,
+        "direction_accuracy": 0.5,
+        "pnl_vs_expected": 0.5,
+        "regime_accuracy": 0.5,
+        "sufficient_data": false,
+        "underperforming": false,
+        "outperforming": false,
+        "trend": "STABLE"
+      },
+      "range_breakout": {
+        "strategy": "range_breakout",
+        "confidence": 0.7,
+        "direction_accuracy": 0.5,
+        "pnl_vs_expected": 0.5,
+        "regime_accuracy": 0.5,
+        "sufficient_data": false,
+        "underperforming": false,
+        "outperforming": false,
+        "trend": "STABLE"
+      },
+      "vwap_deviation": {
+        "strategy": "vwap_deviation",
+        "confidence": 0.7,
+        "direction_accuracy": 0.5,
+        "pnl_vs_expected": 0.5,
+        "regime_accuracy": 0.5,
+        "sufficient_data": false,
+        "underperforming": false,
+        "outperforming": false,
+        "trend": "STABLE"
+      },
+      "volume_profile": {
+        "strategy": "volume_profile",
+        "confidence": 0.7,
+        "direction_accuracy": 0.5,
+        "pnl_vs_expected": 0.5,
+        "regime_accuracy": 0.5,
+        "sufficient_data": false,
+        "underperforming": false,
+        "outperforming": false,
+        "trend": "STABLE"
+      },
+      "orderbook_imbalance": {
+        "strategy": "orderbook_imbalance",
+        "confidence": 0.7,
+        "direction_accuracy": 0.5,
+        "pnl_vs_expected": 0.5,
+        "regime_accuracy": 0.5,
+        "sufficient_data": false,
+        "underperforming": false,
+        "outperforming": false,
+        "trend": "STABLE"
+      },
+      "funding_rate": {
+        "strategy": "funding_rate",
+        "confidence": 0.7,
+        "direction_accuracy": 0.5,
+        "pnl_vs_expected": 0.5,
+        "regime_accuracy": 0.5,
+        "sufficient_data": false,
+        "underperforming": false,
+        "outperforming": false,
+        "trend": "STABLE"
+      },
+      "liquidation_cascade": {
+        "strategy": "liquidation_cascade",
+        "confidence": 0.7,
+        "direction_accuracy": 0.5,
+        "pnl_vs_expected": 0.5,
+        "regime_accuracy": 0.5,
+        "sufficient_data": false,
+        "underperforming": false,
+        "outperforming": false,
+        "trend": "STABLE"
+      }
+    },
+    "prev_confidence": {}
+  },
+  "opportunity_budget_state": {
+    "total_allowed": 430,
+    "total_rejected": 0,
+    "active_slots": {}
+  },
+  "gambler_state": {
+    "bet_timestamps": []
+  },
+  "carry_positions": {
+    "active_positions": {},
+    "total_realized_pnl": -1.8792073411148735,
+    "trade_count": 2
+  },
+  "alpha_boost_state": {
+    "mode": "paper",
+    "version": "2.0",
+    "transition_state": {
+      "SOL": {
+        "previous_regime": "WEAK_CONSOLIDATION",
+        "current_regime": "WEAK_CONSOLIDATION",
+        "transition_tick": 1
+      },
+      "BTC": {
+        "previous_regime": "WEAK_CONSOLIDATION",
+        "current_regime": "QUIET_ACCUMULATION",
+        "transition_tick": 5
+      },
+      "ETH": {
+        "previous_regime": "QUIET_ACCUMULATION",
+        "current_regime": "QUIET_ACCUMULATION",
+        "transition_tick": 1
+      }
+    },
+    "exec_state": {},
+    "tick_count": {
+      "SOL": 7,
+      "BTC": 7,
+      "ETH": 7
+    }
+  },
+  "drl_shadow_diag_state": {
+    "observations": {
+      "SOL": [
+        {
+          "ts": 1775382429.707077,
+          "asset": "SOL",
+          "drl_dir": 0.9796217679977417,
+          "drl_conf": 0.4501832085536902,
+          "quant_dir": -0.031786687358865445,
+          "realized_dir": 1.0,
+          "ood": 0.0,
+          "drift_w": 1.0
+        },
+        {
+          "ts": 1775390518.8274364,
+          "asset": "SOL",
+          "drl_dir": 0.9507100582122803,
+          "drl_conf": 0.4384099341434933,
+          "quant_dir": -0.03349045832710712,
+          "realized_dir": -1.0,
+          "ood": 0.0,
+          "drift_w": 1.0
+        },
+        {
+          "ts": 1775404917.8451471,
+          "asset": "SOL",
+          "drl_dir": 0.9197654724121094,
+          "drl_conf": 0.41836226587155656,
+          "quant_dir": -0.0425298228084752,
+          "realized_dir": 1.0,
+          "ood": 0.0,
+          "drift_w": 1.0
+        }
+      ],
+      "BTC": [
+        {
+          "ts": 1775382452.885618,
+          "asset": "BTC",
+          "drl_dir": 0.9208481311798096,
+          "drl_conf": 0.43715079844665256,
+          "quant_dir": -0.0441651656897446,
+          "realized_dir": -1.0,
+          "ood": 0.0,
+          "drift_w": 1.0
+        },
+        {
+          "ts": 1775390541.3450434,
+          "asset": "BTC",
+          "drl_dir": 0.3556007146835327,
+          "drl_conf": 0.16684848962904714,
+          "quant_dir": -0.04606479482806469,
+          "realized_dir": 1.0,
+          "ood": 0.0,
+          "drift_w": 1.0
+        },
+        {
+          "ts": 1775404941.4389663,
+          "asset": "BTC",
+          "drl_dir": 0.6320837736129761,
+          "drl_conf": 0.2919832800932777,
+          "quant_dir": -0.036829151361381846,
+          "realized_dir": 1.0,
+          "ood": 0.0,
+          "drift_w": 1.0
+        }
+      ],
+      "ETH": [
+        {
+          "ts": 1775382474.909478,
+          "asset": "ETH",
+          "drl_dir": 0.8527185916900635,
+          "drl_conf": 0.28788220514019974,
+          "quant_dir": -0.014562412501405608,
+          "realized_dir": -1.0,
+          "ood": 0.0,
+          "drift_w": 1.0
+        },
+        {
+          "ts": 1775390565.4803262,
+          "asset": "ETH",
+          "drl_dir": -0.895309567451477,
+          "drl_conf": 0.3615171742097615,
+          "quant_dir": -0.028280896215197776,
+          "realized_dir": 1.0,
+          "ood": 0.0,
+          "drift_w": 1.0
+        },
+        {
+          "ts": 1775404964.1001894,
+          "asset": "ETH",
+          "drl_dir": 0.8442659378051758,
+          "drl_conf": 0.3710109543565155,
+          "quant_dir": 0.011936348069183395,
+          "realized_dir": 1.0,
+          "ood": 0.0,
+          "drift_w": 1.0
+        }
+      ]
+    }
+  },
+  "regime_smoother_state": {
+    "SOL": {
+      "current": "WEAK_CONSOLIDATION",
+      "pending": "QUIET_ACCUMULATION",
+      "count": 1
+    },
+    "BTC": {
+      "current": "QUIET_ACCUMULATION",
+      "pending": null,
+      "count": 0
+    },
+    "ETH": {
+      "current": "QUIET_ACCUMULATION",
+      "pending": null,
+      "count": 0
+    }
+  },
+  "ac5_fills_today": 0,
+  "ac5_fills_date": ""
+}

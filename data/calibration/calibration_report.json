@@ -1,0 +1,134 @@
+{
+  "timestamp": "2026-02-28 14:11:30",
+  "gold_count": 99,
+  "baseline": {
+    "n_valid": 76,
+    "n_total": 99,
+    "mae": 0.503,
+    "accuracy_3class": 0.4868,
+    "systematic_bias": 0.0891,
+    "per_class": {
+      "bearish": {
+        "count": 12,
+        "mean_gold": -0.9583333333333334,
+        "mean_pred": -0.125,
+        "bias": 0.8333333333333334
+      },
+      "neutral": {
+        "count": 46,
+        "mean_gold": 0.0,
+        "mean_pred": 0.17826086956521742,
+        "bias": 0.17826086956521742
+      },
+      "bullish": {
+        "count": 18,
+        "mean_gold": 1.0,
+        "mean_pred": 0.365,
+        "bias": -0.635
+      }
+    }
+  },
+  "calibrated": {
+    "n_valid": 64,
+    "n_total": 99,
+    "mae": 0.4141,
+    "accuracy_3class": 0.5781,
+    "systematic_bias": -0.125,
+    "per_class": {
+      "bearish": {
+        "count": 8,
+        "mean_gold": -0.9375,
+        "mean_pred": -0.018750000000000003,
+        "bias": 0.9187500000000001
+      },
+      "neutral": {
+        "count": 41,
+        "mean_gold": 0.0,
+        "mean_pred": -0.007317073170731706,
+        "bias": -0.007317073170731706
+      },
+      "bullish": {
+        "count": 15,
+        "mean_gold": 1.0,
+        "mean_pred": -0.0033333333333333288,
+        "bias": -1.0033333333333334
+      }
+    }
+  },
+  "improvement": {
+    "mae_delta": 0.0889,
+    "accuracy_delta": 0.0913
+  },
+  "top_disagreements": [
+    {
+      "index": 37,
+      "text": "More than 200% Profits and 115M$ Volume in $SKY Pump by #MegaPump! The most powerful Pump in Binance history.\nDon't\u00e2\u0080?https://t.co/B9MzMoWfK1",
+      "gold_sentiment": 1.0,
+      "pred_sentiment": -0.85,
+      "abs_error": 1.85
+    },
+    {
+      "index": 32,
+      "text": "@100trillionUSD I find their lack of faith disturbing #Bitcoin",
+      "gold_sentiment": -1.0,
+      "pred_sentiment": 0.65,
+      "abs_error": 1.65
+    },
+    {
+      "index": 59,
+      "text": "China is rationing hydropowerand #bitcoin mines are getting cut off @FortuneMagazine https://t.co/oDgG9PRmlR https://t.co/6MHptZS7cY",
+      "gold_sentiment": 1.0,
+      "pred_sentiment": -0.65,
+      "abs_error": 1.65
+    },
+    {
+      "index": 69,
+      "text": "What to look at on the $btc chart. \n\nWe have a confirmed breakout and flipped the resistance of the ascending trian\u00e2\u0080?https://t.co/MEoTs1PDqU",
+      "gold_sentiment": -1.0,
+      "pred_sentiment": 0.65,
+      "abs_error": 1.65
+    },
+    {
+      "index": 6,
+      "text": "@BTC_Archive I guess soon we will see changes on the geopolitical map of the world.  \u00e2\u0080\u009cFirst World\u00e2\u0080?May not be such a \u00e2\u0080\u009cFIRST\u00e2\u0080?one anymore very soon\u00e2\u0080?#Bitcoin",
+      "gold_sentiment": -1.0,
+      "pred_sentiment": 0.35,
+      "abs_error": 1.35
+    },
+    {
+      "index": 23,
+      "text": "Can't help but notice all the suits are suddenly giving #BTC a $100K price target by July. Careful here with\u00e2\u0080?https://t.co/csDct0fgdZ",
+      "gold_sentiment": 1.0,
+      "pred_sentiment": -0.35,
+      "abs_error": 1.35
+    },
+    {
+      "index": 97,
+      "text": "Is that it ? A lot of the cryptos are bouncing off key support - here's #Civic as an exampe #altcoins #ALTSEASON\u00e2\u0080?https://t.co/HiW3nxweeY",
+      "gold_sentiment": -1.0,
+      "pred_sentiment": 0.35,
+      "abs_error": 1.35
+    },
+    {
+      "index": 19,
+      "text": "@ArgoBlockchain was green through pretty much the whole day but closed at $3.23 (0%) while most miners were red.\u00e2\u0080?https://t.co/5eRxsIIGJw",
+      "gold_sentiment": -1.0,
+      "pred_sentiment": 0.15,
+      "abs_error": 1.15
+    },
+    {
+      "index": 82,
+      "text": "Are you bearish or bullish for the rest of 2021? Talk to me...\n\n#VeChain $VET $VTHO #Eth #ethereum $ETH $BTC #BTC #bitcoin #cryptocurrency #altcoins #altseason",
+      "gold_sentiment": 1.0,
+      "pred_sentiment": 0.0,
+      "abs_error": 1.0
+    },
+    {
+      "index": 34,
+      "text": "#Bitcoin market cap reached $1 trillion. A worthy milestone, but still tiny.\n\n#icryptoslb #binance #ATH #BTC\u00e2\u0080?https://t.co/HmUVLGPpUq",
+      "gold_sentiment": -0.5,
+      "pred_sentiment": 0.35,
+      "abs_error": 0.85
+    }
+  ]
+}

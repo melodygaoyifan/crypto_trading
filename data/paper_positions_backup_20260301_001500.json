@@ -1,0 +1,283 @@
+{
+  "saved_at": "2026-03-01T12:58:36.103793Z",
+  "positions": {
+    "SOL": {
+      "exposure": 0.0,
+      "direction": 0,
+      "tranche": 0,
+      "entry_price": 82.92462574955628,
+      "notional": 9993.332799388409,
+      "entry_time": "2026-02-20T00:59:03.733723",
+      "strategy": "momentum",
+      "entry_alpha_est": 45.539962052178524,
+      "mode_at_entry": "OPPORTUNITY",
+      "phase_at_entry": "UNKNOWN",
+      "crack_weight": 0.0
+    },
+    "BTC": {
+      "exposure": 0.01106051675195623,
+      "direction": -1.0,
+      "tranche": 0,
+      "entry_price": 67848.44771949464,
+      "notional": 1106.051675195623,
+      "entry_time": "2026-02-20T08:59:51.965545",
+      "strategy": "momentum",
+      "entry_alpha_est": 42.76197804204516,
+      "mode_at_entry": "OPPORTUNITY",
+      "phase_at_entry": "UNKNOWN",
+      "crack_weight": 0.0
+    },
+    "ETH": {
+      "exposure": 0.1,
+      "direction": -1.0,
+      "tranche": 0,
+      "entry_price": 1927.15,
+      "notional": 10000.164892096207,
+      "entry_time": "2026-02-27T16:59:01.793637",
+      "strategy": "momentum",
+      "entry_alpha_est": 98.15193618315575,
+      "mode_at_entry": "OPPORTUNITY",
+      "phase_at_entry": "UNKNOWN",
+      "crack_weight": 0.0,
+      "regime_leverage": 1.0
+    }
+  },
+  "cumulative_pnl": -14.351342865289984,
+  "existence_fuse_state": {
+    "state": "ACTIVE",
+    "suspended_at": null,
+    "suspension_reason": "",
+    "starting_equity": 100027.07520293325,
+    "consecutive_negative": 0,
+    "consecutive_positive": 6,
+    "evaluation_count": 22,
+    "pnl_history": [
+      {
+        "timestamp": "2026-02-25T05:49:26.033159",
+        "realized_pnl": -1.1060516751956229,
+        "cumulative_pnl": -1.1060516751956229,
+        "equity": 100027.07520293325,
+        "trade_count": 1
+      },
+      {
+        "timestamp": "2026-02-25T16:57:03.408722",
+        "realized_pnl": -8.677942495126185,
+        "cumulative_pnl": -9.783994170321808,
+        "equity": 99953.4691673323,
+        "trade_count": 1
+      },
+      {
+        "timestamp": "2026-02-26T16:59:02.322317",
+        "realized_pnl": -9.99534691673323,
+        "cumulative_pnl": -19.779341087055037,
+        "equity": 99937.47661226553,
+        "trade_count": 1
+      },
+      {
+        "timestamp": "2026-02-27T12:58:59.674804",
+        "realized_pnl": -4.587704765123031,
+        "cumulative_pnl": -24.36704585217807,
+        "equity": 100001.64892096206,
+        "trade_count": 1
+      },
+      {
+        "timestamp": "2026-02-27T16:59:01.794513",
+        "realized_pnl": -10.000164892096207,
+        "cumulative_pnl": -34.367210744274274,
+        "equity": 99985.6486571347,
+        "trade_count": 1
+      }
+    ]
+  },
+  "cascade_state": {
+    "phase": "NONE",
+    "phase_start": null,
+    "cascade_start": null,
+    "blocks_count": 0,
+    "allows_count": 0,
+    "phase_transitions": []
+  },
+  "failure_memory_state": {
+    "consecutive_failures": 0,
+    "consecutive_false_breakouts": 0,
+    "consecutive_wins": 0,
+    "in_caution_mode": false,
+    "caution_start_time": null,
+    "recovery_progress": 1.0,
+    "density_boost": 0.0,
+    "tranche_delay": 0
+  },
+  "confidence_scorer_state": {
+    "confidence": {
+      "mean_reversion": {
+        "strategy": "mean_reversion",
+        "confidence": 0.7,
+        "direction_accuracy": 0.5,
+        "pnl_vs_expected": 0.5,
+        "regime_accuracy": 0.5,
+        "sufficient_data": false,
+        "underperforming": false,
+        "outperforming": false,
+        "trend": "STABLE"
+      },
+      "volatility_breakout": {
+        "strategy": "volatility_breakout",
+        "confidence": 0.7,
+        "direction_accuracy": 0.5,
+        "pnl_vs_expected": 0.5,
+        "regime_accuracy": 0.5,
+        "sufficient_data": false,
+        "underperforming": false,
+        "outperforming": false,
+        "trend": "STABLE"
+      },
+      "rsi_divergence": {
+        "strategy": "rsi_divergence",
+        "confidence": 0.7,
+        "direction_accuracy": 0.5,
+        "pnl_vs_expected": 0.5,
+        "regime_accuracy": 0.5,
+        "sufficient_data": false,
+        "underperforming": false,
+        "outperforming": false,
+        "trend": "STABLE"
+      },
+      "trend_following": {
+        "strategy": "trend_following",
+        "confidence": 0.7,
+        "direction_accuracy": 0.5,
+        "pnl_vs_expected": 0.5,
+        "regime_accuracy": 0.5,
+        "sufficient_data": false,
+        "underperforming": false,
+        "outperforming": false,
+        "trend": "STABLE"
+      },
+      "momentum": {
+        "strategy": "momentum",
+        "confidence": 0.7,
+        "direction_accuracy": 0.5,
+        "pnl_vs_expected": 0.5,
+        "regime_accuracy": 0.5,
+        "sufficient_data": false,
+        "underperforming": false,
+        "outperforming": false,
+        "trend": "STABLE"
+      },
+      "obv_confirmation": {
+        "strategy": "obv_confirmation",
+        "confidence": 0.7,
+        "direction_accuracy": 0.5,
+        "pnl_vs_expected": 0.5,
+        "regime_accuracy": 0.5,
+        "sufficient_data": false,
+        "underperforming": false,
+        "outperforming": false,
+        "trend": "STABLE"
+      },
+      "range_breakout": {
+        "strategy": "range_breakout",
+        "confidence": 0.7,
+        "direction_accuracy": 0.5,
+        "pnl_vs_expected": 0.5,
+        "regime_accuracy": 0.5,
+        "sufficient_data": false,
+        "underperforming": false,
+        "outperforming": false,
+        "trend": "STABLE"
+      },
+      "vwap_deviation": {
+        "strategy": "vwap_deviation",
+        "confidence": 0.7,
+        "direction_accuracy": 0.5,
+        "pnl_vs_expected": 0.5,
+        "regime_accuracy": 0.5,
+        "sufficient_data": false,
+        "underperforming": false,
+        "outperforming": false,
+        "trend": "STABLE"
+      },
+      "volume_profile": {
+        "strategy": "volume_profile",
+        "confidence": 0.7,
+        "direction_accuracy": 0.5,
+        "pnl_vs_expected": 0.5,
+        "regime_accuracy": 0.5,
+        "sufficient_data": false,
+        "underperforming": false,
+        "outperforming": false,
+        "trend": "STABLE"
+      },
+      "orderbook_imbalance": {
+        "strategy": "orderbook_imbalance",
+        "confidence": 0.7,
+        "direction_accuracy": 0.5,
+        "pnl_vs_expected": 0.5,
+        "regime_accuracy": 0.5,
+        "sufficient_data": false,
+        "underperforming": false,
+        "outperforming": false,
+        "trend": "STABLE"
+      },
+      "funding_rate": {
+        "strategy": "funding_rate",
+        "confidence": 0.7,
+        "direction_accuracy": 0.5,
+        "pnl_vs_expected": 0.5,
+        "regime_accuracy": 0.5,
+        "sufficient_data": false,
+        "underperforming": false,
+        "outperforming": false,
+        "trend": "STABLE"
+      },
+      "liquidation_cascade": {
+        "strategy": "liquidation_cascade",
+        "confidence": 0.7,
+        "direction_accuracy": 0.5,
+        "pnl_vs_expected": 0.5,
+        "regime_accuracy": 0.5,
+        "sufficient_data": false,
+        "underperforming": false,
+        "outperforming": false,
+        "trend": "STABLE"
+      }
+    },
+    "prev_confidence": {}
+  },
+  "opportunity_budget_state": {
+    "total_allowed": 101,
+    "total_rejected": 0,
+    "active_slots": {
+      "generic_SOL_190627": {
+        "opportunity_id": "generic_SOL_190627",
+        "opportunity_type": "generic",
+        "symbol": "SOL",
+        "budget_cost": 0.3,
+        "activated_at": "2026-02-28T19:06:27.346758",
+        "expires_at": "2026-02-28T23:06:27.346758",
+        "direction": "short",
+        "confidence": 0.19766716978695797,
+        "is_expired": true
+      },
+      "generic_ETH_190635": {
+        "opportunity_id": "generic_ETH_190635",
+        "opportunity_type": "generic",
+        "symbol": "ETH",
+        "budget_cost": 0.3,
+        "activated_at": "2026-02-28T19:06:35.335802",
+        "expires_at": "2026-02-28T23:06:35.335802",
+        "direction": "short",
+        "confidence": 0.2996511321561891,
+        "is_expired": true
+      }
+    }
+  },
+  "gambler_state": {
+    "bet_timestamps": []
+  },
+  "carry_positions": {
+    "active_positions": {},
+    "total_realized_pnl": 0.0,
+    "trade_count": 0
+  }
+}

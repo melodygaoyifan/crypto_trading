@@ -1,0 +1,176 @@
+{
+  "generated": "2026-02-16T08:47:51.355344",
+  "assets": [
+    "BTC",
+    "ETH",
+    "SOL"
+  ],
+  "initial_capital": 10000.0,
+  "cost_model": {
+    "maker_bps": 16.0,
+    "taker_bps": 26.0,
+    "spread_bps": {
+      "BTC": 5.0,
+      "ETH": 8.0,
+      "SOL": 12.0
+    }
+  },
+  "results": [
+    {
+      "strategy": "Buy&Hold",
+      "asset": "BTC",
+      "cumulative_return": 16.818,
+      "annual_return": 0.4114,
+      "sharpe": 0.773,
+      "sortino": 0.774,
+      "calmar": 0.49,
+      "max_drawdown": -0.8391,
+      "trade_count": 1,
+      "win_rate": 1.0,
+      "profit_factor": 0.0
+    },
+    {
+      "strategy": "Buy&Hold",
+      "asset": "ETH",
+      "cumulative_return": 5.9062,
+      "annual_return": 0.2603,
+      "sharpe": 0.648,
+      "sortino": 0.651,
+      "calmar": 0.277,
+      "max_drawdown": -0.9408,
+      "trade_count": 1,
+      "win_rate": 1.0,
+      "profit_factor": 0.0
+    },
+    {
+      "strategy": "Buy&Hold",
+      "asset": "SOL",
+      "cumulative_return": 33.2776,
+      "annual_return": 0.9367,
+      "sharpe": 1.108,
+      "sortino": 1.179,
+      "calmar": 0.97,
+      "max_drawdown": -0.966,
+      "trade_count": 1,
+      "win_rate": 1.0,
+      "profit_factor": 0.0
+    },
+    {
+      "strategy": "EqualWeight",
+      "asset": "BTC",
+      "cumulative_return": 2.8641,
+      "annual_return": 0.2876,
+      "sharpe": 0.655,
+      "sortino": 0.656,
+      "calmar": 0.343,
+      "max_drawdown": -0.8391,
+      "trade_count": 65,
+      "win_rate": 0.0,
+      "profit_factor": 0.0
+    },
+    {
+      "strategy": "EqualWeight",
+      "asset": "ETH",
+      "cumulative_return": 2.7084,
+      "annual_return": 0.2777,
+      "sharpe": 0.695,
+      "sortino": 0.696,
+      "calmar": 0.295,
+      "max_drawdown": -0.9408,
+      "trade_count": 65,
+      "win_rate": 0.0,
+      "profit_factor": 0.0
+    },
+    {
+      "strategy": "EqualWeight",
+      "asset": "SOL",
+      "cumulative_return": 33.2776,
+      "annual_return": 0.9367,
+      "sharpe": 1.108,
+      "sortino": 1.179,
+      "calmar": 0.97,
+      "max_drawdown": -0.966,
+      "trade_count": 65,
+      "win_rate": 0.0,
+      "profit_factor": 0.0
+    },
+    {
+      "strategy": "SMA_20_50",
+      "asset": "BTC",
+      "cumulative_return": 2.3402,
+      "annual_return": 0.1552,
+      "sharpe": 0.438,
+      "sortino": 0.538,
+      "calmar": 0.206,
+      "max_drawdown": -0.7552,
+      "trade_count": 206,
+      "win_rate": 0.345,
+      "profit_factor": 1.223
+    },
+    {
+      "strategy": "SMA_20_50",
+      "asset": "ETH",
+      "cumulative_return": 2.6009,
+      "annual_return": 0.1658,
+      "sharpe": 0.475,
+      "sortino": 0.586,
+      "calmar": 0.204,
+      "max_drawdown": -0.8108,
+      "trade_count": 208,
+      "win_rate": 0.361,
+      "profit_factor": 1.144
+    },
+    {
+      "strategy": "SMA_20_50",
+      "asset": "SOL",
+      "cumulative_return": 23.8448,
+      "annual_return": 0.8235,
+      "sharpe": 1.061,
+      "sortino": 1.434,
+      "calmar": 1.077,
+      "max_drawdown": -0.765,
+      "trade_count": 128,
+      "win_rate": 0.367,
+      "profit_factor": 1.524
+    },
+    {
+      "strategy": "HMATS_RuleOnly",
+      "asset": "BTC",
+      "cumulative_return": -0.0335,
+      "annual_return": -0.0041,
+      "sharpe": -0.217,
+      "sortino": -0.297,
+      "calmar": -0.01,
+      "max_drawdown": -0.4095,
+      "trade_count": 138,
+      "win_rate": 0.529,
+      "profit_factor": 1.188
+    },
+    {
+      "strategy": "HMATS_RuleOnly",
+      "asset": "ETH",
+      "cumulative_return": -0.1199,
+      "annual_return": -0.0152,
+      "sharpe": -0.13,
+      "sortino": -0.183,
+      "calmar": -0.034,
+      "max_drawdown": -0.4502,
+      "trade_count": 145,
+      "win_rate": 0.51,
+      "profit_factor": 1.116
+    },
+    {
+      "strategy": "HMATS_RuleOnly",
+      "asset": "SOL",
+      "cumulative_return": 0.8226,
+      "annual_return": 0.1188,
+      "sharpe": 0.361,
+      "sortino": 0.552,
+      "calmar": 0.339,
+      "max_drawdown": -0.3505,
+      "trade_count": 61,
+      "win_rate": 0.541,
+      "profit_factor": 1.743
+    }
+  ]
+}

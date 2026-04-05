@@ -1,0 +1,23 @@
+2026-01-26 21:54:05,686 | INFO | sanity.check_1_no_trade_proof | ============================================================
+2026-01-26 21:54:05,686 | INFO | sanity.check_1_no_trade_proof | CHECK 1: NO-TRADE PROOF
+2026-01-26 21:54:05,686 | INFO | sanity.check_1_no_trade_proof | ============================================================
+2026-01-26 21:54:09,832 | INFO | sanity.check_1_no_trade_proof | 
+--- Case 1.1: Equity unavailable ---
+2026-01-26 21:54:09,832 | INFO | sanity.check_1_no_trade_proof | PASS: Correctly blocked - Equity unavailable
+2026-01-26 21:54:09,832 | INFO | sanity.check_1_no_trade_proof | 
+--- Case 1.2: Equity = 0 ---
+2026-01-26 21:54:09,833 | INFO | sanity.check_1_no_trade_proof | PASS: Rejected with reason: Invalid equity
+2026-01-26 21:54:09,833 | INFO | sanity.check_1_no_trade_proof | 
+--- Case 1.3: Price = 0 ---
+2026-01-26 21:54:09,833 | INFO | sanity.check_1_no_trade_proof | PASS: Correctly rejected - price must be positive and finite, got 0.0
+2026-01-26 21:54:09,833 | INFO | sanity.check_1_no_trade_proof | 
+--- Case 1.4: Price = NaN ---
+2026-01-26 21:54:09,833 | INFO | sanity.check_1_no_trade_proof | PASS: Correctly rejected - price must be positive and finite, got nan
+2026-01-26 21:54:09,833 | INFO | sanity.check_1_no_trade_proof | 
+--- Case 1.5: Missing price in market_data ---
+2026-01-26 21:54:09,833 | INFO | sanity.check_1_no_trade_proof | PASS: Missing price defaults to 0.0, which should be rejected
+2026-01-26 21:54:09,833 | INFO | sanity.check_1_no_trade_proof | 
+============================================================
+2026-01-26 21:54:09,833 | INFO | sanity.check_1_no_trade_proof | CHECK 1 RESULT: PASS
+2026-01-26 21:54:09,833 | INFO | sanity.check_1_no_trade_proof | Execution attempts: 0
+2026-01-26 21:54:09,833 | INFO | sanity.check_1_no_trade_proof | ============================================================

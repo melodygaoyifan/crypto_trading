@@ -1,0 +1,98 @@
+# ================================================================================
+# HMATS v5.1.0 - Docker Compose Configuration
+# ================================================================================
+# Usage:
+#   # Paper trading
+#   docker-compose up -d
+#
+#   # Live trading (requires explicit override)
+#   docker-compose -f docker-compose.yml -f docker-compose.live.yml up -d
+#
+#   # View logs
+#   docker-compose logs -f
+#
+#   # Stop
+#   docker-compose down
+# ================================================================================
+
+version: "3.8"
+
+services:
+  hmats:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: hmats:5.1.0
+    container_name: hmats
+    restart: unless-stopped
+    
+    # Environment variables
+    environment:
+      # HMATS Configuration
+      - HMATS_BASE_DIR=/opt/hmats
+      - HMATS_MODEL_DIR=/opt/hmats/models/current
+      - HMATS_LOG_DIR=/var/log/hmats
+      - HMATS_STATE_DIR=/var/lib/hmats
+      - HMATS_CONFIG_FILE=/opt/hmats/configs/cloud_production.json
+      - HMATS_LOG_LEVEL=INFO
+      
+      # Kraken API (loaded from .env file)
+      - KRAKEN_API_KEY=${KRAKEN_API_KEY}
+      - KRAKEN_API_SECRET=${KRAKEN_API_SECRET}
+      
+      # Initial capital (optional override)
+      - HMATS_INITIAL_CAPITAL=${HMATS_INITIAL_CAPITAL:-10000}
+    
+    # Volumes
+    volumes:
+      # Model weights (read-only, synced from local)
+      - ${HMATS_HOST_MODEL_DIR:-./models}:/opt/hmats/models:ro
+      
+      # Logs (persistent)
+      - hmats_logs:/var/log/hmats
+      
+      # State (persistent, for hot restart)
+      - hmats_state:/var/lib/hmats
+      
+      # Config override (optional)
+      - ./configs:/opt/hmats/configs:ro
+    
+    # Resource limits (adjust based on your cloud instance)
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+    
+    # Logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "5"
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "python", "-c", "from core.cloud_config import get_cloud_config; c = get_cloud_config(); print('OK')"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    
+    # Default command: paper trading (safe)
+    command: ["--mode", "paper"]
+
+# Named volumes for persistence
+volumes:
+  hmats_logs:
+    driver: local
+  hmats_state:
+    driver: local
+
+# Networks (optional, for future expansion)
+networks:
+  default:
+    name: hmats_network

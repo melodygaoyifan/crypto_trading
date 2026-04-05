@@ -1,0 +1,20 @@
+2026-01-26 21:54:09,834 | INFO | sanity.check_2_authority_chain | ============================================================
+2026-01-26 21:54:09,834 | INFO | sanity.check_2_authority_chain | CHECK 2: AUTHORITY CHAIN PROOF
+2026-01-26 21:54:09,834 | INFO | sanity.check_2_authority_chain | ============================================================
+2026-01-26 21:54:09,834 | INFO | sanity.check_2_authority_chain | 
+--- Case 2.1: Trade Gate Reject ---
+2026-01-26 21:54:09,835 | INFO | sanity.check_2_authority_chain | PASS: Trade gate veto - TRADE_GATE_REJECT: ALPHA_INSUFFICIENT
+2026-01-26 21:54:09,835 | INFO | sanity.check_2_authority_chain | 
+--- Case 2.2: Risk Manager Reject ---
+2026-01-26 21:54:09,835 | INFO | sanity.check_2_authority_chain | PASS: Risk manager veto - RISK_MANAGER: Exposure limit exceeded
+2026-01-26 21:54:09,835 | INFO | sanity.check_2_authority_chain | 
+--- Case 2.3: Leverage Guard Reject ---
+2026-01-26 21:54:09,835 | INFO | sanity.check_2_authority_chain | PASS: Leverage guard veto - RISK_MANAGER: 
+2026-01-26 21:54:09,835 | INFO | sanity.check_2_authority_chain | 
+--- Case 2.4: Stale Data Kill Switch ---
+2026-01-26 21:54:09,876 | INFO | sanity.check_2_authority_chain | PASS: Stale data triggers NO_TRADE - NoTradeTriggerType.STALE_DATA
+2026-01-26 21:54:09,876 | INFO | sanity.check_2_authority_chain | 
+============================================================
+2026-01-26 21:54:09,876 | INFO | sanity.check_2_authority_chain | CHECK 2 RESULT: PASS
+2026-01-26 21:54:09,877 | INFO | sanity.check_2_authority_chain | Execution attempts: 0
+2026-01-26 21:54:09,877 | INFO | sanity.check_2_authority_chain | ============================================================

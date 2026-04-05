@@ -1,0 +1,33 @@
+{
+  "config": "config1_optuna",
+  "folds": [
+    {
+      "fold": 1,
+      "mean_balance": 807266.0,
+      "nav_pct": 707.27,
+      "max_dd_pct": 2.26,
+      "all_positive": true
+    },
+    {
+      "fold": 2,
+      "mean_balance": 718923.0,
+      "nav_pct": 618.92,
+      "max_dd_pct": 1.98,
+      "all_positive": true
+    },
+    {
+      "fold": 3,
+      "mean_balance": 920336.0,
+      "nav_pct": 820.34,
+      "max_dd_pct": 2.62,
+      "all_positive": true
+    }
+  ],
+  "mean_nav": 815508.0,
+  "mean_nav_pct": 715.51,
+  "std_nav": 82433.0,
+  "mean_std_ratio": 9.89,
+  "mean_max_dd": 2.29,
+  "all_positive": true,
+  "skip_config2": true
+}

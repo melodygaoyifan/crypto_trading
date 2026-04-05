@@ -1,0 +1,930 @@
+"""
+Alternative Data Collector for Quant Agent
+===========================================
+Collects derivatives and microstructure data required for
+institutional-grade quantitative strategies.
+
+Data Sources:
+- Bybit API: OI, funding, liquidations
+- Coinglass API: Aggregated liquidations
+- WebSocket: Real-time trades and order book
+
+NO PRICE DATA ONLY - Focus on alternative data.
+"""
+
+import asyncio
+import time
+import json
+import hmac
+import hashlib
+from typing import Dict, List, Optional, Callable
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+from collections import deque
+
+import numpy as np
+import pandas as pd
+
+# Optional imports
+try:
+    import aiohttp
+    from data_mgmt.feeds._http import create_session
+    AIOHTTP_AVAILABLE = True
+except ImportError:
+    AIOHTTP_AVAILABLE = False
+
+try:
+    import websockets
+    WEBSOCKETS_AVAILABLE = True
+except ImportError:
+    WEBSOCKETS_AVAILABLE = False
+
+
+# =============================================================================
+# DATA STRUCTURES
+# =============================================================================
+
+@dataclass
+class OpenInterestData:
+    """Open Interest data point."""
+    timestamp: float
+    symbol: str
+    open_interest: float  # USD
+    open_interest_value: float  # Contracts
+    oi_change_1h: float
+    oi_change_24h: float
+
+
+@dataclass
+class FundingRateData:
+    """Funding rate data point."""
+    timestamp: float
+    symbol: str
+    funding_rate: float
+    predicted_funding: float
+    funding_time: float  # Next funding timestamp
+    mark_price: float
+    index_price: float
+
+
+@dataclass
+class LiquidationData:
+    """Liquidation data point."""
+    timestamp: float
+    symbol: str
+    side: str  # 'long' or 'short'
+    size: float  # USD
+    price: float
+    order_type: str
+
+
+@dataclass
+class OrderBookSnapshot:
+    """Order book snapshot."""
+    timestamp: float
+    symbol: str
+    bids: List[tuple]  # [(price, size), ...]
+    asks: List[tuple]
+    bid_depth_usd: float
+    ask_depth_usd: float
+    spread: float
+    mid_price: float
+
+
+@dataclass
+class TradeFlowData:
+    """Aggregated trade flow data."""
+    timestamp: float
+    symbol: str
+    taker_buy_volume: float
+    taker_sell_volume: float
+    trade_count: int
+    avg_trade_size: float
+    large_trade_volume: float  # Trades > threshold
+    cvd: float  # Cumulative Volume Delta
+
+
+@dataclass
+class DerivativesSnapshot:
+    """Complete derivatives snapshot for quant agent."""
+    timestamp: float
+    symbol: str
+    
+    # Open Interest
+    open_interest: float
+    oi_change_1h: float
+    oi_change_24h: float
+    
+    # Funding
+    funding_rate: float
+    predicted_funding: float
+    
+    # Liquidations (rolling 1h)
+    long_liquidations: float
+    short_liquidations: float
+    liquidation_imbalance: float
+    
+    # Prices
+    spot_price: float
+    perp_price: float
+    mark_price: float
+    basis: float
+    
+    # Order Book
+    bid_depth: float
+    ask_depth: float
+    spread: float
+    
+    # Trade Flow
+    taker_buy_volume: float
+    taker_sell_volume: float
+    cvd: float
+
+
+# =============================================================================
+# BYBIT DATA COLLECTOR
+# =============================================================================
+
+class BybitDerivativesCollector:
+    """
+    Collects derivatives data from Bybit API.
+    
+    Endpoints:
+    - /v5/market/open-interest
+    - /v5/market/funding/history
+    - /v5/market/recent-trade
+    - /v5/market/orderbook
+    - /v5/market/tickers
+    """
+    
+    BASE_URL = "https://api.bybit.com"
+    
+    SYMBOLS = {
+        'SOL': 'SOLUSDT',
+        'ETH': 'ETHUSDT',
+        'BTC': 'BTCUSDT',
+    }
+    
+    def __init__(
+        self,
+        api_key: str = None,
+        api_secret: str = None,
+    ):
+        self.api_key = api_key
+        self.api_secret = api_secret
+        self.session = None
+        
+        # Data buffers
+        self.oi_history: Dict[str, deque] = {
+            s: deque(maxlen=1000) for s in self.SYMBOLS
+        }
+        self.funding_history: Dict[str, deque] = {
+            s: deque(maxlen=500) for s in self.SYMBOLS
+        }
+        self.liquidation_buffer: Dict[str, deque] = {
+            s: deque(maxlen=1000) for s in self.SYMBOLS
+        }
+        self.trade_buffer: Dict[str, deque] = {
+            s: deque(maxlen=5000) for s in self.SYMBOLS
+        }
+        
+    async def initialize(self):
+        """Initialize HTTP session."""
+        if not AIOHTTP_AVAILABLE:
+            raise ImportError("aiohttp required: pip install aiohttp")
+        
+        self.session = create_session(timeout=aiohttp.ClientTimeout(total=30))
+        print("✓ Bybit collector initialized")
+        
+    async def close(self):
+        """Close HTTP session."""
+        if self.session:
+            await self.session.close()
+    
+    def _sign_request(self, params: Dict) -> Dict:
+        """Sign request for authenticated endpoints."""
+        if not self.api_key or not self.api_secret:
+            return params
+        
+        timestamp = str(int(time.time() * 1000))
+        params['api_key'] = self.api_key
+        params['timestamp'] = timestamp
+        
+        param_str = '&'.join([f"{k}={v}" for k, v in sorted(params.items())])
+        signature = hmac.new(
+            self.api_secret.encode(),
+            param_str.encode(),
+            hashlib.sha256
+        ).hexdigest()
+        
+        params['sign'] = signature
+        return params
+    
+    async def _request(self, endpoint: str, params: Dict = None) -> Dict:
+        """Make API request."""
+        url = f"{self.BASE_URL}{endpoint}"
+        params = params or {}
+        
+        try:
+            async with self.session.get(url, params=params) as resp:
+                data = await resp.json()
+                
+                if data.get('retCode') != 0:
+                    print(f"⚠️ API error: {data.get('retMsg')}")
+                    return {}
+                
+                return data.get('result', {})
+        except Exception as e:
+            print(f"⚠️ Request error: {e}")
+            return {}
+    
+    async def get_open_interest(self, asset: str) -> Optional[OpenInterestData]:
+        """Get current open interest."""
+        symbol = self.SYMBOLS.get(asset)
+        if not symbol:
+            return None
+        
+        data = await self._request(
+            "/v5/market/open-interest",
+            {"category": "linear", "symbol": symbol, "intervalTime": "5min", "limit": 50}
+        )
+        
+        if not data or 'list' not in data:
+            return None
+        
+        oi_list = data['list']
+        if not oi_list:
+            return None
+        
+        current = oi_list[0]
+        current_oi = float(current['openInterest'])
+        
+        # Calculate changes
+        oi_1h_ago = float(oi_list[12]['openInterest']) if len(oi_list) > 12 else current_oi
+        oi_24h_ago = float(oi_list[-1]['openInterest']) if len(oi_list) > 48 else current_oi
+        
+        oi_change_1h = (current_oi - oi_1h_ago) / oi_1h_ago if oi_1h_ago else 0
+        oi_change_24h = (current_oi - oi_24h_ago) / oi_24h_ago if oi_24h_ago else 0
+        
+        oi_data = OpenInterestData(
+            timestamp=time.time(),
+            symbol=asset,
+            open_interest=current_oi,
+            open_interest_value=current_oi,
+            oi_change_1h=oi_change_1h,
+            oi_change_24h=oi_change_24h,
+        )
+        
+        self.oi_history[asset].append(oi_data)
+        return oi_data
+    
+    async def get_funding_rate(self, asset: str) -> Optional[FundingRateData]:
+        """Get current and predicted funding rate."""
+        symbol = self.SYMBOLS.get(asset)
+        if not symbol:
+            return None
+        
+        # Get funding history
+        funding_data = await self._request(
+            "/v5/market/funding/history",
+            {"category": "linear", "symbol": symbol, "limit": 10}
+        )
+        
+        # Get tickers for current rates
+        ticker_data = await self._request(
+            "/v5/market/tickers",
+            {"category": "linear", "symbol": symbol}
+        )
+        
+        if not funding_data or not ticker_data:
+            return None
+        
+        funding_list = funding_data.get('list', [])
+        ticker_list = ticker_data.get('list', [])
+        
+        if not funding_list or not ticker_list:
+            return None
+        
+        current_funding = float(funding_list[0]['fundingRate'])
+        ticker = ticker_list[0]
+        
+        # Predicted funding from ticker
+        predicted_funding = float(ticker.get('fundingRate', current_funding))
+        
+        funding_rate_data = FundingRateData(
+            timestamp=time.time(),
+            symbol=asset,
+            funding_rate=current_funding,
+            predicted_funding=predicted_funding,
+            funding_time=float(funding_list[0].get('fundingRateTimestamp', 0)) / 1000,
+            mark_price=float(ticker.get('markPrice', 0)),
+            index_price=float(ticker.get('indexPrice', 0)),
+        )
+        
+        self.funding_history[asset].append(funding_rate_data)
+        return funding_rate_data
+    
+    async def get_recent_trades(self, asset: str, limit: int = 1000) -> List[Dict]:
+        """Get recent trades for trade flow analysis."""
+        symbol = self.SYMBOLS.get(asset)
+        if not symbol:
+            return []
+        
+        data = await self._request(
+            "/v5/market/recent-trade",
+            {"category": "linear", "symbol": symbol, "limit": limit}
+        )
+        
+        if not data:
+            return []
+        
+        trades = data.get('list', [])
+        
+        # Store in buffer
+        for trade in trades:
+            self.trade_buffer[asset].append({
+                'timestamp': float(trade['time']) / 1000,
+                'price': float(trade['price']),
+                'size': float(trade['size']),
+                'side': trade['side'],  # 'Buy' or 'Sell'
+            })
+        
+        return trades
+    
+    async def get_orderbook(self, asset: str, depth: int = 25) -> Optional[OrderBookSnapshot]:
+        """Get order book snapshot."""
+        symbol = self.SYMBOLS.get(asset)
+        if not symbol:
+            return None
+        
+        data = await self._request(
+            "/v5/market/orderbook",
+            {"category": "linear", "symbol": symbol, "limit": depth}
+        )
+        
+        if not data:
+            return None
+        
+        bids = [(float(b[0]), float(b[1])) for b in data.get('b', [])]
+        asks = [(float(a[0]), float(a[1])) for a in data.get('a', [])]
+        
+        if not bids or not asks:
+            return None
+        
+        mid_price = (bids[0][0] + asks[0][0]) / 2
+        
+        # Calculate depth in USD
+        bid_depth = sum(p * s for p, s in bids)
+        ask_depth = sum(p * s for p, s in asks)
+        
+        spread = (asks[0][0] - bids[0][0]) / mid_price
+        
+        return OrderBookSnapshot(
+            timestamp=time.time(),
+            symbol=asset,
+            bids=bids,
+            asks=asks,
+            bid_depth_usd=bid_depth,
+            ask_depth_usd=ask_depth,
+            spread=spread,
+            mid_price=mid_price,
+        )
+    
+    async def get_tickers(self, asset: str) -> Dict:
+        """Get ticker data (prices, volume, etc.)."""
+        symbol = self.SYMBOLS.get(asset)
+        if not symbol:
+            return {}
+        
+        data = await self._request(
+            "/v5/market/tickers",
+            {"category": "linear", "symbol": symbol}
+        )
+        
+        if not data or 'list' not in data:
+            return {}
+        
+        ticker = data['list'][0] if data['list'] else {}
+        
+        return {
+            'last_price': float(ticker.get('lastPrice', 0)),
+            'index_price': float(ticker.get('indexPrice', 0)),
+            'mark_price': float(ticker.get('markPrice', 0)),
+            'volume_24h': float(ticker.get('volume24h', 0)),
+            'turnover_24h': float(ticker.get('turnover24h', 0)),
+            'funding_rate': float(ticker.get('fundingRate', 0)),
+            'open_interest': float(ticker.get('openInterest', 0)),
+        }
+    
+    def calculate_trade_flow(self, asset: str, window_seconds: int = 300) -> TradeFlowData:
+        """Calculate trade flow metrics from recent trades."""
+        now = time.time()
+        cutoff = now - window_seconds
+        
+        trades = [
+            t for t in self.trade_buffer[asset]
+            if t['timestamp'] > cutoff
+        ]
+        
+        if not trades:
+            return TradeFlowData(
+                timestamp=now,
+                symbol=asset,
+                taker_buy_volume=0,
+                taker_sell_volume=0,
+                trade_count=0,
+                avg_trade_size=0,
+                large_trade_volume=0,
+                cvd=0,
+            )
+        
+        buy_volume = sum(t['price'] * t['size'] for t in trades if t['side'] == 'Buy')
+        sell_volume = sum(t['price'] * t['size'] for t in trades if t['side'] == 'Sell')
+        
+        sizes = [t['price'] * t['size'] for t in trades]
+        avg_size = np.mean(sizes) if sizes else 0
+        
+        # Large trades > 2x average
+        large_threshold = avg_size * 2
+        large_volume = sum(s for s in sizes if s > large_threshold)
+        
+        # CVD
+        cvd = buy_volume - sell_volume
+        
+        return TradeFlowData(
+            timestamp=now,
+            symbol=asset,
+            taker_buy_volume=buy_volume,
+            taker_sell_volume=sell_volume,
+            trade_count=len(trades),
+            avg_trade_size=avg_size,
+            large_trade_volume=large_volume,
+            cvd=cvd,
+        )
+    
+    async def get_full_snapshot(self, asset: str) -> Optional[DerivativesSnapshot]:
+        """Get complete derivatives snapshot for quant agent."""
+        
+        # Parallel requests
+        oi_task = self.get_open_interest(asset)
+        funding_task = self.get_funding_rate(asset)
+        orderbook_task = self.get_orderbook(asset)
+        trades_task = self.get_recent_trades(asset, limit=500)
+        ticker_task = self.get_tickers(asset)
+        
+        oi, funding, orderbook, trades, ticker = await asyncio.gather(
+            oi_task, funding_task, orderbook_task, trades_task, ticker_task
+        )
+        
+        if not all([oi, funding, orderbook, ticker]):
+            return None
+        
+        # Calculate trade flow
+        trade_flow = self.calculate_trade_flow(asset)
+        
+        # Calculate liquidations from recent data (if available)
+        long_liq = 0.0
+        short_liq = 0.0
+        
+        # Basis
+        spot_price = ticker.get('index_price', 0)
+        perp_price = ticker.get('mark_price', 0)
+        basis = (perp_price - spot_price) / spot_price if spot_price else 0
+        
+        return DerivativesSnapshot(
+            timestamp=time.time(),
+            symbol=asset,
+            open_interest=oi.open_interest,
+            oi_change_1h=oi.oi_change_1h,
+            oi_change_24h=oi.oi_change_24h,
+            funding_rate=funding.funding_rate,
+            predicted_funding=funding.predicted_funding,
+            long_liquidations=long_liq,
+            short_liquidations=short_liq,
+            liquidation_imbalance=0.0,
+            spot_price=spot_price,
+            perp_price=perp_price,
+            mark_price=funding.mark_price,
+            basis=basis,
+            bid_depth=orderbook.bid_depth_usd,
+            ask_depth=orderbook.ask_depth_usd,
+            spread=orderbook.spread,
+            taker_buy_volume=trade_flow.taker_buy_volume,
+            taker_sell_volume=trade_flow.taker_sell_volume,
+            cvd=trade_flow.cvd,
+        )
+
+
+# =============================================================================
+# COINGLASS LIQUIDATION COLLECTOR
+# =============================================================================
+
+class CoinglassCollector:
+    """
+    Collects aggregated liquidation data from Coinglass.
+    
+    Endpoints:
+    - /api/futures/liquidation/detail
+    - /api/futures/openInterest/chart
+    """
+    
+    BASE_URL = "https://open-api.coinglass.com"
+    
+    SYMBOLS = {
+        'SOL': 'SOL',
+        'ETH': 'ETH',
+        'BTC': 'BTC',
+    }
+    
+    def __init__(self, api_key: str = None):
+        self.api_key = api_key
+        self.session = None
+        
+        # Liquidation history
+        self.liquidation_history: Dict[str, deque] = {
+            s: deque(maxlen=1000) for s in self.SYMBOLS
+        }
+        
+    async def initialize(self):
+        """Initialize HTTP session."""
+        if not AIOHTTP_AVAILABLE:
+            raise ImportError("aiohttp required")
+        
+        self.session = create_session(timeout=aiohttp.ClientTimeout(total=30))
+        print("✓ Coinglass collector initialized")
+        
+    async def close(self):
+        """Close session."""
+        if self.session:
+            await self.session.close()
+    
+    async def _request(self, endpoint: str, params: Dict = None) -> Dict:
+        """Make API request."""
+        url = f"{self.BASE_URL}{endpoint}"
+        headers = {}
+        
+        if self.api_key:
+            headers['coinglassSecret'] = self.api_key
+        
+        params = params or {}
+        
+        try:
+            async with self.session.get(url, params=params, headers=headers) as resp:
+                data = await resp.json()
+                
+                if data.get('code') != '0':
+                    print(f"⚠️ Coinglass error: {data.get('msg')}")
+                    return {}
+                
+                return data.get('data', {})
+        except Exception as e:
+            print(f"⚠️ Coinglass request error: {e}")
+            return {}
+    
+    async def get_liquidations(self, asset: str, interval: str = '1h') -> List[LiquidationData]:
+        """Get recent liquidations."""
+        symbol = self.SYMBOLS.get(asset)
+        if not symbol:
+            return []
+        
+        data = await self._request(
+            "/api/futures/liquidation/detail",
+            {"symbol": symbol, "interval": interval}
+        )
+        
+        if not data:
+            return []
+        
+        liquidations = []
+        
+        for item in data:
+            liq = LiquidationData(
+                timestamp=item.get('createTime', time.time() * 1000) / 1000,
+                symbol=asset,
+                side='long' if item.get('side') == 1 else 'short',
+                size=float(item.get('volUsd', 0)),
+                price=float(item.get('price', 0)),
+                order_type=item.get('exchange', 'unknown'),
+            )
+            liquidations.append(liq)
+            self.liquidation_history[asset].append(liq)
+        
+        return liquidations
+    
+    async def get_aggregated_oi(self, asset: str) -> Dict:
+        """Get aggregated OI across exchanges."""
+        symbol = self.SYMBOLS.get(asset)
+        if not symbol:
+            return {}
+        
+        data = await self._request(
+            "/api/futures/openInterest/chart",
+            {"symbol": symbol, "interval": "1h", "limit": 24}
+        )
+        
+        if not data:
+            return {}
+        
+        return {
+            'total_oi': data[-1].get('openInterest', 0) if data else 0,
+            'oi_history': data,
+        }
+    
+    def calculate_liquidation_metrics(self, asset: str, window_seconds: int = 3600) -> Dict:
+        """Calculate liquidation metrics from recent data."""
+        now = time.time()
+        cutoff = now - window_seconds
+        
+        recent = [
+            l for l in self.liquidation_history[asset]
+            if l.timestamp > cutoff
+        ]
+        
+        long_liq = sum(l.size for l in recent if l.side == 'long')
+        short_liq = sum(l.size for l in recent if l.side == 'short')
+        total = long_liq + short_liq
+        
+        return {
+            'long_liquidations': long_liq,
+            'short_liquidations': short_liq,
+            'total_liquidations': total,
+            'liquidation_imbalance': (long_liq - short_liq) / total if total else 0,
+            'count': len(recent),
+        }
+
+
+# =============================================================================
+# WEBSOCKET REAL-TIME COLLECTOR
+# =============================================================================
+
+class BybitWebSocketCollector:
+    """
+    Real-time WebSocket collector for Bybit.
+    
+    Streams:
+    - Trade stream (for CVD calculation)
+    - Liquidation stream
+    - Order book updates
+    """
+    
+    WS_URL = "wss://stream.bybit.com/v5/public/linear"
+    
+    def __init__(self):
+        self.ws = None
+        self.running = False
+        
+        # Callbacks
+        self.on_trade: Optional[Callable] = None
+        self.on_liquidation: Optional[Callable] = None
+        self.on_orderbook: Optional[Callable] = None
+        
+        # Real-time CVD
+        self.cvd: Dict[str, float] = {'SOL': 0, 'ETH': 0, 'BTC': 0}
+        
+    async def connect(self):
+        """Connect to WebSocket."""
+        if not WEBSOCKETS_AVAILABLE:
+            raise ImportError("websockets required: pip install websockets")
+        
+        self.ws = await websockets.connect(self.WS_URL)
+        self.running = True
+        print("✓ WebSocket connected")
+        
+    async def subscribe(self, channels: List[str]):
+        """Subscribe to channels."""
+        msg = {
+            "op": "subscribe",
+            "args": channels
+        }
+        await self.ws.send(json.dumps(msg))
+        
+    async def subscribe_all(self, assets: List[str] = None):
+        """Subscribe to all relevant channels."""
+        assets = assets or ['SOL', 'ETH', 'BTC']
+        
+        channels = []
+        for asset in assets:
+            symbol = f"{asset}USDT"
+            channels.extend([
+                f"publicTrade.{symbol}",  # Trade stream
+                f"liquidation.{symbol}",  # Liquidation stream
+                f"orderbook.25.{symbol}",  # Order book (25 levels)
+            ])
+        
+        await self.subscribe(channels)
+        print(f"✓ Subscribed to {len(channels)} channels")
+        
+    async def listen(self):
+        """Listen for messages."""
+        while self.running:
+            try:
+                msg = await self.ws.recv()
+                data = json.loads(msg)
+                
+                if 'topic' in data:
+                    await self._handle_message(data)
+                    
+            except websockets.ConnectionClosed:
+                print("⚠️ WebSocket disconnected")
+                break
+            except Exception as e:
+                print(f"⚠️ WebSocket error: {e}")
+                
+    async def _handle_message(self, data: Dict):
+        """Handle incoming WebSocket message."""
+        topic = data.get('topic', '')
+        
+        if topic.startswith('publicTrade'):
+            await self._handle_trade(data)
+        elif topic.startswith('liquidation'):
+            await self._handle_liquidation(data)
+        elif topic.startswith('orderbook'):
+            await self._handle_orderbook(data)
+            
+    async def _handle_trade(self, data: Dict):
+        """Handle trade message."""
+        topic = data['topic']
+        symbol = topic.split('.')[1].replace('USDT', '')
+        
+        for trade in data.get('data', []):
+            side = trade.get('S')  # 'Buy' or 'Sell'
+            size = float(trade.get('v', 0))
+            price = float(trade.get('p', 0))
+            value = size * price
+            
+            # Update CVD
+            if side == 'Buy':
+                self.cvd[symbol] += value
+            else:
+                self.cvd[symbol] -= value
+            
+            if self.on_trade:
+                await self.on_trade(symbol, trade)
+                
+    async def _handle_liquidation(self, data: Dict):
+        """Handle liquidation message."""
+        topic = data['topic']
+        symbol = topic.split('.')[1].replace('USDT', '')
+        
+        for liq in data.get('data', []):
+            if self.on_liquidation:
+                await self.on_liquidation(symbol, liq)
+                
+    async def _handle_orderbook(self, data: Dict):
+        """Handle order book update."""
+        topic = data['topic']
+        symbol = topic.split('.')[2].replace('USDT', '')
+        
+        if self.on_orderbook:
+            await self.on_orderbook(symbol, data.get('data', {}))
+            
+    def get_cvd(self, asset: str) -> float:
+        """Get current CVD for asset."""
+        return self.cvd.get(asset, 0)
+    
+    def reset_cvd(self, asset: str = None):
+        """Reset CVD counter."""
+        if asset:
+            self.cvd[asset] = 0
+        else:
+            self.cvd = {'SOL': 0, 'ETH': 0, 'BTC': 0}
+            
+    async def close(self):
+        """Close WebSocket connection."""
+        self.running = False
+        if self.ws:
+            await self.ws.close()
+
+
+# =============================================================================
+# COMBINED DATA MANAGER
+# =============================================================================
+
+class QuantDataManager:
+    """
+    Unified data manager for quant agent.
+    
+    Combines:
+    - REST API polling (OI, funding)
+    - WebSocket streaming (trades, liquidations)
+    - Aggregated data (Coinglass)
+    """
+    
+    def __init__(
+        self,
+        bybit_key: str = None,
+        bybit_secret: str = None,
+        coinglass_key: str = None,
+    ):
+        self.bybit = BybitDerivativesCollector(bybit_key, bybit_secret)
+        self.coinglass = CoinglassCollector(coinglass_key)
+        self.websocket = BybitWebSocketCollector()
+        
+        # Latest snapshots
+        self.snapshots: Dict[str, DerivativesSnapshot] = {}
+        
+        # Running state
+        self.running = False
+        
+    async def initialize(self):
+        """Initialize all collectors."""
+        await self.bybit.initialize()
+        
+        if self.coinglass.api_key:
+            await self.coinglass.initialize()
+        
+        print("✓ QuantDataManager initialized")
+        
+    async def start_streaming(self, assets: List[str] = None):
+        """Start WebSocket streaming."""
+        assets = assets or ['SOL', 'ETH', 'BTC']
+        
+        await self.websocket.connect()
+        await self.websocket.subscribe_all(assets)
+        
+        # Start listener in background
+        self.running = True
+        asyncio.create_task(self.websocket.listen())
+        
+        print("✓ WebSocket streaming started")
+        
+    async def get_snapshot(self, asset: str) -> Optional[DerivativesSnapshot]:
+        """Get complete snapshot for asset."""
+        snapshot = await self.bybit.get_full_snapshot(asset)
+        
+        if snapshot:
+            # Add real-time CVD from WebSocket
+            snapshot.cvd = self.websocket.get_cvd(asset)
+            
+            # Add aggregated liquidations from Coinglass if available
+            if self.coinglass.session:
+                liq_metrics = self.coinglass.calculate_liquidation_metrics(asset)
+                snapshot.long_liquidations = liq_metrics['long_liquidations']
+                snapshot.short_liquidations = liq_metrics['short_liquidations']
+                snapshot.liquidation_imbalance = liq_metrics['liquidation_imbalance']
+            
+            self.snapshots[asset] = snapshot
+            
+        return snapshot
+    
+    async def get_all_snapshots(self) -> Dict[str, DerivativesSnapshot]:
+        """Get snapshots for all assets."""
+        assets = ['SOL', 'ETH', 'BTC']
+        
+        tasks = [self.get_snapshot(asset) for asset in assets]
+        results = await asyncio.gather(*tasks)
+        
+        return {
+            asset: snapshot
+            for asset, snapshot in zip(assets, results)
+            if snapshot
+        }
+        
+    async def close(self):
+        """Close all connections."""
+        self.running = False
+        await self.bybit.close()
+        await self.coinglass.close()
+        await self.websocket.close()
+
+
+# =============================================================================
+# EXAMPLE USAGE
+# =============================================================================
+
+async def main():
+    """Example usage of data collectors."""
+    
+    print("=" * 60)
+    print("Quant Data Manager - Alternative Data Collection")
+    print("=" * 60)
+    
+    # Initialize
+    manager = QuantDataManager()
+    await manager.initialize()
+    
+    # Get snapshots
+    print("\nFetching derivatives snapshots...")
+    
+    for asset in ['SOL', 'ETH', 'BTC']:
+        snapshot = await manager.get_snapshot(asset)
+        
+        if snapshot:
+            print(f"\n{asset} Snapshot:")
+            print(f"  OI: ${snapshot.open_interest:,.0f}")
+            print(f"  OI Change (1h): {snapshot.oi_change_1h:.2%}")
+            print(f"  Funding: {snapshot.funding_rate:.4%}")
+            print(f"  Predicted Funding: {snapshot.predicted_funding:.4%}")
+            print(f"  Basis: {snapshot.basis:.4%}")
+            print(f"  Bid Depth: ${snapshot.bid_depth:,.0f}")
+            print(f"  Ask Depth: ${snapshot.ask_depth:,.0f}")
+            print(f"  CVD: ${snapshot.cvd:,.0f}")
+    
+    await manager.close()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+
+# Alias for backward compatibility
+QuantDataCollector = QuantDataManager

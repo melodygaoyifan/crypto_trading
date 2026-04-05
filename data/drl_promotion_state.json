@@ -1,0 +1,11 @@
+{
+  "authority_level": "EXIT_ONLY",
+  "demoted_at": null,
+  "peak_equity": 0.0,
+  "current_equity": 0.0,
+  "demotion_history": [],
+  "trade_count": 0,
+  "updated_at": "2026-04-05T20:48:24.344235+00:00",
+  "_reset_reason": "Pre-live audit: DRL was ACTIVE with only 2 trades and -$178 equity. 30-shadow-trade requirement not met. Reset to SHADOW per CLAUDE.md policy.",
+  "_promotion_reason": "Phase-1.5: bounded decision participation. EXIT_ONLY = exits/hold only, no entry authority, no direction override. Auto-demotion active (5 losses / 15% DD / zero-peak)."
+}

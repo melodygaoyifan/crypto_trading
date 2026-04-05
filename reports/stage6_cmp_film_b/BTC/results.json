@@ -1,0 +1,34 @@
+{
+  "asset": "BTC",
+  "folds": {
+    "fold_1": {
+      "mean_reward": 632.6464718087136,
+      "std_reward": 0.0,
+      "train_time_minutes": 367.2867376089096,
+      "train_rows": 15527,
+      "val_rows": 2747
+    },
+    "fold_2": {
+      "mean_reward": 627.1580331585195,
+      "std_reward": 1.1368683772161603e-13,
+      "train_time_minutes": 327.3408380031586,
+      "train_rows": 12780,
+      "val_rows": 2747
+    },
+    "fold_3": {
+      "mean_reward": 730.9115061181074,
+      "std_reward": 0.0,
+      "train_time_minutes": 238.6989025950432,
+      "train_rows": 10033,
+      "val_rows": 2747
+    }
+  },
+  "weights": {
+    "fold_1": 0.45,
+    "fold_2": 0.35,
+    "fold_3": 0.2
+  },
+  "weighted_score": 650.3785251430245,
+  "best_fold": "fold_3",
+  "best_reward": 730.9115061181074
+}

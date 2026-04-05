@@ -1,0 +1,51 @@
+2026-01-26 21:54:10,042 | INFO | sanity.check_6_explainability | ============================================================
+2026-01-26 21:54:10,043 | INFO | sanity.check_6_explainability | CHECK 6: EXPLAINABILITY LOG
+2026-01-26 21:54:10,043 | INFO | sanity.check_6_explainability | ============================================================
+2026-01-26 21:54:10,043 | INFO | sanity.check_6_explainability | 
+--- Simulating decision flow with full logging ---
+2026-01-26 21:54:10,043 | INFO | sanity.check_6_explainability | 
+[INTENT] Decision request:
+2026-01-26 21:54:10,043 | INFO | sanity.check_6_explainability |   Asset: SOL
+2026-01-26 21:54:10,043 | INFO | sanity.check_6_explainability |   Direction: SHORT
+2026-01-26 21:54:10,043 | INFO | sanity.check_6_explainability |   Target exposure: 30.0%
+2026-01-26 21:54:10,043 | INFO | sanity.check_6_explainability |   Price: $185.00
+2026-01-26 21:54:10,043 | INFO | sanity.check_6_explainability |   Equity: $100,000.00
+2026-01-26 21:54:10,043 | INFO | sanity.check_6_explainability |   Regime: BEAR
+2026-01-26 21:54:10,043 | INFO | sanity.check_6_explainability |   Confidence: 0.65
+2026-01-26 21:54:10,043 | INFO | sanity.check_6_explainability | 
+[GUARD] DATA_GUARD: PASS - Data fresh (0.5s)
+2026-01-26 21:54:10,043 | INFO | sanity.check_6_explainability | [GUARD] TRADE_GATE: PASS - Alpha sufficient (45 bps)
+2026-01-26 21:54:10,043 | INFO | sanity.check_6_explainability | [GUARD] RISK_MANAGER: PASS - Within exposure limits
+2026-01-26 21:54:10,043 | INFO | sanity.check_6_explainability | [GUARD] LEVERAGE_GUARD: PASS - Leverage 0.30x <= 3.0x
+2026-01-26 21:54:10,044 | INFO | sanity.check_6_explainability | 
+[EXECUTION] Order details:
+2026-01-26 21:54:10,044 | INFO | sanity.check_6_explainability |   Symbol: SOL/USD
+2026-01-26 21:54:10,044 | INFO | sanity.check_6_explainability |   Side: SELL
+2026-01-26 21:54:10,044 | INFO | sanity.check_6_explainability |   Quantity: 162.162162
+2026-01-26 21:54:10,044 | INFO | sanity.check_6_explainability |   Price: $185.00
+2026-01-26 21:54:10,044 | INFO | sanity.check_6_explainability |   Notional: $30,000.00
+2026-01-26 21:54:10,044 | INFO | sanity.check_6_explainability |   Leverage: 0.30x
+2026-01-26 21:54:10,044 | INFO | sanity.check_6_explainability | 
+--- Verifying log completeness ---
+2026-01-26 21:54:10,044 | INFO | sanity.check_6_explainability |   ✓ Intent summary: Found '[INTENT]'
+2026-01-26 21:54:10,044 | INFO | sanity.check_6_explainability |   ✓ Guard results: Found '[GUARD]'
+2026-01-26 21:54:10,044 | INFO | sanity.check_6_explainability |   ✓ Direction logged: Found 'direction'
+2026-01-26 21:54:10,044 | INFO | sanity.check_6_explainability |   ✓ Exposure logged: Found 'exposure'
+2026-01-26 21:54:10,044 | INFO | sanity.check_6_explainability |   ✓ Price logged: Found 'Price'
+2026-01-26 21:54:10,044 | INFO | sanity.check_6_explainability |   ✓ Equity logged: Found 'Equity'
+2026-01-26 21:54:10,044 | INFO | sanity.check_6_explainability | 
+PASS: Log contains all required decision chain elements
+2026-01-26 21:54:10,044 | INFO | sanity.check_6_explainability | 
+--- Simulating veto scenario ---
+2026-01-26 21:54:10,044 | INFO | sanity.check_6_explainability | 
+[INTENT] Decision request (HIGH LEVERAGE):
+2026-01-26 21:54:10,044 | INFO | sanity.check_6_explainability |   Asset: SOL
+2026-01-26 21:54:10,044 | INFO | sanity.check_6_explainability |   Target exposure: 500%
+2026-01-26 21:54:10,045 | INFO | sanity.check_6_explainability | 
+[GUARD] LEVERAGE_GUARD: FAIL - Leverage 5.0x > max 3.0x
+2026-01-26 21:54:10,045 | INFO | sanity.check_6_explainability | [VETO] Execution blocked
+2026-01-26 21:54:10,045 | INFO | sanity.check_6_explainability |   Final veto reason: LEVERAGE_GUARD - Leverage 5.0x > max 3.0x
+2026-01-26 21:54:10,045 | INFO | sanity.check_6_explainability | 
+============================================================
+2026-01-26 21:54:10,045 | INFO | sanity.check_6_explainability | CHECK 6 RESULT: PASS
+2026-01-26 21:54:10,045 | INFO | sanity.check_6_explainability | ============================================================

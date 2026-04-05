@@ -1,0 +1,111 @@
+{
+  "timestamp": "2026-02-21T20:06:28.062740",
+  "config": {
+    "extractor": "lstm_film_a",
+    "n_stack": 8,
+    "timesteps": 200000,
+    "eval_freq": 5000,
+    "n_eval_episodes": 10,
+    "learning_rate": 3e-05,
+    "buffer_size": 2000000,
+    "learning_starts": 30000,
+    "batch_size": 256,
+    "gradient_steps": 4,
+    "ent_coef": 0.1,
+    "tau": 0.005,
+    "gamma": 0.99,
+    "n_quantiles": 32,
+    "n_critics": 2,
+    "top_quantiles_to_drop": 2,
+    "net_arch": [
+      256,
+      256
+    ],
+    "bear_mult": 1.2,
+    "bull_mult": 1.1,
+    "sol_vol_mult": 1.0,
+    "smooth_regimes": 2
+  },
+  "results": [
+    {
+      "experiment": "classic",
+      "reward_mode": "classic",
+      "augment": false,
+      "nav_pct": 693.1768,
+      "nav_std": 0.0,
+      "raw_reward": 808.19,
+      "raw_reward_std": 0.0,
+      "trade_count": 7890,
+      "avg_exposure": 0.6178,
+      "flat_pct": 0.77,
+      "total_steps": 27360,
+      "elapsed_s": 13924.5,
+      "balances": [
+        793176.8255905034,
+        793176.8255905034,
+        793176.8255905034,
+        793176.8255905034,
+        793176.8255905034,
+        793176.8255905034,
+        793176.8255905034,
+        793176.8255905034,
+        793176.8255905034,
+        793176.8255905034
+      ]
+    },
+    {
+      "experiment": "sharpe",
+      "reward_mode": "sharpe",
+      "augment": false,
+      "nav_pct": 564.748,
+      "nav_std": 0.0,
+      "raw_reward": 368.22,
+      "raw_reward_std": 0.0,
+      "trade_count": 6990,
+      "avg_exposure": 0.5096,
+      "flat_pct": 0.73,
+      "total_steps": 27360,
+      "elapsed_s": 14376.9,
+      "balances": [
+        664748.0467322274,
+        664748.0467322274,
+        664748.0467322274,
+        664748.0467322274,
+        664748.0467322274,
+        664748.0467322274,
+        664748.0467322274,
+        664748.0467322274,
+        664748.0467322274,
+        664748.0467322274
+      ]
+    },
+    {
+      "experiment": "sortino",
+      "reward_mode": "sortino",
+      "augment": false,
+      "nav_pct": 579.812,
+      "nav_std": 0.0,
+      "raw_reward": 316.59,
+      "raw_reward_std": 0.0,
+      "trade_count": 7790,
+      "avg_exposure": 0.4941,
+      "flat_pct": 0.8,
+      "total_steps": 27360,
+      "elapsed_s": 14286.4,
+      "balances": [
+        679811.9902814464,
+        679811.9902814464,
+        679811.9902814464,
+        679811.9902814464,
+        679811.9902814464,
+        679811.9902814464,
+        679811.9902814464,
+        679811.9902814464,
+        679811.9902814464,
+        679811.9902814464
+      ]
+    }
+  ],
+  "winner": "classic",
+  "decision": "Stage 8 unchanged"
+}

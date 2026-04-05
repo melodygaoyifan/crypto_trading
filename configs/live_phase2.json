@@ -1,0 +1,72 @@
+{
+    "_description": "HMATS Live Phase 2 — Day 14: Full Position (100% allocation)",
+    "_deploy_date": "Day 14 after Phase 1 validation",
+    "mode": "LIVE",
+    "assets": ["BTC", "ETH", "SOL"],
+    "exchange": {
+        "kraken": {
+            "api_key_env": "KRAKEN_API_KEY",
+            "api_secret_env": "KRAKEN_API_SECRET",
+            "rate_limit": 15
+        }
+    },
+    "risk": {
+        "max_position_pct": 0.50,
+        "max_exposure_total": 1.0,
+        "max_drawdown": 0.35,
+        "daily_loss_limit": 0.10,
+        "per_asset_caps": {
+            "BTC": 0.25,
+            "ETH": 0.25,
+            "SOL": 0.20
+        },
+        "max_leverage": 3
+    },
+    "execution": {
+        "default_order_type": "LIMIT",
+        "post_only": true,
+        "limit_order_timeout_seconds": 120,
+        "market_fallback_enabled": true,
+        "prefer_limit_orders": true,
+        "enable_maker_reprice": true,
+        "maker_reprice_max_attempts": 3,
+        "maker_reprice_wait_seconds": 20.0,
+        "maker_reprice_min_fill_ratio": 0.50,
+        "maker_reprice_improve_bps_schedule": [8, 5, 3]
+    },
+    "regime_leverage": {
+        "VOLATILE_CHOP": 3,
+        "MOMENTUM_RALLY": 2,
+        "PANIC_SELLOFF": 2,
+        "WEAK_CONSOLIDATION": 1,
+        "QUIET_ACCUMULATION": 1,
+        "EXTREME_VOLATILITY": 1
+    },
+    "drl": {
+        "mode": "ACTIVE",
+        "auto_demotion_enabled": true,
+        "consecutive_loss_threshold": 3,
+        "demotion_period_days": 3
+    },
+    "sentiment": {
+        "layer1_enabled": true,
+        "fear_greed_source": "alternative_me"
+    },
+    "cash_and_carry": {
+        "enabled": true,
+        "base_allocation_pct": 0.10,
+        "max_allocation_pct": 0.25
+    },
+    "dms_timeout_seconds": 60,
+    "stop_order_max_retries": 3,
+    "stop_order_backoff_ms": [200, 400, 800],
+    "stop_order_failure_policy": "FREEZE_ENTRIES",
+    "single_exchange_mode": true,
+    "allowed_venues": ["kraken"],
+    "logging": {
+        "level": "INFO",
+        "file": "logs/live_phase2.log",
+        "rotation": "daily",
+        "retention_days": 90
+    }
+}

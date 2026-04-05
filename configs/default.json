@@ -1,0 +1,80 @@
+{
+  "_comment": "HMATS v5 Multi-Asset Configuration - SOL Focused",
+  "_DEPRECATED": "2026-02-28: NOT loaded by v6.7 runtime. Use cloud_production.json + canonical_config.py.",
+  
+  "risk_profile": "aggressive",
+  "initial_capital": 10000,
+  
+  "assets": [
+    {
+      "symbol": "SOL/USDT",
+      "base": "SOL",
+      "enabled": true,
+      "max_allocation_pct": 0.60,
+      "target_allocation_pct": 0.50,
+      "_comment": "PRIMARY - 50% target"
+    },
+    {
+      "symbol": "BTC/USDT",
+      "base": "BTC",
+      "enabled": true,
+      "max_allocation_pct": 0.30,
+      "target_allocation_pct": 0.25,
+      "_comment": "SECONDARY - 25% target"
+    },
+    {
+      "symbol": "ETH/USDT", 
+      "base": "ETH",
+      "enabled": true,
+      "max_allocation_pct": 0.30,
+      "target_allocation_pct": 0.25,
+      "_comment": "SECONDARY - 25% target"
+    }
+  ],
+  
+  "exchange": {
+    "name": "kraken",
+    "testnet": false,
+    "rate_limit": true
+  },
+  
+  "portfolio": {
+    "max_total_exposure": 1.00,
+    "max_single_asset": 0.60,
+    "max_correlated_exposure": 0.50,
+    "cash_buffer": 0.00,
+    "_comment": "100% deployed, no cash buffer"
+  },
+  
+  "timing": {
+    "heavy_interval_hours": 1.0,
+    "light_interval_seconds": 10.0,
+    "data_lookback_candles": 500
+  },
+  
+  "heavy_model": {
+    "provider": "anthropic",
+    "model": "claude-3-opus-20240229",
+    "temperature": 0.3,
+    "max_tokens": 3000
+  },
+  
+  "risk_profiles": {
+    "conservative": {
+      "risk_per_trade": 0.02,
+      "max_drawdown": 0.10
+    },
+    "moderate": {
+      "risk_per_trade": 0.05,
+      "max_drawdown": 0.15
+    },
+    "aggressive": {
+      "risk_per_trade": 0.08,
+      "max_drawdown": 0.25
+    },
+    "degen": {
+      "risk_per_trade": 0.15,
+      "max_drawdown": 0.40
+    }
+  }
+}

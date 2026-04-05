@@ -1,0 +1,83 @@
+# ================================================================================
+# HMATS v5.1.0 - Systemd Service Unit
+# ================================================================================
+# Installation:
+#   sudo cp hmats.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable hmats
+#   sudo systemctl start hmats
+#
+# Management:
+#   sudo systemctl status hmats
+#   sudo systemctl stop hmats
+#   sudo systemctl restart hmats
+#   sudo journalctl -u hmats -f
+#
+# ================================================================================
+
+[Unit]
+Description=HMATS v5.1.0 Trading System (Single-Exchange, Kraken)
+Documentation=https://github.com/your-org/hmats
+After=network-online.target
+Wants=network-online.target
+
+# Dependencies (optional)
+# Requires=network.target
+
+[Service]
+# Service type
+Type=simple
+
+# User/Group (create with: useradd -r -s /bin/false hmats)
+User=hmats
+Group=hmats
+
+# Working directory
+WorkingDirectory=/opt/hmats
+
+# Environment file (contains API keys)
+EnvironmentFile=/etc/hmats/hmats.env
+
+# Additional environment variables
+Environment="HMATS_BASE_DIR=/opt/hmats"
+Environment="HMATS_MODEL_DIR=/opt/hmats/models/current"
+Environment="HMATS_LOG_DIR=/var/log/hmats"
+Environment="HMATS_STATE_DIR=/var/lib/hmats"
+Environment="HMATS_CONFIG_FILE=/opt/hmats/configs/cloud_production.json"
+Environment="PYTHONUNBUFFERED=1"
+
+# Startup command (default: paper mode)
+# For live: change --mode paper to --mode live --confirm-live
+ExecStart=/opt/hmats/venv/bin/python /opt/hmats/main.py --mode paper
+
+# Graceful shutdown
+ExecStop=/bin/kill -SIGTERM $MAINPID
+TimeoutStopSec=30
+
+# Restart policy
+Restart=on-failure
+RestartSec=30
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+
+# Allow write to specific directories
+ReadWritePaths=/var/log/hmats /var/lib/hmats
+
+# Resource limits
+MemoryMax=4G
+CPUQuota=200%
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hmats
+
+[Install]
+WantedBy=multi-user.target

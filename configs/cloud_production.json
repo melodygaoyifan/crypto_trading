@@ -1,0 +1,207 @@
+{
+    "_version": "6.5.1",
+    "_description": "Cloud-optimized single-exchange production config",
+    "_deploy_mode": "SINGLE_EXCHANGE_KRAKEN_ONLY",
+    "mode": "PRODUCTION",
+    "_runtime": {
+        "_note": "NOT LOADED by ProductionConfig.from_file(). Paths come from env vars or hardcoded defaults.",
+        "base_dir_env": "HMATS_BASE_DIR",
+        "base_dir_default": "/opt/hmats",
+        "model_dir_env": "HMATS_MODEL_DIR",
+        "model_dir_default": "/opt/hmats/models/current",
+        "log_dir_env": "HMATS_LOG_DIR",
+        "log_dir_default": "/var/log/hmats",
+        "state_dir_env": "HMATS_STATE_DIR",
+        "state_dir_default": "/var/lib/hmats",
+        "config_dir_env": "HMATS_CONFIG_DIR",
+        "config_dir_default": "/opt/hmats/configs"
+    },
+    "assets": [
+        "SOL",
+        "BTC",
+        "ETH"
+    ],
+    "primary_asset": "SOL",
+    "exchange": {
+        "_mode": "SINGLE_EXCHANGE",
+        "_active": "kraken",
+        "kraken": {
+            "api_key_env": "KRAKEN_API_KEY",
+            "api_secret_env": "KRAKEN_API_SECRET",
+            "rate_limit": 15,
+            "ws_enabled": true,
+            "rest_enabled": true
+        }
+    },
+    "risk": {
+        "initial_capital_env": "HMATS_INITIAL_CAPITAL",
+        "initial_capital_default": 10000.0,
+        "hard_drawdown_halt": 0.25,
+        "correlation_crisis": 0.98,
+        "max_position_pct": 0.80,
+        "max_drawdown": 0.35,
+        "daily_loss_limit": 0.08,
+        "reduce_at_drawdown": 0.08,
+        "critical_drawdown": 0.15,
+        "position_limits": {
+            "SOL": 500.0,
+            "BTC": 1.0,
+            "ETH": 10.0
+        }
+    },
+    "execution": {
+        "default_order_type": "LIMIT",
+        "maker_bias": 0.7,
+        "max_slippage_bps": 10,
+        "retry_attempts": 3
+    },
+    "_models": {
+        "_note": "NOT LOADED by ProductionConfig.from_file(). Model paths come from env vars or hardcoded defaults.",
+        "decision_transformer": {
+            "enabled": true,
+            "subdir": "decision_transformer",
+            "config_file": "config.json",
+            "weights_file": "dt_model.npz",
+            "required_for_live": false
+        },
+        "regime_classifier": {
+            "enabled": true,
+            "subdir": "regime_classifier",
+            "config_file": "gmm_config.json",
+            "weights_file": "gmm_covariances.npy",
+            "required_for_live": true
+        },
+        "validation": {
+            "check_file_exists": true,
+            "check_file_size_min_bytes": 1000,
+            "fail_closed_on_missing": true,
+            "fail_closed_action": "NO_TRADE_MODE"
+        }
+    },
+    "_logging": {
+        "_note": "NOT LOADED. Logger is configured before config load. Changes here have no effect.",
+        "level_env": "HMATS_LOG_LEVEL",
+        "level_default": "INFO",
+        "stdout_enabled": true,
+        "file_enabled": true,
+        "file_path": "hmats.log",
+        "rotation": "daily",
+        "retention_days": 7,
+        "json_format": false,
+        "proof_logs": {
+            "enabled": true,
+            "subdir": "proof"
+        },
+        "event_logs": {
+            "enabled": true,
+            "subdir": "events",
+            "compression": true
+        }
+    },
+    "_state_persistence": {
+        "_note": "NOT LOADED. Hot restart managed by runtime_spine, not config.",
+        "hot_restart_enabled": true,
+        "state_file": "hmats_state.json",
+        "checkpoint_interval_seconds": 300,
+        "max_state_file_size_mb": 10
+    },
+    "_timing": {
+        "_note": "NOT LOADED. Tick interval uses ProductionConfig class default (14400s). Profile overlays cannot change it.",
+        "master_tick_seconds": 14400,
+        "execution_loop_ms": 200,
+        "heartbeat_interval_seconds": 60
+    },
+    "_drl": {
+        "_note": "NOT LOADED. DRL mode comes from HMATS_DRL_MODE env var + PromotionGate. Changes here have no effect.",
+        "_description": "DRL Live Authority Gating Configuration",
+        "mode": "SHADOW",
+        "mode_options": [
+            "DISABLED",
+            "SHADOW",
+            "EXECUTION_ADVISORY",
+            "EXIT_ONLY"
+        ],
+        "entry_authority": false,
+        "entry_authority_note": "FOREVER BANNED - DRL cannot decide entry direction/position",
+        "promotion_gate": {
+            "enabled": true,
+            "min_regime_coverage": 0.8,
+            "min_sharpe_ratio": 0.5,
+            "min_win_rate": 0.45,
+            "min_sample_size": 100,
+            "cooldown_days": 7,
+            "auto_demote_on_fail": true
+        },
+        "fail_closed_triggers": {
+            "data_stale_seconds": 30,
+            "extreme_spread_bps": 100,
+            "correlation_crisis": 0.95,
+            "fuse_triggered": true
+        },
+        "audit_logging": {
+            "enabled": true,
+            "log_authority_changes": true,
+            "log_promotion_gate_results": true,
+            "log_fail_closed_events": true
+        }
+    },
+    "dms_timeout_seconds": 60,
+    "stop_order_max_retries": 3,
+    "stop_order_backoff_ms": [200, 400, 800],
+    "stop_order_failure_policy": "ALERT_ONLY",
+    "_single_exchange_mode": true,
+    "_allowed_venues": ["kraken"],
+    "passive_aggressive": {
+        "_description": "P2-03: PA executor ACTIVE mode. Drives order type and price improvement based on VPIN/urgency/toxicity.",
+        "mode": "ACTIVE",
+        "max_price_improve_bps": 8,
+        "min_price_improve_bps": 2,
+        "toxic_flow_abort_threshold": 0.85,
+        "abort_on_insufficient_edge": true
+    },
+    "gambler": {
+        "_description": "[PRE-LAUNCH] Aggressive sizing for OPPORTUNITY windows. Weekly limit raised 3→8, cooldown 4h→2h, regimes expanded. Risk layer still vetoes after.",
+        "enabled": true,
+        "max_bet_pct_nav": 0.50,
+        "confidence_threshold": 0.65,
+        "allowed_modes": ["OPPORTUNITY"],
+        "allowed_regimes": ["STRONG_TREND", "IGNITION", "EXPANSION", "MOMENTUM_RALLY", "PANIC_SELLOFF"],
+        "min_seconds_between_bets": 7200,
+        "max_bets_per_week": 8
+    },
+    "_safety": {
+        "_note": "NOT LOADED. Safety flags are hardcoded in P0 modules.",
+        "require_confirm_live": true,
+        "dry_run_default": true,
+        "startup_reconciliation": true,
+        "health_check_endpoint": false
+    },
+    "alpha_boost_config": {
+        "transition_aggression_enabled": true,
+        "transition_alpha_gate_mult": 0.85,
+        "transition_size_boost": 1.15,
+        "transition_max_age_bars": 2,
+        "transition_min_phase_confidence": 0.40,
+        "transition_require_volume_confirm": true,
+
+        "expert_gating_enabled": true,
+        "expert_gating_min_trades": 25,
+        "expert_gating_max_boost": 1.15,
+        "expert_gating_min_weight": 0.70,
+        "expert_gating_shrinkage_strength": 0.6,
+
+        "exec_feedback_enabled": true,
+        "exec_feedback_min_fills": 15,
+        "exec_feedback_slippage_penalty_bps": 3.0,
+        "exec_feedback_maker_bonus_threshold": 0.70,
+        "exec_feedback_maker_bonus": 1.03,
+        "exec_feedback_gate_mult_range": [0.95, 1.05],
+
+        "global_gate_mult_clamp": [0.85, 1.10],
+        "global_size_mult_clamp": [0.90, 1.15],
+        "global_confidence_mult_clamp": [0.80, 1.15]
+    },
+    "sentiment_gate_config": {
+        "enabled": false
+    }
+}

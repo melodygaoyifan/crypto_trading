@@ -1,0 +1,102 @@
+{
+  "report_id": "exec_quality_20260126_054142",
+  "generated_at": "2026-01-26T05:41:42.420921",
+  "period_start": "2026-01-19T06:41:42.358654",
+  "period_end": "2026-01-26T04:41:42.359165",
+  "version": "5.2.1-P1",
+  "total_executions": 200,
+  "total_volume_usd": 20000000.0,
+  "rl_executions": 67,
+  "baseline_executions": 133,
+  "rl_usage_rate": 0.335,
+  "rl_slippage_mean_bps": 4.619371472586044,
+  "rl_slippage_p50_bps": 4.626299854894074,
+  "rl_slippage_p90_bps": 5.107240897761953,
+  "rl_slippage_p99_bps": 5.179335854952295,
+  "baseline_slippage_mean_bps": 5.898873516962528,
+  "baseline_slippage_p50_bps": 5.935241131531916,
+  "baseline_slippage_p90_bps": 6.521658050205552,
+  "baseline_slippage_p99_bps": 6.733529380113319,
+  "slippage_improvement_bps": 1.2795020443764837,
+  "slippage_improvement_pct": 21.690616703294396,
+  "total_impact_cost_usd": 10940.480664192813,
+  "impact_cost_ratio_pct": 0.054702403320964064,
+  "fill_ratio_mean": 0.9617653435419757,
+  "time_to_fill_mean_sec": 5.09242887024455,
+  "cancel_rate": 0.185,
+  "fuse_trigger_count": 0,
+  "fuse_reasons": {},
+  "downweight_count": 0,
+  "downweight_reasons": {},
+  "by_asset": {
+    "BTC": {
+      "count": 67,
+      "rl_count": 67,
+      "rl_ratio": 1.0,
+      "slippage_mean": 4.619371472586044,
+      "fill_ratio": 0.9619799697371177
+    },
+    "ETH": {
+      "count": 67,
+      "rl_count": 0,
+      "rl_ratio": 0.0,
+      "slippage_mean": 5.894004909788669,
+      "fill_ratio": 0.9600715374171924
+    },
+    "SOL": {
+      "count": 66,
+      "rl_count": 0,
+      "rl_ratio": 0.0,
+      "slippage_mean": 5.903815890911749,
+      "fill_ratio": 0.9632669352887322
+    }
+  },
+  "by_session": {
+    "us_morning": {
+      "count": 67,
+      "rl_count": 67,
+      "rl_ratio": 1.0,
+      "slippage_mean": 4.619371472586044,
+      "fill_ratio": 0.9619799697371177
+    },
+    "europe_morning": {
+      "count": 67,
+      "rl_count": 0,
+      "rl_ratio": 0.0,
+      "slippage_mean": 5.894004909788669,
+      "fill_ratio": 0.9600715374171924
+    },
+    "asia_morning": {
+      "count": 66,
+      "rl_count": 0,
+      "rl_ratio": 0.0,
+      "slippage_mean": 5.903815890911749,
+      "fill_ratio": 0.9632669352887322
+    }
+  },
+  "by_volatility": {
+    "low": {
+      "count": 67,
+      "rl_count": 67,
+      "rl_ratio": 1.0,
+      "slippage_mean": 4.619371472586044,
+      "fill_ratio": 0.9619799697371177
+    },
+    "medium": {
+      "count": 67,
+      "rl_count": 0,
+      "rl_ratio": 0.0,
+      "slippage_mean": 5.894004909788669,
+      "fill_ratio": 0.9600715374171924
+    },
+    "high": {
+      "count": 66,
+      "rl_count": 0,
+      "rl_ratio": 0.0,
+      "slippage_mean": 5.903815890911749,
+      "fill_ratio": 0.9632669352887322
+    }
+  },
+  "status": "complete",
+  "warnings": []
+}
