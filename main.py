@@ -60,7 +60,7 @@ import signal
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
