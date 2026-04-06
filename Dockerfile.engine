@@ -1,0 +1,76 @@
+# HMATS v6.8.0 — Engine Container
+# Runs the trading engine (main.py) with 4H tick loop
+#
+# Build:  docker build -f Dockerfile.engine -t hmats-engine:6.8.0 .
+# Run:    docker run -d --name hmats-engine --env-file .env \
+#           -v hmats-models:/opt/hmats/models:ro \
+#           -v hmats-data:/opt/hmats/data \
+#           -v hmats-logs:/opt/hmats/logs \
+#           hmats-engine:6.8.0 --mode paper
+
+FROM python:3.12-slim-bookworm AS base
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONFAULTHANDLER=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /opt/hmats
+
+# System deps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl ca-certificates gcc g++ && \
+    rm -rf /var/lib/apt/lists/*
+
+# Non-root user
+RUN groupadd --gid 1000 hmats && \
+    useradd --uid 1000 --gid hmats --shell /bin/bash --create-home hmats && \
+    mkdir -p /opt/hmats/data /opt/hmats/logs /opt/hmats/models && \
+    chown -R hmats:hmats /opt/hmats
+
+# Python deps
+COPY --chown=hmats:hmats requirements-runtime.txt ./
+RUN pip install --no-cache-dir -r requirements-runtime.txt && \
+    pip install --no-cache-dir ccxt filterpy ta
+
+# Application code
+COPY --chown=hmats:hmats main.py ./
+COPY --chown=hmats:hmats core/ ./core/
+COPY --chown=hmats:hmats agents/ ./agents/
+COPY --chown=hmats:hmats analytics/ ./analytics/
+COPY --chown=hmats:hmats configs/ ./configs/
+COPY --chown=hmats:hmats defense/ ./defense/
+COPY --chown=hmats:hmats drl/ ./drl/
+COPY --chown=hmats:hmats engine/ ./engine/
+COPY --chown=hmats:hmats exchange/ ./exchange/
+COPY --chown=hmats:hmats execution/ ./execution/
+COPY --chown=hmats:hmats infra/ ./infra/
+COPY --chown=hmats:hmats integration/ ./integration/
+COPY --chown=hmats:hmats liquidity/ ./liquidity/
+COPY --chown=hmats:hmats market/ ./market/
+COPY --chown=hmats:hmats orchestration/ ./orchestration/
+COPY --chown=hmats:hmats portfolio/ ./portfolio/
+COPY --chown=hmats:hmats risk/ ./risk/
+COPY --chown=hmats:hmats signals/ ./signals/
+COPY --chown=hmats:hmats strategies/ ./strategies/
+COPY --chown=hmats:hmats data_mgmt/ ./data_mgmt/
+COPY --chown=hmats:hmats shadow/ ./shadow/
+COPY --chown=hmats:hmats tools/ ./tools/
+COPY --chown=hmats:hmats dashboard/ ./dashboard/
+
+VOLUME ["/opt/hmats/models", "/opt/hmats/data", "/opt/hmats/logs"]
+
+USER hmats
+
+HEALTHCHECK --interval=60s --timeout=10s --start-period=120s --retries=3 \
+    CMD python -c "\
+import json, time; \
+from pathlib import Path; \
+s = Path('/opt/hmats/data/dashboard_state.json'); \
+assert s.exists(), 'no state file'; \
+d = json.loads(s.read_text()); \
+assert 'updated_at' in d, 'no timestamp'; \
+print('OK')" || exit 1
+
+ENTRYPOINT ["python", "main.py"]
+CMD ["--mode", "verify"]

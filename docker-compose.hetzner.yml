@@ -1,0 +1,102 @@
+# HMATS v6.8.0 — Hetzner Cloud Compose
+# Usage:
+#   docker compose -f docker-compose.hetzner.yml up -d
+#   docker compose -f docker-compose.hetzner.yml logs -f hmats-engine
+#   docker compose -f docker-compose.hetzner.yml down
+
+services:
+  hmats-engine:
+    build:
+      context: .
+      dockerfile: Dockerfile.engine
+    image: hmats-engine:6.8.0
+    container_name: hmats-engine
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - HMATS_BASE_DIR=/opt/hmats
+      - HMATS_STATE_DIR=/opt/hmats/data
+      - HMATS_LOG_DIR=/opt/hmats/logs
+      - HMATS_MODEL_DIR=/opt/hmats/models
+      - HMATS_CONFIG_FILE=/opt/hmats/configs/cloud_production.json
+      - HMATS_RUNTIME_MODE=PROD
+    volumes:
+      - hmats-models:/opt/hmats/models:ro
+      - hmats-data:/opt/hmats/data
+      - hmats-logs:/opt/hmats/logs
+    command: ["--mode", "paper"]
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+          memory: 2G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+    healthcheck:
+      test: >
+        python -c "
+        import json, time;
+        from pathlib import Path;
+        s = Path('/opt/hmats/data/dashboard_state.json');
+        assert s.exists(), 'no state';
+        d = json.loads(s.read_text());
+        assert 'updated_at' in d, 'no ts';
+        print('OK')
+        "
+      interval: 120s
+      timeout: 10s
+      start_period: 180s
+      retries: 3
+
+  hmats-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    image: hmats-api:6.8.0
+    container_name: hmats-api
+    restart: unless-stopped
+    environment:
+      - HMATS_BASE_DIR=/opt/hmats
+      - HMATS_STATE_DIR=/opt/hmats/data
+      - HMATS_LOG_DIR=/opt/hmats/logs
+    volumes:
+      - hmats-data:/opt/hmats/data:ro
+      - hmats-logs:/opt/hmats/logs:ro
+    ports:
+      - "127.0.0.1:8080:8080"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+        reservations:
+          cpus: "0.1"
+          memory: 64M
+    depends_on:
+      hmats-engine:
+        condition: service_started
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+volumes:
+  hmats-models:
+    driver: local
+  hmats-data:
+    driver: local
+  hmats-logs:
+    driver: local
