@@ -23,7 +23,7 @@ Author: Quant Research Team
 
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Optional, Tuple, NamedTuple
+from typing import Any, Dict, List, Optional, Tuple, NamedTuple
 from dataclasses import dataclass, field
 from collections import deque
 from enum import Enum
