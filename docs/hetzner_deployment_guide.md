@@ -54,9 +54,9 @@ cat $env:USERPROFILE\.ssh\hetzner_hmats.pub
 
 | 选项 | 推荐值 | 说明 |
 |------|--------|------|
-| **Location** | `Falkenstein (eu-central)` | 德国，离 Kraken 最近 |
+| **Location** | `Nuremberg (eu-central)` | 德国，离 Kraken 最近 |
 | **Image** | `Ubuntu 24.04` | LTS，稳定 |
-| **Type** | `CPX21` (3 vCPU, 4GB RAM, 80GB SSD) | 够跑 runtime + dashboard |
+| **Type** | `CPX22` | 够跑 runtime + dashboard |
 | **SSH Key** | 选择 `hmats-deploy` | 刚添加的密钥 |
 | **Networking** | 勾选 IPv4 | 需要公网 IP |
 | **Name** | `hmats-prod` | 服务器名 |
@@ -526,7 +526,7 @@ scp -r hmats:~/hmats/app/data/shadow_ledger/ C:\Users\melod\Downloads\hmats_shad
 
 | 项目 | 月费 | 说明 |
 |------|------|------|
-| CPX21 服务器 | €7.49 | 3 vCPU, 4GB RAM, 80GB SSD |
+| CPX22 服务器 | 按实际定价 | Nuremberg 数据中心 |
 | IPv4 地址 | 含在内 | 已包含 |
 | 流量 | 免费 | 20TB/月 出站免费 |
 | 快照备份 | ~€0.50 | 可选，按使用量 |
