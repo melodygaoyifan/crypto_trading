@@ -4578,7 +4578,7 @@ class HMATSProductionRunner:
                 _drl_cfg.get("paper_bootstrap_authority", "")
             )
             if (
-                self.config.mode == RunMode.PAPER
+                self.config.mode in (RunMode.PAPER, RunMode.LIVE)
                 and _paper_bootstrap
                 and self._drl_models_ready > 0
                 and self._drl_authority_level in ("DISABLED", "SHADOW")
