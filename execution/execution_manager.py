@@ -1150,7 +1150,10 @@ class ExecutionManager:
                 amount=size,
                 params=order_params,
             )
-            
+
+            if order is None:
+                raise RuntimeError("Exchange returned None for market order (possible nonce/auth error)")
+
             filled_price = order.get('average', order.get('price', 0))
             
             return OrderResult(

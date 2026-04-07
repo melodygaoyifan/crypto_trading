@@ -4213,7 +4213,21 @@ class HMATSProductionRunner:
                 dms_timeout = self.config.dms_timeout_seconds
                 # [FIX-DMS-LIVE-GUARD] In LIVE mode, dead-man switch MUST have a
                 # real Kraken client. Without it, there's no server-side crash protection.
-                _dms_client = self.kraken_rest if not is_dry else None
+                _dms_client = None
+                if not is_dry:
+                    # [FIX-DMS-NONCE] DMS gets its own KrakenRESTClient to avoid nonce
+                    # collisions with the main execution thread. Shared ccxt instance
+                    # causes EAPI:Invalid nonce when DMS heartbeat and trade execution
+                    # call Kraken API simultaneously.
+                    try:
+                        _dms_client = KrakenRESTClient(
+                            api_key=self.kraken_rest._api_key,
+                            api_secret=self.kraken_rest._api_secret,
+                        )
+                        logger.info("  [FIX-DMS-NONCE] DMS using dedicated Kraken client")
+                    except Exception as _dms_e:
+                        logger.warning(f"  [FIX-DMS-NONCE] Dedicated client failed ({_dms_e}), falling back to shared")
+                        _dms_client = self.kraken_rest
                 if not is_dry and _dms_client is None:
                     raise RuntimeError(
                         "LIVE mode requires Dead-Man Switch with authenticated Kraken client. "

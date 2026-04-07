@@ -213,6 +213,6 @@
         "global_confidence_mult_clamp": [0.80, 1.15]
     },
     "sentiment_gate_config": {
-        "enabled": false
+        "enabled": true
     }
 }
