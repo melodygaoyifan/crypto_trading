@@ -51,7 +51,9 @@ WORKDIR /opt/hmats
 # Install Python dependencies
 COPY --chown=hmats:hmats requirements-runtime.txt ./
 RUN pip install --no-cache-dir -r requirements-runtime.txt \
-    && pip install --no-cache-dir ccxt filterpy ta streamlit
+    && pip install --no-cache-dir ccxt filterpy ta streamlit \
+    && pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu \
+    && pip install --no-cache-dir sb3-contrib stable-baselines3
 
 # Copy application code
 COPY --chown=hmats:hmats main.py ./
