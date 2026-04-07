@@ -12,10 +12,6 @@ venv_cuda/
 logs/
 archive/
 tests/
-training/training_data/
-training/sentiment/
-training/run_training.py
-training/train_*.py
 /models/
 docs/
 reports/
@@ -30,23 +26,24 @@ data/drl_training/
 !requirements*.txt
 *.log
 *.parquet
-*.pkl
-*.zip
-*.npz
-*.pt
-*.pth
-*.csv
+
+# Exclude training binaries but keep .py modules
+training/training_data/
+training/sentiment/
+training/run_training.py
+training/train_*.py
+training/**/*.pt
+training/**/*.pkl
+training/**/*.zip
+training/**/*.npz
+training/**/*.csv
+
+# Exclude root-level binaries
 *.db
 *.db-shm
 *.db-wal
 *.bak*
 *.tfevents*
-# Re-include training Python modules needed for DRL inference
-!training/__init__.py
-!training/models/__init__.py
-!training/models/film_extractor.py
-!training/models/feature_extractors.py
-!training/drl/
 docker-compose*.yml
 Dockerfile*
 .dockerignore
