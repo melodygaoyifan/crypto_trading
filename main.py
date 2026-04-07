@@ -4116,6 +4116,13 @@ class HMATSProductionRunner:
                 except Exception as e:
                     logger.warning(f"  CCXT/Kraken: FAILED ({e})")
 
+        # [FIX-ACCT-SYNC] Wire ccxt exchange to account_sync for LIVE balance fetching
+        if self.account_sync and not self.account_sync.dry_run and not self.account_sync.exchange_client:
+            _acct_exchange = getattr(self.kraken_rest, '_exchange', None) or self._ccxt_exchange
+            if _acct_exchange:
+                self.account_sync.exchange_client = _acct_exchange
+                logger.info(f"  [FIX-ACCT-SYNC] AccountSync wired to {type(_acct_exchange).__name__}")
+
         # [FIX-FEE-TIER] Query actual Kraken fee tier and update execution constants.
         # Hardcoded 26/16 bps may not match actual account tier.
         if self.kraken_rest and self.config.mode in [RunMode.PAPER, RunMode.LIVE]:
