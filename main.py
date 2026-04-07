@@ -5448,6 +5448,7 @@ class HMATSProductionRunner:
                         "source_status": "available",
                     })
                     market_data["fear_greed_index"] = fg_value / 100.0  # Normalize to 0-1
+                    market_data["_fear_greed_value"] = fg_value  # [SENT-SWITCH] Raw 0-100 for strategy selector
 
                     # Route F&G direction to fusion engine's sentiment signal
                     # F&G (0-100) ->direction [-1, +1] ->zscore [-3, +3]
@@ -11734,9 +11735,12 @@ class HMATSProductionRunner:
                         direction=agent_signals.get('regime_direction', 0),
                         confidence=agent_signals.get('regime_confidence', 0)),
                 }
+                # [SENT-SWITCH] Sentiment authority upgrades to DECIDE at extremes
+                _fg_raw = market_data.get("_fear_greed_value", 50)
+                _sent_authority = 'DECIDE' if (_fg_raw is not None and (_fg_raw < 20 or _fg_raw > 80)) else 'CONFIRM'
                 pc_authority = {
                     'quant': SimpleNamespace(value='DECIDE'),
-                    'sentiment': SimpleNamespace(value='CONFIRM'),
+                    'sentiment': SimpleNamespace(value=_sent_authority),
                     'regime': SimpleNamespace(value='CONFIRM'),
                 }
                 pc_result = self._partial_consensus.check(

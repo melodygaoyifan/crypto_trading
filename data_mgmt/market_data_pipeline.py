@@ -919,6 +919,28 @@ class MarketDataPipeline:
                 raw.get("volume_ratio", 1.0), gmm_regime_name,
             )
 
+            # [SENT-SWITCH] Sentiment-driven strategy fitness modulation
+            # Extreme fear → boost mean_revert (contrarian), suppress momentum
+            # Extreme greed → boost momentum (trend-following), suppress mean_revert
+            # Neutral → no modification (sentiment stays silent)
+            _fg_value = raw.get("_fear_greed_value", 50)
+            if _fg_value is not None and isinstance(_fg_value, (int, float)):
+                if _fg_value < 25:  # Extreme fear
+                    _sent_boost = (25 - _fg_value) / 25.0  # 0→1.0 as fear increases
+                    if "mean_revert" in strategies:
+                        strategies["mean_revert"]["strength"] *= (1.0 + 0.4 * _sent_boost)
+                    if "momentum" in strategies:
+                        strategies["momentum"]["strength"] *= (1.0 - 0.3 * _sent_boost)
+                elif _fg_value > 75:  # Extreme greed
+                    _sent_boost = (_fg_value - 75) / 25.0  # 0→1.0 as greed increases
+                    if "momentum" in strategies:
+                        strategies["momentum"]["strength"] *= (1.0 + 0.3 * _sent_boost)
+                    if "mean_revert" in strategies:
+                        strategies["mean_revert"]["strength"] *= (1.0 - 0.2 * _sent_boost)
+                if _fg_value < 20 or _fg_value > 80:
+                    if "vrp" in strategies:
+                        strategies["vrp"]["strength"] *= 1.3  # Extreme sentiment → vol premium
+
             # [FIX-MOM-CONSOLIDATION] Hard filter: momentum must not win in
             # low-vol consolidation regimes. Paper run showed momentum in
             # QUIET_ACCUMULATION/WEAK_CONSOLIDATION lost on every exit.
