@@ -32,9 +32,9 @@ class AlphaGateSettings:
     min_alpha_bps_short: float = 0.0
     alpha_stage_selector: str = ""
 
-    quiet_accum_min_direction: float = 0.35
+    quiet_accum_min_direction: float = 0.15       # [UTIL-2] was 0.35 — unblocks SOL in quiet regimes
     quiet_accum_min_direction_by_asset: Dict[str, float] = field(default_factory=dict)
-    quiet_accum_min_direction_short: float = 0.35
+    quiet_accum_min_direction_short: float = 0.15  # [UTIL-2] was 0.35
     quiet_accum_min_direction_short_by_asset: Dict[str, float] = field(default_factory=dict)
 
     opportunity_actionable_min_direction_short: float = 0.05

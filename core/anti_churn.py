@@ -22,7 +22,7 @@ class AntiChurnManager:
         ac2_max_per_asset: int = 2,
         ac2_max_global: int = 4,       # [CALIBRATION] was 6. 4 global = fewer concurrent entries
         ac2_window_ticks: int = 6,
-        ac5_max_per_day: int = 4,      # [CALIBRATION] was 8. 4 fills × 15bps = 60bps/day max fee drag
+        ac5_max_per_day: int = 8,      # [UTIL-4] was 4. 8 fills × 15bps = 120bps/day max fee drag. Needed for higher utilization
     ):
         # AC-1: Minimum hold time
         self.ac1_min_hold_ticks = ac1_min_hold_ticks

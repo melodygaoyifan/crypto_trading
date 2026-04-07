@@ -1476,20 +1476,20 @@ class ProductionConfig:
         "BULL_TREND": 1.2,
         "BEAR_TREND": 1.0,
         "UNCERTAIN": 0.8,       # [UNLEASH] UL-8a: was 0.6 ->0.8
-        "MEAN_REVERT": 0.5,    # [UNLEASH] UL-8a: was 0.3 ->0.5 (Best-of-N mean_revert needs this)
+        "MEAN_REVERT": 0.75,   # [UTIL-3] was 0.5 — mean_revert is primary strategy in this regime
         "TRANSITION": 0.3,
-        "SIDEWAYS": 0.5,
+        "SIDEWAYS": 0.70,      # [UTIL-3] was 0.5
         "UNKNOWN": 0.90,   # [FIX-M3] Was 0.75. Unknown ≠ bad regime. Neutral-leaning to avoid cold-start penalty.
         # --- GMM 6-regime names -profit-maximizing (backtest-driven) ---
         "MOMENTUM_RALLY": 1.3,         # Strong trend following (was 1.5)
-        "QUIET_ACCUMULATION": 0.8,     # Allow small positions (was 0.5)
+        "QUIET_ACCUMULATION": 1.0,     # [UTIL-3] was 0.8 — full sizing in quiet regime
         "PANIC_SELLOFF": 1.2,          # Short-biased profits (was 0.2)
         "VOLATILE_CHOP": 1.5,          # Best regime: 71% WR, +503% (was 0.3)
-        "EXTREME_VOLATILITY": 0.5,     # Cautious but active (was 0.1)
+        "EXTREME_VOLATILITY": 0.65,    # [UTIL-3] was 0.5 — still cautious but less restrictive
         "WEAK_CONSOLIDATION": 1.0,     # [FIX-H2] Was 0.6 — mean_revert has highest edge in consolidation. Neutral power allows full sizing.
         # [P2] Newly named regimes -keep default 0.75 until backtest calibration
-        "STEADY_UPTREND": 0.75,        # Calm bullish grind (TODO: calibrate after 2 weeks data)
-        "NEUTRAL_DRIFT": 0.75,         # Directionless but orderly (TODO: calibrate after 2 weeks data)
+        "STEADY_UPTREND": 0.90,        # [UTIL-3] was 0.75 — calm bullish grind deserves near-full sizing
+        "NEUTRAL_DRIFT": 0.85,         # [UTIL-3] was 0.75 — orderly market, allow moderate sizing
     })
     regime_power_allow_scale_in: Dict[str, bool] = field(default_factory=lambda: {
         "STRONG_TREND": True,
@@ -4583,7 +4583,7 @@ class HMATSProductionRunner:
                 and self._drl_models_ready > 0
                 and self._drl_authority_level in ("DISABLED", "SHADOW")
             ):
-                if _paper_bootstrap in ("EXIT_ONLY",):
+                if _paper_bootstrap in ("EXIT_ONLY", "ACTIVE"):
                     self._promotion_gate.promote(_paper_bootstrap)
                     self._drl_authority_level = self._promotion_gate.get_authority_level()
                     self._drl_bootstrap_applied = True
@@ -9614,14 +9614,26 @@ class HMATSProductionRunner:
                             f"{_struct_runtime['structure_soft_override_reason']}"
                         )
                     else:
-                        intent.veto_active = True
-                        intent.veto_reason = "[STRUCTURE] LONG blocked -no fractal high break"
-                        logger.info(
-                            f"[STRUCTURE] {asset}: LONG blocked "
-                            f"(resistance={_near.get('nearest_resistance', 'N/A')}, "
-                            f"support={_near.get('nearest_support', 'N/A')}, "
-                            f"gap_bps={_struct_gap_bps if _struct_gap_bps is not None else 'N/A'})"
-                        )
+                        # [UTIL-1] Bypass structure veto for T1 new entries — keep for T2+ scale-in
+                        _existing_pos = self._paper_positions.get(asset, {})
+                        _existing_exp = abs(float(_existing_pos.get("exposure", 0) or 0))
+                        if _existing_exp < 0.001:
+                            # T1 new entry: allow without fractal break, reduce size as caution
+                            intent.target_exposure *= 0.75
+                            _struct_runtime["structure_t1_bypass"] = True
+                            logger.info(
+                                f"[STRUCTURE] {asset}: LONG T1-bypass (no position, size×0.75) "
+                                f"gap_bps={_struct_gap_bps if _struct_gap_bps is not None else 'N/A'}"
+                            )
+                        else:
+                            intent.veto_active = True
+                            intent.veto_reason = "[STRUCTURE] LONG blocked -no fractal high break"
+                            logger.info(
+                                f"[STRUCTURE] {asset}: LONG blocked "
+                                f"(resistance={_near.get('nearest_resistance', 'N/A')}, "
+                                f"support={_near.get('nearest_support', 'N/A')}, "
+                                f"gap_bps={_struct_gap_bps if _struct_gap_bps is not None else 'N/A'})"
+                            )
                 elif intent.direction < 0 and not _struct.can_short:
                     if _allow_structure_soft_override(is_long=False):
                         _pre_struct_exp = intent.target_exposure
@@ -9725,11 +9737,23 @@ class HMATSProductionRunner:
                                 f"{_struct_runtime['structure_pre_veto_hold_reason']} -> HOLD"
                             )
                         else:
-                            intent.veto_active = True
-                            intent.veto_reason = "[STRUCTURE] SHORT blocked -no fractal low break"
-                            logger.info(
-                                f"[STRUCTURE] {asset}: SHORT blocked "
-                                f"(support={_near.get('nearest_support', 'N/A')}, "
+                            # [UTIL-1] Bypass structure veto for T1 new entries
+                            _existing_pos_s = self._paper_positions.get(asset, {})
+                            _existing_exp_s = abs(float(_existing_pos_s.get("exposure", 0) or 0))
+                            if _existing_exp_s < 0.001:
+                                intent.target_exposure *= 0.75
+                                _struct_runtime["structure_t1_bypass"] = True
+                                logger.info(
+                                    f"[STRUCTURE] {asset}: SHORT T1-bypass (no position, size×0.75) "
+                                    f"gap_bps={_struct_gap_bps if _struct_gap_bps is not None else 'N/A'}"
+                                )
+                            else:
+                                intent.veto_active = True
+                                intent.veto_reason = "[STRUCTURE] SHORT blocked -no fractal low break"
+                            if intent.veto_active:
+                                logger.info(
+                                    f"[STRUCTURE] {asset}: SHORT blocked "
+                                    f"(support={_near.get('nearest_support', 'N/A')}, "
                                 f"resistance={_near.get('nearest_resistance', 'N/A')}, "
                                 f"support_gap_bps={_struct_gap_to_support_bps if _struct_gap_to_support_bps is not None else 'N/A'}, "
                                 f"resistance_gap_bps={_struct_gap_to_resistance_bps if _struct_gap_to_resistance_bps is not None else 'N/A'}, "
@@ -19389,11 +19413,11 @@ class HMATSProductionRunner:
         return self._market_pipeline.generate_verification_data(asset)
 
     def _normalize_drl_paper_bootstrap_authority(self, requested: Any) -> str:
-        """Fail-closed paper bootstrap: never let bootstrap start with entry authority."""
+        """Paper bootstrap authority normalization.
+        [UTIL-5] ACTIVE now allowed — auto-demotion safety (5 consec losses / 15% DD) still enforced.
+        """
         normalized = str(requested or "").upper().strip()
-        if normalized == "ACTIVE":
-            return "EXIT_ONLY"
-        if normalized in ("EXIT_ONLY", "SHADOW", "DISABLED"):
+        if normalized in ("ACTIVE", "EXIT_ONLY", "SHADOW", "DISABLED"):
             return normalized
         return ""
 

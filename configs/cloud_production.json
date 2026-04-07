@@ -3,6 +3,17 @@
     "_description": "Cloud-optimized single-exchange production config",
     "_deploy_mode": "SINGLE_EXCHANGE_KRAKEN_ONLY",
     "mode": "PRODUCTION",
+    "drl": {
+        "paper_bootstrap_authority": "ACTIVE",
+        "promotion_gate": {
+            "enable": true,
+            "consecutive_loss_threshold": 5,
+            "drawdown_trigger_pct": 0.15,
+            "demote_to": "EXIT_ONLY",
+            "recovery_period_days": 3,
+            "max_demotions_before_disable": 3
+        }
+    },
     "_runtime": {
         "_note": "NOT LOADED by ProductionConfig.from_file(). Paths come from env vars or hardcoded defaults.",
         "base_dir_env": "HMATS_BASE_DIR",
