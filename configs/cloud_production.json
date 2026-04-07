@@ -197,7 +197,7 @@
 
         "expert_gating_enabled": true,
         "expert_gating_min_trades": 25,
-        "expert_gating_max_boost": 1.15,
+        "expert_gating_max_boost": 1.20,
         "expert_gating_min_weight": 0.70,
         "expert_gating_shrinkage_strength": 0.6,
 
@@ -206,11 +206,14 @@
         "exec_feedback_slippage_penalty_bps": 3.0,
         "exec_feedback_maker_bonus_threshold": 0.70,
         "exec_feedback_maker_bonus": 1.03,
-        "exec_feedback_gate_mult_range": [0.95, 1.05],
+        "exec_feedback_gate_mult_range": [0.93, 1.07],
 
-        "global_gate_mult_clamp": [0.85, 1.10],
-        "global_size_mult_clamp": [0.90, 1.15],
-        "global_confidence_mult_clamp": [0.80, 1.15]
+        "global_gate_mult_clamp": [0.80, 1.15],
+        "global_size_mult_clamp": [0.85, 1.25],
+        "global_confidence_mult_clamp": [0.75, 1.25]
+    },
+    "thesis_budget": {
+        "max_reentry_after_budget_hit": 1
     },
     "sentiment_gate_config": {
         "enabled": true
