@@ -19202,6 +19202,24 @@ class HMATSProductionRunner:
                     if _p > 0:
                         _live_prices[asset] = _p
 
+                # [LIVE-DASH] Export dashboard state for monitoring (same as paper loop)
+                if not hasattr(self, '_live_round_count'):
+                    self._live_round_count = 0
+                    self._live_tick_count = 0
+                self._live_round_count += 1
+                self._live_tick_count += len(self.config.assets)
+                _live_asset_data = {}
+                for _ld_asset in self.config.assets:
+                    _ld_pos = self._paper_positions.get(_ld_asset, {})
+                    _live_asset_data[_ld_asset] = {
+                        "price": _live_prices.get(_ld_asset, 0),
+                        "regime": getattr(self, '_last_regime', {}).get(_ld_asset, "UNKNOWN"),
+                    }
+                try:
+                    self._export_dashboard_state(self._live_round_count, self._live_tick_count, _live_asset_data)
+                except Exception as _ld_err:
+                    logger.debug(f"[LIVE-DASH] Dashboard export failed: {_ld_err}")
+
                 # T24: Feed correlation controller with all-asset prices (once per tick cycle)
                 if (STRATEGIC_COORDINATOR_AVAILABLE and self.strategic_coordinator
                         and hasattr(self.strategic_coordinator, '_correlation_controller')
