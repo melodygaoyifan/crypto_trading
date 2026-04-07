@@ -77,9 +77,10 @@ COPY --chown=hmats:hmats signals/ ./signals/
 COPY --chown=hmats:hmats strategies/ ./strategies/
 COPY --chown=hmats:hmats data_mgmt/ ./data_mgmt/
 COPY --chown=hmats:hmats dashboard/ ./dashboard/
+# Training Python modules needed for DRL model deserialization
 COPY --chown=hmats:hmats training/__init__.py ./training/
-COPY --chown=hmats:hmats training/models/ ./training/models/
-COPY --chown=hmats:hmats training/drl/ ./training/drl/
+COPY --chown=hmats:hmats training/models/__init__.py training/models/film_extractor.py training/models/feature_extractors.py ./training/models/
+COPY --chown=hmats:hmats training/drl/__init__.py training/drl/features.py training/drl/model.py ./training/drl/
 COPY --chown=hmats:hmats shadow/ ./shadow/
 COPY --chown=hmats:hmats tools/ ./tools/
 

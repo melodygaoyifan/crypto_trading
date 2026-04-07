@@ -41,6 +41,12 @@ data/drl_training/
 *.db-wal
 *.bak*
 *.tfevents*
+# Re-include training Python modules needed for DRL inference
+!training/__init__.py
+!training/models/__init__.py
+!training/models/film_extractor.py
+!training/models/feature_extractors.py
+!training/drl/
 docker-compose*.yml
 Dockerfile*
 .dockerignore
