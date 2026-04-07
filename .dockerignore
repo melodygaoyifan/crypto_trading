@@ -14,10 +14,8 @@ archive/
 tests/
 training/training_data/
 training/sentiment/
-training/*.py
-training/models/*.pt
-training/models/*.zip
-training/models/*.pkl
+training/run_training.py
+training/train_*.py
 models/
 docs/
 reports/
