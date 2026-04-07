@@ -16,7 +16,7 @@ training/training_data/
 training/sentiment/
 training/run_training.py
 training/train_*.py
-models/
+/models/
 docs/
 reports/
 scripts/
