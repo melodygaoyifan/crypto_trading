@@ -218,11 +218,11 @@
     "sentiment_gate_config": {
         "enabled": true
     },
-    "g6_config": {
+    "g6": {
         "enabled": true,
         "shadow_mode": false
     },
-    "allocation_config": {
+    "allocation": {
         "live_enabled": true
     }
 }
