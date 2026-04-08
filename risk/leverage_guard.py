@@ -30,6 +30,7 @@ Usage:
 """
 
 import logging
+import time
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Tuple, Optional, Dict, Any
@@ -177,8 +178,18 @@ class LeverageGuard:
             (approved, reason) tuple
         """
         self._stats["orders_checked"] += 1
-        
+
         try:
+            # Check 0: Margin health breach — block risk-increasing, allow reduce-only
+            if self.is_margin_breach():
+                _is_reducing = position_notional_usd < existing_position_usd
+                if not _is_reducing:
+                    return self._reject(
+                        f"MARGIN_BREACH: risk-increasing order blocked. "
+                        f"Only reduce-risk orders allowed until margin health recovers."
+                    )
+                logger.info("[LEVERAGE_GUARD] Margin breach active but order is risk-reducing — allowing")
+
             # Check 1: Leverage limit
             approved, reason = self._check_leverage_limit(
                 position_notional_usd, account_equity
@@ -443,6 +454,78 @@ class LeverageGuard:
     def update_position_pnl(self, asset: str, pnl: float):
         """Update tracked P&L for anti-martingale checking."""
         self._position_pnls[asset] = pnl
+
+    # =========================================================================
+    # MARGIN HEALTH AWARENESS (Phase 6)
+    # =========================================================================
+
+    def update_margin_health(
+        self,
+        effective_leverage: float,
+        initial_margin_pct: float,
+        maintenance_margin_pct: float,
+        unrealized_funding: float = 0.0,
+        equity: float = 0.0,
+    ):
+        """Ingest margin health fields from derivatives account state.
+
+        Can be called each tick with data from account_sync or derivatives client.
+        Works in data_only mode (no execution needed to track margin).
+        """
+        self._margin_health = {
+            "effective_leverage": effective_leverage,
+            "initial_margin_pct": initial_margin_pct,
+            "maintenance_margin_pct": maintenance_margin_pct,
+            "unrealized_funding": unrealized_funding,
+            "equity": equity,
+            "timestamp": time.time(),
+        }
+
+        # Check configurable guards
+        breaches = []
+
+        if effective_leverage > self.config.max_leverage:
+            breaches.append(
+                f"EFFECTIVE_LEVERAGE {effective_leverage:.1f}x > max {self.config.max_leverage:.1f}x"
+            )
+
+        # Maintenance margin buffer: warn if IM used > 80% of equity
+        if equity > 0 and initial_margin_pct > 0:
+            im_ratio = initial_margin_pct / 100.0
+            if im_ratio > 0.80:
+                breaches.append(
+                    f"MARGIN_UTILIZATION {im_ratio:.0%} > 80% — approaching liquidation zone"
+                )
+
+        # Liquidation proximity: warn if MM buffer < configured threshold
+        if equity > 0 and maintenance_margin_pct > 0:
+            mm_buffer = 1.0 - (maintenance_margin_pct / 100.0)
+            if mm_buffer < self.config.liquidation_buffer_pct:
+                breaches.append(
+                    f"LIQUIDATION_PROXIMITY buffer={mm_buffer:.1%} < "
+                    f"required={self.config.liquidation_buffer_pct:.1%}"
+                )
+
+        if breaches:
+            self._margin_breach_active = True
+            for b in breaches:
+                logger.warning(f"[LEVERAGE_GUARD] MARGIN BREACH: {b}")
+        else:
+            self._margin_breach_active = False
+
+    def is_margin_breach(self) -> bool:
+        """True if any margin health guard is breached.
+
+        When breached:
+        - Block risk-increasing orders (new entries, scale-in)
+        - Allow reduce-risk only (partial close, full close)
+        - Escalate to kill-switch if configured
+        """
+        return getattr(self, "_margin_breach_active", False)
+
+    def get_margin_health(self) -> Dict[str, Any]:
+        """Get current margin health state for monitoring."""
+        return getattr(self, "_margin_health", {})
 
 
 # =============================================================================

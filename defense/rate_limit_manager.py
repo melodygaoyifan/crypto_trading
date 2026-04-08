@@ -247,40 +247,78 @@ class KrakenRateLimitManager:
         
         logger.info("KrakenRateLimitManager initialized")
     
-    def acquire(self, endpoint: KrakenEndpoint, block: bool = True, timeout: float = 30.0) -> bool:
-        """
-        Acquire rate limit token for endpoint.
-        
-        Args:
-            endpoint: Kraken endpoint to call
-            block: Whether to wait if limit reached
-            timeout: Max wait time in seconds
-            
-        Returns:
-            True if acquired, False if timeout or not blocking
+    # Priority tiers for rate limit budget allocation
+    PRIORITY_EMERGENCY = 0   # cancel / reduce-risk / dead-man upkeep
+    PRIORITY_MAINTENANCE = 1 # cancel-replace / maintenance
+    PRIORITY_NORMAL = 2      # normal entry / rebalance
+
+    # Reserve capacity for higher-priority actions
+    _PRIORITY_RESERVE = {
+        0: 1.00,  # Emergency: use full capacity
+        1: 0.90,  # Maintenance: use up to 90%
+        2: 0.75,  # Normal: use up to 75% (reserve 25% for emergencies)
+    }
+
+    def acquire(
+        self,
+        endpoint: KrakenEndpoint,
+        block: bool = True,
+        timeout: float = 30.0,
+        priority: int = 2,
+    ) -> bool:
+        """Acquire rate limit token for endpoint with priority routing.
+
+        Priority levels:
+          0 = EMERGENCY (cancel, reduce-risk, dead-man) — uses full capacity
+          1 = MAINTENANCE (cancel-replace) — uses up to 90%
+          2 = NORMAL (entry, rebalance) — uses up to 75%
+
+        Lower-priority requests are throttled when budget is constrained,
+        reserving headroom for higher-priority risk management actions.
         """
         bucket = self.buckets[endpoint.category]
         cost = endpoint.cost
-        
+
+        # Apply priority-based capacity limit
+        reserve = self._PRIORITY_RESERVE.get(priority, 0.75)
+        effective_cap = bucket.effective_max * reserve
+
         start_time = time.time()
-        
+
         while True:
-            can_proceed, wait_time = bucket.can_request(cost)
-            
-            if can_proceed:
-                bucket.consume(cost)
-                return True
-            
+            with bucket._lock:
+                bucket._decay()
+                if bucket.current_counter + cost <= effective_cap:
+                    bucket.current_counter += cost
+                    bucket.total_requests += 1
+                    bucket.total_cost += cost
+                    if priority <= 1:
+                        logger.debug(
+                            f"[RATE_LIMIT] P{priority} {endpoint._name}: acquired "
+                            f"(counter={bucket.current_counter:.1f}/{effective_cap:.1f})"
+                        )
+                    return True
+
+                wait_time = (bucket.current_counter + cost - effective_cap) / bucket.decay_rate
+
             if not block:
+                if priority >= 2:
+                    logger.info(
+                        f"[RATE_LIMIT] P{priority} {endpoint._name}: THROTTLED "
+                        f"(counter={bucket.current_counter:.1f}/{effective_cap:.1f})"
+                    )
                 return False
-            
+
             elapsed = time.time() - start_time
             if elapsed >= timeout:
-                logger.warning(f"Rate limit timeout for {endpoint.name}")
+                logger.warning(
+                    f"[RATE_LIMIT] P{priority} {endpoint._name}: TIMEOUT after {timeout:.0f}s"
+                )
                 return False
-            
-            # Wait with backoff
-            actual_wait = min(wait_time, timeout - elapsed, self.current_backoff_ms / 1000)
+
+            actual_wait = min(wait_time, timeout - elapsed)
+            if self.current_backoff_ms > 0:
+                actual_wait = min(actual_wait, self.current_backoff_ms / 1000)
             if actual_wait > 0:
                 time.sleep(actual_wait)
     

@@ -8128,8 +8128,12 @@ class HMATSProductionRunner:
             system_state=system_state,
         )
         
+        # Stamp audit trail IDs on intent (Phase 8)
+        intent.tick_id = tick_id
+        intent.intent_id = f"{tick_id}_{int(time.time()*1000) % 100000}"
+
         # ===== DIAG: Engine Decide =====
-        _diag_record('engine_decide', called=True, output={'system_mode': getattr(intent, 'system_mode', 'N/A'), 'direction': getattr(intent, 'direction', 'N/A'), 'target_exposure': getattr(intent, 'target_exposure', 'N/A'), 'veto_active': getattr(intent, 'veto_active', False), 'is_actionable': getattr(intent, 'is_actionable', False)}, consumed=True, note='CORE DECISION')
+        _diag_record('engine_decide', called=True, output={'system_mode': getattr(intent, 'system_mode', 'N/A'), 'direction': getattr(intent, 'direction', 'N/A'), 'target_exposure': getattr(intent, 'target_exposure', 'N/A'), 'veto_active': getattr(intent, 'veto_active', False), 'is_actionable': getattr(intent, 'is_actionable', False), 'intent_id': intent.intent_id}, consumed=True, note='CORE DECISION')
         # ===== DIAG_END: Engine Decide =====
 
         # [VC-0] Capture original exposure for cumulative multiplier monitoring
@@ -14763,6 +14767,8 @@ class HMATSProductionRunner:
                                     "funding_pnl": _funding_pnl,
                                     "trade_fee_usd": _exit_fee_usd,
                                     "margin_opening_fee_usd": 0.0,
+                                    "intent_id": getattr(intent, 'intent_id', ''),
+                                    "tick_id": getattr(intent, 'tick_id', ''),
                                 },
                             )
                             _note_shadow_fill(bool(_shadow_fill_ok))
@@ -15253,6 +15259,8 @@ class HMATSProductionRunner:
                                 "funding_pnl": _partial_funding_pnl,
                                 "trade_fee_usd": _partial_exit_fee_usd,
                                 "margin_opening_fee_usd": 0.0,
+                                "intent_id": getattr(intent, 'intent_id', ''),
+                                "tick_id": getattr(intent, 'tick_id', ''),
                             },
                         )
                         _note_shadow_fill(bool(_shadow_fill_ok))

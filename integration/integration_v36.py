@@ -132,7 +132,11 @@ from core.canonical_enums import (
 @dataclass
 class TradeIntentV36:
     """Trade intent from 4H decision layer (v3.6.1 canonical)."""
-    
+
+    # Audit trail linkage (Phase 8)
+    intent_id: str = ""       # unique per intent: f"{tick_ts}_{asset}"
+    tick_id: str = ""         # shared across all assets in one tick cycle
+
     # Core intent
     asset: str = ""
     direction: float = 0.0
@@ -273,7 +277,7 @@ class TradeIntentV36:
             f"FailureMemory={{caution={self.in_caution_mode},boost={self.opportunity_density_threshold-0.70:.2f}}} | "
             f"SOL_dom={{active={self.sol_dominance_active},TTL={self.sol_dominance_ttl}}} | "
             f"Deadlock={self.deadlock_resolution or 'NONE'} | "
-            f"Intent={{asset={self.asset},dir={self.direction:+.2f},exp={self.target_exposure:.1%}}} | "
+            f"Intent={{asset={self.asset},dir={self.direction:+.2f},exp={self.target_exposure:.1%},id={self.intent_id}}} | "
             f"Exec={self.execution_mode.value if hasattr(self.execution_mode, 'value') else self.execution_mode} | "
             f"Timing={{total={self.timing_score:.2f},spread={self.timing_spread_score or 0:.2f},depth={self.timing_depth_score or 0:.2f},vpin={self.timing_vpin_score or 0:.2f},ll={self.timing_lead_lag_score or 0:.2f}}}"
         )
