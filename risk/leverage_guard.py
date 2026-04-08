@@ -513,6 +513,34 @@ class LeverageGuard:
         else:
             self._margin_breach_active = False
 
+    def update_derivatives_context(
+        self,
+        asset: str,
+        funding_rate_8h: float = 0.0,
+        mark_price: float = 0.0,
+        open_interest_usd: float = 0.0,
+    ):
+        """Ingest live derivatives market data into risk engine.
+
+        Called per-asset per-tick with data from KrakenFuturesFeed.
+        Used for:
+        - Funding cost awareness in risk assessment
+        - Mark price for liquidation distance calculation
+        - OI for position-relative-to-market sizing
+        """
+        if not hasattr(self, "_derivs_context"):
+            self._derivs_context: Dict[str, Dict] = {}
+        self._derivs_context[asset.upper()] = {
+            "funding_rate_8h": funding_rate_8h,
+            "mark_price": mark_price,
+            "open_interest_usd": open_interest_usd,
+            "timestamp": time.time(),
+        }
+
+    def get_derivatives_context(self, asset: str) -> Dict[str, Any]:
+        """Get latest derivatives context for an asset."""
+        return getattr(self, "_derivs_context", {}).get(asset.upper(), {})
+
     def is_margin_breach(self) -> bool:
         """True if any margin health guard is breached.
 

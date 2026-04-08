@@ -984,6 +984,23 @@ class FrictionComponents:
             self.margin_opening_fee_bps = 0.0
             self.margin_rollover_bps_per_4h = 0.0
 
+    def update_funding_rate(self, funding_rate_8h: float):
+        """Ingest live perpetual funding rate as holding cost.
+
+        funding_rate_8h is the per-8h rate from Kraken Futures.
+        Converts to bps and adds to rollover cost so the alpha gate
+        accounts for real funding drag on leveraged/perpetual positions.
+        Consumed by cost model via _margin_cost_bps -> taker_friction_bps.
+        """
+        # funding_rate_8h is a ratio (e.g. 0.0001 = 1bps per 8h)
+        # Convert to bps: 0.0001 * 10000 = 1.0 bps
+        # A 4H position pays ~half an 8H funding period
+        funding_bps_per_4h = abs(funding_rate_8h) * 10000.0 * 0.5
+        self.margin_rollover_bps_per_4h = max(
+            self.margin_rollover_bps_per_4h,
+            funding_bps_per_4h,
+        )
+
     @property
     def _margin_cost_bps(self) -> float:
         """Total margin cost: opening fee + expected rollover fees."""

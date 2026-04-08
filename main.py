@@ -5398,6 +5398,18 @@ class HMATSProductionRunner:
                     f"OI=${_kf_ticker.open_interest_usd:,.0f}, "
                     f"premium={_kf_ticker.premium:.6f}"
                 )
+
+                # Wire live derivs data into risk engine (Phase 5)
+                if self.leverage_guard:
+                    try:
+                        self.leverage_guard.update_derivatives_context(
+                            asset=_kf_asset,
+                            funding_rate_8h=_kf_ticker.funding_rate_8h,
+                            mark_price=_kf_ticker.mark_price,
+                            open_interest_usd=_kf_ticker.open_interest_usd,
+                        )
+                    except Exception:
+                        pass
             elif _kf_ticker:
                 # Kraken returned data but funding=0 -still inject OI/premium
                 if _kf_ticker.open_interest_usd > 0:
@@ -7833,6 +7845,10 @@ class HMATSProductionRunner:
                 _t2_regime = agent_signals.get("regime_state", "UNKNOWN").upper()
                 _t2_lev = self.config.regime_leverage_map.get(_t2_regime, 1.0)
                 self.engine.guarantees.alpha_calculator.FRICTION.update_for_leverage(asset, _t2_lev)
+                # Wire live funding_rate into cost model
+                _t2_funding = float(market_data.get("funding_rate", 0.0) or 0.0)
+                if abs(_t2_funding) > 1e-8:
+                    self.engine.guarantees.alpha_calculator.FRICTION.update_funding_rate(_t2_funding)
             except Exception:
                 pass
 
