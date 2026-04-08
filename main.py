@@ -17244,10 +17244,18 @@ class HMATSProductionRunner:
         slippage_bps = float(getattr(alpha_result, "friction_slippage_bps", 0.0) or 0.0) if alpha_result else 0.0
         latency_bps = float(getattr(alpha_result, "friction_latency_bps", 0.0) or 0.0) if alpha_result else 0.0
         margin_bps = float(getattr(alpha_result, "friction_margin_bps", 0.0) or 0.0) if alpha_result else 0.0
+        # Use alpha_result's fee if available; otherwise use FRICTION's current value (not hardcoded 26)
+        _fallback_fee = alpha_fee_bps
+        if _fallback_fee <= 0.0:
+            try:
+                _fr = self.engine.guarantees.alpha_calculator.FRICTION
+                _fallback_fee = _fr.maker_fee_bps if self._intent_uses_maker_fee(intent) else _fr.taker_fee_bps
+            except Exception:
+                _fallback_fee = 0.0
         runtime_fee_bps = self._get_effective_fee_bps(
             fee_context,
             is_maker=self._intent_uses_maker_fee(intent),
-            default_bps=alpha_fee_bps or (16.0 if self._intent_uses_maker_fee(intent) else 26.0),
+            default_bps=_fallback_fee,
         )
         # When alpha-gate logging already consumed the runtime fee model but the dataclass
         # still carries a stale zero, export the effective fee to keep the dashboard truthful.
