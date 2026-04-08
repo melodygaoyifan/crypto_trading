@@ -87,8 +87,8 @@ class SOTAFlags:
     # P1.5: LONG-TERM SURVIVAL GOVERNORS (v6.1.3)
     # =========================================================================
     
-    # Opportunity Budget Governor 鈥?DISABLED for profit maximization
-    ENABLE_OPPORTUNITY_BUDGET_GOVERNOR: bool = False
+    # Opportunity Budget Governor — [ACTIVATE] prevents overconcentration in OPPORTUNITY windows
+    ENABLE_OPPORTUNITY_BUDGET_GOVERNOR: bool = True
 
     # Regime Transition Buffer 鈥?DISABLED: 1 tick delay is too slow for 4H bars
     ENABLE_REGIME_TRANSITION_BUFFER: bool = False
@@ -206,8 +206,8 @@ class SOTAFlags:
     ENABLE_STRUCTURE_ANALYZER: bool = True
     
     # Strategy Allocator - Risk budget distribution across agents/signals
-    # Default OFF - requires tuning for specific strategy profiles
-    ENABLE_STRATEGY_ALLOCATOR: bool = False
+    # [ACTIVATE] Enable for risk budget distribution
+    ENABLE_STRATEGY_ALLOCATOR: bool = True
     
     # On-chain Graph Alpha Agent - Solana on-chain analysis
     # Default OFF - requires on-chain data providers

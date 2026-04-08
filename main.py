@@ -2240,7 +2240,7 @@ class HMATSProductionRunner:
         self._execution_advisory_min_side_closed_trades = 1
         self._execution_advisory_min_side_total_realized_pnl_usd = -25.0
         self._execution_advisory_min_side_avg_realized_pnl_bps = -15.0
-        self._fast_market_execution_enabled = False
+        self._fast_market_execution_enabled = True  # [ACTIVATE] Was False — enables aggressive fills in OPPORTUNITY
         self._fast_market_execution_modes = {"OPPORTUNITY"}
         self._fast_market_execution_require_aggressive_mode = True
         self._fast_market_execution_min_short_net_alpha_bps = 10.0
@@ -2364,7 +2364,7 @@ class HMATSProductionRunner:
         self._profit_calibration_shadow_keep_long_avg_bps_above = 10.0
         self._profit_calibration_shadow_relax_short_avg_bps_above = 15.0
         self._profit_calibration_shadow_relax_short_total_pnl_usd_above = 20.0
-        self._profit_calibration_live_enabled = False
+        self._profit_calibration_live_enabled = True  # [ACTIVATE] Was False — auto-adjusts alpha gates from realized PnL
         self._profit_calibration_live_min_closed_trades_per_side = 5
         self._profit_calibration_live_short_alpha_bps_relax = 0.0
         self._profit_calibration_live_short_structure_gap_bonus_bps = 0.0
@@ -3575,8 +3575,8 @@ class HMATSProductionRunner:
         self._sol_exec_guard = None
         if SOL_EXEC_GUARD_AVAILABLE:
             try:
-                self._sol_exec_guard = get_sol_execution_guard(enabled=True, shadow=True)
-                logger.info("  SOLExecutionGuard: ACTIVE (SHADOW mode)")
+                self._sol_exec_guard = get_sol_execution_guard(enabled=True, shadow=False)
+                logger.info("  SOLExecutionGuard: ACTIVE (ENFORCEMENT mode)")
             except Exception as e:
                 logger.warning(f"  SOLExecutionGuard: STUB ({e})")
 

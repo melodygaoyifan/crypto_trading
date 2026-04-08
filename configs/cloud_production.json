@@ -217,5 +217,12 @@
     },
     "sentiment_gate_config": {
         "enabled": true
+    },
+    "g6_config": {
+        "enabled": true,
+        "shadow_mode": false
+    },
+    "allocation_config": {
+        "live_enabled": true
     }
 }
