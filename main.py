@@ -4133,7 +4133,19 @@ class HMATSProductionRunner:
                     _btc_fees = _fee_exchange.fetch_trading_fee("BTC/USD")
                     _taker = float(_btc_fees.get("taker", 0.0026)) * 10000
                     _maker = float(_btc_fees.get("maker", 0.0016)) * 10000
-                    if _taker > 0 and _maker > 0:
+                    # [P0-FIX] Apply free-tier blending: if monthly volume < $10K,
+                    # fees are 0. Use the fee blender to get the actual effective rate
+                    # instead of raw exchange tier.
+                    try:
+                        from execution.fees import get_fee_calculator
+                        _fc = get_fee_calculator()
+                        _monthly_vol = _fc.tracker.get_monthly_volume()
+                        _taker = _fc.blender.apply(_btc_fees.get("taker", 0.0026), _monthly_vol) * 10000
+                        _maker = _fc.blender.apply(_btc_fees.get("maker", 0.0016), _monthly_vol) * 10000
+                        logger.info(f"  [P0-FIX] Blended fees: taker={_taker:.1f}bps, maker={_maker:.1f}bps (vol=${_monthly_vol:,.0f})")
+                    except Exception as _blend_err:
+                        logger.debug(f"  [P0-FIX] Fee blending failed, using exchange rates: {_blend_err}")
+                    if _taker >= 0 and _maker >= 0:
                         from execution.passive_aggressive import update_fee_tier_from_exchange
                         update_fee_tier_from_exchange(taker_bps=_taker, maker_bps=_maker)
                     else:

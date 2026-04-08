@@ -71,7 +71,9 @@ FILL_SLOPE_TOXIC_MS = 500.0
 DRIFT_P_VALUE_THRESHOLD = 0.05
 
 # Minimum edge for execution
-MIN_EDGE_MULTIPLIER = 3.0  # α > 3× friction
+# [P0-FIX] Was 3.0 — required 150bps alpha at 50bps friction, blocking all trades.
+# 1.5x ensures alpha covers round-trip cost with margin of safety.
+MIN_EDGE_MULTIPLIER = 1.5  # α > 1.5× friction
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

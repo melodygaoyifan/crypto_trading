@@ -695,6 +695,14 @@ class ExecutionManager:
                 order_params['oflags'] = 'post'          # Kraken-specific
             # --- end [v9-PATCH-3] ---
 
+            size = self._clamp_size_to_balance(symbol, side, size, price)
+            if size <= 0:
+                return OrderResult(
+                    success=False, symbol=symbol, side=side.value,
+                    order_type=OrderType.LIMIT.value,
+                    status=OrderStatus.REJECTED,
+                    error_message="Insufficient balance after clamping"
+                )
             order = self.exchange.create_limit_order(
                 symbol=symbol,
                 side=side.value.lower(),
@@ -1136,6 +1144,47 @@ class ExecutionManager:
                 time_to_fill_seconds=elapsed,
             )
 
+    def _clamp_size_to_balance(self, symbol: str, side: OrderSide, size: float, price: float = 0) -> float:
+        """[P0-FIX] Clamp order size to available balance to prevent 'Insufficient funds'.
+
+        For BUY: need USD. For SELL: need the asset.
+        Uses 90% of available to leave margin for fees.
+        """
+        try:
+            if not self.exchange or self.dry_run:
+                return size
+            balance = self.exchange.fetch_balance()
+            if side == OrderSide.BUY:
+                usd_free = float(balance.get('USD', {}).get('free', 0) or 0)
+                if usd_free <= 0:
+                    self.logger.warning(f"[P0-FIX] No USD available for {symbol} BUY")
+                    return 0.0
+                if price <= 0:
+                    # Estimate price from last ticker
+                    try:
+                        ticker = self.exchange.fetch_ticker(symbol)
+                        price = float(ticker.get('last', 0) or 0)
+                    except Exception:
+                        return size  # Can't check, proceed with original
+                max_size = (usd_free * 0.90) / price
+                if size > max_size:
+                    self.logger.warning(
+                        f"[P0-FIX] {symbol} BUY size clamped: {size:.6f} -> {max_size:.6f} "
+                        f"(USD free=${usd_free:.2f}, price=${price:.2f})"
+                    )
+                    return max_size
+            else:
+                asset = symbol.split('/')[0]
+                asset_free = float(balance.get(asset, {}).get('free', 0) or 0)
+                if size > asset_free and asset_free > 0:
+                    self.logger.warning(
+                        f"[P0-FIX] {symbol} SELL size clamped: {size:.6f} -> {asset_free:.6f}"
+                    )
+                    return asset_free
+        except Exception as e:
+            self.logger.debug(f"[P0-FIX] Balance check failed: {e}")
+        return size
+
     def _execute_market_order(self,
                              symbol: str,
                              side: OrderSide,
@@ -1144,6 +1193,14 @@ class ExecutionManager:
         """Execute a market order."""
         try:
             order_params = extra_params or {}
+            size = self._clamp_size_to_balance(symbol, side, size)
+            if size <= 0:
+                return OrderResult(
+                    success=False, symbol=symbol, side=side.value,
+                    order_type=OrderType.MARKET.value,
+                    status=OrderStatus.REJECTED,
+                    error_message="Insufficient balance after clamping"
+                )
             order = self.exchange.create_market_order(
                 symbol=symbol,
                 side=side.value.lower(),
