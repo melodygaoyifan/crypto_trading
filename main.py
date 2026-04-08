@@ -15479,6 +15479,8 @@ class HMATSProductionRunner:
                                         "funding_pnl": _flip_funding_pnl,
                                         "trade_fee_usd": _flip_fee,
                                         "margin_opening_fee_usd": 0.0,
+                                        "intent_id": getattr(intent, 'intent_id', ''),
+                                        "tick_id": getattr(intent, 'tick_id', ''),
                                     },
                                 )
                                 _note_shadow_fill(bool(_shadow_fill_ok))
@@ -15683,6 +15685,8 @@ class HMATSProductionRunner:
                                 "trade_fee_usd": _entry_trade_fee_usd,
                                 "margin_opening_fee_usd": _entry_margin_opening_fee_usd,
                                 "requires_margin": bool(_order_fee_result.get("requires_margin", False)),
+                                "intent_id": getattr(intent, 'intent_id', ''),
+                                "tick_id": getattr(intent, 'tick_id', ''),
                             },
                         )
                         _note_shadow_fill(bool(_shadow_fill_ok))
