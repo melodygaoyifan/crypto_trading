@@ -4152,6 +4152,16 @@ class HMATSProductionRunner:
                         logger.warning(f"  [FIX-FEE-TIER] Unexpected fee values: taker={_taker}, maker={_maker}")
                 else:
                     logger.debug("  [FIX-FEE-TIER] Exchange object not available for fee query")
+                # Sync constitution FRICTION at startup (not just per-tick)
+                # Eliminates warmup tick 1 race where fee=26bps default is used
+                if hasattr(self, 'engine') and hasattr(self.engine, 'guarantees'):
+                    try:
+                        self.engine.guarantees.alpha_calculator.FRICTION.update_fee_bps(
+                            maker_fee_bps=_maker, taker_fee_bps=_taker,
+                        )
+                        logger.info(f"  [FIX-FEE-STARTUP] FRICTION synced at init: taker={_taker:.1f}bps maker={_maker:.1f}bps")
+                    except Exception:
+                        pass
             except Exception as _fee_err:
                 logger.warning(f"  [FIX-FEE-TIER] Fee tier query failed (using defaults): {_fee_err}")
 
