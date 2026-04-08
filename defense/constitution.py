@@ -949,13 +949,24 @@ class FrictionComponents:
         self.slippage_bps = self.ASSET_SPREAD_BPS.get(asset_key, 5.0)
 
     def update_for_volume(self, monthly_volume_usd: float):
-        """Update fee components based on current monthly volume."""
-        if monthly_volume_usd <= self.KRAKEN_FREE_TIER_USD:  # [FIX-A1-3] Was < (strict). Aligned with fee_blender which uses <=
+        """Update fee components based on current monthly volume.
+
+        Uses continuous linear blending matching KrakenPlusFeeBlender:
+        - V <= FREE_TIER ($10K): fees = 0
+        - FREE_TIER < V < FREE_TIER + BLEND_BAND ($12K): linear interpolation
+        - V >= FREE_TIER + BLEND_BAND: full standard fees
+        """
+        _blend_band = 2000.0  # Match KrakenPlusFeeBlender.blend_band_usd
+        if monthly_volume_usd <= self.KRAKEN_FREE_TIER_USD:
             self.taker_fee_bps = 0.0
             self.maker_fee_bps = 0.0
-        else:
+        elif monthly_volume_usd >= self.KRAKEN_FREE_TIER_USD + _blend_band:
             self.taker_fee_bps = self.KRAKEN_TAKER_BPS
             self.maker_fee_bps = self.KRAKEN_MAKER_BPS
+        else:
+            _weight = (monthly_volume_usd - self.KRAKEN_FREE_TIER_USD) / _blend_band
+            self.taker_fee_bps = self.KRAKEN_TAKER_BPS * _weight
+            self.maker_fee_bps = self.KRAKEN_MAKER_BPS * _weight
 
     def update_fee_bps(self, *, taker_fee_bps: float, maker_fee_bps: float):
         """Override fee bps from the shared execution fee model."""

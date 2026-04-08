@@ -1145,31 +1145,55 @@ class ExecutionManager:
             )
 
     def _clamp_size_to_balance(self, symbol: str, side: OrderSide, size: float, price: float = 0) -> float:
-        """[P0-FIX] Clamp order size to available balance to prevent 'Insufficient funds'.
+        """Clamp order size to available balance to prevent 'Insufficient funds'.
 
         For BUY: need USD. For SELL: need the asset.
         Uses 90% of available to leave margin for fees.
+        Prefers cached account_sync balance to avoid extra API call.
+        Falls back to fetch_balance() if cache unavailable.
         """
         try:
             if not self.exchange or self.dry_run:
                 return size
+
+            # Try cached balance from account_sync first (no API call)
+            balance = None
+            try:
+                from core.account_sync import get_account_sync
+                _sync = get_account_sync()
+                if _sync and _sync._state.status.name == "VALID":
+                    # Use available_balance from last refresh
+                    if side == OrderSide.BUY:
+                        usd_free = _sync._state.available_balance
+                        if usd_free > 0 and price > 0:
+                            max_size = (usd_free * 0.90) / price
+                            if size > max_size:
+                                self.logger.info(
+                                    f"[SIZE_CLAMP] {symbol} BUY clamped: {size:.6f} -> {max_size:.6f} "
+                                    f"(cached USD=${usd_free:.2f})"
+                                )
+                                return max_size
+                            return size
+            except Exception:
+                pass  # Fall through to direct fetch
+
+            # Fallback: direct fetch_balance (costs 1 API call)
             balance = self.exchange.fetch_balance()
             if side == OrderSide.BUY:
                 usd_free = float(balance.get('USD', {}).get('free', 0) or 0)
                 if usd_free <= 0:
-                    self.logger.warning(f"[P0-FIX] No USD available for {symbol} BUY")
+                    self.logger.warning(f"[SIZE_CLAMP] No USD available for {symbol} BUY")
                     return 0.0
                 if price <= 0:
-                    # Estimate price from last ticker
                     try:
                         ticker = self.exchange.fetch_ticker(symbol)
                         price = float(ticker.get('last', 0) or 0)
                     except Exception:
-                        return size  # Can't check, proceed with original
+                        return size
                 max_size = (usd_free * 0.90) / price
                 if size > max_size:
-                    self.logger.warning(
-                        f"[P0-FIX] {symbol} BUY size clamped: {size:.6f} -> {max_size:.6f} "
+                    self.logger.info(
+                        f"[SIZE_CLAMP] {symbol} BUY clamped: {size:.6f} -> {max_size:.6f} "
                         f"(USD free=${usd_free:.2f}, price=${price:.2f})"
                     )
                     return max_size
@@ -1177,12 +1201,12 @@ class ExecutionManager:
                 asset = symbol.split('/')[0]
                 asset_free = float(balance.get(asset, {}).get('free', 0) or 0)
                 if size > asset_free and asset_free > 0:
-                    self.logger.warning(
-                        f"[P0-FIX] {symbol} SELL size clamped: {size:.6f} -> {asset_free:.6f}"
+                    self.logger.info(
+                        f"[SIZE_CLAMP] {symbol} SELL clamped: {size:.6f} -> {asset_free:.6f}"
                     )
                     return asset_free
         except Exception as e:
-            self.logger.debug(f"[P0-FIX] Balance check failed: {e}")
+            self.logger.debug(f"[SIZE_CLAMP] Balance check failed: {e}")
         return size
 
     def _execute_market_order(self,
