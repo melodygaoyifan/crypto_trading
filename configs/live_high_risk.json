@@ -69,31 +69,32 @@
       {"stage": "MONTH1", "min_alpha_bps": 2}
     ],
     "stage_selector": "HIGH_RISK",
-    "quiet_accum_min_direction": 0.15,
+    "quiet_accum_min_direction": 0.08,
     "quiet_accum_min_direction_by_asset": {
       "BTC": 0.04,
       "ETH": 0.025
     },
-    "quiet_accum_min_direction_short": 0.05,
+    "quiet_accum_min_direction_short": 0.12,
+    "_short_tighten_note": "2026-04-08: Raised SHORT direction floors to match high_risk.json. Only high-conviction shorts pass.",
     "quiet_accum_min_direction_short_by_asset": {
-      "BTC": 0.03,
-      "ETH": 0.015
+      "BTC": 0.08,
+      "ETH": 0.05
     },
-    "opportunity_actionable_min_direction_short": 0.045,
+    "opportunity_actionable_min_direction_short": 0.10,
     "opportunity_actionable_min_direction_short_by_asset": {
-      "ETH": 0.015
+      "ETH": 0.04
     },
     "opportunity_actionable_min_exposure": 0.01,
     "opportunity_actionable_min_exposure_by_asset": {
       "ETH": 0.005
     },
-    "normal_actionable_min_direction_short": 0.085,
-    "borderline_alpha_pass_epsilon_bps": 0.0,
+    "normal_actionable_min_direction_short": 0.15,
+    "borderline_alpha_pass_epsilon_bps": 2.0,
     "borderline_alpha_pass_epsilon_bps_by_asset": {
-      "BTC": 1.0,
+      "BTC": 2.5,
       "ETH": 4.5
     },
-    "borderline_alpha_pass_epsilon_bps_short": 0.25,
+    "borderline_alpha_pass_epsilon_bps_short": 1.5,
     "borderline_alpha_pass_epsilon_bps_short_by_asset": {
       "BTC": 1.0,
       "ETH": 4.5,
@@ -107,8 +108,8 @@
       "WEAK_CONSOLIDATION": 0.90
     },
     "regime_alpha_gate_relax_short": {
-      "QUIET_ACCUMULATION": 0.80,
-      "WEAK_CONSOLIDATION": 0.80
+      "QUIET_ACCUMULATION": 1.10,
+      "WEAK_CONSOLIDATION": 1.10
     },
     "profit_calibration_shadow": {
       "enabled": true,

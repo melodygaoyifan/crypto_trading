@@ -429,21 +429,33 @@ class ExitAlphaManager:
         entry_price: float,
         current_price: float,
         direction: int,  # 1 for long, -1 for short
+        strategy: str = "",  # [2026-04-08] Strategy-aware trail widths
     ) -> RunnerState:
         """
         Create runner position after scale-out.
-        
+
         CALLED AFTER:
             - 25% scale-out executed
             - Remaining 75% becomes runner
         """
-        
+        # [2026-04-08] Strategy-differentiated trail stops:
+        # mean_revert: 4% initial (needs room for counter-trend reversal)
+        # momentum: 2.5% initial (tighter trail to lock in trend gains)
+        _trail = self.config.runner_initial_trail_pct
+        try:
+            from configs.high_risk_mode import get_high_risk_config
+            _hrc = get_high_risk_config()
+            if _hrc and strategy:
+                _trail = _hrc.get_runner_trail_pct(tight=False, strategy=strategy)
+        except Exception:
+            pass
+
         runner = RunnerState(
             active=True,
             size_pct=remaining_size_pct,
             entry_price=entry_price,
             peak_price=current_price,
-            trail_pct=self.config.runner_initial_trail_pct,
+            trail_pct=_trail,
         )
         
         # Calculate initial trail stop
@@ -468,6 +480,7 @@ class ExitAlphaManager:
         direction: int,
         phase_result: RegimePhaseResult,
         drl_output: Optional[DRLOutput] = None,
+        strategy: str = "",  # [2026-04-08] Strategy-aware trail tightening
     ) -> Tuple[RunnerAction, Optional[RunnerState]]:
         """
         Manage existing runner position.
@@ -539,7 +552,15 @@ class ExitAlphaManager:
                 should_tighten = True
             
             if should_tighten:
-                runner.trail_pct = self.config.runner_tight_trail_pct
+                _tight_trail = self.config.runner_tight_trail_pct
+                try:
+                    from configs.high_risk_mode import get_high_risk_config
+                    _hrc = get_high_risk_config()
+                    if _hrc and strategy:
+                        _tight_trail = _hrc.get_runner_trail_pct(tight=True, strategy=strategy)
+                except Exception:
+                    pass
+                runner.trail_pct = _tight_trail
                 runner.tightened = True
                 
                 # Recalculate trail stop

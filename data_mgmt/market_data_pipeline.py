@@ -115,6 +115,17 @@ REGIME_STRATEGY_FIT = {
         "PANIC_SELLOFF": 0.9,
         "_default": 0.4,
     },
+    # [2026-04-08] HOLD: no-trade strategy for choppy/directionless markets.
+    # Prevents forced entries when no strategy has edge. Wins Best-of-N when
+    # ADX<15, RSI neutral, volume thin — exactly the conditions that produced
+    # 14.3% SOL win rate and 12.5% SHORT win rate in paper run.
+    "hold": {
+        "QUIET_ACCUMULATION": 0.8, "WEAK_CONSOLIDATION": 0.8,
+        "NEUTRAL_DRIFT": 0.7, "VOLATILE_CHOP": 0.6,
+        "STEADY_UPTREND": 0.15, "MOMENTUM_RALLY": 0.10,
+        "PANIC_SELLOFF": 0.10, "EXTREME_VOLATILITY": 0.3,
+        "_default": 0.3,
+    },
 }
 
 # L4-13: Default strength for unknown regime labels (conservative)
@@ -220,6 +231,14 @@ class MarketDataPipeline:
         self._bootstrap_ohlcv_cache: Dict[str, pd.DataFrame] = {}
         self._binance_vision_recent_cache: Dict[str, Dict[str, Any]] = {}
         self._requests_session = None
+        # [2026-04-10] CCXT session auto-reset: after N consecutive fetch failures
+        # across ALL assets, recreate the CCXT exchange object to clear stale
+        # SSL sessions and connection pools. Without this, a stuck TCP connection
+        # causes 21h+ data blackout (process alive but zero data).
+        self._global_fetch_failure_count: int = 0
+        self._global_fetch_success_count: int = 0
+        self._ccxt_reset_count: int = 0
+        self._CCXT_RESET_THRESHOLD: int = 10  # reset after 10 consecutive failures (~5 min)
         # Orderbook resiliency state (avoid noisy risk triggers on transient fetch failures)
         self._last_orderbook_depth_usd: Dict[str, float] = {}
         self._last_orderbook_imbalance: Dict[str, float] = {}
@@ -288,6 +307,61 @@ class MarketDataPipeline:
         except Exception as exc:
             logger.debug(f"[PREPARE_DATA] runtime feature snapshot failed: {exc}")
             return {}
+
+    def _reset_ccxt_session(self):
+        """Recreate CCXT exchange objects to clear stale SSL/connection pool.
+        Called after _CCXT_RESET_THRESHOLD consecutive fetch failures.
+        Resets both the primary (kraken_rest._exchange) and fallback (_ccxt_exchange)."""
+        self._ccxt_reset_count += 1
+        logger.warning(
+            f"[CCXT_RESET] Resetting CCXT session after {self._global_fetch_failure_count} "
+            f"consecutive failures (reset #{self._ccxt_reset_count})"
+        )
+        self._global_fetch_failure_count = 0
+        try:
+            import ccxt
+            # Reset primary: kraken_rest._exchange (authenticated, used for data+trading)
+            if self._kraken_rest and hasattr(self._kraken_rest, '_exchange'):
+                old_ex = self._kraken_rest._exchange
+                if old_ex:
+                    try:
+                        if hasattr(old_ex, 'session') and old_ex.session:
+                            old_ex.session.close()
+                    except Exception:
+                        pass
+                    # Recreate with same config (preserves API keys)
+                    new_cfg = {
+                        'timeout': getattr(old_ex, 'timeout', 10000),
+                        'enableRateLimit': getattr(old_ex, 'enableRateLimit', True),
+                    }
+                    if getattr(old_ex, 'apiKey', None):
+                        new_cfg['apiKey'] = old_ex.apiKey
+                        new_cfg['secret'] = old_ex.secret
+                    self._kraken_rest._exchange = ccxt.kraken(new_cfg)
+                    logger.info("[CCXT_RESET] Primary kraken_rest._exchange recreated")
+
+            # Reset fallback: _ccxt_exchange (unauthenticated)
+            if self._ccxt_exchange:
+                try:
+                    if hasattr(self._ccxt_exchange, 'session') and self._ccxt_exchange.session:
+                        self._ccxt_exchange.session.close()
+                except Exception:
+                    pass
+            self._ccxt_exchange = ccxt.kraken({
+                'timeout': 10000,
+                'enableRateLimit': True,
+            })
+            logger.info("[CCXT_RESET] Fallback _ccxt_exchange recreated")
+        except Exception as e:
+            logger.error(f"[CCXT_RESET] Failed to recreate CCXT session: {e}")
+
+        # Also reset requests session (used by binance vision etc)
+        if self._requests_session:
+            try:
+                self._requests_session.close()
+            except Exception:
+                pass
+            self._requests_session = None
 
     def _get_requests_session(self):
         if self._requests_session is not None:
@@ -1560,10 +1634,17 @@ class MarketDataPipeline:
                 "recent_sell_trade_volume_usd": _trade_sell_notional_usd,
                 "trade_metrics_source": _trade_metrics_source,
             }
+            # [2026-04-10] Reset global failure counter on successful fetch
+            self._global_fetch_failure_count = 0
+            self._global_fetch_success_count += 1
 
         except Exception as e:
             logger.warning(f"[LIVE_DATA] {asset} fetch failed: {e}, using synthetic fallback")
             self._orderbook_failure_streak[asset] = self._orderbook_failure_streak.get(asset, 0) + 1
+            # [2026-04-10] CCXT session auto-reset on consecutive failures
+            self._global_fetch_failure_count += 1
+            if self._global_fetch_failure_count >= self._CCXT_RESET_THRESHOLD:
+                self._reset_ccxt_session()
             fallback = self.generate_verification_data(asset)
             fallback["data_valid"] = False
             fallback["_source"] = "synthetic_fallback"
@@ -1798,6 +1879,20 @@ class MarketDataPipeline:
         _vrp_table = REGIME_STRATEGY_FIT["vrp"]
         vrp_fit = _vrp_table.get(regime, _vrp_table.get("_default", _UNKNOWN_REGIME_FIT))
         strategies["vrp"] = {"signal": vrp_sig, "strength": abs(vrp_sig) * vrp_fit}
+
+        # 5. HOLD — no-trade strategy for directionless/choppy markets
+        # Scores high when: low ADX (no trend), RSI neutral, volume thin.
+        # Signal is always 0.0 (no direction). Strength comes from regime fitness.
+        hold_base = 0.0
+        if adx_val < 15:                                     # market has no trend
+            hold_base += 0.25
+        if 35 <= rsi_val <= 65 and abs(bb_pos) < 0.3:       # price near mean, no extreme
+            hold_base += 0.20
+        if volume_ratio < 0.7:                               # volume drying up
+            hold_base += 0.10
+        _hold_table = REGIME_STRATEGY_FIT["hold"]
+        hold_fit = _hold_table.get(regime, _hold_table.get("_default", _UNKNOWN_REGIME_FIT))
+        strategies["hold"] = {"signal": 0.0, "strength": hold_base * hold_fit}
 
         return strategies
 

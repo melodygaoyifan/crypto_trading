@@ -8514,6 +8514,7 @@ class HMATSProductionRunner:
                     structure_confirmed=market_data.get("higher_lows_detected", False),
                     adverse_momentum=_g_adverse_momentum,
                     bars_since_entry=_effective_bars,
+                    strategy=_pos_strategy,  # [2026-04-08] Strategy-differentiated exits
                 )
                 if _g_exit.should_exit:
                     # [FIX-GAMBLER-DRL] When DRL is ACTIVE (DECIDE authority) and
@@ -8633,12 +8634,23 @@ class HMATSProductionRunner:
                         (_tb_curr_p - _tb_entry_p) / _tb_entry_p * _tb_dir
                         if _tb_entry_p > 0 else 0.0
                     )
-                    # [P2-HOLD] Asymmetric time stop:
-                    # - LOSING positions: exit after 2 ticks (8h) — cut losses fast
-                    # - WINNING positions: don't time-stop until 4 ticks (16h) —
-                    #   data shows 16-24h is the sweet spot for profitable trades
+                    # [P2-HOLD] Asymmetric time stop, now strategy-aware:
+                    # Mean_revert: 4 bars losing / 6 bars winning (enters against trend, needs time)
+                    # Momentum: 2 bars losing / 4 bars winning (should confirm quickly)
+                    # Default: 2 bars losing / 4 bars winning
                     _tb_is_profitable = _tb_pnl_pct > 0.001
-                    _tb_min_bars = 4 if _tb_is_profitable else 2
+                    _tb_strategy = _tb_pos.get("strategy", "")
+                    # [2026-04-08] Strategy-differentiated time stops:
+                    # mean_revert: 4/6 bars (enters against trend, needs time to develop)
+                    # momentum: 2/4 bars (should confirm quickly)
+                    try:
+                        from configs.high_risk_mode import get_high_risk_config
+                        _hrc = get_high_risk_config()
+                        _tb_min_bars = _hrc.get_time_stop_bars(
+                            _tb_is_profitable, _tb_strategy
+                        ) if _hrc else (4 if _tb_is_profitable else 2)
+                    except Exception:
+                        _tb_min_bars = 4 if _tb_is_profitable else 2
                     if _tb_bars_held >= _tb_min_bars and _tb_pnl_pct < -0.001:
                         self._exit_trigger_tag[asset] = "T16_TIME_STOP"
                         intent.veto_active = False
@@ -8805,6 +8817,7 @@ class HMATSProductionRunner:
                         entry_price=_entry_p,
                         current_price=_curr_p,
                         direction=_pos_dir,
+                        strategy=_pos.get("strategy", ""),
                     )
             except Exception as e:
                 logger.debug(f"[EXIT_ALPHA] Evaluation skipped: {e}")
@@ -8851,6 +8864,7 @@ class HMATSProductionRunner:
                         direction=_pos_dir,
                         phase_result=_phase_res,
                         drl_output=_drl_runner_output,  # [P1-FIX] was always None
+                        strategy=self._paper_positions.get(asset, {}).get("strategy", ""),
                     )
 
                     if _runner_action == RunnerAction.RELEASE:
@@ -13198,6 +13212,7 @@ class HMATSProductionRunner:
                         drawdown_status=_dd_status,
                         price_usd=current_price,
                         is_opportunity=_is_opportunity,  # [RULETABLE]
+                        confidence=getattr(intent, 'quant_confidence', 0.5),
                     )
                     _sizer_exp = _sizing.final_exposure_pct
                 if _sizer_exp < exposure_fraction:

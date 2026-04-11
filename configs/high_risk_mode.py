@@ -131,20 +131,56 @@ class HighRiskModeConfig:
     # prevent full-size losers. Normal -42bps, Gambler -25bps.
     soft_exit_pnl_threshold_normal: float = -42.0     # was -30
     soft_exit_pnl_threshold_gambler: float = -25.0     # was -15
-    
+
     # Time without confirmation before soft exit (minutes)
     no_confirmation_timeout_normal: float = 120.0   # 2 hours
     no_confirmation_timeout_gambler: float = 45.0   # 45 minutes
-    
+
     # Structure break failure recognition (faster in gambler mode)
     structure_failure_bars_normal: int = 3   # 3 bars to confirm failure
     structure_failure_bars_gambler: int = 3  # [FIX-GAMBLER-BARS] was 1 (immediate).
     # 1-bar killed mean_revert entries that enter against trend (structure never confirms
     # in first bar). 3 bars = 12h gives mean_revert time to develop.
-    
+
     # VPIN soft exit threshold (earlier exit in toxic flow)
     vpin_soft_exit_normal: float = 0.80
     vpin_soft_exit_gambler: float = 0.70
+
+    # [2026-04-08] Strategy-differentiated exit overrides.
+    # Mean_revert enters against trend — needs more room to develop than momentum.
+    # Paper run: 60% of trades exited before optimal point, T9_GAMBLER killed
+    # mean_revert entries at bar 1 (structure_failure=1). SOL LONG realized -33.6bps
+    # but counterfactual was +581bps — massive opportunity cost from premature exit.
+    # Momentum exits stay tight (trend-following should confirm quickly).
+    strategy_exit_overrides: Dict[str, Dict[str, float]] = field(default_factory=lambda: {
+        "mean_revert": {
+            "soft_exit_pnl_bps": -65.0,        # wider loss tolerance (vs -42/-25)
+            "no_confirmation_timeout_min": 180.0,  # 3h (vs 2h/45min) — MR needs time
+            "structure_failure_bars": 5,        # 5 bars=20h (vs 3=12h) — MR enters against trend
+            "time_stop_losing_bars": 4,         # 4 bars=16h (vs 2=8h) before time stop
+            "time_stop_winning_bars": 6,        # 6 bars=24h (vs 4=16h) — let MR winners run
+            "runner_initial_trail_pct": 0.04,   # 4% (vs 3%) — wider trail for reversal plays
+            "runner_tight_trail_pct": 0.02,     # 2% (vs 1.5%) — don't tighten too fast
+        },
+        "momentum": {
+            "soft_exit_pnl_bps": -30.0,        # tighter (vs -42) — failed momentum = wrong
+            "no_confirmation_timeout_min": 90.0,   # 1.5h (vs 2h) — momentum confirms fast
+            "structure_failure_bars": 2,        # 2 bars=8h (vs 3) — trend should be obvious
+            "time_stop_losing_bars": 2,         # 2 bars=8h (same as current)
+            "time_stop_winning_bars": 4,        # 4 bars=16h (same as current)
+            "runner_initial_trail_pct": 0.025,  # 2.5% (vs 3%) — tighter trail for trend
+            "runner_tight_trail_pct": 0.012,    # 1.2% (vs 1.5%) — lock in momentum gains
+        },
+        "volume_breakout": {
+            "soft_exit_pnl_bps": -35.0,        # moderate
+            "no_confirmation_timeout_min": 60.0,   # 1h — breakout confirms very fast
+            "structure_failure_bars": 2,        # 2 bars=8h — volume event is immediate
+            "time_stop_losing_bars": 2,         # same as momentum
+            "time_stop_winning_bars": 4,        # same as momentum
+            "runner_initial_trail_pct": 0.03,   # 3% (same as default)
+            "runner_tight_trail_pct": 0.015,    # 1.5% (same as default)
+        },
+    })
     
     def get_entry_confidence_threshold(self, gambler_mode: bool) -> float:
         """Get entry confidence threshold based on mode."""
@@ -190,21 +226,48 @@ class HighRiskModeConfig:
         """Get max concurrent same-direction strategies."""
         return self.max_concurrent_same_direction_gambler if gambler_mode else self.max_concurrent_same_direction_normal
     
-    def get_soft_exit_pnl_threshold(self, gambler_mode: bool) -> float:
-        """Get soft exit P&L threshold (bps)."""
+    def get_soft_exit_pnl_threshold(self, gambler_mode: bool, strategy: str = "") -> float:
+        """Get soft exit P&L threshold (bps). Strategy override takes precedence."""
+        overrides = self.strategy_exit_overrides.get(strategy, {})
+        if "soft_exit_pnl_bps" in overrides:
+            return overrides["soft_exit_pnl_bps"]
         return self.soft_exit_pnl_threshold_gambler if gambler_mode else self.soft_exit_pnl_threshold_normal
-    
-    def get_no_confirmation_timeout(self, gambler_mode: bool) -> float:
-        """Get no-confirmation timeout (minutes)."""
+
+    def get_no_confirmation_timeout(self, gambler_mode: bool, strategy: str = "") -> float:
+        """Get no-confirmation timeout (minutes). Strategy override takes precedence."""
+        overrides = self.strategy_exit_overrides.get(strategy, {})
+        if "no_confirmation_timeout_min" in overrides:
+            return overrides["no_confirmation_timeout_min"]
         return self.no_confirmation_timeout_gambler if gambler_mode else self.no_confirmation_timeout_normal
-    
-    def get_structure_failure_bars(self, gambler_mode: bool) -> int:
-        """Get structure failure bar count."""
+
+    def get_structure_failure_bars(self, gambler_mode: bool, strategy: str = "") -> int:
+        """Get structure failure bar count. Strategy override takes precedence."""
+        overrides = self.strategy_exit_overrides.get(strategy, {})
+        if "structure_failure_bars" in overrides:
+            return int(overrides["structure_failure_bars"])
         return self.structure_failure_bars_gambler if gambler_mode else self.structure_failure_bars_normal
-    
+
     def get_vpin_soft_exit(self, gambler_mode: bool) -> float:
         """Get VPIN soft exit threshold."""
         return self.vpin_soft_exit_gambler if gambler_mode else self.vpin_soft_exit_normal
+
+    def get_time_stop_bars(self, is_profitable: bool, strategy: str = "") -> int:
+        """Get time stop bar count, strategy-aware. Default: 2 losing, 4 winning."""
+        overrides = self.strategy_exit_overrides.get(strategy, {})
+        if is_profitable and "time_stop_winning_bars" in overrides:
+            return int(overrides["time_stop_winning_bars"])
+        if not is_profitable and "time_stop_losing_bars" in overrides:
+            return int(overrides["time_stop_losing_bars"])
+        return 4 if is_profitable else 2
+
+    def get_runner_trail_pct(self, tight: bool, strategy: str = "") -> float:
+        """Get runner trail %, strategy-aware."""
+        overrides = self.strategy_exit_overrides.get(strategy, {})
+        if tight and "runner_tight_trail_pct" in overrides:
+            return overrides["runner_tight_trail_pct"]
+        if not tight and "runner_initial_trail_pct" in overrides:
+            return overrides["runner_initial_trail_pct"]
+        return 0.015 if tight else 0.03
 
 
 # =============================================================================

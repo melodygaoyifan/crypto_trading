@@ -1052,7 +1052,7 @@ class AlphaThresholdCalculator:
     # v6.5.1 CTO audit: lowered from 3.0/2.0/2.5
     # [UNLEASH] UL-3: further lowered - 4H system should trade more freely
     # Original: 2.0/1.15/1.15/1.15. New: 1.5/1.0/1.0/1.0
-    NORMAL_MULTIPLIER = 1.25            # was 1.5 -> 1.25 (audit: 1.5 blocked 89% of signals, realistic alpha=30-50bps)
+    NORMAL_MULTIPLIER = 1.10            # was 1.25 -> 1.10 (2026-04-08: 1.25 blocked 95% signals in paper run, 4H system alpha typically 5-30bps)
     OPPORTUNITY_LEAD_LAG_MULTIPLIER = 1.0  # [UNLEASH] was 1.15 -> 1.0 (7bps = just friction)
     OPPORTUNITY_CRACK_MULTIPLIER = 1.0     # [UNLEASH] was 1.15 -> 1.0
     OPPORTUNITY_OTHER_MULTIPLIER = 1.0     # [UNLEASH] was 1.15 -> 1.0

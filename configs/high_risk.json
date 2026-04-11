@@ -4,14 +4,14 @@
   "risk_profile": "HIGH_RISK",
   "alpha_gate": {
     "_description": "HIGH_RISK should still trade QUIET_ACCUMULATION setups when direction is meaningfully non-trivial instead of hard-blocking sub-0.35 signals.",
-    "min_alpha_bps_default": 10,
-    "min_alpha_bps_short_default": 8,
-    "_calibration_note": "理念1: 错过高确信度机会 > 可控亏损. Was 22bps (too conservative, blocked 50%+ trades). 10bps = covers fees while allowing more opportunities. Other risk controls (thesis budget, drawdown, time stop) handle downside.",
+    "min_alpha_bps_default": 6,
+    "min_alpha_bps_short_default": 5,
+    "_calibration_note": "Relaxed 2026-04-08: was 10/8bps, blocked 95% signals in paper run. 6/5bps still covers Kraken maker fees (2.6bps) with margin. HOLD strategy + thesis budget handle downside.",
     "staged_schedule": [
-      {"stage": "HIGH_RISK", "min_alpha_bps": 10},
-      {"stage": "WEEK1", "min_alpha_bps": 10},
-      {"stage": "WEEK2_3", "min_alpha_bps": 8},
-      {"stage": "MONTH1", "min_alpha_bps": 5}
+      {"stage": "HIGH_RISK", "min_alpha_bps": 6},
+      {"stage": "WEEK1", "min_alpha_bps": 6},
+      {"stage": "WEEK2_3", "min_alpha_bps": 5},
+      {"stage": "MONTH1", "min_alpha_bps": 4}
     ],
     "staged_schedule_short": [
       {"stage": "HIGH_RISK", "min_alpha_bps": 8},
@@ -20,31 +20,32 @@
       {"stage": "MONTH1", "min_alpha_bps": 5}
     ],
     "stage_selector": "HIGH_RISK",
-    "quiet_accum_min_direction": 0.15,
+    "quiet_accum_min_direction": 0.08,
     "quiet_accum_min_direction_by_asset": {
       "BTC": 0.04,
       "ETH": 0.025
     },
-    "quiet_accum_min_direction_short": 0.05,
+    "quiet_accum_min_direction_short": 0.12,
+    "_short_tighten_note": "2026-04-08: Paper run 12.5% SHORT win rate. Shorts enter too early with low conviction. Raised all SHORT direction floors ~2x to require stronger signal before shorting. Shorts directionally correct (counterfactual worse) but entry timing poor.",
     "quiet_accum_min_direction_short_by_asset": {
-      "BTC": 0.03,
-      "ETH": 0.015
+      "BTC": 0.08,
+      "ETH": 0.05
     },
-    "opportunity_actionable_min_direction_short": 0.045,
+    "opportunity_actionable_min_direction_short": 0.10,
     "opportunity_actionable_min_direction_short_by_asset": {
-      "ETH": 0.015
+      "ETH": 0.04
     },
     "opportunity_actionable_min_exposure": 0.01,
     "opportunity_actionable_min_exposure_by_asset": {
       "ETH": 0.005
     },
-    "normal_actionable_min_direction_short": 0.085,
-    "borderline_alpha_pass_epsilon_bps": 0.0,
+    "normal_actionable_min_direction_short": 0.15,
+    "borderline_alpha_pass_epsilon_bps": 2.0,
     "borderline_alpha_pass_epsilon_bps_by_asset": {
-      "BTC": 1.0,
+      "BTC": 2.5,
       "ETH": 4.5
     },
-    "borderline_alpha_pass_epsilon_bps_short": 0.25,
+    "borderline_alpha_pass_epsilon_bps_short": 1.5,
     "borderline_alpha_pass_epsilon_bps_short_by_asset": {
       "BTC": 1.0,
       "ETH": 4.5,
@@ -58,8 +59,8 @@
       "WEAK_CONSOLIDATION": 0.90
     },
     "regime_alpha_gate_relax_short": {
-      "QUIET_ACCUMULATION": 0.80,
-      "WEAK_CONSOLIDATION": 0.80
+      "QUIET_ACCUMULATION": 1.10,
+      "WEAK_CONSOLIDATION": 1.10
     },
     "profit_calibration_shadow": {
       "enabled": true,

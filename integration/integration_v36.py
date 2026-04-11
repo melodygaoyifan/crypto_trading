@@ -754,7 +754,48 @@ class HMATSv36Engine:
         market_data: Dict[str, Any],
         position_state: Dict[str, Any],
     ) -> bool:
-        """Downgrade weak quiet-regime long volume_breakout probes to HOLD before alpha gating."""
+        """Downgrade to HOLD before alpha gating when Best-of-N selects hold strategy,
+        or when weak quiet-regime volume_breakout probes are detected."""
+        # [2026-04-08] Best-of-N HOLD strategy: when pipeline determines no strategy
+        # has edge (ADX<15, RSI neutral, volume thin in choppy regime), skip alpha gate
+        # and maintain current position. This prevents forced entries that produced
+        # 14.3% SOL win rate and -$60 SHORT losses in paper run.
+        _strategy = str(agent_signals.get("primary_strategy", "") or "").lower()
+        if _strategy == "hold":
+            _current_exp = abs(
+                float(
+                    position_state.get(
+                        "current_exposure",
+                        market_data.get("current_exposure", 0.0),
+                    ) or 0.0
+                )
+            )
+            _regime = str(market_data.get("regime_state", "") or "").upper()
+            intent.direction = 0.0
+            intent.target_exposure = _current_exp
+            intent.tranche_action = "HOLD"
+            intent.tranche_level = 0
+            intent.alpha_gate_passed = True
+            intent.alpha_estimated_bps = 0.0
+            intent.alpha_threshold_bps = 0.0
+            intent.expected_net_alpha_bps = 0.0
+            intent.net_alpha_threshold_bps = 0.0
+            intent.veto_active = False
+            intent.veto_reason = (
+                f"[BEST_OF_N_HOLD] {_regime} no strategy has edge"
+            )
+            self._last_alpha_result = AlphaGatingResult(
+                passes_threshold=True,
+                estimated_alpha_bps=0.0,
+                threshold_bps=0.0,
+                gate_decision="BEST_OF_N_HOLD",
+            )
+            logger.info(
+                f"[BEST_OF_N_HOLD] {asset}: {_regime} hold strategy won "
+                f"Best-of-N -> HOLD (current_exp={_current_exp:.4f})"
+            )
+            return True
+
         if not bool(market_data.get("pre_alpha_hold_volume_breakout_long_in_quiet", False)):
             return False
 

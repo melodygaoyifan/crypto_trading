@@ -209,6 +209,7 @@ class GamblerSoftExitChecker:
         structure_confirmed: bool,
         adverse_momentum: bool,
         bars_since_entry: int = 0,
+        strategy: str = "",  # [2026-04-08] Strategy-differentiated exit thresholds
     ) -> SoftExitCheckResult:
         """
         Check if soft exit should be triggered.
@@ -228,18 +229,18 @@ class GamblerSoftExitChecker:
         gambler_mode = self._is_gambler_mode()
         config = self._get_config()
         
-        # Get thresholds based on mode
+        # Get thresholds based on mode + strategy (strategy overrides take precedence)
         if gambler_mode and config:
-            pnl_threshold = config.get_soft_exit_pnl_threshold(True)
+            pnl_threshold = config.get_soft_exit_pnl_threshold(True, strategy)
             vpin_threshold = config.get_vpin_soft_exit(True)
-            structure_bars = config.get_structure_failure_bars(True)
-            timeout_mins = config.get_no_confirmation_timeout(True)
+            structure_bars = config.get_structure_failure_bars(True, strategy)
+            timeout_mins = config.get_no_confirmation_timeout(True, strategy)
         else:
             if config:
-                pnl_threshold = config.get_soft_exit_pnl_threshold(False)
+                pnl_threshold = config.get_soft_exit_pnl_threshold(False, strategy)
                 vpin_threshold = config.get_vpin_soft_exit(False)
-                structure_bars = config.get_structure_failure_bars(False)
-                timeout_mins = config.get_no_confirmation_timeout(False)
+                structure_bars = config.get_structure_failure_bars(False, strategy)
+                timeout_mins = config.get_no_confirmation_timeout(False, strategy)
             else:
                 # Fallback defaults
                 pnl_threshold = -30.0

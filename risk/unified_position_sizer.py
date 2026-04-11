@@ -268,6 +268,7 @@ class UnifiedPositionSizer:
         asset_cap_override: Optional[float] = None,
         price_usd: Optional[float] = None,
         is_opportunity: bool = False,  # v6.2.1: OPPORTUNITY mode flag
+        confidence: float = 0.5,      # [2026-04-08] Confidence-based sizing
     ) -> PositionSizingResult:
         """
         Calculate final position size with all constraints applied.
@@ -352,7 +353,12 @@ class UnifiedPositionSizer:
         if stop_loss_pct <= 0:
             stop_loss_pct = 0.02  # Default 2% stop
         
-        risk_amount = account_balance * self.config.risk_per_trade
+        # [2026-04-08] Confidence-based risk scaling: low conviction = smaller bets,
+        # high conviction = larger bets. Multiplier range [0.5, 1.5] applied to
+        # base risk_per_trade. At conf=0.3 → 0.8×, conf=0.5 → 1.0×, conf=0.9 → 1.4×.
+        _conf_mult = max(0.5, min(1.5, 0.5 + float(confidence)))
+        _effective_risk = self.config.risk_per_trade * _conf_mult
+        risk_amount = account_balance * _effective_risk
         risk_based_max_usd = risk_amount / stop_loss_pct
 
         # Step 1b: R3 - Apply Kelly cap if available

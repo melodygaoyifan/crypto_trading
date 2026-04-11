@@ -188,12 +188,12 @@
     },
 
     "alpha_gate": {
-        "_description": "P1-2A: Staged min alpha floor. Lowers the minimum alpha threshold over time. EV gate (friction * multiplier) still applies as stricter constraint in post-free-tier.",
-        "min_alpha_bps_default": 10,
+        "_description": "P1-2A: Staged min alpha floor. Relaxed 2026-04-08: paper run showed 95% signal rejection at 10bps floor (avg signal alpha 1-10bps). Lowered to allow more trades while HOLD strategy filters choppy regimes.",
+        "min_alpha_bps_default": 5,
         "staged_schedule": [
-            {"stage": "WEEK1",   "min_alpha_bps": 10},
-            {"stage": "WEEK2_3", "min_alpha_bps": 8},
-            {"stage": "MONTH1",  "min_alpha_bps": 5}
+            {"stage": "WEEK1",   "min_alpha_bps": 5},
+            {"stage": "WEEK2_3", "min_alpha_bps": 4},
+            {"stage": "MONTH1",  "min_alpha_bps": 3}
         ],
         "stage_selector": "WEEK1"
     },

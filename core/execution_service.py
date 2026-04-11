@@ -392,6 +392,7 @@ async def execute_intent_v2(
                     drawdown_status=_dd_status,
                     price_usd=current_price,
                     is_opportunity=_is_opportunity,  # [RULETABLE]
+                    confidence=getattr(intent, 'quant_confidence', 0.5),
                 )
                 _sizer_exp = _sizing.final_exposure_pct
             if _sizer_exp < exposure_fraction:
