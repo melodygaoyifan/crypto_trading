@@ -25,11 +25,17 @@ SPECIAL CASE - SystemMode in authority_fusion.py:
 from enum import Enum, auto
 
 
+# [N5] str,Enum pattern: all string-valued enums inherit from (str, Enum)
+# so that `SystemMode.NORMAL == "NORMAL"` is True without .value access.
+# This eliminates the entire class of enum identity comparison bugs that
+# HMATS has had across 8+ enum definitions (see MEMORY.md bug patterns).
+
+
 # =============================================================================
 # SYSTEM MODE (Mode Hierarchy: NO_TRADE > OPPORTUNITY > NORMAL)
 # =============================================================================
 
-class SystemMode(Enum):
+class SystemMode(str, Enum):
     """System operating mode.
 
     Precedence: NO_TRADE > OPPORTUNITY > NORMAL (LOCKED).
@@ -48,7 +54,7 @@ class SystemMode(Enum):
 # EXECUTION MODE (Trade Intent level - how to execute)
 # =============================================================================
 
-class ExecutionMode(Enum):
+class ExecutionMode(str, Enum):
     """Trade execution mode at the intent level.
 
     Canonical source: was integration/integration_v36.py.
@@ -69,7 +75,7 @@ class ExecutionMode(Enum):
 # DEADLOCK RESOLUTION
 # =============================================================================
 
-class DeadlockResolution(Enum):
+class DeadlockResolution(str, Enum):
     """Fusion deadlock resolution.
 
     Canonical source: was integration/integration_v36.py.
@@ -86,7 +92,7 @@ class DeadlockResolution(Enum):
 # REGIME PHASE (Where within a move)
 # =============================================================================
 
-class RegimePhase(Enum):
+class RegimePhase(str, Enum):
     """Regime phase within a trend.
 
     NOT the same as regime_state (BULL/BEAR/SIDEWAYS).
@@ -107,7 +113,7 @@ class RegimePhase(Enum):
 # DRL AUTHORITY LEVEL
 # =============================================================================
 
-class DRLAuthorityLevel(Enum):
+class DRLAuthorityLevel(str, Enum):
     """DRL authority gating level.
 
     Promotion path: DISABLED -> SHADOW -> EXIT_ONLY -> ACTIVE
@@ -145,7 +151,7 @@ class TrancheLevel(Enum):
 # RUN MODE (CLI mode selection)
 # =============================================================================
 
-class RunMode(Enum):
+class RunMode(str, Enum):
     """System run mode (CLI argument)."""
     VERIFY = "verify"
     PAPER = "paper"
@@ -157,7 +163,7 @@ class RunMode(Enum):
 # AUTHORITY TYPES (for agent roles in fusion)
 # =============================================================================
 
-class Authority(Enum):
+class Authority(str, Enum):
     """Authority types for agent roles in the fusion engine.
 
     Canonical source: was signals/authority_fusion.py.

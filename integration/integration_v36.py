@@ -796,6 +796,39 @@ class HMATSv36Engine:
             )
             return True
 
+        # [2026-04-11] Black Swan Sentinel: when BSS=0 (crisis in progress),
+        # force HOLD for new entries. Existing positions handled by stop-loss/risk.
+        _bss = int(market_data.get("black_swan_sentinel", 3))
+        if _bss == 0:
+            _current_exp = abs(float(
+                position_state.get("current_exposure",
+                                   market_data.get("current_exposure", 0.0)) or 0.0
+            ))
+            _regime = str(market_data.get("regime_state", "") or "").upper()
+            intent.direction = 0.0
+            intent.target_exposure = _current_exp
+            intent.tranche_action = "HOLD"
+            intent.tranche_level = 0
+            intent.alpha_gate_passed = True
+            intent.alpha_estimated_bps = 0.0
+            intent.alpha_threshold_bps = 0.0
+            intent.expected_net_alpha_bps = 0.0
+            intent.net_alpha_threshold_bps = 0.0
+            intent.veto_active = False
+            intent.veto_reason = f"[BLACK_SWAN_SENTINEL] BSS=0 crisis detected in {_regime}"
+            self._last_alpha_result = AlphaGatingResult(
+                passes_threshold=True,
+                estimated_alpha_bps=0.0,
+                threshold_bps=0.0,
+                gate_decision="BLACK_SWAN_HOLD",
+            )
+            logger.warning(
+                f"[BLACK_SWAN_SENTINEL] {asset}: BSS=0 crisis -> HOLD "
+                f"(fear={market_data.get('_fear_greed_value', '?')}, "
+                f"vol_spike={market_data.get('vol_spike_ratio', '?')})"
+            )
+            return True
+
         if not bool(market_data.get("pre_alpha_hold_volume_breakout_long_in_quiet", False)):
             return False
 

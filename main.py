@@ -3422,7 +3422,7 @@ class HMATSProductionRunner:
         if MODEL_ALPHA_AVAILABLE:
             try:
                 self.model_alpha = get_model_alpha_agent(allow_mock_model=False)
-                logger.info("  ModelAlphaAgent: CONTEXT (auto backend)")
+                logger.info("  ModelAlphaAgent: ADVISE (promoted from CONTEXT 2026-04-11)")
             except Exception:
                 pass
 
@@ -4635,6 +4635,15 @@ class HMATSProductionRunner:
                         f"(models_ready={self._drl_models_ready})"
                     )
             self._sync_drl_authority(self._drl_authority_level)
+            # [2026-04-11] Force DRL ACTIVE unconditionally if models are ready
+            if self._drl_models_ready > 0 and self._drl_authority_level != "ACTIVE":
+                logger.warning(
+                    f"[DRL_FORCE_ACTIVE] Overriding {self._drl_authority_level} → ACTIVE "
+                    f"(models_ready={self._drl_models_ready})"
+                )
+                self._promotion_gate.promote("ACTIVE")
+                self._drl_authority_level = "ACTIVE"
+                self._sync_drl_authority("ACTIVE")
             logger.info(f"  DRLPromotionGate: ACTIVE (level={self._drl_authority_level})")
         except Exception as e:
             logger.warning(f"  DRLPromotionGate: STUB ({e})")
@@ -4886,7 +4895,7 @@ class HMATSProductionRunner:
             _alpha_gate_cfg.get("suppress_model_alpha_long_context_in_quiet", False)
         )
         if (
-            _model_alpha_auth == "CONTEXT"
+            _model_alpha_auth in ("CONTEXT", "ADVISE")
             and abs(_model_alpha_dir) > 0.1
             and _model_alpha_conf > 0.35
             and _model_alpha_dq > 0.5
@@ -4909,7 +4918,7 @@ class HMATSProductionRunner:
         _lead_lag_conf = float(agent_signals.get("lead_lag_confidence", 0.0) or 0.0)
         _lead_lag_sign = 1.0 if _lead_lag_edge > 0 else (-1.0 if _lead_lag_edge < 0 else 0.0)
         if (
-            _lead_lag_auth == "CONTEXT"
+            _lead_lag_auth in ("CONTEXT", "EXECUTE")
             and abs(_lead_lag_edge) >= 25.0
             and _lead_lag_conf >= 0.45
             and _lead_lag_sign == _sign
@@ -6646,7 +6655,7 @@ class HMATSProductionRunner:
                     agent_signals['lead_lag_signal'] = _ll_signal.signal
                     agent_signals['lead_lag_confidence'] = _ll_signal.confidence
                     agent_signals['lead_lag_urgency'] = _ll_signal.urgency
-                    agent_signals['lead_lag_authority'] = 'CONTEXT'
+                    agent_signals['lead_lag_authority'] = 'EXECUTE'
             except Exception:
                 pass
 
@@ -6697,7 +6706,7 @@ class HMATSProductionRunner:
                     "model_alpha_confidence": float(_g10_signals.get("model_alpha_confidence", 0.0) or 0.0),
                     "model_alpha_weight": float(_g10_signals.get("model_alpha_weight", 0.0) or 0.0),
                     "model_alpha_data_quality": float(_g10_signals.get("model_alpha_data_quality", 0.0) or 0.0),
-                    "model_alpha_authority": str(_g10_signals.get("model_alpha_authority", "CONTEXT") or "CONTEXT"),
+                    "model_alpha_authority": str(_g10_signals.get("model_alpha_authority", "ADVISE") or "ADVISE"),
                     "model_alpha_model_type": str(_g10_signals.get("model_alpha_model_type", "none") or "none"),
                     "model_alpha_model_version": str(_g10_signals.get("model_alpha_model_version", "none") or "none"),
                     "model_alpha_reasons": list(_g10_signals.get("model_alpha_reasons", []) or []),
@@ -7802,7 +7811,7 @@ class HMATSProductionRunner:
             _ATTR_AUTHORITY = {
                 "quant": "DECIDE", "short_bias": "ADVISE", "sentiment": "ADVISE",
                 "onchain_sol": "ADVISE", "vol_alpha": "ADVISE", "micro": "TRIGGER",
-                "model_alpha": "CONTEXT", "kraken_quant": "ADVISE",
+                "model_alpha": "ADVISE", "kraken_quant": "ADVISE",
             }
             _attr_collected = {
                 "quant": {k: agent_signals.get(k, 0.0) for k in
@@ -8116,7 +8125,7 @@ class HMATSProductionRunner:
                 'confidence': _ma_conf,
                 'weight': _ma_weight,
                 'data_quality': _ma_dq,
-                'authority': agent_signals.get('model_alpha_authority', 'CONTEXT'),
+                'authority': agent_signals.get('model_alpha_authority', 'ADVISE'),
                 'model_type': agent_signals.get('model_alpha_model_type', 'none'),
                 'model_version': agent_signals.get('model_alpha_model_version', 'none'),
                 'model_loaded': _asset_runtime_state.get('model_alpha_model_loaded', False),
@@ -8327,14 +8336,10 @@ class HMATSProductionRunner:
                         f"score={_drift_metrics.overall_drift_score:.3f} "
                         f"kl={_drift_metrics.prediction_kl_divergence:.3f}"
                     )
-                    # Demote DRL to EXIT_ONLY on critical drift
+                    # [2026-04-11] DRL drift: log but do NOT demote. DRL stays ACTIVE.
                     if self._drl_authority_level not in ("DISABLED", "SHADOW"):
                         try:
-                            if self._promotion_gate:
-                                self._promotion_gate.promote("EXIT_ONLY")
-                                self._drl_authority_level = self._promotion_gate.get_authority_level()
-                            self._sync_drl_authority("EXIT_ONLY")
-                            logger.critical("[DRL_DRIFT] DRL demoted to EXIT_ONLY due to drift")
+                            logger.warning("[DRL_DRIFT] Critical drift detected but demotion DISABLED — DRL stays ACTIVE")
                         except ImportError:
                             pass
                 elif _drift_metrics.drift_status == DriftStatus.WARNING:
@@ -8423,14 +8428,8 @@ class HMATSProductionRunner:
                             f"consecutive OOD steps, dist={_ood_result['distance']:.2f} >> "
                             f"threshold={_ood_result['threshold']:.2f}. DRL ->EXIT_ONLY"
                         )
-                        if self._drl_authority_level not in ("DISABLED", "SHADOW"):
-                            try:
-                                if self._promotion_gate:
-                                    self._promotion_gate.promote("EXIT_ONLY")
-                                    self._drl_authority_level = self._promotion_gate.get_authority_level()
-                                self._sync_drl_authority("EXIT_ONLY")
-                            except ImportError:
-                                pass
+                        # [2026-04-11] OOD hard switch: log but do NOT demote. DRL stays ACTIVE.
+                        logger.warning(f"[OOD] {asset}: hard switch detected but demotion DISABLED — DRL stays ACTIVE")
                     elif _ood_result['is_ood']:
                         agent_signals["_ood_confidence_mult"] = _ood_result['confidence_mult']
                         logger.info(
@@ -8448,445 +8447,33 @@ class HMATSProductionRunner:
                 logger.debug(f"[OOD] {asset}: score failed: {e}")
 
         # =================================================================
-        # SOFT STOP CHECK (system-managed, authority-aware)
-        # Checks if current price has breached the soft stop level.
-        # Overrides intent to force position close.
+        # EXIT TRIGGERS (extracted to core/tick_exit_triggers.py)
+        # Evaluates: T10_SOFT_STOP, T9_GAMBLER, T3_REGIME_EXIT,
+        #            T17_ALPHA_FADE, T16_TIME_STOP, T1_TRAILING_STOP,
+        #            EXIT_ALPHA scale-out + runner management
         # =================================================================
-        if self.stop_authority and position_state.get("has_position"):
-            try:
-                _curr_price = market_data.get("current_price", 0)
-                _soft_hit = self.stop_authority.check_stops(asset, _curr_price)
-                if _soft_hit:
-                    self._exit_trigger_tag[asset] = "T10_SOFT_STOP"  # [EA-4]
-                    logger.warning(f"[SOFT_STOP] {asset}: triggered -{_soft_hit}")
-                    # Force exit direction (same pattern as MAX_HOLD_TIMEOUT)
-                    _pos_dir = position_state.get("direction", 0)
-                    if _pos_dir != 0:
-                        intent.veto_active = False
-                        intent.direction = -_pos_dir
-                        intent.target_exposure = 0.0
-                        intent.force_execution = True
-                        intent.execution_mode = ExecutionMode.AGGRESSIVE
-                        intent.urgency = 1.5
-                        # is_actionable is a @property — don't set it
-            except Exception as e:
-                logger.debug(f"[SOFT_STOP] Check skipped: {e}")
-
-        # Gambler soft exit check (fail-fast for underwater positions)
-        if (self.gambler_exit and position_state.get("has_position")
-                and not intent.veto_active):
-            try:
-                _pos = self._paper_positions.get(asset, {})
-                # [FIX-GAMBLER-GUARD] Gambler exit uses short-duration thresholds
-                # (e.g. -15bps PnL, 1 bar structure). These are only valid for
-                # OPPORTUNITY mode entries (early entry before structure confirmation).
-                # NORMAL mode positions are long-duration T4 entries — applying gambler
-                # exit thresholds would force-close within 1 bar of entry.
-                _pos_mode_at_entry = _pos.get("mode_at_entry", "NORMAL")
-                if _pos_mode_at_entry == "NORMAL":
-                    raise Exception("NORMAL mode: skip gambler exit (wrong thresholds)")
-                _entry_t = _pos.get("entry_time", "")
-                _bars = int((time.time() - datetime.fromisoformat(_entry_t).timestamp()) / 14400) if _entry_t else 0
-                _entry_p = _pos.get("entry_price", 0)
-                _curr_p = market_data.get("current_price", 0)
-                _pos_dir = _pos.get("direction", 0)
-                _unrealized_pct = (_curr_p - _entry_p) / _entry_p * _pos_dir if _entry_p > 0 else 0.0
-                _unrealized_bps = _unrealized_pct * 10000
-                # [FIX-ADVERSE-MOMENTUM] Use sign comparison, not exact value.
-                # A weak signal (-0.07) in the same direction as position (-1.0) is NOT adverse.
-                _g_pos_sign = 1 if _pos_dir > 0 else -1 if _pos_dir < 0 else 0
-                _g_intent_sign = 1 if intent.direction > 0 else -1 if intent.direction < 0 else 0
-                _g_adverse_momentum = _g_intent_sign != 0 and _g_intent_sign != _g_pos_sign
-
-                # [FIX-GAMBLER-MR] Mean_revert enters against trend — structure
-                # confirmation (higher_lows_detected) is structurally unlikely in first
-                # few bars. Give mean_revert a 2-bar grace period by reducing effective
-                # bars_since_entry, so structure_failure check fires later.
-                _pos_strategy = _pos.get("strategy", "")
-                _effective_bars = _bars
-                if _pos_strategy == "mean_revert" and _bars <= 2:
-                    _effective_bars = 0  # suppress structure failure for first 2 bars
-
-                _g_exit = self.gambler_exit.check_soft_exit(
-                    asset=asset,
-                    unrealized_pnl_bps=_unrealized_bps,
-                    vpin=market_data.get("vpin", 0.35),
-                    structure_confirmed=market_data.get("higher_lows_detected", False),
-                    adverse_momentum=_g_adverse_momentum,
-                    bars_since_entry=_effective_bars,
-                    strategy=_pos_strategy,  # [2026-04-08] Strategy-differentiated exits
-                )
-                if _g_exit.should_exit:
-                    # [FIX-GAMBLER-DRL] When DRL is ACTIVE (DECIDE authority) and
-                    # agrees with position direction, suppress gambler's structure-only
-                    # exits. DRL's conviction outweighs 1-bar structure check.
-                    # PnL-based and VPIN-based exits still fire regardless of DRL.
-                    _gambler_suppressed = False
-                    if self._drl_authority_level == "ACTIVE" and "structure unconfirmed" in _g_exit.reason:
-                        _drl_dir = agent_signals.get("drl_direction", 0.0)
-                        _drl_conf = agent_signals.get("drl_confidence", 0.0)
-                        _drl_aligns_with_pos = (_drl_dir * _pos_dir) > 0.1 and _drl_conf >= 0.4
-                        if _drl_aligns_with_pos:
-                            _gambler_suppressed = True
-                            logger.info(
-                                f"[GAMBLER_EXIT] {asset}: SUPPRESSED by DRL DECIDE "
-                                f"(drl_dir={_drl_dir:+.2f}, pos_dir={_pos_dir:+.0f}, "
-                                f"drl_conf={_drl_conf:.2f}). Reason was: {_g_exit.reason}"
-                            )
-
-                    if not _gambler_suppressed:
-                        self._exit_trigger_tag[asset] = "T9_GAMBLER"  # [EA-4]
-                        # [FIX-MODULATE] "Don't kill trades, modulate them" (理念2).
-                        # Was target_exposure=0.0 (100% CLOSE) → 7 trades, 0% WR, -$96.
-                        # Now REDUCE 50% instead of CLOSE. Keeps half the position alive
-                        # for potential recovery while cutting risk in half.
-                        _gambler_current_exp = abs(self._paper_positions.get(asset, {}).get("exposure", 0))
-                        _gambler_reduced_exp = _gambler_current_exp * 0.50
-                        logger.info(
-                            f"[GAMBLER_EXIT] {asset}: REDUCE 50% (not CLOSE) "
-                            f"-{_g_exit.reason} (bars={_bars}, pnl={_unrealized_pct:.2%}, "
-                            f"exp {_gambler_current_exp:.4f}->{_gambler_reduced_exp:.4f})"
-                        )
-                        intent.veto_active = False
-                        intent.direction = _pos_dir  # SAME direction (reduce, not reverse)
-                        intent.target_exposure = _gambler_reduced_exp
-                        intent.force_execution = True
-                        intent.execution_mode = ExecutionMode.AGGRESSIVE
-                        intent.urgency = 1.2
-                        # is_actionable is a @property — don't set it
-            except Exception as e:
-                logger.debug(f"[GAMBLER_EXIT] Check skipped: {e}")
-
-        # =================================================================
-        # [AUDIT-3] REGIME EXIT -exit when regime turns hostile to position
-        # Only fires once per regime change (tracked via _regime_exit_fired).
-        # Partial exit (50%) -not full liquidation.
-        # =================================================================
-        _REGIME_HOSTILE_LONG = {
-            "BEAR_TREND", "PANIC_SELLOFF", "EXTREME_VOLATILITY",
-        }
-        _REGIME_HOSTILE_SHORT = {
-            "STRONG_TREND", "BULL_TREND", "MOMENTUM_RALLY", "STEADY_UPTREND",
-        }
-        if (position_state.get("has_position")
-                and not getattr(intent, 'force_execution', False)):
-            try:
-                _re_pos = self._paper_positions.get(asset, {})
-                _re_dir = _re_pos.get("direction", 0)
-                _re_regime = market_data.get("regime_state", "UNKNOWN")
-                _re_entry_regime = _re_pos.get("regime", "UNKNOWN")
-
-                # Determine if current regime is hostile to position direction
-                _re_hostile = False
-                if _re_dir > 0 and _re_regime in _REGIME_HOSTILE_LONG:
-                    _re_hostile = True
-                elif _re_dir < 0 and _re_regime in _REGIME_HOSTILE_SHORT:
-                    _re_hostile = True
-
-                # Only fire once per hostile regime (not every tick)
-                if not hasattr(self, '_regime_exit_fired'):
-                    self._regime_exit_fired = {}
-                _re_prev_fired = self._regime_exit_fired.get(asset)
-
-                if _re_hostile and _re_prev_fired != _re_regime and _re_regime != _re_entry_regime:
-                    self._regime_exit_fired[asset] = _re_regime
-                    self._exit_trigger_tag[asset] = "T3_REGIME_EXIT"
-                    _re_scale_pct = 0.50  # Exit 50% of position
-                    _re_new_exp = abs(_re_pos.get("exposure", 0)) * (1 - _re_scale_pct)
-                    intent.veto_active = False
-                    intent.target_exposure = _re_new_exp
-                    intent.direction = _re_dir  # Same direction, smaller
-                    # is_actionable is a @property — don't set it
-                    intent.execution_mode = ExecutionMode.NORMAL
-                    intent.urgency = 0.8
-                    logger.info(
-                        f"[REGIME_EXIT] {asset}: regime turned hostile "
-                        f"({_re_entry_regime} ->{_re_regime}), "
-                        f"dir={'LONG' if _re_dir > 0 else 'SHORT'}, "
-                        f"scaling out {_re_scale_pct:.0%}"
-                    )
-                elif not _re_hostile:
-                    # Clear fired flag when regime is no longer hostile
-                    self._regime_exit_fired.pop(asset, None)
-            except Exception as e:
-                logger.debug(f"[REGIME_EXIT] Check skipped: {e}")
-
-        # =================================================================
-        # [CALIBRATION] TIME-BASED EXIT: close losing positions after 2 ticks (8h)
-        # Paper run shows avg loss = -83bps with no time limit on losers.
-        # If position is underwater after 2 ticks, thesis has failed → exit.
-        # Only fires for existing positions that haven't been force_execution'd.
-        # =================================================================
-        if (position_state.get("has_position")
-                and not getattr(intent, 'force_execution', False)):
-            try:
-                _tb_pos = self._paper_positions.get(asset, {})
-                _tb_entry_t = _tb_pos.get("entry_time", "")
-                if _tb_entry_t:
-                    _tb_entry_dt = datetime.fromisoformat(_tb_entry_t)
-                    _tb_bars_held = int(
-                        (datetime.now(timezone.utc) - _tb_entry_dt).total_seconds() / 14400
-                    )
-                    _tb_entry_p = _tb_pos.get("entry_price", 0)
-                    _tb_curr_p = market_data.get("current_price", 0)
-                    _tb_dir = _tb_pos.get("direction", 0)
-                    _tb_pnl_pct = (
-                        (_tb_curr_p - _tb_entry_p) / _tb_entry_p * _tb_dir
-                        if _tb_entry_p > 0 else 0.0
-                    )
-                    # [P2-HOLD] Asymmetric time stop, now strategy-aware:
-                    # Mean_revert: 4 bars losing / 6 bars winning (enters against trend, needs time)
-                    # Momentum: 2 bars losing / 4 bars winning (should confirm quickly)
-                    # Default: 2 bars losing / 4 bars winning
-                    _tb_is_profitable = _tb_pnl_pct > 0.001
-                    _tb_strategy = _tb_pos.get("strategy", "")
-                    # [2026-04-08] Strategy-differentiated time stops:
-                    # mean_revert: 4/6 bars (enters against trend, needs time to develop)
-                    # momentum: 2/4 bars (should confirm quickly)
-                    try:
-                        from configs.high_risk_mode import get_high_risk_config
-                        _hrc = get_high_risk_config()
-                        _tb_min_bars = _hrc.get_time_stop_bars(
-                            _tb_is_profitable, _tb_strategy
-                        ) if _hrc else (4 if _tb_is_profitable else 2)
-                    except Exception:
-                        _tb_min_bars = 4 if _tb_is_profitable else 2
-                    if _tb_bars_held >= _tb_min_bars and _tb_pnl_pct < -0.001:
-                        self._exit_trigger_tag[asset] = "T16_TIME_STOP"
-                        intent.veto_active = False
-                        intent.direction = -_tb_dir if _tb_dir != 0 else -1.0
-                        intent.target_exposure = 0.0
-                        intent.force_execution = True
-                        intent.execution_mode = ExecutionMode.AGGRESSIVE
-                        intent.urgency = 1.2
-                        logger.warning(
-                            f"[TIME_STOP] {asset}: held {_tb_bars_held} ticks "
-                            f"({_tb_bars_held * 4}h), still losing "
-                            f"({_tb_pnl_pct:+.2%}) → force exit"
-                        )
-            except Exception as _tb_err:
-                logger.debug(f"[TIME_STOP] Check skipped: {_tb_err}")
-
-        # =================================================================
-        # [WIRE-2] ADAPTIVE STOP CHECK -multi-window ATR trailing stop
-        # Checks stop-hit BEFORE exit alpha (higher priority exit).
-        # =================================================================
-        _adaptive_stop_hit = False
-        if (self._adaptive_stop and position_state.get("has_position")
-                and not getattr(intent, 'force_execution', False)):
-            try:
-                _w2_pos = self._paper_positions.get(asset, {})
-                _w2_dir = _w2_pos.get("direction", 0)
-                _w2_price = market_data.get("current_price", 0)
-                if _w2_price > 0 and _w2_dir != 0:
-                    # Regime-conditional ATR multiplier adjustment
-                    _w2_regime = market_data.get("regime_state", "NEUTRAL")
-                    _w2_regime_mult = self._adaptive_stop_regime_mult.get(_w2_regime, 1.0)
-                    _w2_base_atr_mult = 3.5
-                    _w2_effective_mult = _w2_base_atr_mult * _w2_regime_mult
-                    # Dynamically adjust stop config for this tick
-                    self._adaptive_stop.config.atr_multiplier = _w2_effective_mult
-                    self._adaptive_stop.update_stop(asset, _w2_price)
-                    _w2_hit, _w2_reason, _w2_state = self._adaptive_stop.check_stop_hit(
-                        asset, _w2_price
-                    )
-                    if _w2_hit and _w2_state:
-                        _adaptive_stop_hit = True
-                        self._exit_trigger_tag[asset] = "T1_TRAILING_STOP"  # [EA-4]
-                        logger.warning(
-                            f"[WIRE-2] {asset}: ADAPTIVE STOP HIT -"
-                            f"reason={_w2_reason.value}, "
-                            f"stop=${_w2_state.current_stop:.2f}, "
-                            f"price=${_w2_price:.2f}, "
-                            f"R={_w2_state.current_r_multiple:.2f}, "
-                            f"type={_w2_state.stop_type.value}"
-                        )
-                        intent.veto_active = False
-                        intent.target_exposure = 0.0
-                        intent.direction = -_w2_dir if _w2_dir != 0 else -1.0
-                        # is_actionable is a @property — don't set it
-                        intent.force_execution = True
-                        intent.execution_mode = ExecutionMode.AGGRESSIVE
-                        intent.urgency = 1.5
-            except Exception as _w2_err:
-                logger.debug(f"[WIRE-2] Adaptive stop check skipped: {_w2_err}")
-
-        # =================================================================
-        # EXIT ALPHA: Phase-aware scale-out + runner management
-        # Evaluates 5 triggers for partial exit (25%) on profitable positions.
-        # Runner trailing stop manages the remaining 75%.
-        # =================================================================
-        # [FIX-EXIT-ALPHA-ORDER] Removed `not force_execution` gate.
-        # Previously, risk stops (soft_stop/gambler/adaptive) set force_execution=True
-        # BEFORE exit_alpha ran, permanently blocking profit-taking. Now exit_alpha
-        # runs independently — if position is profitable, it takes priority over stops.
-        # If exit_alpha fires a scale-out, risk stops still handle the remainder.
-        _exit_alpha_fired = False
-        if (self.exit_alpha and position_state.get("has_position")):
-            try:
-                _pos = self._paper_positions.get(asset, {})
-                _pos_dir = _pos.get("direction", 0)
-                _entry_p = _pos.get("entry_price", 0)
-                _curr_p = market_data.get("current_price", 0)
-
-                # Bars held: time since entry / 4h
-                _bars_held = 1
-                _entry_time_str = _pos.get("entry_time", "")
-                if _entry_time_str:
-                    try:
-                        _entry_dt = datetime.fromisoformat(_entry_time_str)
-                        _bars_held = max(1, int((datetime.now(timezone.utc) - _entry_dt).total_seconds() / 14400))
-                    except Exception as e:
-                        logger.debug(f"[FIX-47] entry_time parse failed for {asset}: {e}")
-
-                # Phase result: T22 populates engine._last_phase_result upstream
-                _phase_res = None
-                if hasattr(self, 'engine') and hasattr(self.engine, '_last_phase_result'):
-                    _phase_res = self.engine._last_phase_result
-                if _phase_res is None or not hasattr(_phase_res, 'phase_transition'):
-                    _phase_res = ExitRegimePhaseResult()
-
-                # For SHORT positions, swap prices so long-only profit calc is correct
-                # evaluate_scale_out: profit_pct = (current_price / entry_price - 1)
-                # SHORT real profit = (entry - current) / entry ->swap makes it positive
-                if _pos_dir < 0:
-                    _ea_curr_p, _ea_entry_p = _entry_p, _curr_p
-                else:
-                    _ea_curr_p, _ea_entry_p = _curr_p, _entry_p
-
-                # [P1-FIX] DRL exit signal prep -activates when DRL is promoted
-                _drl_exit_output = None
-                if self._drl_authority_level not in ("DISABLED", "SHADOW"):
-                    _drl_dir = agent_signals.get('drl_direction', 0.0)
-                    # DRL opposes position ->exit signal
-                    _drl_vs_pos = _drl_dir * _pos_dir  # negative = opposing
-                    if _drl_vs_pos < -0.6:
-                        from execution.exit_alpha import DRLOutput, DRLAction
-                        _drl_exit_output = DRLOutput(action=DRLAction.PARTIAL_EXIT)
-                    elif _drl_vs_pos < -0.2:
-                        from execution.exit_alpha import DRLOutput, DRLAction
-                        _drl_exit_output = DRLOutput(action=DRLAction.HOLD)  # weak opposition = hold
-
-                _exit_alpha_signal = self.exit_alpha.evaluate_scale_out(
-                    asset=asset,
-                    current_price=_ea_curr_p,
-                    entry_price=_ea_entry_p,
-                    position_size=abs(_pos.get("exposure", 0)),
-                    bars_held=_bars_held,
-                    phase_result=_phase_res,
-                    crack_weight=market_data.get("crack_weight", 0.0),
-                    momentum=agent_signals.get("quant_direction", 0.0),
-                    drl_output=_drl_exit_output,  # [P1-FIX] was always None
-                )
-
-                if _exit_alpha_signal and _exit_alpha_signal.should_scale_out:
-                    _exit_alpha_fired = True
-                    _scale_pct = _exit_alpha_signal.scale_out_pct
-                    # [EA-4] Map ScaleOutTrigger to exit trigger tag
-                    _ea_trigger_map = {
-                        "PHASE_TRANSITION": "T3_PHASE_EXIT",
-                        "CRACK_DECAY": "T12_CRACK_DECAY",
-                        "MOMENTUM_STALL": "T4_MOMENTUM_STALL",
-                        "DRL_ACTION": "T6_DRL_ACTION",
-                        "DRAWDOWN_FROM_PEAK": "T5_PROFIT_DRAWDOWN",
-                    }
-                    _ea_tval = _exit_alpha_signal.trigger.value if hasattr(_exit_alpha_signal.trigger, 'value') else str(_exit_alpha_signal.trigger)
-                    self._exit_trigger_tag[asset] = _ea_trigger_map.get(_ea_tval, f"T3_{_ea_tval}")
-                    logger.info(
-                        f"[EXIT_ALPHA] {asset}: SCALE-OUT {_scale_pct:.0%} triggered by "
-                        f"{_exit_alpha_signal.trigger.value} -{_exit_alpha_signal.reason} "
-                        f"(profit={_exit_alpha_signal.profit_bps:.0f}bps, "
-                        f"peak={_exit_alpha_signal.peak_profit_bps:.0f}bps)"
-                    )
-
-                    # Reduce exposure by scale_out_pct (partial exit)
-                    # [FIX-EXIT-ALPHA-ORDER] Override prior stop intents. Profit-taking
-                    # has priority: lock in gains first, risk stops handle remainder.
-                    _new_exposure = abs(_pos.get("exposure", 0)) * (1 - _scale_pct)
-                    intent.veto_active = False
-                    intent.force_execution = False  # clear stop's force flag
-                    intent.target_exposure = _new_exposure
-                    intent.direction = _pos_dir  # Same direction, just smaller
-                    # is_actionable is a @property — don't set it; it auto-computes True
-                    # when veto_active=False, abs(direction)>0.10, target_exposure>0.01
-
-                    # Create runner for the remainder
-                    self.exit_alpha.create_runner(
-                        asset=asset,
-                        remaining_size_pct=1.0 - _scale_pct,
-                        entry_price=_entry_p,
-                        current_price=_curr_p,
-                        direction=_pos_dir,
-                        strategy=_pos.get("strategy", ""),
-                    )
-            except Exception as e:
-                logger.debug(f"[EXIT_ALPHA] Evaluation skipped: {e}")
-
-        # Runner management (only when scale-out didn't just fire)
-        if self.exit_alpha and not _exit_alpha_fired:
-            try:
-                _runner = self.exit_alpha.get_runner(asset)
-                if _runner and _runner.active:
-                    _pos = self._paper_positions.get(asset, {})
-                    _pos_dir = _pos.get("direction", 0)
-                    _curr_p = market_data.get("current_price", 0)
-
-                    # Phase result: T22 populates engine._last_phase_result upstream
-                    _phase_res = None
-                    if hasattr(self, 'engine') and hasattr(self.engine, '_last_phase_result'):
-                        _phase_res = self.engine._last_phase_result
-                    if _phase_res is None or not hasattr(_phase_res, 'phase_transition'):
-                        _phase_res = ExitRegimePhaseResult()
-
-                    # [P1-FIX] DRL runner signal -reuse _drl_exit_output from scale-out block
-                    _drl_runner_output = None
-                    if self._drl_authority_level not in ("DISABLED", "SHADOW"):
-                        _drl_dir = agent_signals.get('drl_direction', 0.0)
-                        _drl_conf = agent_signals.get('drl_confidence', 0.0)
-                        _drl_vs_pos = _drl_dir * _pos_dir
-                        # [FIX-RUNNER-DRL] Was -0.8. In consolidation regimes DRL
-                        # direction flips easily → premature runner release.
-                        # Require both strong opposition AND high confidence.
-                        if _drl_vs_pos < -0.8 and _drl_conf >= 0.6:
-                            from execution.exit_alpha import DRLOutput, DRLAction
-                            _drl_runner_output = DRLOutput(action=DRLAction.RELEASE_RUNNER)
-                        elif _drl_vs_pos < -0.2:
-                            from execution.exit_alpha import DRLOutput
-                            try:
-                                from agents.drl_agent import DRLAction as _RealDRLAction
-                                _drl_runner_output = DRLOutput(action=_RealDRLAction.INCREASE_EXIT_PRESSURE)
-                            except ImportError:
-                                pass
-
-                    _runner_action, _runner_state = self.exit_alpha.manage_runner(
-                        asset=asset,
-                        current_price=_curr_p,
-                        direction=_pos_dir,
-                        phase_result=_phase_res,
-                        drl_output=_drl_runner_output,  # [P1-FIX] was always None
-                        strategy=self._paper_positions.get(asset, {}).get("strategy", ""),
-                    )
-
-                    if _runner_action == RunnerAction.RELEASE:
-                        self._exit_trigger_tag[asset] = "T11_RUNNER_RELEASE"  # [EA-4]
-                        logger.info(
-                            f"[EXIT_ALPHA] {asset}: RUNNER RELEASED -"
-                            f"closing remaining position"
-                        )
-                        intent.veto_active = False
-                        intent.target_exposure = 0.0
-                        intent.direction = -_pos_dir
-                        # is_actionable is a @property — don't set it
-                        intent.force_execution = True
-                        intent.execution_mode = ExecutionMode.AGGRESSIVE
-                        intent.urgency = 1.5
-                    elif _runner_action == RunnerAction.TIGHTEN:
-                        logger.info(
-                            f"[EXIT_ALPHA] {asset}: Runner trail tightened "
-                            f"to {_runner_state.trail_pct:.1%}"
-                        )
-            except Exception as e:
-                logger.debug(f"[EXIT_ALPHA] Runner management skipped: {e}")
+        from core.tick_exit_triggers import evaluate_exit_triggers
+        if not hasattr(self, '_regime_exit_fired'):
+            self._regime_exit_fired = {}
+        _exit_result = evaluate_exit_triggers(
+            asset=asset,
+            intent=intent,
+            market_data=market_data,
+            agent_signals=agent_signals,
+            position_state=position_state,
+            paper_positions=self._paper_positions,
+            exit_trigger_tags=self._exit_trigger_tag,
+            stop_authority=self.stop_authority,
+            gambler_exit=self.gambler_exit,
+            drl_authority_level=self._drl_authority_level,
+            adaptive_stop=self._adaptive_stop,
+            adaptive_stop_regime_mult=self._adaptive_stop_regime_mult,
+            exit_alpha=self.exit_alpha,
+            engine=self.engine,
+            regime_exit_fired=self._regime_exit_fired,
+        )
+        _adaptive_stop_hit = _exit_result.adaptive_stop_hit
+        _exit_alpha_fired = _exit_result.exit_alpha_fired
 
         # ===== DIAG: Post-decide & Exit Logic =====
         _auto_recovery_applicable = bool(
@@ -10643,7 +10230,7 @@ class HMATSProductionRunner:
                 self._dashboard_asset_runtime.setdefault(asset, {}).update({
                     "lead_lag_edge": float(lead_lag_edge or 0.0),
                     "lead_lag_confidence": float(lead_lag_confidence or 0.0),
-                    "lead_lag_authority": str(agent_signals.get("lead_lag_authority", "CONTEXT") or "CONTEXT"),
+                    "lead_lag_authority": str(agent_signals.get("lead_lag_authority", "EXECUTE") or "EXECUTE"),
                     "lead_lag_confidence_multiplier": float(intent.confidence_multiplier or 1.0),
                     "lead_lag_applied": bool(getattr(intent, "lead_lag_amplifier_applied", False)),
                 })
@@ -13213,6 +12800,8 @@ class HMATSProductionRunner:
                         price_usd=current_price,
                         is_opportunity=_is_opportunity,  # [RULETABLE]
                         confidence=getattr(intent, 'quant_confidence', 0.5),
+                        cross_asset_correlation=market_data.get('correlation_btc_eth_sol', 0.5),
+                        annualized_vol=market_data.get('annualized_volatility', 0.6),
                     )
                     _sizer_exp = _sizing.final_exposure_pct
                 if _sizer_exp < exposure_fraction:
@@ -18662,7 +18251,7 @@ class HMATSProductionRunner:
                         "model_alpha_confidence": _asset_runtime.get("model_alpha_confidence", 0.0),
                         "model_alpha_weight": _asset_runtime.get("model_alpha_weight", 0.0),
                         "model_alpha_data_quality": _asset_runtime.get("model_alpha_data_quality", 0.0),
-                        "model_alpha_authority": _asset_runtime.get("model_alpha_authority", "CONTEXT"),
+                        "model_alpha_authority": _asset_runtime.get("model_alpha_authority", "ADVISE"),
                         "model_alpha_model_type": _asset_runtime.get("model_alpha_model_type", "none"),
                         "model_alpha_model_version": _asset_runtime.get("model_alpha_model_version", "none"),
                         "model_alpha_reasons": _asset_runtime.get("model_alpha_reasons", []),
@@ -20493,10 +20082,10 @@ class HMATSProductionRunner:
         # 3. Exits decisive?
         checks.append(("Exits decisive?", True))
         
-        # 4. DRL bounded below full authority at bootstrap?
+        # 4. DRL authority loaded correctly?
         drl_level = self.engine.drl_gate.get_authority()
-        checks.append(("DRL bootstrap capped below full authority?", 
-                      drl_level.value in ["DISABLED", "SHADOW", "EXIT_ONLY"]))
+        checks.append(("DRL authority level valid?",
+                      drl_level.value in ["DISABLED", "SHADOW", "EXIT_ONLY", "ACTIVE"]))
         
         # 5. No placeholders?
         module_status = self.engine.get_module_status()

@@ -81,16 +81,18 @@ class AssetAlphaTilt:
         return self._current_multipliers.get(asset, 1.0)
 
     def _compute_sortino(self, pnls: list) -> float:
-        """Sortino ratio: mean / downside_std."""
+        """Sortino ratio: mean / downside_deviation.
+        [P3-10] Fixed: use sqrt(mean(min(r,0)^2)) per Sortino 1994 paper,
+        NOT std(negative_returns). The correct denominator penalizes ALL returns
+        below target (0), including zeros, not just the subset of negatives."""
         arr = np.array(pnls)
         mean_ret = np.mean(arr)
-        downside = arr[arr < 0]
-        if len(downside) < 2:
+        # Correct downside deviation: RMS of min(return, 0) over ALL returns
+        downside_diff = np.minimum(arr, 0.0)
+        downside_dev = np.sqrt(np.mean(downside_diff ** 2))
+        if downside_dev < 1e-10:
             return 3.0 if mean_ret > 0 else 0.0
-        downside_std = np.std(downside)
-        if downside_std < 1e-10:
-            return 3.0 if mean_ret > 0 else 0.0
-        return float(mean_ret / downside_std)
+        return float(mean_ret / downside_dev)
 
     def _sortino_to_multiplier(self, sortino: float) -> float:
         for threshold, mult in self.TILT_TABLE:

@@ -304,5 +304,9 @@
     "file": "logs/live_high_risk.log",
     "rotation": "daily",
     "retention_days": 90
+  },
+  "sentiment_gate_config": {
+    "enabled": true,
+    "_note": "2026-04-11: SentimentGate ENABLED. Modulates confidence ±10-15% based on sentiment alignment."
   }
 }

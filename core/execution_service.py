@@ -367,6 +367,16 @@ async def execute_intent_v2(
                     _dd_status = "CRITICAL"
                 elif _dd > get_rule("reduce_at_drawdown", _is_opportunity):  # [RULETABLE] HARD=0.08
                     _dd_status = "REDUCED"
+            # [P2-7] Margin constraint check (constraint-first pattern):
+            # Compute available margin BEFORE sizing to prevent margin exhaustion.
+            _margin_req = 0.50  # Kraken 2x leverage = 50% margin requirement
+            _margin_used = _gross_exp * account_equity if account_equity > 0 else 0.0
+            _margin_available = max(0.0, (account_equity / _margin_req) - _margin_used)
+            if _margin_available <= 0 and exposure_fraction > 0:
+                logger.info(f"[MARGIN_LIMIT] {asset}: margin exhausted "
+                            f"(used={_margin_used:.0f}, avail={_margin_available:.0f})")
+                exposure_fraction = 0.0
+
             # [P1-FIX] Dynamic stop_loss_pct for sizing -matches actual stop
             # placement in StopLossAuthority (SOL=3% soft, BTC/ETH=2% soft)
             _sizing_stop_pct = 0.03 if 'SOL' in asset else 0.02
@@ -393,6 +403,8 @@ async def execute_intent_v2(
                     price_usd=current_price,
                     is_opportunity=_is_opportunity,  # [RULETABLE]
                     confidence=getattr(intent, 'quant_confidence', 0.5),
+                    cross_asset_correlation=market_data.get('correlation_btc_eth_sol', 0.5),
+                    annualized_vol=market_data.get('annualized_volatility', 0.6),
                 )
                 _sizer_exp = _sizing.final_exposure_pct
             if _sizer_exp < exposure_fraction:

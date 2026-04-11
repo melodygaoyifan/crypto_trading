@@ -6,12 +6,13 @@
     "drl": {
         "paper_bootstrap_authority": "ACTIVE",
         "promotion_gate": {
-            "enable": true,
-            "consecutive_loss_threshold": 5,
-            "drawdown_trigger_pct": 0.15,
-            "demote_to": "EXIT_ONLY",
-            "recovery_period_days": 3,
-            "max_demotions_before_disable": 3
+            "enable": false,
+            "_note": "2026-04-11: Auto-demotion DISABLED. DRL stays ACTIVE unconditionally.",
+            "consecutive_loss_threshold": 999,
+            "drawdown_trigger_pct": 1.0,
+            "demote_to": "ACTIVE",
+            "recovery_period_days": 0,
+            "max_demotions_before_disable": 999
         }
     },
     "_runtime": {
@@ -132,16 +133,16 @@
             "EXECUTION_ADVISORY",
             "EXIT_ONLY"
         ],
-        "entry_authority": false,
-        "entry_authority_note": "FOREVER BANNED - DRL cannot decide entry direction/position",
+        "entry_authority": true,
+        "entry_authority_note": "2026-04-11: DRL ACTIVE with full entry+exit authority",
         "promotion_gate": {
-            "enabled": true,
+            "enabled": false,
             "min_regime_coverage": 0.8,
             "min_sharpe_ratio": 0.5,
             "min_win_rate": 0.45,
             "min_sample_size": 100,
             "cooldown_days": 7,
-            "auto_demote_on_fail": true
+            "auto_demote_on_fail": false
         },
         "fail_closed_triggers": {
             "data_stale_seconds": 30,

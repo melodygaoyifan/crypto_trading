@@ -269,6 +269,8 @@ class UnifiedPositionSizer:
         price_usd: Optional[float] = None,
         is_opportunity: bool = False,  # v6.2.1: OPPORTUNITY mode flag
         confidence: float = 0.5,      # [2026-04-08] Confidence-based sizing
+        cross_asset_correlation: float = 0.5,  # [2026-04-11] Correlation-adjusted sizing
+        annualized_vol: float = 0.6,           # [2026-04-11] Dynamic vol-adjusted limit
     ) -> PositionSizingResult:
         """
         Calculate final position size with all constraints applied.
@@ -384,13 +386,46 @@ class UnifiedPositionSizer:
         # Step 3: Apply drawdown multiplier
         dd_multiplier = self.config.drawdown_size_multipliers.get(drawdown_status, 1.0)
         size_after_drawdown = tranche_requested_usd * dd_multiplier
-        
+
+        # Step 3b: [2026-04-11] Correlation-adjusted sizing (ai-hedge-fund risk_manager pattern)
+        # BTC/ETH/SOL are typically 0.7-0.9 correlated. When correlation is high,
+        # reduce per-asset size to limit concentrated risk.
+        # corr >= 0.80 → ×0.70, corr >= 0.60 → ×0.85, corr >= 0.40 → ×1.00,
+        # corr >= 0.20 → ×1.05, corr < 0.20 → ×1.10
+        _corr = float(cross_asset_correlation)
+        if _corr >= 0.80:
+            _corr_mult = 0.70
+        elif _corr >= 0.60:
+            _corr_mult = 0.85
+        elif _corr >= 0.40:
+            _corr_mult = 1.00
+        elif _corr >= 0.20:
+            _corr_mult = 1.05
+        else:
+            _corr_mult = 1.10
+        size_after_drawdown *= _corr_mult
+
         # Step 4: Apply global gross exposure cap (may be boosted in gambler mode)
         remaining_gross_room = (max_gross - current_gross_exposure) * account_balance
         size_after_gross_cap = min(size_after_drawdown, max(0, remaining_gross_room))
         
-        # Step 5: Apply asset-specific cap
-        asset_cap = asset_cap_override or self.config.default_asset_caps.get(asset, 0.80)
+        # Step 4b: [P2-6] Dynamic vol-adjusted asset cap (linear interpolation)
+        # Crypto-adjusted: BTC ~60-80%, ETH ~80-100%, SOL ~100-150% annualized vol.
+        # Higher vol → lower effective cap. Smooth linear decay within tiers.
+        _ann_vol = float(annualized_vol)
+        if _ann_vol < 0.40:
+            _vol_cap_mult = 1.20
+        elif _ann_vol < 0.80:
+            _vol_cap_mult = 1.00 - (_ann_vol - 0.40) * 0.75  # 1.00 → 0.70
+        elif _ann_vol < 1.20:
+            _vol_cap_mult = 0.70 - (_ann_vol - 0.80) * 0.50  # 0.70 → 0.50
+        else:
+            _vol_cap_mult = 0.50
+        _vol_cap_mult = max(0.30, min(1.20, _vol_cap_mult))
+
+        # Step 5: Apply asset-specific cap (now dynamic)
+        _base_asset_cap = asset_cap_override or self.config.default_asset_caps.get(asset, 0.80)
+        asset_cap = _base_asset_cap * _vol_cap_mult
         remaining_asset_room = (asset_cap - current_asset_exposure) * account_balance
         size_after_asset_cap = min(size_after_gross_cap, max(0, remaining_asset_room))
         

@@ -986,11 +986,132 @@ class MarketDataPipeline:
                 raw["regime_state"] = smoothed_regime
             raw["_regime_raw"] = _raw_regime
 
+            # ─── [N3] CONSISTENCY SCORING ────────────────────────────────────
+            # Check what % of recent bars met signal threshold (Munger pattern).
+            # More robust than single-bar check — reduces noise.
+            _consistency_window = min(20, len(df))
+            _rsi_consistency = 0.0  # fraction of window with RSI < 35 or > 65
+            _bb_consistency = 0.0   # fraction of window with |bb_pos| > 0.5
+            if _consistency_window >= 5:
+                try:
+                    _rsi_col = df["close"].rolling(14).apply(
+                        lambda x: 100 - 100 / (1 + (x.diff().clip(lower=0).mean() /
+                                                     (-x.diff().clip(upper=0).mean() + 1e-12))),
+                        raw=False
+                    ).values[-_consistency_window:]
+                    _rsi_extreme_count = sum(1 for r in _rsi_col if r is not None and (r < 35 or r > 65))
+                    _rsi_consistency = _rsi_extreme_count / _consistency_window
+                except Exception:
+                    pass  # fallback: single-bar only
+                try:
+                    _bb_m_arr = df["close"].rolling(20).mean().values[-_consistency_window:]
+                    _bb_s_arr = df["close"].rolling(20).std().values[-_consistency_window:]
+                    _close_arr_w = df["close"].values[-_consistency_window:]
+                    _bb_extreme_count = 0
+                    for _ci in range(_consistency_window):
+                        if _bb_s_arr[_ci] > 1e-8:
+                            _bp = (_close_arr_w[_ci] - _bb_m_arr[_ci]) / (_bb_s_arr[_ci] + 1e-12)
+                            if abs(_bp) > 0.5:
+                                _bb_extreme_count += 1
+                    _bb_consistency = _bb_extreme_count / _consistency_window
+                except Exception:
+                    pass
+            raw["rsi_consistency"] = _rsi_consistency
+            raw["bb_consistency"] = _bb_consistency
+
+            # ─── ADVANCED METRICS (Hurst, vol regime, tail risk, MTF momentum) ───
+            _adv_metrics = {"hurst": 0.5, "vol_regime": 1.0, "vol_z": 0.0,
+                            "kurtosis": 3.0, "skewness": 0.0, "tail_ratio": 1.0,
+                            "z_score_50": 0.0, "mtf_momentum": 0.0, "vol_spike_ratio": 1.0}
+            try:
+                _close_arr = df["close"].values.astype(float)
+                _vol_arr = df["volume"].values.astype(float)
+                _adv_metrics = self._compute_advanced_metrics(_close_arr, _vol_arr, np)
+            except Exception as _adv_err:
+                logger.debug(f"[ADV_METRICS] {asset}: computation failed: {_adv_err}")
+
+            # Store all metrics in raw for downstream consumption
+            raw["hurst_exponent"] = _adv_metrics.get("hurst", 0.5)
+            raw["vol_regime"] = _adv_metrics.get("vol_regime", 1.0)
+            raw["vol_z"] = _adv_metrics.get("vol_z", 0.0)
+            raw["kurtosis"] = _adv_metrics.get("kurtosis", 3.0)
+            raw["skewness"] = _adv_metrics.get("skewness", 0.0)
+            raw["tail_ratio"] = _adv_metrics.get("tail_ratio", 1.0)
+            raw["z_score_50"] = _adv_metrics.get("z_score_50", 0.0)
+            raw["mtf_momentum"] = _adv_metrics.get("mtf_momentum", 0.0)
+            raw["vol_spike_ratio"] = _adv_metrics.get("vol_spike_ratio", 1.0)
+            raw["convexity"] = _adv_metrics.get("convexity", 1.0)
+            raw["vov_spike_ratio"] = _adv_metrics.get("vov_spike_ratio", 1.0)
+            raw["vol_z_score"] = _adv_metrics.get("vol_z_score", 0.0)
+            # Annualized vol for dynamic position sizing (4H bars: sqrt(6*252) ≈ sqrt(1512) ≈ 38.9)
+            raw["annualized_volatility"] = _adv_metrics.get("vol_regime", 1.0) * 0.6  # rough proxy: regime*baseline
+            if len(df) >= 21:
+                try:
+                    _4h_rets = df["close"].pct_change().dropna().values[-21:]
+                    raw["annualized_volatility"] = float(np.std(_4h_rets) * np.sqrt(6 * 252))
+                except Exception:
+                    pass
+
+            # [2026-04-11] Black Swan Sentinel (Taleb-inspired)
+            # Combines negative news ratio + volume spike to detect crisis onset.
+            # Score 0-4: 0 = black swan in progress, 3 = calm, 4 = contrarian opportunity.
+            _bss_score = 3  # default: calm
+            _fg = raw.get("_fear_greed_value", 50)
+            _vol_spike = _adv_metrics.get("vol_spike_ratio", 1.0)
+            _is_extreme_fear = isinstance(_fg, (int, float)) and _fg < 20
+            _is_fear = isinstance(_fg, (int, float)) and _fg < 35
+            if _is_extreme_fear and _vol_spike > 2.0:
+                _bss_score = 0  # black swan in progress
+            elif _is_extreme_fear or _vol_spike > 2.5:
+                _bss_score = 1
+            elif _is_fear and abs(_adv_metrics.get("mtf_momentum", 0)) > 0.10:
+                _bss_score = 1
+            elif not _is_fear and _vol_spike < 1.5:
+                _bss_score = 3  # calm
+            # [P2-5] Contrarian bonus: extreme fear but market calm ��� opportunity
+            # "Smart money" accumulates when retail is fearful but not dumping.
+            _contrarian_opportunity = False
+            if _is_extreme_fear and _vol_spike < 1.3:
+                _bss_score = 4  # contrarian opportunity
+                _contrarian_opportunity = True
+            elif _is_fear and _vol_spike < 1.5:
+                # Fear without panic selling — weaker contrarian signal
+                _contrarian_opportunity = True
+            raw["black_swan_sentinel"] = _bss_score
+            raw["contrarian_opportunity"] = _contrarian_opportunity
+
+            # [N4] Relative vs Median Bands (Damodaran pattern):
+            # Compare current VPIN and funding rate to their rolling medians.
+            # < 70% of median = anomalously low → contrarian signal.
+            # > 130% of median = anomalously high → risk signal.
+            # Store as multipliers for downstream consumption.
+            _vpin_val = raw.get("vpin", 0.35)
+            _vpin_median = raw.get("_vpin_rolling_median", _vpin_val)
+            if isinstance(_vpin_median, (int, float)) and _vpin_median > 0.01:
+                raw["vpin_vs_median"] = float(_vpin_val) / float(_vpin_median)
+            else:
+                raw["vpin_vs_median"] = 1.0
+            # Anomalous VPIN (>130% of median) = potential informed trading → caution
+            if raw["vpin_vs_median"] > 1.30:
+                raw["vpin_anomaly"] = "HIGH"
+            elif raw["vpin_vs_median"] < 0.70:
+                raw["vpin_anomaly"] = "LOW"
+            else:
+                raw["vpin_anomaly"] = "NORMAL"
+
             # ─── BEST-OF-N STRATEGY ─────────────────────────────────────
             strategies = self._compute_strategy_signals(
                 rsi_sig, macd_sig, bb_sig, ema_sig, adx_mult,
                 _rsi, _adx, bb_pos if bb_rng > 0 else 0.0,
                 raw.get("volume_ratio", 1.0), gmm_regime_name,
+                hurst=_adv_metrics.get("hurst", 0.5),
+                vol_regime=_adv_metrics.get("vol_regime", 1.0),
+                z_score_50=_adv_metrics.get("z_score_50", 0.0),
+                mtf_momentum=_adv_metrics.get("mtf_momentum", 0.0),
+                convexity=_adv_metrics.get("convexity", 1.0),
+                vol_z_score=_adv_metrics.get("vol_z_score", 0.0),
+                vov_spike_ratio=_adv_metrics.get("vov_spike_ratio", 1.0),
+                rsi_consistency=raw.get("rsi_consistency", 0.0),
             )
 
             # [SENT-SWITCH] Sentiment-driven strategy fitness modulation
@@ -1015,6 +1136,31 @@ class MarketDataPipeline:
                     if "vrp" in strategies:
                         strategies["vrp"]["strength"] *= 1.3  # Extreme sentiment → vol premium
 
+            # [P2-5] Contrarian bonus: fear + low volume = accumulation opportunity
+            if raw.get("contrarian_opportunity") and "mean_revert" in strategies:
+                strategies["mean_revert"]["strength"] *= 1.10  # +10% MR boost
+                if "hold" in strategies:
+                    strategies["hold"]["strength"] *= 0.90     # -10% HOLD (there IS an opportunity)
+
+            # [P1-2] VoV spike penalty: regime changing, all strategy fitness unreliable
+            _vov_spike = _adv_metrics.get("vov_spike_ratio", 1.0)
+            if _vov_spike > 2.0:
+                for _sk in strategies:
+                    if _sk != "hold":
+                        strategies[_sk]["strength"] *= 0.70  # -30% all non-HOLD strategies
+            elif _vov_spike > 1.5:
+                for _sk in strategies:
+                    if _sk != "hold":
+                        strategies[_sk]["strength"] *= 0.85  # -15%
+
+            # [P1-4] 5-Tier vol regime confidence multiplier for all strategies
+            _vr = _adv_metrics.get("vol_regime", 1.0)
+            if 1.3 < _vr <= 2.0:
+                # Elevated vol = opportunity zone: boost non-HOLD strategies
+                for _sk in strategies:
+                    if _sk != "hold":
+                        strategies[_sk]["strength"] *= 1.10
+
             # [FIX-MOM-CONSOLIDATION] Hard filter: momentum must not win in
             # low-vol consolidation regimes. Paper run showed momentum in
             # QUIET_ACCUMULATION/WEAK_CONSOLIDATION lost on every exit.
@@ -1036,11 +1182,51 @@ class MarketDataPipeline:
             agreement = abs(sum(signs)) / 4.0
             quant_conf = 0.3 + 0.4 * agreement + 0.3 * min(abs(quant_dir), 1.0)
 
+            # [P3-8] Weighted signal conflict check (ai-hedge-fund pattern):
+            # Compute weighted ensemble score across ALL strategies. If ensemble
+            # disagrees with Best-of-N winner, penalize confidence.
+            # weights: mean_revert=0.25, momentum=0.25, volume_breakout=0.20, vrp=0.15, hold=0.15
+            _ensemble_weights = {"mean_revert": 0.25, "momentum": 0.25,
+                                 "volume_breakout": 0.20, "vrp": 0.15, "hold": 0.15}
+            _w_sum = 0.0
+            _w_conf_sum = 0.0
+            for _sk, _sv in strategies.items():
+                _w = _ensemble_weights.get(_sk, 0.10)
+                _s_numeric = 1.0 if _sv["signal"] > 0.05 else (-1.0 if _sv["signal"] < -0.05 else 0.0)
+                _s_conf = min(_sv["strength"], 1.0)
+                _w_sum += _s_numeric * _w * _s_conf
+                _w_conf_sum += _w * _s_conf
+            _ensemble_score = _w_sum / max(_w_conf_sum, 1e-6)
+            # If Best-of-N says bullish but ensemble score < -0.1, or vice versa: conflict
+            _best_dir_sign = 1.0 if quant_dir > 0.05 else (-1.0 if quant_dir < -0.05 else 0.0)
+            if _best_dir_sign != 0.0 and _ensemble_score * _best_dir_sign < -0.1:
+                quant_conf *= 0.75  # -25% confidence on conflict
+            raw["_ensemble_score"] = _ensemble_score
+
+            # [P3-9] Risk/Reward vol tiers (Druckenmiller-inspired):
+            # Penalize entry confidence when daily vol is extreme.
+            # Crypto-adjusted: 4H returns → approximate daily via sqrt(6).
+            _ann_vol = raw.get("annualized_volatility", 0.6)
+            _daily_vol_approx = _ann_vol / (252 ** 0.5) if _ann_vol > 0 else 0.03
+            if _daily_vol_approx > 0.08:       # >8% daily vol = extreme for crypto
+                quant_conf *= 0.80             # -20% confidence
+            elif _daily_vol_approx > 0.05:     # 5-8% = high
+                quant_conf *= 0.90             # -10%
+            # 3-5% normal, <3% favorable → no penalty
+
+            # [N1] Confidence bucketing by signal direction (Munger pattern):
+            # Prevents contradictory combos like dir=+0.8 conf=0.15.
+            # Bullish: conf clamped to [0.30, 1.00] — at least 30% confident
+            # Bearish: conf clamped to [0.10, 0.60] — cap bearish confidence
+            # Neutral (hold): conf clamped to [0.40, 0.70]
+            if quant_dir > 0.05:      # bullish
+                quant_conf = max(0.30, min(1.00, quant_conf))
+            elif quant_dir < -0.05:   # bearish
+                quant_conf = max(0.10, min(0.60, quant_conf))
+            else:                     # neutral/hold
+                quant_conf = max(0.40, min(0.70, quant_conf))
+
             # [P3-LONG-BIAS] In consolidation regimes, add slight LONG bias.
-            # Paper run evidence: ALL profitable trades were LONG, ALL shorts lost.
-            # Crypto in QUIET_ACCUM tends to drift up (accumulation before breakout).
-            # Bias is small (+0.10) — not enough to override strong SHORT signals,
-            # but enough to tip neutral/weak signals toward LONG.
             _LONG_BIAS_REGIMES = {"QUIET_ACCUMULATION", "WEAK_CONSOLIDATION"}
             if gmm_regime_name in _LONG_BIAS_REGIMES:
                 quant_dir = float(np.clip(quant_dir + 0.10, -1.0, 1.0))
@@ -1069,7 +1255,11 @@ class MarketDataPipeline:
             logger.info(
                 f"[STRATEGY_SELECT] {asset}: Best={best_name} "
                 f"(sig={best['signal']:+.3f}, str={best['strength']:.3f}) | "
-                f"regime={gmm_regime_name} | others=[{other_strs}]"
+                f"regime={gmm_regime_name} | others=[{other_strs}] | "
+                f"H={_adv_metrics.get('hurst', 0.5):.2f} "
+                f"VR={_adv_metrics.get('vol_regime', 1.0):.2f} "
+                f"K={_adv_metrics.get('kurtosis', 3.0):.1f} "
+                f"BSS={raw.get('black_swan_sentinel', 3)}"
             )
 
             if self._sq_tracker:
@@ -1803,11 +1993,205 @@ class MarketDataPipeline:
 
         return confidence, regime_name
 
+    @staticmethod
+    def _compute_advanced_metrics(closes: "np.ndarray", volumes: "np.ndarray", np_mod) -> Dict[str, float]:
+        """Compute Hurst exponent, vol regime, kurtosis, tail ratio, z-score, multi-TF momentum.
+        Inspired by ai-hedge-fund technical_analyst + nassim_taleb agents.
+        All pure OHLCV — no fundamental data needed, works for crypto."""
+        n = len(closes)
+        metrics: Dict[str, float] = {}
+
+        # Returns array
+        rets = np_mod.diff(closes) / np_mod.where(closes[:-1] != 0, closes[:-1], 1.0)
+        rets = rets[np_mod.isfinite(rets)]
+
+        # --- Hurst Exponent (R/S method, max_lag=20) ---
+        # H < 0.5 = mean-reverting, H > 0.5 = trending
+        hurst = 0.5  # neutral default
+        if len(rets) >= 40:
+            try:
+                max_lag = min(20, len(rets) // 2)
+                lags = range(2, max_lag + 1)
+                rs_values = []
+                for lag in lags:
+                    chunks = [rets[i:i + lag] for i in range(0, len(rets) - lag + 1, lag)]
+                    rs_list = []
+                    for chunk in chunks:
+                        if len(chunk) < 2:
+                            continue
+                        mean_c = np_mod.mean(chunk)
+                        deviate = np_mod.cumsum(chunk - mean_c)
+                        r = float(np_mod.max(deviate) - np_mod.min(deviate))
+                        s = float(np_mod.std(chunk, ddof=1))
+                        if s > 1e-12:
+                            rs_list.append(r / s)
+                    if rs_list:
+                        rs_values.append((float(np_mod.log(lag)), float(np_mod.log(np_mod.mean(rs_list)))))
+                if len(rs_values) >= 4:
+                    x = np_mod.array([v[0] for v in rs_values])
+                    y = np_mod.array([v[1] for v in rs_values])
+                    # Simple linear regression slope
+                    x_mean, y_mean = np_mod.mean(x), np_mod.mean(y)
+                    hurst = float(np_mod.sum((x - x_mean) * (y - y_mean)) / max(np_mod.sum((x - x_mean) ** 2), 1e-12))
+                    hurst = max(0.0, min(1.0, hurst))
+            except Exception:
+                hurst = 0.5
+        metrics["hurst"] = hurst
+
+        # --- Volatility Regime (Taleb-style: current_vol / avg_vol) ---
+        # < 0.7 = "turkey problem" (dangerously calm), 0.9-1.3 = normal, > 1.3 = elevated
+        vol_regime = 1.0
+        vol_z = 0.0
+        if len(rets) >= 80:
+            try:
+                current_vol = float(np_mod.std(rets[-21:]))
+                avg_vol = float(np_mod.mean([np_mod.std(rets[max(0, i - 21):i]) for i in range(21, len(rets))]))
+                if avg_vol > 1e-12:
+                    vol_regime = current_vol / avg_vol
+                vol_std = float(np_mod.std([np_mod.std(rets[max(0, i - 21):i]) for i in range(21, min(len(rets), 84))]))
+                if vol_std > 1e-12:
+                    vol_z = (current_vol - avg_vol) / vol_std
+            except Exception:
+                pass
+        metrics["vol_regime"] = vol_regime
+        metrics["vol_z"] = vol_z
+
+        # --- Kurtosis & Skewness (tail risk) ---
+        kurtosis = 3.0  # normal default
+        skewness = 0.0
+        tail_ratio = 1.0
+        if len(rets) >= 63:
+            try:
+                r63 = rets[-63:]
+                mean_r = float(np_mod.mean(r63))
+                std_r = float(np_mod.std(r63))
+                if std_r > 1e-12:
+                    z = (r63 - mean_r) / std_r
+                    kurtosis = float(np_mod.mean(z ** 4))   # excess = kurtosis - 3
+                    skewness = float(np_mod.mean(z ** 3))
+                # Tail ratio: P95 gain / |P5 loss|
+                p95 = float(np_mod.percentile(r63, 95))
+                p5 = float(np_mod.percentile(r63, 5))
+                if abs(p5) > 1e-12:
+                    tail_ratio = abs(p95 / p5)
+            except Exception:
+                pass
+        metrics["kurtosis"] = kurtosis
+        metrics["skewness"] = skewness
+        metrics["tail_ratio"] = tail_ratio
+
+        # --- Z-score (50-period, for mean reversion) ---
+        z_score_50 = 0.0
+        if n >= 50:
+            try:
+                sma50 = float(np_mod.mean(closes[-50:]))
+                std50 = float(np_mod.std(closes[-50:]))
+                if std50 > 1e-12:
+                    z_score_50 = (float(closes[-1]) - sma50) / std50
+            except Exception:
+                pass
+        metrics["z_score_50"] = z_score_50
+
+        # --- Multi-Timeframe Momentum (7d/30d/90d weighted 0.4/0.3/0.3) ---
+        # On 4H bars: 7d=42 bars, 30d=180 bars, 90d=540 bars
+        mtf_momentum = 0.0
+        if n >= 42:
+            try:
+                mom_7d = (float(closes[-1]) - float(closes[-42])) / float(closes[-42]) if n >= 42 else 0.0
+                mom_30d = (float(closes[-1]) - float(closes[-180])) / float(closes[-180]) if n >= 180 else mom_7d
+                mom_90d = (float(closes[-1]) - float(closes[-540])) / float(closes[-540]) if n >= 540 else mom_30d
+                mtf_momentum = 0.4 * mom_7d + 0.3 * mom_30d + 0.3 * mom_90d
+            except Exception:
+                pass
+        metrics["mtf_momentum"] = mtf_momentum
+
+        # --- Volume Spike (for Black Swan Sentinel) ---
+        vol_spike_ratio = 1.0
+        if len(volumes) >= 21 and volumes[-1] > 0:
+            try:
+                avg_vol = float(np_mod.mean(volumes[-21:]))
+                if avg_vol > 0:
+                    vol_spike_ratio = float(volumes[-1]) / avg_vol
+            except Exception:
+                pass
+        metrics["vol_spike_ratio"] = vol_spike_ratio
+
+        # --- [P1-1] Convexity Score (upside/downside capture ratio) ---
+        # avg_up / |avg_down|: >1.3 = convex (favor longs), <0.8 = concave (favor shorts)
+        convexity = 1.0
+        if len(rets) >= 63:
+            try:
+                r63 = rets[-63:]
+                up_rets = r63[r63 > 0]
+                down_rets = r63[r63 < 0]
+                if len(up_rets) > 0 and len(down_rets) > 0:
+                    avg_up = float(np_mod.mean(up_rets))
+                    avg_down = float(np_mod.mean(np_mod.abs(down_rets)))
+                    if avg_down > 1e-12:
+                        convexity = avg_up / avg_down
+            except Exception:
+                pass
+        metrics["convexity"] = convexity
+
+        # --- [P1-2] VoV Spike vs Historical Median ---
+        # current_vov / median(all_history_vov): >2.0 = regime change likely
+        vov_spike_ratio = 1.0
+        if len(rets) >= 80:
+            try:
+                # rolling 21-bar vol, then std of that = vov
+                _rolling_vols = np_mod.array([
+                    float(np_mod.std(rets[max(0, i - 21):i]))
+                    for i in range(21, len(rets))
+                ])
+                if len(_rolling_vols) >= 21:
+                    _rolling_vov = np_mod.array([
+                        float(np_mod.std(_rolling_vols[max(0, i - 21):i]))
+                        for i in range(21, len(_rolling_vols))
+                    ])
+                    if len(_rolling_vov) > 0:
+                        current_vov = float(_rolling_vov[-1]) if len(_rolling_vov) > 0 else 0.0
+                        median_vov = float(np_mod.median(_rolling_vov))
+                        if median_vov > 1e-12:
+                            vov_spike_ratio = current_vov / median_vov
+            except Exception:
+                pass
+        metrics["vov_spike_ratio"] = vov_spike_ratio
+
+        # --- [P1-3] Volatility Z-Score (vol mean-reversion signal) ---
+        # How far current vol deviates from its own 63-bar mean, in sigma.
+        # vol_z < -1.5 = compressed spring (breakout coming)
+        # vol_z > 2.0 = extreme vol (mean reversion of vol likely)
+        # NOTE: vol_z was already partially computed above. Here we refine
+        # using the standard 63-bar window for consistency with the repo.
+        vol_z_score = vol_z  # use existing computation as baseline
+        if len(rets) >= 84:
+            try:
+                _vols_63 = np_mod.array([
+                    float(np_mod.std(rets[max(0, i - 21):i]))
+                    for i in range(21, min(len(rets), 84))
+                ])
+                if len(_vols_63) >= 10:
+                    _vol_mean_63 = float(np_mod.mean(_vols_63))
+                    _vol_std_63 = float(np_mod.std(_vols_63))
+                    _current_vol = float(np_mod.std(rets[-21:]))
+                    if _vol_std_63 > 1e-12:
+                        vol_z_score = (_current_vol - _vol_mean_63) / _vol_std_63
+            except Exception:
+                pass
+        metrics["vol_z_score"] = vol_z_score
+
+        return metrics
+
     def _compute_strategy_signals(
         self,
         rsi_sig: float, macd_sig: float, bb_sig: float, ema_sig: float,
         adx_mult: float, rsi_val: float, adx_val: float, bb_pos: float,
         volume_ratio: float, regime: str,
+        # [2026-04-11] Advanced metrics from _compute_advanced_metrics
+        hurst: float = 0.5, vol_regime: float = 1.0, z_score_50: float = 0.0,
+        mtf_momentum: float = 0.0, convexity: float = 1.0,
+        vol_z_score: float = 0.0, vov_spike_ratio: float = 1.0,
+        rsi_consistency: float = 0.0,
     ) -> Dict[str, Dict]:
         """Compute independent alpha estimate per strategy (Best-of-N)."""
         strategies = {}
@@ -1817,46 +2201,73 @@ class MarketDataPipeline:
             logger.warning(f"[REGIME_UNKNOWN] Got '{regime}', using {_UNKNOWN_REGIME_FIT}x strength")
             _LOGGED_UNKNOWN_REGIMES.add(regime)
 
-        # 1. Mean Reversion
+        # 1. Mean Reversion (upgraded: z-score+BB joint condition from ai-hedge-fund)
+        # Entry quality filter: z_score_50 < -2 AND bb_pos < -0.6 = strong long signal
+        #                       z_score_50 > +2 AND bb_pos > +0.6 = strong short signal
+        # This is stricter than RSI-only, reducing false entries in consolidation.
         mr_sig = 0.0
         if rsi_val < 30:
             mr_sig = (30 - rsi_val) / 30
         elif rsi_val > 70:
             mr_sig = -(rsi_val - 70) / 30
         if abs(bb_pos) > 0.8:
-            # [FIX-MR-RSI-CONFIRM] Require RSI confirmation for BB mean-revert.
-            # Without this, BB fires LONG when price is below mean even if RSI is
-            # neutral (30-70), producing mean-revert entries in downtrends.
-            # SOL/BTC/ETH all lost -238/-72/-67 bps on BB-only mean_revert signals
-            # in WEAK_CONSOLIDATION (2026-03-26). RSI was ~45 (neutral), MACD/EMA
-            # bearish, but BB=+0.46 dominated.
-            # When RSI extreme (<30 or >70): full BB power (1.0x)
-            # When RSI neutral (30-70): reduce BB power to 0.4x
             _rsi_confirm = 1.0 if (rsi_val < 30 or rsi_val > 70) else 0.4
             mr_sig += -bb_pos * 0.3 * _rsi_confirm
+        # [2026-04-11] z-score+BB joint boost: when BOTH z-score AND BB agree on
+        # extreme deviation, boost signal confidence (ai-hedge-fund pattern).
+        # z < -2 AND bb_pos < -0.6 → boost LONG; z > 2 AND bb_pos > 0.6 → boost SHORT.
+        if z_score_50 < -2.0 and bb_pos < -0.6:
+            mr_sig = max(mr_sig, min(abs(z_score_50) / 4.0, 1.0))   # strong LONG
+        elif z_score_50 > 2.0 and bb_pos > 0.6:
+            mr_sig = min(mr_sig, -min(abs(z_score_50) / 4.0, 1.0))  # strong SHORT
         mr_sig = max(-1.0, min(1.0, mr_sig))
         _mr_table = REGIME_STRATEGY_FIT["mean_revert"]
         mr_fit = _mr_table.get(regime, _mr_table.get("_default", _UNKNOWN_REGIME_FIT))
-        strategies["mean_revert"] = {"signal": mr_sig, "strength": abs(mr_sig) * mr_fit}
+        # [2026-04-11] Hurst modulation: H < 0.5 = mean-reverting market → boost MR
+        _hurst_mr_boost = max(0.8, 1.0 + (0.5 - hurst) * 1.0)  # H=0.3→1.2x, H=0.5→1.0x, H=0.7→0.8x
+        # [N3] Consistency scoring boost: if 50%+ of recent bars had extreme RSI,
+        # the mean_revert signal is more reliable (persistent oversold/overbought).
+        _rsi_cons = rsi_consistency
+        if _rsi_cons > 0.50 and abs(mr_sig) > 0.05:
+            mr_sig *= 1.15  # +15% boost for persistent extreme
+            mr_sig = max(-1.0, min(1.0, mr_sig))
+        # [P1-1] Convexity modulation: convex asset (avg_up > avg_down) favors MR long
+        _convexity_mr = 1.0
+        if convexity > 1.3 and mr_sig > 0:     # convex + LONG MR signal
+            _convexity_mr = 1.10                # +10% boost (upside capture > downside)
+        elif convexity < 0.8 and mr_sig < 0:   # concave + SHORT MR signal
+            _convexity_mr = 1.10                # +10% boost (downside dominant)
+        elif convexity < 0.7 and mr_sig > 0:   # concave + LONG signal = risky
+            _convexity_mr = 0.85                # -15% penalty
+        strategies["mean_revert"] = {"signal": mr_sig, "strength": abs(mr_sig) * mr_fit * _hurst_mr_boost * _convexity_mr}
 
-        # 2. Momentum
-        # [FIX-EMA-CONSOLIDATION] In consolidation regimes, EMA_200 is a lagging
-        # trap: after a large drop, price stabilizes but EMA stays high for weeks,
-        # producing persistent false SHORT signals. Reduce EMA weight from 60%→30%
-        # and increase MACD weight (a leading indicator) from 40%→70%.
+        # 2. Momentum (upgraded: multi-timeframe from ai-hedge-fund + Hurst modulation)
         _CONSOLIDATION_REGIMES = {"QUIET_ACCUMULATION", "WEAK_CONSOLIDATION", "NEUTRAL_DRIFT"}
         if regime in _CONSOLIDATION_REGIMES:
-            mom_sig = ema_sig * 0.3 + macd_sig * 0.7  # MACD leads, EMA lags
+            mom_sig = ema_sig * 0.3 + macd_sig * 0.7
         else:
-            mom_sig = ema_sig * 0.6 + macd_sig * 0.4  # Trending: EMA is valid
+            mom_sig = ema_sig * 0.6 + macd_sig * 0.4
         if adx_val > 25:
             mom_sig *= 1.0 + (adx_val - 25) / 50
         else:
             mom_sig *= 0.5
+        # [2026-04-11] Multi-TF momentum blend: combine TA-based mom with
+        # price-return momentum (7d/30d/90d weighted 0.4/0.3/0.3).
+        # mtf_momentum is already in the same [-1,+1]-ish scale as price returns.
+        # Blend: 70% TA-based + 30% multi-TF returns (confirmation).
+        _mtf_clamped = max(-1.0, min(1.0, mtf_momentum * 5.0))  # scale ~0.05 returns to ~0.25 signal
+        if abs(mtf_momentum) > 0.01:  # only blend when MTF has signal
+            # Confirm or dampen: same direction → strengthen, opposite → weaken
+            if mom_sig * _mtf_clamped > 0:   # aligned
+                mom_sig = mom_sig * 0.7 + _mtf_clamped * 0.3
+            else:                             # conflicting
+                mom_sig *= 0.6  # dampen conflicting TA signal
         mom_sig = max(-1.0, min(1.0, mom_sig))
         _mom_table = REGIME_STRATEGY_FIT["momentum"]
         mom_fit = _mom_table.get(regime, _mom_table.get("_default", _UNKNOWN_REGIME_FIT))
-        strategies["momentum"] = {"signal": mom_sig, "strength": abs(mom_sig) * mom_fit}
+        # [2026-04-11] Hurst modulation: H > 0.5 = trending market → boost momentum
+        _hurst_mom_boost = max(0.8, 1.0 + (hurst - 0.5) * 1.0)  # H=0.7→1.2x, H=0.5→1.0x, H=0.3→0.8x
+        strategies["momentum"] = {"signal": mom_sig, "strength": abs(mom_sig) * mom_fit * _hurst_mom_boost}
 
         # 3. Volume Breakout
         vb_sig = macd_sig
@@ -1867,7 +2278,11 @@ class MarketDataPipeline:
         vb_sig = max(-1.0, min(1.0, vb_sig))
         _vb_table = REGIME_STRATEGY_FIT["volume_breakout"]
         vb_fit = _vb_table.get(regime, _vb_table.get("_default", _UNKNOWN_REGIME_FIT))
-        strategies["volume_breakout"] = {"signal": vb_sig, "strength": abs(vb_sig) * vb_fit}
+        # [P1-3] Vol z-score: compressed vol (z < -1.5) = spring about to uncoil → boost breakout
+        _vol_z_vb_boost = 1.0
+        if vol_z_score < -1.5:
+            _vol_z_vb_boost = 1.15  # +15% boost for compressed vol breakout
+        strategies["volume_breakout"] = {"signal": vb_sig, "strength": abs(vb_sig) * vb_fit * _vol_z_vb_boost}
 
         # 4. VRP
         vrp_sig = 0.0
@@ -1890,6 +2305,29 @@ class MarketDataPipeline:
             hold_base += 0.20
         if volume_ratio < 0.7:                               # volume drying up
             hold_base += 0.10
+        # [P1-4] 5-Tier vol regime scoring (Taleb):
+        # < 0.7  = turkey problem (dangerous calm)  → strong HOLD
+        # 0.7-0.9 = approaching complacency          → moderate HOLD
+        # 0.9-1.3 = normal                           → no HOLD boost
+        # 1.3-2.0 = elevated (opportunity zone)      → slight HOLD reduction
+        # > 2.0  = crisis                            → moderate HOLD
+        if vol_regime < 0.7:
+            hold_base += 0.20      # turkey problem — calm before storm
+        elif vol_regime < 0.9:
+            hold_base += 0.10      # approaching complacency — early warning
+        elif vol_regime <= 1.3:
+            pass                   # normal — no adjustment
+        elif vol_regime <= 2.0:
+            hold_base -= 0.05      # elevated vol = opportunity, reduce HOLD
+        else:
+            hold_base += 0.10      # crisis — reduce new entries
+        hold_base = max(0.0, hold_base)
+        # Hurst near 0.5 = random walk, no edge → favor HOLD
+        if 0.45 <= hurst <= 0.55:
+            hold_base += 0.10
+        # [P1-2] VoV spike > 2x median = regime change likely → boost HOLD
+        if vov_spike_ratio > 2.0:
+            hold_base += 0.15
         _hold_table = REGIME_STRATEGY_FIT["hold"]
         hold_fit = _hold_table.get(regime, _hold_table.get("_default", _UNKNOWN_REGIME_FIT))
         strategies["hold"] = {"signal": 0.0, "strength": hold_base * hold_fit}
