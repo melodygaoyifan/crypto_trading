@@ -112,8 +112,8 @@ def get_last_data_age() -> float | None:
 
         if last_ts is None:
             return None
-        # Assume log timestamps are UTC
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        # Log timestamps are LOCAL time (not UTC)
+        now = datetime.now()
         return (now - last_ts).total_seconds()
     except Exception:
         return None
