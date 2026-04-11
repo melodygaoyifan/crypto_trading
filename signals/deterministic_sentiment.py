@@ -338,48 +338,74 @@ class CrowdingAdapter:
         funding_rate: Optional[float] = None,
         lunarcrush_galaxy_score: Optional[float] = None,
         lunarcrush_alt_rank: Optional[int] = None,
+        # [2026-04-11] L1 Step 18 completion: 4 missing signals
+        oi_change_24h_pct: Optional[float] = None,
+        liquidation_imbalance: Optional[float] = None,
+        dvol_zscore: Optional[float] = None,
+        vpin: Optional[float] = None,
     ) -> Tuple[float, bool]:
         """
-        Compute crowding bias from external sources.
-        
+        Compute crowding bias from 6 signal sources (Step 18 spec).
+
+        Weights per Step 18.2:
+          Funding Rate: 25%, LS Ratio (via LunarCrush proxy): 10%,
+          Fear & Greed: 15%, OI Change: 15%, Liquidations: 15%,
+          DVOL+VPIN: 10%, LunarCrush social: 10%
+
         IMPORTANT: This is NOT direction. Crowding measures market overcrowding.
-        
-        Args:
-            fear_greed_value: 0-100 Fear & Greed index
-            funding_rate: Perpetual funding rate (e.g., 0.001 = 0.1%)
-            lunarcrush_galaxy_score: LunarCrush galaxy score
-            lunarcrush_alt_rank: LunarCrush alt rank
-            
+
         Returns:
             Tuple of (crowding_bias, extreme_crowding)
             crowding_bias: -1.0 (crowded short) to +1.0 (crowded long)
         """
         components = []
         weights = []
-        
-        # Fear/Greed -> Crowding
-        if fear_greed_value is not None:
-            # High greed = crowded longs (positive crowding)
-            # High fear = crowded shorts (negative crowding)
-            fg_crowding = (fear_greed_value - 50) / 50  # -1 to +1
-            components.append(fg_crowding)
-            weights.append(0.4)
-        
-        # Funding Rate -> Crowding
+
+        # 1. Funding Rate (25%) — positive = longs pay = crowded longs
         if funding_rate is not None:
-            # Positive funding = longs pay shorts = crowded longs
-            # Negative funding = shorts pay longs = crowded shorts
             funding_crowding = np.clip(funding_rate * 1000, -1.0, 1.0)
             components.append(funding_crowding)
-            weights.append(0.4)
-        
-        # LunarCrush -> Crowding (social hype indicator)
+            weights.append(0.25)
+
+        # 2. Fear/Greed (15%) — high greed = crowded longs
+        if fear_greed_value is not None:
+            fg_crowding = (fear_greed_value - 50) / 50  # -1 to +1
+            components.append(fg_crowding)
+            weights.append(0.15)
+
+        # 3. OI Change 24h (15%) — rising OI = leveraging up = crowded
+        if oi_change_24h_pct is not None:
+            # >5% OI rise = strong crowding signal
+            oi_crowding = np.clip(oi_change_24h_pct / 10.0, -1.0, 1.0)
+            components.append(oi_crowding)
+            weights.append(0.15)
+
+        # 4. Liquidation Imbalance (15%) — positive = more long liquidations
+        if liquidation_imbalance is not None:
+            # liq_imbalance > 0 = long liquidations dominate → bearish cascade
+            liq_crowding = np.clip(liquidation_imbalance * 2.0, -1.0, 1.0)
+            components.append(-liq_crowding)  # negative because long liqs = longs were overcrowded
+            weights.append(0.15)
+
+        # 5. DVOL + VPIN (10%) — high vol/toxicity = market stress
+        _vol_component = 0.0
+        _vol_has_signal = False
+        if dvol_zscore is not None and abs(dvol_zscore) > 0.5:
+            _vol_component += np.clip(-dvol_zscore / 3.0, -0.5, 0.5)  # high dvol = bearish stress
+            _vol_has_signal = True
+        if vpin is not None and vpin > 0.5:
+            _vol_component += np.clip(-(vpin - 0.5) * 2.0, -0.5, 0.0)  # high VPIN = toxic flow
+            _vol_has_signal = True
+        if _vol_has_signal:
+            components.append(np.clip(_vol_component, -1.0, 1.0))
+            weights.append(0.10)
+
+        # 6. LunarCrush social hype (10%) — fallback social signal
         if lunarcrush_galaxy_score is not None:
-            # High galaxy score = high social attention = potential crowding
             lc_crowding = np.clip((lunarcrush_galaxy_score - 50) / 50, -1.0, 1.0)
             components.append(lc_crowding)
-            weights.append(0.2)
-        
+            weights.append(0.10)
+
         if not components:
             return 0.0, False
 
@@ -388,8 +414,8 @@ class CrowdingAdapter:
         if total_weight == 0:
             return 0.0, False
         crowding_bias = sum(c * w for c, w in zip(components, weights)) / total_weight
-        crowding_bias = np.clip(crowding_bias, -1.0, 1.0)
-        
+        crowding_bias = float(np.clip(crowding_bias, -1.0, 1.0))
+
         # Determine extreme crowding
         extreme_crowding = False
         if fear_greed_value is not None:
@@ -398,11 +424,15 @@ class CrowdingAdapter:
         if funding_rate is not None:
             if abs(funding_rate) >= self.extreme_funding_threshold:
                 extreme_crowding = True
-        
+        if oi_change_24h_pct is not None and abs(oi_change_24h_pct) > 8.0:
+            extreme_crowding = True
+        if liquidation_imbalance is not None and abs(liquidation_imbalance) > 0.6:
+            extreme_crowding = True
+
         # Track history
         self._crowding_history.append(crowding_bias)
-        
-        return float(crowding_bias), extreme_crowding
+
+        return crowding_bias, extreme_crowding
     
     def get_crowding_delta(self) -> float:
         """Get change in crowding over recent periods."""
@@ -453,13 +483,19 @@ class DeterministicSentimentEngine:
         # Text inputs (for direction)
         news_texts: Optional[List[str]] = None,
         social_texts: Optional[List[str]] = None,
-        
+
         # Crowding inputs (NOT direction)
         fear_greed_value: Optional[int] = None,
         funding_rate: Optional[float] = None,
         funding_rates_by_asset: Optional[Dict[str, float]] = None,
         lunarcrush_data: Optional[Dict[str, Any]] = None,
-        
+
+        # [2026-04-11] L1 Step 18 completion: 4 missing signals
+        oi_change_24h_pct: Optional[float] = None,
+        liquidation_imbalance: Optional[float] = None,
+        dvol_zscore: Optional[float] = None,
+        vpin: Optional[float] = None,
+
         # Asset focus
         asset: str = "BTC",
     ) -> DeterministicSentimentOutput:
@@ -558,6 +594,10 @@ class DeterministicSentimentEngine:
             funding_rate=effective_funding,
             lunarcrush_galaxy_score=lc_galaxy,
             lunarcrush_alt_rank=lc_rank,
+            oi_change_24h_pct=oi_change_24h_pct,
+            liquidation_imbalance=liquidation_imbalance,
+            dvol_zscore=dvol_zscore,
+            vpin=vpin,
         )
         
         sources["crowding"] = {

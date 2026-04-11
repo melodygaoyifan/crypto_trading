@@ -3946,6 +3946,7 @@ class HMATSProductionRunner:
             self._regime_warn_cooldown_sec = 600.0
         self.sentiment_feed = None  # Fear & Greed API (alternative.me, free)
         self._deterministic_sentiment = None  # Layer 1 deterministic engine
+        self._deberta_sentiment = None  # Layer 2 DeBERTa local inference
         
         if EXTERNAL_FEEDS_AVAILABLE:
             try:
@@ -4051,6 +4052,17 @@ class HMATSProductionRunner:
             logger.info("  SentimentFeed: ACTIVE (alternative.me Fear & Greed, Layer 1)")
         except Exception as e:
             logger.warning(f"  SentimentFeed: STUB ({e})")
+
+        # L2: DeBERTa v2.2 local sentiment inference
+        try:
+            from agents.sentiment_deberta import get_deberta_sentiment_engine
+            self._deberta_sentiment = get_deberta_sentiment_engine()
+            if self._deberta_sentiment and self._deberta_sentiment.is_ready:
+                logger.info("  SentimentL2: ACTIVE (DeBERTa v2.2 local inference)")
+            else:
+                logger.info("  SentimentL2: UNAVAILABLE (model not loaded)")
+        except Exception as e:
+            logger.info(f"  SentimentL2: STUB ({e})")
 
         # =====================================================================
         # V6.6: KRAKEN REST CLIENT -Live market data for paper/live modes
@@ -5499,6 +5511,11 @@ class HMATSProductionRunner:
                         fear_greed_value=fg_value,
                         funding_rate=funding,
                         asset=asset,
+                        # [2026-04-11] L1 Step 18: wire 4 missing signals
+                        oi_change_24h_pct=market_data.get("oi_change_24h_pct"),
+                        liquidation_imbalance=market_data.get("liquidation_imbalance"),
+                        dvol_zscore=market_data.get("dvol_zscore"),
+                        vpin=market_data.get("vpin"),
                     )
 
                     # Enrich context
@@ -5531,6 +5548,43 @@ class HMATSProductionRunner:
                     )
             except Exception as e:
                 logger.warning(f"[SENTIMENT_L1] Fetch failed (non-fatal): {e}")
+
+        # L2: DeBERTa local inference — run on CryptoPanic headlines if available
+        if self._deberta_sentiment and self._deberta_sentiment.is_ready:
+            try:
+                _l2_headlines = []
+                # Try to get headlines from CryptoPanic feed (same source as L3 Haiku)
+                if hasattr(self, 'cryptopanic_feed') and self.cryptopanic_feed:
+                    try:
+                        _cp_metrics = self.cryptopanic_feed.get_latest_metrics()
+                        if _cp_metrics and hasattr(_cp_metrics, 'recent_titles'):
+                            _l2_headlines = list(_cp_metrics.recent_titles or [])[:20]
+                    except Exception:
+                        pass
+                if _l2_headlines:
+                    _l2_result = self._deberta_sentiment.predict_batch(_l2_headlines)
+                    if _l2_result and _l2_result.get("source") == "l2_deberta":
+                        _l2_dir = float(_l2_result["direction"])
+                        _l2_conf = float(_l2_result["confidence"])
+                        market_data["_l2_sentiment_direction"] = _l2_dir
+                        market_data["_l2_sentiment_confidence"] = _l2_conf
+                        market_data["_l2_sentiment_label"] = _l2_result["label"]
+                        # Blend L2 into sentiment_zscore: L1 base + L2 refinement
+                        # If L2 has strong signal (conf > 0.6), weight it 40%, else 20%
+                        _l2_weight = 0.40 if _l2_conf > 0.6 else 0.20
+                        _l1_zscore = market_data.get("sentiment_zscore", 0.0)
+                        _l2_zscore = _l2_dir * 3.0  # scale to z-score range
+                        market_data["sentiment_zscore"] = (
+                            (1 - _l2_weight) * _l1_zscore + _l2_weight * _l2_zscore
+                        )
+                        logger.info(
+                            f"[SENTIMENT_L2] {asset}: DeBERTa dir={_l2_dir:+.3f} "
+                            f"conf={_l2_conf:.2f} label={_l2_result['label']} "
+                            f"headlines={_l2_result.get('count', 0)} "
+                            f"blended_zscore={market_data['sentiment_zscore']:+.3f}"
+                        )
+            except Exception as _l2_err:
+                logger.debug(f"[SENTIMENT_L2] Failed (non-fatal): {_l2_err}")
 
         # Inject macro/crowd/sentiment into market_data for downstream consumers
         # This preserves the original market_data and adds new fields
