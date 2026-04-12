@@ -1,12 +1,12 @@
 {
-  "updated_at": "2026-04-05T20:50:39.781370+00:00Z",
-  "round": 1,
-  "tick_count": 3,
-  "mode": "paper",
+  "updated_at": "2026-04-12T00:03:02.534747+00:00Z",
+  "round": 7,
+  "tick_count": 21,
+  "mode": "live",
   "risk_profile": "HIGH_RISK",
   "run": {
-    "started_at": "2026-04-05T20:48:52.125062Z",
-    "elapsed_hours": 0.029910551666666667,
+    "started_at": null,
+    "elapsed_hours": null,
     "meets_48h_minimum": false
   },
   "crashes": {
@@ -44,17 +44,11 @@
       "meets_5plus_threshold": false
     },
     "rolling_48h": {
-      "count": 1,
-      "fills_by_asset": {
-        "SOL": 1
-      },
-      "assets_with_fills": [
-        "SOL"
-      ],
-      "last_fill_at": "2026-04-04T00:02:00.553301+00:00",
-      "last_fill_at_by_asset": {
-        "SOL": "2026-04-04T00:02:00.553301+00:00"
-      },
+      "count": 0,
+      "fills_by_asset": {},
+      "assets_with_fills": [],
+      "last_fill_at": null,
+      "last_fill_at_by_asset": {},
       "meets_10plus_threshold": false
     }
   },
@@ -67,26 +61,26 @@
   },
   "alpha_gate": {
     "passed": 0,
-    "total": 3,
-    "pass_rate": 0.0,
+    "total": 0,
+    "pass_rate": null,
     "meets_40pct_threshold": false,
     "by_asset": {
       "BTC": {
-        "total": 1,
+        "total": 0,
         "passed": 0
       },
       "ETH": {
-        "total": 1,
+        "total": 0,
         "passed": 0
       },
       "SOL": {
-        "total": 1,
+        "total": 0,
         "passed": 0
       }
     }
   },
   "ood": {
-    "scored_decisions": 3,
+    "scored_decisions": 21,
     "soft_degrade_count": 0,
     "soft_degrade_ratio": 0.0,
     "hard_switch_count": 0,
@@ -94,19 +88,19 @@
     "meets_10pct_limit": true,
     "by_asset": {
       "BTC": {
-        "decisions": 1,
+        "decisions": 7,
         "soft_degrade": 0,
         "hard_switch": 0,
         "shadow_alert": 0
       },
       "ETH": {
-        "decisions": 1,
+        "decisions": 7,
         "soft_degrade": 0,
         "hard_switch": 0,
         "shadow_alert": 0
       },
       "SOL": {
-        "decisions": 1,
+        "decisions": 7,
         "soft_degrade": 0,
         "hard_switch": 0,
         "shadow_alert": 0
@@ -336,7 +330,7 @@
         "learned_execution_policy": "DISABLED",
         "g6": "BOUNDED_LIVE",
         "aggressive_allocator": "SHADOW",
-        "lead_lag": "ADVISORY",
+        "lead_lag": "DISABLED",
         "model_alpha": "ADVISORY",
         "drl": "BOUNDED_LIVE"
       },
@@ -345,7 +339,7 @@
         "learned_execution_policy": "DISABLED",
         "g6": "BOUNDED_LIVE",
         "aggressive_allocator": "SHADOW",
-        "lead_lag": "ADVISORY",
+        "lead_lag": "DISABLED",
         "model_alpha": "ADVISORY",
         "drl": "BOUNDED_LIVE"
       },
@@ -354,7 +348,7 @@
         "learned_execution_policy": "DISABLED",
         "g6": "BOUNDED_LIVE",
         "aggressive_allocator": "SHADOW",
-        "lead_lag": "ADVISORY",
+        "lead_lag": "DISABLED",
         "model_alpha": "ADVISORY",
         "drl": "BOUNDED_LIVE"
       }
@@ -385,166 +379,11 @@
       "vol_ratio_s_denoised"
     ],
     "feature_count": 5,
-    "ticks": 3,
-    "observed_asset_count": 3,
-    "observed_assets": [
-      "BTC",
-      "ETH",
-      "SOL"
-    ],
+    "ticks": 0,
+    "observed_asset_count": 0,
+    "observed_assets": [],
     "meets_nonzero_and_changing_evidence": false,
-    "by_asset": {
-      "BTC": {
-        "ticks": 1,
-        "any_nonzero_ticks": 1,
-        "all_nonzero_ticks": 1,
-        "changed_ticks": 0,
-        "meets_nonzero_evidence": true,
-        "meets_changing_evidence": false,
-        "features": {
-          "rsi_14_denoised": {
-            "nonzero_count": 1,
-            "min": 0.1767882526421587,
-            "max": 0.1767882526421587,
-            "last": 0.1767882526421587,
-            "nonzero_observed": true,
-            "changing_observed": false
-          },
-          "macd_12_26_denoised": {
-            "nonzero_count": 1,
-            "min": 0.0017111731882927831,
-            "max": 0.0017111731882927831,
-            "last": 0.0017111731882927831,
-            "nonzero_observed": true,
-            "changing_observed": false
-          },
-          "bb_width_20_denoised": {
-            "nonzero_count": 1,
-            "min": 0.014714008346752116,
-            "max": 0.014714008346752116,
-            "last": 0.014714008346752116,
-            "nonzero_observed": true,
-            "changing_observed": false
-          },
-          "atr_14_denoised": {
-            "nonzero_count": 1,
-            "min": 0.005659701566946747,
-            "max": 0.005659701566946747,
-            "last": 0.005659701566946747,
-            "nonzero_observed": true,
-            "changing_observed": false
-          },
-          "vol_ratio_s_denoised": {
-            "nonzero_count": 1,
-            "min": 0.547971488098217,
-            "max": 0.547971488098217,
-            "last": 0.547971488098217,
-            "nonzero_observed": true,
-            "changing_observed": false
-          }
-        }
-      },
-      "ETH": {
-        "ticks": 1,
-        "any_nonzero_ticks": 1,
-        "all_nonzero_ticks": 1,
-        "changed_ticks": 0,
-        "meets_nonzero_evidence": true,
-        "meets_changing_evidence": false,
-        "features": {
-          "rsi_14_denoised": {
-            "nonzero_count": 1,
-            "min": 0.10340073528441285,
-            "max": 0.10340073528441285,
-            "last": 0.10340073528441285,
-            "nonzero_observed": true,
-            "changing_observed": false
-          },
-          "macd_12_26_denoised": {
-            "nonzero_count": 1,
-            "min": 0.0032571061863930304,
-            "max": 0.0032571061863930304,
-            "last": 0.0032571061863930304,
-            "nonzero_observed": true,
-            "changing_observed": false
-          },
-          "bb_width_20_denoised": {
-            "nonzero_count": 1,
-            "min": 0.01593674706993007,
-            "max": 0.01593674706993007,
-            "last": 0.01593674706993007,
-            "nonzero_observed": true,
-            "changing_observed": false
-          },
-          "atr_14_denoised": {
-            "nonzero_count": 1,
-            "min": 0.008547914299245687,
-            "max": 0.008547914299245687,
-            "last": 0.008547914299245687,
-            "nonzero_observed": true,
-            "changing_observed": false
-          },
-          "vol_ratio_s_denoised": {
-            "nonzero_count": 1,
-            "min": 0.6265718961636283,
-            "max": 0.6265718961636283,
-            "last": 0.6265718961636283,
-            "nonzero_observed": true,
-            "changing_observed": false
-          }
-        }
-      },
-      "SOL": {
-        "ticks": 1,
-        "any_nonzero_ticks": 1,
-        "all_nonzero_ticks": 1,
-        "changed_ticks": 0,
-        "meets_nonzero_evidence": true,
-        "meets_changing_evidence": false,
-        "features": {
-          "rsi_14_denoised": {
-            "nonzero_count": 1,
-            "min": -0.022975930124251753,
-            "max": -0.022975930124251753,
-            "last": -0.022975930124251753,
-            "nonzero_observed": true,
-            "changing_observed": false
-          },
-          "macd_12_26_denoised": {
-            "nonzero_count": 1,
-            "min": -0.004786591783849397,
-            "max": -0.004786591783849397,
-            "last": -0.004786591783849397,
-            "nonzero_observed": true,
-            "changing_observed": false
-          },
-          "bb_width_20_denoised": {
-            "nonzero_count": 1,
-            "min": 0.03043130075888064,
-            "max": 0.03043130075888064,
-            "last": 0.03043130075888064,
-            "nonzero_observed": true,
-            "changing_observed": false
-          },
-          "atr_14_denoised": {
-            "nonzero_count": 1,
-            "min": 0.01005634405534554,
-            "max": 0.01005634405534554,
-            "last": 0.01005634405534554,
-            "nonzero_observed": true,
-            "changing_observed": false
-          },
-          "vol_ratio_s_denoised": {
-            "nonzero_count": 1,
-            "min": 0.5362769862139983,
-            "max": 0.5362769862139983,
-            "last": 0.5362769862139983,
-            "nonzero_observed": true,
-            "changing_observed": false
-          }
-        }
-      }
-    }
+    "by_asset": {}
   },
   "kill_switch": {
     "dead_man_available": true,
@@ -559,9 +398,9 @@
       "session_fill_count": 0,
       "has_position": false,
       "alpha_gate_passed": false,
-      "alpha_gate_decision": "REJECT_MIN_ALPHA",
+      "alpha_gate_decision": "",
       "actionable": false,
-      "veto_reason": "[v3.6.1] Alpha gate: Alpha 3bps < min_alpha_floor 8bps (EV threshold=4bps)",
+      "veto_reason": "",
       "execution_advisory_guard_open": false,
       "execution_advisory_guard_reason": "UNAVAILABLE",
       "execution_advisory_guard_side": "flat",
@@ -572,7 +411,7 @@
         "learned_execution_policy": "DISABLED",
         "g6": "BOUNDED_LIVE",
         "aggressive_allocator": "SHADOW",
-        "lead_lag": "ADVISORY",
+        "lead_lag": "DISABLED",
         "model_alpha": "ADVISORY",
         "drl": "BOUNDED_LIVE"
       },
@@ -584,9 +423,9 @@
       "session_fill_count": 0,
       "has_position": false,
       "alpha_gate_passed": false,
-      "alpha_gate_decision": "REJECT_LOW_DIRECTION_QUIET",
+      "alpha_gate_decision": "",
       "actionable": false,
-      "veto_reason": "[v3.6.1] Alpha gate: QUIET_ACCUMULATION + direction 0.00 < 0.03 hard filter",
+      "veto_reason": "",
       "execution_advisory_guard_open": false,
       "execution_advisory_guard_reason": "UNAVAILABLE",
       "execution_advisory_guard_side": "flat",
@@ -597,7 +436,7 @@
         "learned_execution_policy": "DISABLED",
         "g6": "BOUNDED_LIVE",
         "aggressive_allocator": "SHADOW",
-        "lead_lag": "ADVISORY",
+        "lead_lag": "DISABLED",
         "model_alpha": "ADVISORY",
         "drl": "BOUNDED_LIVE"
       },
@@ -609,9 +448,9 @@
       "session_fill_count": 0,
       "has_position": false,
       "alpha_gate_passed": false,
-      "alpha_gate_decision": "REJECT_EV",
+      "alpha_gate_decision": "",
       "actionable": false,
-      "veto_reason": "[v3.6.1] Alpha gate: Alpha 2bps < threshold 9bps (1.0x friction)",
+      "veto_reason": "",
       "execution_advisory_guard_open": false,
       "execution_advisory_guard_reason": "UNAVAILABLE",
       "execution_advisory_guard_side": "flat",
@@ -622,7 +461,7 @@
         "learned_execution_policy": "DISABLED",
         "g6": "BOUNDED_LIVE",
         "aggressive_allocator": "SHADOW",
-        "lead_lag": "ADVISORY",
+        "lead_lag": "DISABLED",
         "model_alpha": "ADVISORY",
         "drl": "BOUNDED_LIVE"
       },
