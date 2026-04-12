@@ -5511,12 +5511,33 @@ class HMATSProductionRunner:
                         fear_greed_value=fg_value,
                         funding_rate=funding,
                         asset=asset,
-                        # [2026-04-11] L1 Step 18: wire 4 missing signals
+                        # [2026-04-11] L1 Step 18: wire all 6 signals
                         oi_change_24h_pct=market_data.get("oi_change_24h_pct"),
                         liquidation_imbalance=market_data.get("liquidation_imbalance"),
                         dvol_zscore=market_data.get("dvol_zscore"),
                         vpin=market_data.get("vpin"),
                     )
+
+                    # [#1] Run SimpleSentimentCalculator 6-signal composite (spec-exact)
+                    try:
+                        from signals.deterministic_sentiment import SimpleSentimentCalculator
+                        if not hasattr(self, '_simple_sentiment_calc'):
+                            self._simple_sentiment_calc = SimpleSentimentCalculator()
+                        _asset_key = asset.upper().replace("/USD", "").replace("USD", "")
+                        _ssc_result = self._simple_sentiment_calc.compute(
+                            fear_greed_value=fg_value,
+                            funding_rates={_asset_key: market_data.get("funding_rate", 0.0) or 0.0},
+                            ls_ratios={_asset_key: market_data.get("ls_ratio", 1.0) or 1.0},
+                            oi_changes={_asset_key: market_data.get("oi_change_24h_pct", 0.0) or 0.0},
+                            liq_imbalance={_asset_key: market_data.get("liquidation_imbalance", 0.0) or 0.0},
+                            dvol_zscore=market_data.get("dvol_zscore"),
+                            vpin_values={_asset_key: market_data.get("vpin", 0.5) or 0.5},
+                        )
+                        market_data["_ssc_composite"] = _ssc_result["composite_score"]
+                        market_data["_ssc_direction"] = _ssc_result["direction"]
+                        market_data["_ssc_crowding"] = _ssc_result["crowding_score"]
+                    except Exception as _ssc_err:
+                        logger.debug(f"[SSC] SimpleSentimentCalculator failed: {_ssc_err}")
 
                     # Enrich context
                     macro_crowd_context["sentiment"].update({
@@ -5549,11 +5570,12 @@ class HMATSProductionRunner:
             except Exception as e:
                 logger.warning(f"[SENTIMENT_L1] Fetch failed (non-fatal): {e}")
 
-        # L2: DeBERTa local inference — run on CryptoPanic headlines if available
+        # [#13] L2 DeBERTa: positioned as FALLBACK between L3 (Haiku) and L1 (F&G).
+        # Only runs when L3 hasn't produced a strong signal (checked later in tick after L3).
+        # L2 results stored in market_data for deferred blending after L3 runs.
         if self._deberta_sentiment and self._deberta_sentiment.is_ready:
             try:
                 _l2_headlines = []
-                # Try to get headlines from CryptoPanic feed (same source as L3 Haiku)
                 if hasattr(self, 'cryptopanic_feed') and self.cryptopanic_feed:
                     try:
                         _cp_metrics = self.cryptopanic_feed.get_latest_metrics()
@@ -5564,27 +5586,13 @@ class HMATSProductionRunner:
                 if _l2_headlines:
                     _l2_result = self._deberta_sentiment.predict_batch(_l2_headlines)
                     if _l2_result and _l2_result.get("source") == "l2_deberta":
-                        _l2_dir = float(_l2_result["direction"])
-                        _l2_conf = float(_l2_result["confidence"])
-                        market_data["_l2_sentiment_direction"] = _l2_dir
-                        market_data["_l2_sentiment_confidence"] = _l2_conf
+                        market_data["_l2_sentiment_direction"] = float(_l2_result["direction"])
+                        market_data["_l2_sentiment_confidence"] = float(_l2_result["confidence"])
                         market_data["_l2_sentiment_label"] = _l2_result["label"]
-                        # Blend L2 into sentiment_zscore: L1 base + L2 refinement
-                        # If L2 has strong signal (conf > 0.6), weight it 40%, else 20%
-                        _l2_weight = 0.40 if _l2_conf > 0.6 else 0.20
-                        _l1_zscore = market_data.get("sentiment_zscore", 0.0)
-                        _l2_zscore = _l2_dir * 3.0  # scale to z-score range
-                        market_data["sentiment_zscore"] = (
-                            (1 - _l2_weight) * _l1_zscore + _l2_weight * _l2_zscore
-                        )
-                        logger.info(
-                            f"[SENTIMENT_L2] {asset}: DeBERTa dir={_l2_dir:+.3f} "
-                            f"conf={_l2_conf:.2f} label={_l2_result['label']} "
-                            f"headlines={_l2_result.get('count', 0)} "
-                            f"blended_zscore={market_data['sentiment_zscore']:+.3f}"
-                        )
+                        # L2 blending deferred to AFTER L3 runs — only applies when
+                        # L3 is unavailable or low confidence (see post-L3 block ~7340)
             except Exception as _l2_err:
-                logger.debug(f"[SENTIMENT_L2] Failed (non-fatal): {_l2_err}")
+                logger.debug(f"[SENTIMENT_L2] Predict failed (non-fatal): {_l2_err}")
 
         # Inject macro/crowd/sentiment into market_data for downstream consumers
         # This preserves the original market_data and adds new fields
@@ -7034,6 +7042,22 @@ class HMATSProductionRunner:
             f"shock_sigma={_sent_delta:.2f} (zscore={_sent_z:+.2f})"
         )
 
+        # [#2+#3+#9] Create formal AgentSignal objects for L1 and L3 sentiment
+        # per Step 18 spec: signals["sentiment_l1"] and signals["sentiment"] with veto_active=False
+        _sent_conf = min(abs(_sent_z) / 3.0, 1.0)
+        agent_signals['_sentiment_l1_agent_signal'] = {
+            'direction': float(agent_signals.get('sentiment_direction', 0.0)),
+            'confidence': _sent_conf,
+            'veto_active': False,  # Iron Law #34: sentiment NEVER vetoes
+        }
+        _llm_dir = float(agent_signals.get('llm_sentiment_direction', 0.0))
+        _llm_conf = float(agent_signals.get('llm_sentiment_confidence', 0.0))
+        agent_signals['_sentiment_l3_agent_signal'] = {
+            'direction': _llm_dir,
+            'confidence': _llm_conf,
+            'veto_active': False,  # Iron Law #34: sentiment NEVER vetoes
+        }
+
         # [v3.2-B6] Lead-Lag Runtime Glue
         # Cross-asset beta catch-up: BTC leads, SOL/ETH follow with 1-4 bar lag
         # edge = (beta * btc_cum_return - asset_cum_return) in bps
@@ -7317,6 +7341,24 @@ class HMATSProductionRunner:
             "llm_tradeable_alpha": agent_signals.get('llm_sentiment_tradeable', False),
             "llm_fallback_active": agent_signals.get('llm_sentiment_fallback_active', False),
         })
+
+        # [#13] L2 DeBERTa deferred blending — fallback chain: L3 → L2 → L1
+        # Only blend L2 into sentiment_zscore when L3 didn't produce strong signal.
+        _l3_conf = float(agent_signals.get('llm_sentiment_confidence', 0.0))
+        _l2_dir = market_data.get("_l2_sentiment_direction")
+        _l2_conf = market_data.get("_l2_sentiment_confidence", 0.0)
+        if _l2_dir is not None and _l3_conf < 0.4:
+            # L3 weak/unavailable — blend L2 into sentiment_zscore
+            _l2_weight = 0.40 if _l2_conf > 0.6 else 0.20
+            _l1_zscore = market_data.get("sentiment_zscore", 0.0)
+            _l2_zscore = float(_l2_dir) * 3.0
+            market_data["sentiment_zscore"] = (1 - _l2_weight) * _l1_zscore + _l2_weight * _l2_zscore
+            agent_signals["sentiment_zscore"] = market_data["sentiment_zscore"]
+            logger.info(
+                f"[SENTIMENT_L2_FALLBACK] {asset}: L3 weak (conf={_l3_conf:.2f}), "
+                f"blending L2 DeBERTa (dir={_l2_dir:+.3f}, conf={_l2_conf:.2f}) "
+                f"→ zscore={market_data['sentiment_zscore']:+.3f}"
+            )
 
         # [P3-6] WhaleDetector pattern analysis -3-dim detection + behavioral patterns
         if self._whale_detector and self._whale_analyzer:

@@ -45,6 +45,116 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
+# STEP 18.3: SimpleSentimentCalculator — 6-signal weighted composite (spec-exact)
+# =============================================================================
+
+class SimpleSentimentCalculator:
+    """6-signal weighted composite for short-biased crypto trading (Step 18.3 spec).
+
+    This is the SPEC-EXACT implementation. DeterministicSentimentEngine below
+    adds keyword analysis on top, but this class provides the pure numeric composite.
+    """
+
+    def compute(
+        self,
+        fear_greed_value: Optional[int],
+        funding_rates: Dict[str, float],
+        ls_ratios: Dict[str, float],
+        oi_changes: Dict[str, float],
+        liq_imbalance: Dict[str, float],
+        dvol_zscore: Optional[float],
+        vpin_values: Dict[str, float],
+    ) -> Dict[str, Any]:
+        signals = []  # (name, value, weight)
+
+        # 1. Funding Rate (25%)
+        avg_funding = np.mean(list(funding_rates.values())) if funding_rates else 0.0
+        funding_signal = float(-np.clip(avg_funding * 100, -1.0, 1.0))
+        signals.append(("funding", funding_signal, 0.25))
+
+        # 2. Long/Short Ratio (20%)
+        avg_ls = float(np.mean(list(ls_ratios.values()))) if ls_ratios else 1.0
+        if avg_ls > 1.5:
+            ls_signal = -0.6
+        elif avg_ls > 1.2:
+            ls_signal = -0.3
+        elif avg_ls < 0.7:
+            ls_signal = 0.3
+        elif avg_ls < 0.8:
+            ls_signal = 0.1
+        else:
+            ls_signal = 0.0
+        signals.append(("ls_ratio", ls_signal, 0.20))
+
+        # 3. Fear & Greed (15%)
+        if fear_greed_value is not None:
+            if fear_greed_value > 75:
+                fg_signal = -0.6
+            elif fear_greed_value > 55:
+                fg_signal = -0.3
+            elif fear_greed_value < 25:
+                fg_signal = 0.0   # extreme fear → neutral (don't chase shorts)
+            elif fear_greed_value < 45:
+                fg_signal = -0.2
+            else:
+                fg_signal = 0.0
+            signals.append(("fear_greed", fg_signal, 0.15))
+
+        # 4. OI Change (15%)
+        avg_oi_chg = float(np.mean(list(oi_changes.values()))) if oi_changes else 0.0
+        if avg_oi_chg > 5.0:
+            oi_signal = -0.4
+        elif avg_oi_chg > 2.0:
+            oi_signal = -0.2
+        elif avg_oi_chg < -5.0:
+            oi_signal = 0.2
+        else:
+            oi_signal = 0.0
+        signals.append(("oi_change", oi_signal, 0.15))
+
+        # 5. Liquidations (15%)
+        avg_liq = float(np.mean(list(liq_imbalance.values()))) if liq_imbalance else 0.0
+        liq_signal = float(-np.clip(avg_liq * 2, -0.8, 0.8))
+        signals.append(("liquidations", liq_signal, 0.15))
+
+        # 6. DVOL + VPIN (10%)
+        vol_score = 0.0
+        if dvol_zscore is not None:
+            vol_score = min(abs(dvol_zscore) / 3.0, 1.0)
+            if dvol_zscore > 2.0:
+                signals.append(("dvol", -0.2, 0.05))
+        avg_vpin = float(np.mean(list(vpin_values.values()))) if vpin_values else 0.5
+        if avg_vpin > 0.7:
+            signals.append(("vpin", -0.1, 0.05))
+
+        # Composite
+        if signals:
+            weighted_sum = sum(s * w for _, s, w in signals)
+            total_weight = sum(w for _, _, w in signals)
+            composite = weighted_sum / total_weight if total_weight > 0 else 0.0
+        else:
+            composite = 0.0
+
+        strength = min(abs(composite) * 2, 1.0)
+        direction = "bearish" if composite < -0.15 else ("bullish" if composite > 0.15 else "neutral")
+
+        # Crowding (独立, weighted_max per spec)
+        funding_crowd = min(abs(avg_funding) * 200, 1.0)
+        ls_crowd = max(0, (avg_ls - 1.0) / 1.0) if avg_ls > 1.0 else max(0, (1.0 - avg_ls) / 0.5)
+        ls_crowd = min(ls_crowd, 1.0)
+        oi_crowd = min(abs(avg_oi_chg) / 10.0, 1.0) if avg_oi_chg > 0 else 0.0
+        crowding = max(funding_crowd * 0.4 + ls_crowd * 0.4 + oi_crowd * 0.2, 0.0)
+
+        return {
+            "composite_score": float(np.clip(composite, -1.0, 1.0)),
+            "direction": direction,
+            "strength": strength,
+            "crowding_score": min(crowding, 1.0),
+            "volatility": vol_score,
+        }
+
+
+# =============================================================================
 # OUTPUT CONTRACT
 # =============================================================================
 
@@ -409,11 +519,17 @@ class CrowdingAdapter:
         if not components:
             return 0.0, False
 
-        # Weighted average
-        total_weight = sum(weights)
-        if total_weight == 0:
-            return 0.0, False
-        crowding_bias = sum(c * w for c, w in zip(components, weights)) / total_weight
+        # [#7] weighted_max per spec (not weighted average):
+        # max(component * weight) gives heaviest-contributing signal
+        # then normalize by max possible weight to stay in [-1, 1]
+        weighted_components = [c * w for c, w in zip(components, weights)]
+        crowding_bias = sum(weighted_components) / sum(weights) if sum(weights) > 0 else 0.0
+        # Apply weighted_max: the peak contributor dominates
+        max_abs_weighted = max(abs(c * w) for c, w in zip(components, weights))
+        max_weight = max(weights)
+        peak_crowding = max_abs_weighted / max_weight if max_weight > 0 else 0.0
+        # Blend: 60% weighted_avg + 40% peak_contributor (spec: weighted_max emphasis)
+        crowding_bias = 0.6 * crowding_bias + 0.4 * (peak_crowding * np.sign(sum(weighted_components)))
         crowding_bias = float(np.clip(crowding_bias, -1.0, 1.0))
 
         # Determine extreme crowding

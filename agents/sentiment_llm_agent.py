@@ -165,10 +165,22 @@ WHY: Retail confidently calling breakout = often the top. No factual catalyst. C
 Output ONLY the JSON object. No markdown. No explanation. No preamble."""
 
 
-def _build_user_prompt(asset: str, headlines: List[str]) -> str:
-    """Build the user prompt from headlines."""
-    joined = "\n".join(f"- {h}" for h in headlines[:50])  # Cap at 50
-    return f"Asset: {asset}\n\nRecent headlines:\n{joined}\n\nAnalyze sentiment."
+def _build_user_prompt(
+    asset: str,
+    headlines: List[str],
+    regime: str = "",
+    funding_rate: float = 0.0,
+) -> str:
+    """Build the user prompt from headlines with regime context (Step 18.5 spec)."""
+    joined = "\n".join(f"- {h}" for h in headlines[:50])
+    # [#5] Regime-aware context per spec: same headline = different interpretation per regime
+    context = f"Asset: {asset}\n"
+    if regime:
+        context += f"Current market regime: {regime}\n"
+    if abs(funding_rate) > 0.0001:
+        context += f"Current funding rate: {funding_rate:+.4f} (8h)\n"
+    context += f"\nRecent headlines:\n{joined}\n\nAnalyze sentiment."
+    return context
 
 
 # ============================================================================
@@ -447,7 +459,7 @@ class LLMSentimentAgent:
     def __init__(
         self,
         api_key: Optional[str] = None,
-        model: str = "claude-3-haiku-20240307",
+        model: str = "claude-haiku-4-5-20251001",  # [#6] Updated per Step 18 spec
         max_tokens: int = 200,
         timeout_sec: float = 8.0,
     ):
@@ -462,7 +474,7 @@ class LLMSentimentAgent:
 
         # Cache: asset -> SentimentResult.  Per-asset validity via result.timestamp.
         self._cache: Dict[str, SentimentResult] = {}
-        self._cache_ttl: float = 3600.0  # 1 hour (less than 4H interval)
+        self._cache_ttl: float = 14400.0  # [#11] 4 hours per Step 18 spec (was 1h)
 
         # Concurrency guard: avoid stampede from parallel BTC/ETH/SOL calls
         self._semaphore = asyncio.Semaphore(3)
@@ -681,6 +693,8 @@ class LLMSentimentAgent:
         headlines: Optional[List[str]] = None,
         fg_zscore: float = 0.0,
         cryptopanic_meta: Optional[Dict[str, Any]] = None,
+        regime: str = "",             # [#5] GMM regime for context-aware analysis
+        funding_rate: float = 0.0,    # [#5] Current funding rate for disambiguation
     ) -> SentimentResult:
         """
         Analyze sentiment for one asset. Never raises.
@@ -1056,7 +1070,7 @@ class LLMSentimentAgent:
         if client is None:
             return None
 
-        user_prompt = _build_user_prompt(asset, headlines)
+        user_prompt = _build_user_prompt(asset, headlines, regime=regime, funding_rate=funding_rate)
 
         async with self._semaphore:
             try:
@@ -1191,6 +1205,23 @@ async def fetch_headlines(
                 continue
             seen_titles.add(title_lower)
             headlines.append(item.title)
+
+        # [#12] Adaptive window: if < 3 headlines, expand to 8H per spec
+        if len(headlines) < 3 and win.total_seconds() < 28800:
+            expanded_win = timedelta(hours=8)
+            expanded_cutoff = now - expanded_win
+            for item in data.recent_news:
+                if asset not in item.currencies:
+                    continue
+                if item.published_at < expanded_cutoff:
+                    continue
+                title_lower = item.title.strip().lower()
+                if title_lower in seen_titles:
+                    continue
+                seen_titles.add(title_lower)
+                headlines.append(item.title)
+            if len(headlines) >= 3:
+                logger.info(f"[LLM_SENTIMENT] {asset}: expanded to 8H window, got {len(headlines)} headlines")
 
         if not headlines:
             logger.debug(

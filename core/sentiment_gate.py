@@ -32,12 +32,12 @@ class SentimentGateConfig:
     # Minimum |sentiment_zscore| to activate gate
     min_zscore: float = 1.5
     # When sentiment aligns with quant direction: boost multiplier
-    aligned_boost: float = 1.10      # +10% confidence/exposure on alignment
-    # When sentiment opposes quant direction: suppress multiplier
-    opposed_suppress: float = 0.90   # -10% confidence/exposure on opposition
-    # Maximum confidence multiplier (prevent runaway)
-    max_mult: float = 1.15
-    min_mult: float = 0.85
+    # [#10] Tightened per Step 18.1: no scatter multipliers. These modulate
+    # confidence only (±5%), not position size. Effective influence ~2-5%.
+    aligned_boost: float = 1.05      # +5% confidence on alignment (was 1.10)
+    opposed_suppress: float = 0.95   # -5% confidence on opposition (was 0.90)
+    max_mult: float = 1.05           # (was 1.15)
+    min_mult: float = 0.95           # (was 0.85)
     # Regime filter: only active in these regimes (empty = all)
     active_regimes: tuple = ("MOMENTUM_RALLY", "PANIC_SELLOFF", "STEADY_UPTREND")
 
