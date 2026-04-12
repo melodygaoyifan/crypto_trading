@@ -97,6 +97,32 @@ class TestTimeStopBars:
 # RUNNER TRAIL PERCENTAGES (Strategy-Aware)
 # =============================================================================
 
+class TestRegimeAwareTrail:
+    def test_trending_regime_widens_trail(self, config):
+        """MOMENTUM_RALLY should widen trail by 50%."""
+        normal = config.get_runner_trail_pct(tight=False, strategy="momentum", regime="")
+        trending = config.get_runner_trail_pct(tight=False, strategy="momentum", regime="MOMENTUM_RALLY")
+        assert trending == pytest.approx(normal * 1.5, rel=0.01)
+
+    def test_chop_regime_no_widening(self, config):
+        """QUIET_ACCUMULATION should NOT widen trail."""
+        normal = config.get_runner_trail_pct(tight=False, strategy="momentum", regime="")
+        chop = config.get_runner_trail_pct(tight=False, strategy="momentum", regime="QUIET_ACCUMULATION")
+        assert chop == normal
+
+    def test_panic_selloff_widens_trail(self, config):
+        """PANIC_SELLOFF is also a trending regime — should widen."""
+        normal = config.get_runner_trail_pct(tight=False, strategy="momentum", regime="")
+        panic = config.get_runner_trail_pct(tight=False, strategy="momentum", regime="PANIC_SELLOFF")
+        assert panic > normal
+
+    def test_tight_trail_also_regime_widened(self, config):
+        """Tight trail in trending regime should also be widened."""
+        normal_tight = config.get_runner_trail_pct(tight=True, strategy="momentum", regime="")
+        trend_tight = config.get_runner_trail_pct(tight=True, strategy="momentum", regime="STEADY_UPTREND")
+        assert trend_tight == pytest.approx(normal_tight * 1.5, rel=0.01)
+
+
 class TestRunnerTrail:
     def test_mean_revert_wider_initial_trail(self, config):
         mr = config.get_runner_trail_pct(tight=False, strategy="mean_revert")

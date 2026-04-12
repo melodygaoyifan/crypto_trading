@@ -430,6 +430,7 @@ class ExitAlphaManager:
         current_price: float,
         direction: int,  # 1 for long, -1 for short
         strategy: str = "",  # [2026-04-08] Strategy-aware trail widths
+        regime: str = "",    # [2026-04-12] Regime-aware trail widths
     ) -> RunnerState:
         """
         Create runner position after scale-out.
@@ -446,7 +447,7 @@ class ExitAlphaManager:
             from configs.high_risk_mode import get_high_risk_config
             _hrc = get_high_risk_config()
             if _hrc and strategy:
-                _trail = _hrc.get_runner_trail_pct(tight=False, strategy=strategy)
+                _trail = _hrc.get_runner_trail_pct(tight=False, strategy=strategy, regime=regime)
         except Exception:
             pass
 
@@ -481,6 +482,7 @@ class ExitAlphaManager:
         phase_result: RegimePhaseResult,
         drl_output: Optional[DRLOutput] = None,
         strategy: str = "",  # [2026-04-08] Strategy-aware trail tightening
+        regime: str = "",    # [2026-04-12] Regime-aware trail tightening
     ) -> Tuple[RunnerAction, Optional[RunnerState]]:
         """
         Manage existing runner position.
@@ -557,7 +559,7 @@ class ExitAlphaManager:
                     from configs.high_risk_mode import get_high_risk_config
                     _hrc = get_high_risk_config()
                     if _hrc and strategy:
-                        _tight_trail = _hrc.get_runner_trail_pct(tight=True, strategy=strategy)
+                        _tight_trail = _hrc.get_runner_trail_pct(tight=True, strategy=strategy, regime=regime)
                 except Exception:
                     pass
                 runner.trail_pct = _tight_trail

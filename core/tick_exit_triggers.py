@@ -407,6 +407,7 @@ def evaluate_exit_triggers(
                     current_price=_curr_p,
                     direction=_pos_dir,
                     strategy=_pos.get("strategy", ""),
+                    regime=market_data.get("regime_state", ""),
                 )
                 result.triggered = True
                 result.tag = exit_trigger_tags.get(asset, "EXIT_ALPHA")
@@ -453,6 +454,7 @@ def evaluate_exit_triggers(
                     phase_result=_phase_res,
                     drl_output=_drl_runner_output,
                     strategy=paper_positions.get(asset, {}).get("strategy", ""),
+                    regime=market_data.get("regime_state", ""),
                 )
 
                 if _runner_action == RunnerAction.RELEASE:

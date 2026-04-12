@@ -260,14 +260,23 @@ class HighRiskModeConfig:
             return int(overrides["time_stop_losing_bars"])
         return 4 if is_profitable else 2
 
-    def get_runner_trail_pct(self, tight: bool, strategy: str = "") -> float:
-        """Get runner trail %, strategy-aware."""
+    def get_runner_trail_pct(self, tight: bool, strategy: str = "", regime: str = "") -> float:
+        """Get runner trail %, strategy-aware + regime-aware.
+        In trending regimes (MOMENTUM_RALLY, STEADY_UPTREND), widen trails
+        to avoid getting shaken out by normal trend pullbacks."""
         overrides = self.strategy_exit_overrides.get(strategy, {})
         if tight and "runner_tight_trail_pct" in overrides:
-            return overrides["runner_tight_trail_pct"]
-        if not tight and "runner_initial_trail_pct" in overrides:
-            return overrides["runner_initial_trail_pct"]
-        return 0.015 if tight else 0.03
+            base = overrides["runner_tight_trail_pct"]
+        elif not tight and "runner_initial_trail_pct" in overrides:
+            base = overrides["runner_initial_trail_pct"]
+        else:
+            base = 0.015 if tight else 0.03
+
+        # Regime widening: in strong trends, widen trail by 50% to ride the trend
+        _TRENDING_REGIMES = {"MOMENTUM_RALLY", "STEADY_UPTREND", "PANIC_SELLOFF"}
+        if regime.upper() in _TRENDING_REGIMES:
+            base *= 1.50  # 2.5% → 3.75%, 3% → 4.5%, 4% → 6%
+        return base
 
 
 # =============================================================================
