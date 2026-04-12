@@ -175,6 +175,81 @@ class TestLiquidityContext:
         assert "HIGH_CROWDING" in state.explanation_tags
 
 
+class TestExistingDataOnlyGuard:
+    def test_no_external_api_dependency(self):
+        """SmartBetaController only reads from market_data dict — no API calls."""
+        import inspect
+        from core.smart_beta_controller import SmartBetaController
+        source = inspect.getsource(SmartBetaController.compute)
+        # Must NOT contain any API/fetch/request calls
+        forbidden = ["requests.get", "aiohttp", "fetch(", "api_call", "httpx"]
+        for f in forbidden:
+            assert f not in source, f"SmartBetaController.compute contains {f}"
+
+    def test_only_reads_market_data_dict(self, market_data, agent_signals):
+        """Compute only reads from market_data and agent_signals — no side effects."""
+        ctrl = SmartBetaController(SmartBetaConfig(enabled=True))
+        md_copy = dict(market_data)
+        as_copy = dict(agent_signals)
+        ctrl.compute("BTC", market_data, agent_signals)
+        # market_data should not be modified by compute()
+        assert market_data == md_copy
+
+
+class TestNoObsContractChange:
+    def test_obs_dim_unchanged(self):
+        """Smart Beta does NOT modify obs_dim or feature_manifest."""
+        import json
+        from pathlib import Path
+        manifest = Path("configs/feature_manifest.json")
+        if manifest.exists():
+            with open(manifest) as f:
+                m = json.load(f)
+            # obs_dim should still be 122 features + 4 env = 126
+            total_features = m.get("total_feature_count", m.get("total_features", 0))
+            assert total_features == 122, f"feature_manifest changed! expected 122, got {total_features}"
+
+    def test_smart_beta_does_not_import_training(self):
+        """SmartBetaController must not import training modules."""
+        import inspect
+        from core.smart_beta_controller import SmartBetaController
+        source = inspect.getsource(SmartBetaController)
+        assert "train_drl" not in source
+        assert "feature_manifest" not in source
+        assert "obs_dim" not in source
+
+
+class TestNeutralDriftScore:
+    def test_quiet_accum_has_high_drift(self, market_data, agent_signals):
+        market_data["regime_state"] = "QUIET_ACCUMULATION"
+        market_data["hurst_exponent"] = 0.5
+        market_data["adx"] = 12.0
+        ctrl = SmartBetaController(SmartBetaConfig(enabled=True))
+        state = ctrl.compute("BTC", market_data, agent_signals)
+        assert state.neutral_drift_score > 0.3
+
+    def test_momentum_rally_has_low_drift(self, market_data, agent_signals):
+        market_data["regime_state"] = "MOMENTUM_RALLY"
+        market_data["adx"] = 35.0
+        ctrl = SmartBetaController(SmartBetaConfig(enabled=True))
+        state = ctrl.compute("BTC", market_data, agent_signals)
+        assert state.neutral_drift_score == 0.0
+
+
+class TestDownsideBeta:
+    def test_downside_beta_computed(self):
+        """BetaExposureAnalyzer should compute downside_beta."""
+        import numpy as np
+        from analytics.beta_exposure import BetaExposureAnalyzer
+        analyzer = BetaExposureAnalyzer()
+        np.random.seed(42)
+        s = np.random.normal(0, 0.01, 100)
+        b = np.random.normal(0, 0.01, 100)
+        db = analyzer.compute_downside_beta(s, b)
+        assert isinstance(db, float)
+        assert abs(db) < 5.0  # sanity bound
+
+
 class TestExistingContractsUntouched:
     def test_sentiment_not_modified(self, market_data, agent_signals):
         agent_signals["sentiment_zscore"] = -2.0

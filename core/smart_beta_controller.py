@@ -88,6 +88,9 @@ class SmartBetaState:
     liquidity_risk: float = 0.0      # [0, 1]
     liquidation_risk: float = 0.0    # [0, 1]
 
+    # Neutral drift score
+    neutral_drift_score: float = 0.0 # [0, 1] how "drifty/directionless" the market is
+
     # Recommended modulations (bounded)
     recommended_alpha_gate_mult: float = 1.0
     recommended_size_mult: float = 1.0
@@ -159,6 +162,15 @@ class SmartBetaController:
             # Trend quality: Hurst > 0.55 = trending quality
             state.trend_quality = min(max(hurst - 0.4, 0) / 0.3, 1.0)
 
+            # Neutral drift score: high when regime is directionless + Hurst near 0.5 + low ADX
+            if regime in _NEUTRAL_REGIMES:
+                _nd_regime = 0.6
+                _nd_hurst = max(0, 1.0 - abs(hurst - 0.5) * 4)  # peaks at H=0.5
+                _nd_adx = max(0, 1.0 - (adx - 10) / 25)  # peaks at ADX=10
+                state.neutral_drift_score = min(_nd_regime * 0.4 + _nd_hurst * 0.3 + _nd_adx * 0.3, 1.0)
+            else:
+                state.neutral_drift_score = 0.0
+
             # Tags
             if regime in _NEUTRAL_REGIMES:
                 tags.append("NEUTRAL_DRIFT")
@@ -166,6 +178,13 @@ class SmartBetaController:
                 tags.append("TREND_STRONG")
             elif regime in _BEARISH_REGIMES:
                 tags.append("BEARISH_REGIME")
+
+            if cfg.log_proofs:
+                logger.debug(
+                    f"[BETA_TREND] {asset}: dir={state.trend_dir:+.2f} str={state.trend_strength:.2f} "
+                    f"qual={state.trend_quality:.2f} drift={state.neutral_drift_score:.2f} "
+                    f"regime={regime} hurst={hurst:.2f} adx={adx:.0f}"
+                )
 
         # =====================================================================
         # VOLATILITY REGIME CONTEXT (reuses: vol_regime, vol_z_score, VPIN, kurtosis)
@@ -196,6 +215,13 @@ class SmartBetaController:
                 tags.append("HIGH_TOXICITY")
             if bss <= 1:
                 tags.append("BLACK_SWAN_RISK")
+
+            if cfg.log_proofs:
+                logger.debug(
+                    f"[BETA_VOL] {asset}: regime={vol_regime:.2f} z={vol_z:.2f} "
+                    f"tox={state.toxicity_score:.2f} bss={bss} "
+                    f"expansion={state.vol_expansion_score:.2f}"
+                )
 
         # =====================================================================
         # LIQUIDITY FUNDING CONTEXT (reuses: funding, OI, liq, crowding, F&G)
@@ -230,6 +256,13 @@ class SmartBetaController:
                 tags.append("HIGH_CROWDING")
             if state.liquidation_risk > 0.5:
                 tags.append("LIQUIDATION_RISK")
+
+            if cfg.log_proofs:
+                logger.debug(
+                    f"[BETA_LIQ] {asset}: funding_heat={state.funding_heat:+.2f} "
+                    f"crowd={state.crowding_score:.2f} liq_risk={state.liquidity_risk:.2f} "
+                    f"liq_imb={state.liquidation_risk:.2f} fg={fg}"
+                )
 
         # =====================================================================
         # COMPUTE BOUNDED RECOMMENDATIONS

@@ -33,6 +33,7 @@ class BetaReport:
     # Upside/Downside
     upside_capture: float = 0.0
     downside_capture: float = 0.0
+    downside_beta: float = 0.0      # beta computed only on negative benchmark days
     upside_sample_count: int = 0
     downside_sample_count: int = 0
     # Rolling (latest values)
@@ -126,6 +127,22 @@ class BetaExposureAnalyzer:
 
         return up_capture, down_capture, up_count, down_count
 
+    def compute_downside_beta(
+        self,
+        strategy_returns: np.ndarray,
+        benchmark_returns: np.ndarray,
+    ) -> float:
+        """Beta computed only on negative benchmark return samples."""
+        down_mask = benchmark_returns < 0
+        if np.sum(down_mask) < 5:
+            return 0.0
+        s_down = strategy_returns[down_mask]
+        b_down = benchmark_returns[down_mask]
+        var_b = np.var(b_down)
+        if var_b < 1e-15:
+            return 0.0
+        return float(np.cov(s_down, b_down)[0, 1] / var_b)
+
     def compute_residual_alpha(
         self,
         strategy_returns: np.ndarray,
@@ -196,6 +213,9 @@ class BetaExposureAnalyzer:
         # Returns
         report.strategy_return = float((np.prod(1 + s) - 1) * 100)
         report.benchmark_return = float((np.prod(1 + b) - 1) * 100)
+
+        # Downside beta
+        report.downside_beta = self.compute_downside_beta(s, b)
 
         # Upside/Downside capture
         up, down, up_n, down_n = self.compute_upside_downside_capture(s, b)
