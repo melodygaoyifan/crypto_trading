@@ -175,6 +175,42 @@ class TestLiquidityContext:
         assert "HIGH_CROWDING" in state.explanation_tags
 
 
+class TestCarryOpportunity:
+    def test_negative_funding_tags_carry_long(self, market_data, agent_signals):
+        """Negative funding (shorts pay longs) → CARRY_OPPORTUNITY_LONG tag."""
+        market_data["funding_rate"] = -0.001  # negative = longs earn carry
+        ctrl = SmartBetaController(SmartBetaConfig(enabled=True))
+        state = ctrl.compute("ETH", market_data, agent_signals)
+        assert "CARRY_OPPORTUNITY_LONG" in state.explanation_tags
+
+    def test_positive_funding_tags_carry_short(self, market_data, agent_signals):
+        """Positive funding (longs pay shorts) → CARRY_OPPORTUNITY_SHORT tag."""
+        market_data["funding_rate"] = 0.001  # positive = shorts earn carry
+        ctrl = SmartBetaController(SmartBetaConfig(enabled=True))
+        state = ctrl.compute("BTC", market_data, agent_signals)
+        assert "CARRY_OPPORTUNITY_SHORT" in state.explanation_tags
+
+    def test_carry_long_relaxes_gate_boosts_size(self, market_data, agent_signals):
+        """CARRY_OPPORTUNITY_LONG should lower gate and boost LONG size."""
+        market_data["funding_rate"] = -0.001
+        market_data["regime_state"] = "STEADY_UPTREND"  # avoid neutral_drift overriding
+        ctrl = SmartBetaController(SmartBetaConfig(enabled=True, mode="bounded_influence"))
+        state = ctrl.compute("ETH", market_data, agent_signals)
+        ctrl.apply_to_agent_signals(state, agent_signals, "ETH")
+        # Gate should be relaxed (lower)
+        assert state.recommended_alpha_gate_mult < 1.0
+        # Short restriction should be tighter (discourage shorts that pay funding)
+        assert state.short_restriction_mult < 1.0
+
+    def test_neutral_funding_no_carry_tag(self, market_data, agent_signals):
+        """Neutral funding → no carry tag."""
+        market_data["funding_rate"] = 0.00005  # negligible
+        ctrl = SmartBetaController(SmartBetaConfig(enabled=True))
+        state = ctrl.compute("BTC", market_data, agent_signals)
+        assert "CARRY_OPPORTUNITY_LONG" not in state.explanation_tags
+        assert "CARRY_OPPORTUNITY_SHORT" not in state.explanation_tags
+
+
 class TestExistingDataOnlyGuard:
     def test_no_external_api_dependency(self):
         """SmartBetaController only reads from market_data dict — no API calls."""

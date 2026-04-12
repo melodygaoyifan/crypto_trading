@@ -252,6 +252,12 @@ class SmartBetaController:
 
             if abs(state.funding_heat) > 0.5:
                 tags.append("FUNDING_EXTREME")
+            # Carry opportunity: negative funding = LONGs earn carry income
+            # This is free alpha when holding LONG positions in negative funding environment
+            if state.funding_heat < -0.3:
+                tags.append("CARRY_OPPORTUNITY_LONG")
+            elif state.funding_heat > 0.3:
+                tags.append("CARRY_OPPORTUNITY_SHORT")
             if state.crowding_score > 0.6:
                 tags.append("HIGH_CROWDING")
             if state.liquidation_risk > 0.5:
@@ -296,10 +302,18 @@ class SmartBetaController:
             allow_si = False
             short_mult *= 0.50
 
-        # Liquidity: overheating → restrict
+        # Liquidity: overheating → restrict; carry opportunity → encourage
         if "FUNDING_EXTREME" in tags:
             size_mult *= 0.85
             short_mult *= 0.70
+        # Carry opportunity: negative funding = LONGs earn carry income
+        # Relax gate for LONG entries and boost size — this is "free" alpha
+        if "CARRY_OPPORTUNITY_LONG" in tags:
+            gate_mult *= 0.92   # lower bar for LONG entries
+            size_mult *= 1.08   # slightly larger LONG positions (earn carry)
+            short_mult *= 0.80  # discourage shorts (they PAY funding)
+        elif "CARRY_OPPORTUNITY_SHORT" in tags:
+            short_mult *= 1.00  # don't penalize shorts when they earn carry
         if "HIGH_CROWDING" in tags:
             size_mult *= 0.90
             allow_si = False
