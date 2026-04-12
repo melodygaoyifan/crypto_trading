@@ -1,0 +1,45 @@
+{
+  "timestamp": "2026-04-12T01:07:19.329905+00:00",
+  "num_trades": 18,
+  "verdict": "ALPHA_ONLY_REASONABLE",
+  "explanation": "Low beta and correlation \u2192 strategy returns largely independent of market direction",
+  "portfolio": {
+    "beta": 0.2318,
+    "correlation": 0.2032,
+    "alpha_annualized_pct": -500.01,
+    "strategy_return_pct": -2.01,
+    "benchmark_return_pct": 10.03,
+    "upside_capture": -0.115,
+    "downside_capture": 0.06,
+    "beta_risk_level": "LOW"
+  },
+  "per_asset": {
+    "BTC": {
+      "beta": 0.0,
+      "correlation": 0.0,
+      "alpha_annualized_pct": 0.0,
+      "upside_capture": 0.0,
+      "downside_capture": 0.0,
+      "risk_level": "INSUFFICIENT_DATA",
+      "regime_betas": {}
+    },
+    "ETH": {
+      "beta": 0.0,
+      "correlation": 0.0,
+      "alpha_annualized_pct": 0.0,
+      "upside_capture": 0.0,
+      "downside_capture": 0.0,
+      "risk_level": "INSUFFICIENT_DATA",
+      "regime_betas": {}
+    },
+    "SOL": {
+      "beta": 0.0,
+      "correlation": 0.0,
+      "alpha_annualized_pct": 0.0,
+      "upside_capture": 0.0,
+      "downside_capture": 0.0,
+      "risk_level": "INSUFFICIENT_DATA",
+      "regime_betas": {}
+    }
+  }
+}
