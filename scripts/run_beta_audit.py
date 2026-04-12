@@ -71,6 +71,44 @@ def build_regime_labels(trades):
     return np.array([t.get("regime_at_entry", "UNKNOWN") for t in trades])
 
 
+def load_bar_level_returns():
+    """Load 4H bar-level OHLCV returns from Kraken for stronger beta measurement.
+    Returns dict: {asset: np.array of bar returns}. Uses existing CCXT client."""
+    bar_returns = {}
+    try:
+        import requests, time as _time
+        PAIRS = {"BTC": "XXBTZUSD", "ETH": "XETHZUSD", "SOL": "SOLUSD"}
+        for asset, pair in PAIRS.items():
+            since = int(_time.time()) - 720 * 14400  # ~120 days of 4H bars
+            url = f"https://api.kraken.com/0/public/OHLC?pair={pair}&interval=240&since={since}"
+            resp = requests.get(url, timeout=15)
+            data = resp.json()
+            if data.get("error"):
+                continue
+            ohlc_key = [k for k in data["result"] if k != "last"][0]
+            bars = data["result"][ohlc_key]
+            closes = np.array([float(b[4]) for b in bars])
+            if len(closes) > 1:
+                rets = np.diff(closes) / closes[:-1]
+                bar_returns[asset] = rets[np.isfinite(rets)]
+        logger.info(f"[BAR_LEVEL] Loaded: {', '.join(f'{a}={len(r)} bars' for a, r in bar_returns.items())}")
+    except Exception as e:
+        logger.warning(f"[BAR_LEVEL] OHLCV fetch failed: {e}")
+    return bar_returns
+
+
+def build_market_basket_returns(bar_returns):
+    """Build equal-weight BTC/ETH/SOL basket returns from bar-level OHLCV."""
+    assets = [a for a in ["BTC", "ETH", "SOL"] if a in bar_returns]
+    if len(assets) < 2:
+        return None
+    min_len = min(len(bar_returns[a]) for a in assets)
+    basket = np.zeros(min_len)
+    for a in assets:
+        basket += bar_returns[a][-min_len:] / len(assets)
+    return basket
+
+
 def main():
     logger.info("=" * 60)
     logger.info("HMATS Alpha/Beta Decomposition Audit")
@@ -135,6 +173,73 @@ def main():
     logger.info(f"  Downside capture: {port_report.downside_capture:.2f}")
     logger.info(f"  Risk level: {port_report.beta_risk_level}")
 
+    # =====================================================================
+    # [BP2+BP4] Bar-level beta measurement + market basket benchmark
+    # Stronger statistical basis: 720 bars × 3 assets vs 18 sparse trades
+    # =====================================================================
+    bar_rets = load_bar_level_returns()
+    basket_rets = build_market_basket_returns(bar_rets)
+    bar_level_results = {}
+
+    if bar_rets:
+        logger.info(f"\n{'='*60}")
+        logger.info(f"BAR-LEVEL BETA (4H OHLCV, ~120 days)")
+        logger.info(f"{'='*60}")
+
+        # Per-asset vs BTC buy-and-hold
+        btc_rets = bar_rets.get("BTC")
+        for asset in ["ETH", "SOL"]:
+            asset_rets = bar_rets.get(asset)
+            if asset_rets is None or btc_rets is None:
+                continue
+            min_n = min(len(asset_rets), len(btc_rets))
+            if min_n < 42:
+                continue
+            report = analyzer.full_report(
+                asset_rets[-min_n:], btc_rets[-min_n:],
+                benchmark_name="BTC Buy&Hold",
+                window=126,
+            )
+            bar_level_results[f"{asset}_vs_BTC"] = {
+                "beta": round(report.overall_beta, 4),
+                "correlation": round(report.overall_correlation, 4),
+                "downside_beta": round(report.downside_beta, 4),
+                "upside_capture": round(report.upside_capture, 3),
+                "downside_capture": round(report.downside_capture, 3),
+                "bars": min_n,
+                "risk_level": report.beta_risk_level,
+            }
+            logger.info(
+                f"  {asset} vs BTC: beta={report.overall_beta:.3f} corr={report.overall_correlation:.3f} "
+                f"downside_beta={report.downside_beta:.3f} risk={report.beta_risk_level} ({min_n} bars)"
+            )
+
+        # Market basket benchmark
+        if basket_rets is not None:
+            for asset in ["BTC", "ETH", "SOL"]:
+                asset_rets = bar_rets.get(asset)
+                if asset_rets is None:
+                    continue
+                min_n = min(len(asset_rets), len(basket_rets))
+                if min_n < 42:
+                    continue
+                report = analyzer.full_report(
+                    asset_rets[-min_n:], basket_rets[-min_n:],
+                    benchmark_name="EQ-Weight BTC/ETH/SOL Basket",
+                    window=126,
+                )
+                bar_level_results[f"{asset}_vs_Basket"] = {
+                    "beta": round(report.overall_beta, 4),
+                    "correlation": round(report.overall_correlation, 4),
+                    "downside_beta": round(report.downside_beta, 4),
+                    "bars": min_n,
+                    "risk_level": report.beta_risk_level,
+                }
+                logger.info(
+                    f"  {asset} vs Basket: beta={report.overall_beta:.3f} corr={report.overall_correlation:.3f} "
+                    f"downside_beta={report.downside_beta:.3f} ({min_n} bars)"
+                )
+
     # Verdict
     if abs(port_report.overall_beta) < 0.3 and abs(port_report.overall_correlation) < 0.3:
         verdict = "ALPHA_ONLY_REASONABLE"
@@ -160,6 +265,7 @@ def main():
         "portfolio": {
             "beta": round(port_report.overall_beta, 4),
             "correlation": round(port_report.overall_correlation, 4),
+            "downside_beta": round(port_report.downside_beta, 4),
             "alpha_annualized_pct": round(port_report.overall_alpha_annualized, 2),
             "strategy_return_pct": round(port_report.strategy_return, 2),
             "benchmark_return_pct": round(port_report.benchmark_return, 2),
@@ -167,12 +273,14 @@ def main():
             "downside_capture": round(port_report.downside_capture, 3),
             "beta_risk_level": port_report.beta_risk_level,
         },
+        "bar_level_beta": bar_level_results if bar_rets else {},
         "per_asset": {},
     }
     for asset, report in asset_reports.items():
         result["per_asset"][asset] = {
             "beta": round(report.overall_beta, 4),
             "correlation": round(report.overall_correlation, 4),
+            "downside_beta": round(report.downside_beta, 4),
             "alpha_annualized_pct": round(report.overall_alpha_annualized, 2),
             "upside_capture": round(report.upside_capture, 3),
             "downside_capture": round(report.downside_capture, 3),

@@ -81,6 +81,64 @@ class TestRegimeBucket:
         assert result["BULL"]["beta"] > result["BEAR"]["beta"]
 
 
+class TestDownsideBeta:
+    def test_downside_beta_negative_benchmark(self, analyzer):
+        """Downside beta computed only on benchmark < 0 samples."""
+        np.random.seed(42)
+        b = np.random.normal(0, 0.01, 200)
+        s = 1.5 * b + np.random.normal(0, 0.002, 200)  # high beta
+        db = analyzer.compute_downside_beta(s, b)
+        assert db > 0  # positive beta on downside
+        assert abs(db - 1.5) < 0.5  # should be near true beta
+
+    def test_downside_beta_insufficient_samples(self, analyzer):
+        """< 5 negative benchmark samples should return 0."""
+        b = np.array([0.01, 0.02, 0.03, -0.01, 0.01])  # only 1 negative
+        s = np.array([0.005, 0.01, 0.02, -0.005, 0.008])
+        db = analyzer.compute_downside_beta(s, b)
+        assert db == 0.0
+
+    def test_downside_beta_zero_variance(self, analyzer):
+        """All identical negative returns should return 0."""
+        b = np.array([-0.01] * 10)
+        s = np.array([-0.005] * 10)
+        db = analyzer.compute_downside_beta(s, b)
+        assert db == 0.0
+
+
+class TestMarketBasket:
+    def test_basket_returns_construction(self):
+        """Equal-weight basket from 3 assets."""
+        from scripts.run_beta_audit import build_market_basket_returns
+        bar_rets = {
+            "BTC": np.array([0.01, -0.02, 0.03]),
+            "ETH": np.array([0.02, -0.01, 0.01]),
+            "SOL": np.array([0.03, -0.03, 0.02]),
+        }
+        basket = build_market_basket_returns(bar_rets)
+        assert basket is not None
+        assert len(basket) == 3
+        # Equal weight: (0.01+0.02+0.03)/3 = 0.02 for first bar
+        assert basket[0] == pytest.approx(0.02, abs=0.001)
+
+    def test_basket_returns_unequal_lengths(self):
+        """Basket should use min length across assets."""
+        from scripts.run_beta_audit import build_market_basket_returns
+        bar_rets = {
+            "BTC": np.array([0.01, -0.02, 0.03, 0.01]),
+            "ETH": np.array([0.02, -0.01]),
+            "SOL": np.array([0.03, -0.03, 0.02]),
+        }
+        basket = build_market_basket_returns(bar_rets)
+        assert len(basket) == 2  # min of 4, 2, 3
+
+    def test_basket_returns_insufficient_assets(self):
+        """< 2 assets should return None."""
+        from scripts.run_beta_audit import build_market_basket_returns
+        basket = build_market_basket_returns({"BTC": np.array([0.01])})
+        assert basket is None
+
+
 class TestFullReport:
     def test_report_structure(self, analyzer):
         """Full report should have all required fields."""

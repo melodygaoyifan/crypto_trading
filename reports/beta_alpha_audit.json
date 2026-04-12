@@ -1,11 +1,12 @@
 {
-  "timestamp": "2026-04-12T01:07:19.329905+00:00",
+  "timestamp": "2026-04-12T04:40:05.361699+00:00",
   "num_trades": 18,
   "verdict": "ALPHA_ONLY_REASONABLE",
   "explanation": "Low beta and correlation \u2192 strategy returns largely independent of market direction",
   "portfolio": {
     "beta": 0.2318,
     "correlation": 0.2032,
+    "downside_beta": -1.5619,
     "alpha_annualized_pct": -500.01,
     "strategy_return_pct": -2.01,
     "benchmark_return_pct": 10.03,
@@ -13,10 +14,52 @@
     "downside_capture": 0.06,
     "beta_risk_level": "LOW"
   },
+  "bar_level_beta": {
+    "ETH_vs_BTC": {
+      "beta": 1.2233,
+      "correlation": 0.9068,
+      "downside_beta": 1.258,
+      "upside_capture": 1.18,
+      "downside_capture": 1.197,
+      "bars": 719,
+      "risk_level": "EXTREME"
+    },
+    "SOL_vs_BTC": {
+      "beta": 1.2668,
+      "correlation": 0.8697,
+      "downside_beta": 1.3465,
+      "upside_capture": 1.236,
+      "downside_capture": 1.299,
+      "bars": 719,
+      "risk_level": "EXTREME"
+    },
+    "BTC_vs_Basket": {
+      "beta": 0.7846,
+      "correlation": 0.9543,
+      "downside_beta": 0.7772,
+      "bars": 719,
+      "risk_level": "HIGH"
+    },
+    "ETH_vs_Basket": {
+      "beta": 1.071,
+      "correlation": 0.9669,
+      "downside_beta": 1.0729,
+      "bars": 719,
+      "risk_level": "EXTREME"
+    },
+    "SOL_vs_Basket": {
+      "beta": 1.1485,
+      "correlation": 0.9603,
+      "downside_beta": 1.1582,
+      "bars": 719,
+      "risk_level": "EXTREME"
+    }
+  },
   "per_asset": {
     "BTC": {
       "beta": 0.0,
       "correlation": 0.0,
+      "downside_beta": 0.0,
       "alpha_annualized_pct": 0.0,
       "upside_capture": 0.0,
       "downside_capture": 0.0,
@@ -26,6 +69,7 @@
     "ETH": {
       "beta": 0.0,
       "correlation": 0.0,
+      "downside_beta": 0.0,
       "alpha_annualized_pct": 0.0,
       "upside_capture": 0.0,
       "downside_capture": 0.0,
@@ -35,6 +79,7 @@
     "SOL": {
       "beta": 0.0,
       "correlation": 0.0,
+      "downside_beta": 0.0,
       "alpha_annualized_pct": 0.0,
       "upside_capture": 0.0,
       "downside_capture": 0.0,
