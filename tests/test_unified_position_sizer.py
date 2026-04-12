@@ -128,6 +128,34 @@ class TestVolAdjustedLimits:
 # EDGE CASES
 # =============================================================================
 
+class TestBetaAdjustedSizing:
+    def test_high_beta_reduces_size(self, sizer, base_kwargs):
+        """SOL with beta=1.35 should get smaller position than BTC with beta=1.0."""
+        btc = sizer.calculate_position_size(**{**base_kwargs, "beta_to_btc": 1.0})
+        sol = sizer.calculate_position_size(**{**base_kwargs, "beta_to_btc": 1.35, "asset": "SOL"})
+        assert sol.final_size_usd < btc.final_size_usd
+
+    def test_low_beta_increases_size(self, sizer, base_kwargs):
+        """Asset with beta=0.7 should get slightly larger position."""
+        normal = sizer.calculate_position_size(**{**base_kwargs, "beta_to_btc": 1.0})
+        low_beta = sizer.calculate_position_size(**{**base_kwargs, "beta_to_btc": 0.7})
+        assert low_beta.final_size_usd >= normal.final_size_usd
+
+    def test_beta_multiplier_clamped(self, sizer, base_kwargs):
+        """Extreme beta should be clamped — not explode or go to zero."""
+        extreme_high = sizer.calculate_position_size(**{**base_kwargs, "beta_to_btc": 3.0})
+        extreme_low = sizer.calculate_position_size(**{**base_kwargs, "beta_to_btc": 0.3})
+        # Both should produce valid sizes (not zero, not infinite)
+        assert extreme_high.final_size_usd > 0
+        assert extreme_low.final_size_usd > 0
+
+    def test_btc_beta_one_no_change(self, sizer, base_kwargs):
+        """BTC with beta=1.0 should get the same as default."""
+        default = sizer.calculate_position_size(**{**base_kwargs})  # beta_to_btc defaults to 1.0
+        explicit = sizer.calculate_position_size(**{**base_kwargs, "beta_to_btc": 1.0})
+        assert default.final_size_usd == explicit.final_size_usd
+
+
 class TestEdgeCases:
     def test_zero_balance_returns_zero(self, sizer, base_kwargs):
         result = sizer.calculate_position_size(**{**base_kwargs, "account_balance": 0.0})

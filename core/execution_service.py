@@ -405,6 +405,7 @@ async def execute_intent_v2(
                     confidence=getattr(intent, 'quant_confidence', 0.5),
                     cross_asset_correlation=market_data.get('correlation_btc_eth_sol', 0.5),
                     annualized_vol=market_data.get('annualized_volatility', 0.6),
+                    beta_to_btc=market_data.get('beta_to_btc', 1.0),
                 )
                 _sizer_exp = _sizing.final_exposure_pct
             if _sizer_exp < exposure_fraction:

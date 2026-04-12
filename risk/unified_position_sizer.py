@@ -271,6 +271,7 @@ class UnifiedPositionSizer:
         confidence: float = 0.5,      # [2026-04-08] Confidence-based sizing
         cross_asset_correlation: float = 0.5,  # [2026-04-11] Correlation-adjusted sizing
         annualized_vol: float = 0.6,           # [2026-04-11] Dynamic vol-adjusted limit
+        beta_to_btc: float = 1.0,             # [2026-04-12] Beta-adjusted sizing
     ) -> PositionSizingResult:
         """
         Calculate final position size with all constraints applied.
@@ -404,6 +405,18 @@ class UnifiedPositionSizer:
         else:
             _corr_mult = 1.10
         size_after_drawdown *= _corr_mult
+
+        # Step 3c: [2026-04-12] Beta-adjusted sizing
+        # Higher-beta assets (ETH beta=1.22, SOL beta=1.35 to BTC) should get
+        # proportionally smaller positions to equalize risk contribution.
+        # Formula: size *= 1/beta (clamped to [0.65, 1.10])
+        # BTC (beta=1.0) → ×1.0, ETH (beta=1.2) → ×0.83, SOL (beta=1.35) → ×0.74
+        _beta = max(0.5, min(2.5, float(beta_to_btc)))
+        if _beta > 0.01:
+            _beta_mult = max(0.65, min(1.10, 1.0 / _beta))
+        else:
+            _beta_mult = 1.0
+        size_after_drawdown *= _beta_mult
 
         # Step 4: Apply global gross exposure cap (may be boosted in gambler mode)
         remaining_gross_room = (max_gross - current_gross_exposure) * account_balance
