@@ -308,5 +308,14 @@
   "sentiment_gate_config": {
     "enabled": true,
     "_note": "2026-04-11: SentimentGate ENABLED. Modulates confidence ±10-15% based on sentiment alignment."
+  },
+  "smart_beta_config": {
+    "enabled": true,
+    "mode": "observe_only",
+    "_note": "2026-04-12: Phase 2a — observe_only. Computes + logs Smart Beta state every tick, zero decision impact. Validate via grep [SMART_BETA_STATE] in logs.",
+    "trend_enabled": true,
+    "volatility_enabled": true,
+    "liquidity_enabled": true,
+    "log_proofs": true
   }
 }
