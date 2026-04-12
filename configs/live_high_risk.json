@@ -311,11 +311,22 @@
   },
   "smart_beta_config": {
     "enabled": true,
-    "mode": "observe_only",
-    "_note": "2026-04-12: Phase 2a — observe_only. Computes + logs Smart Beta state every tick, zero decision impact. Validate via grep [SMART_BETA_STATE] in logs.",
+    "mode": "bounded_influence",
+    "_note": "2026-04-12: Phase 3 — bounded_influence. Modulates gate/size/scale-in/short restriction within bounds. Kill switch: set enabled=false.",
     "trend_enabled": true,
     "volatility_enabled": true,
     "liquidity_enabled": true,
+    "alpha_gate_mult_min": 0.85,
+    "alpha_gate_mult_max": 1.20,
+    "size_mult_min": 0.70,
+    "size_mult_max": 1.15,
+    "confidence_mult_min": 0.80,
+    "confidence_mult_max": 1.10,
+    "short_restriction_mult_min": 0.20,
+    "short_restriction_mult_max": 1.00,
+    "allow_scale_in_modulation": true,
+    "allow_direction_override": false,
+    "allow_veto": false,
     "log_proofs": true
   }
 }
