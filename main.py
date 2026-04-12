@@ -5578,9 +5578,9 @@ class HMATSProductionRunner:
                 _l2_headlines = []
                 if hasattr(self, 'cryptopanic_feed') and self.cryptopanic_feed:
                     try:
-                        _cp_metrics = self.cryptopanic_feed.get_latest_metrics()
-                        if _cp_metrics and hasattr(_cp_metrics, 'recent_titles'):
-                            _l2_headlines = list(_cp_metrics.recent_titles or [])[:20]
+                        _cp_data = self.cryptopanic_feed.get_latest()
+                        if _cp_data and hasattr(_cp_data, 'recent_news') and _cp_data.recent_news:
+                            _l2_headlines = [item.title for item in _cp_data.recent_news[:20] if hasattr(item, 'title')]
                     except Exception:
                         pass
                 if _l2_headlines:
@@ -6808,7 +6808,7 @@ class HMATSProductionRunner:
                     # Store in agent_signals for shadow logging
                     agent_signals['ensemble_action'] = _tqc_result.action
                     agent_signals['ensemble_confidence'] = _tqc_result.confidence
-                    agent_signals['ensemble_authority'] = 'SHADOW'
+                    agent_signals['ensemble_authority'] = self._drl_authority_level  # was hardcoded 'SHADOW'
                     agent_signals['drl_direction'] = max(-1.0, min(1.0, float(_tqc_result.action)))
                     agent_signals['drl_confidence'] = float(_tqc_result.confidence)
                     logger.info(

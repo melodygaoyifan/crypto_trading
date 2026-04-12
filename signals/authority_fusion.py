@@ -148,7 +148,7 @@ AUTHORITY_MATRIX_NORMAL = {
     "macro": Authority.CAP,         # Leverage ceiling
     "lead_lag": Authority.EXECUTE,  # Execution mode only
     "risk": Authority.VETO,         # Hard override
-    # "model_alpha": Authority.ADVISE,  # NOT WIRED - agent exists but not initialized in main.py
+    # model_alpha: wired as ADVISE (line 165), promoted from CONTEXT 2026-04-11
     "two_stage": Authority.CONFIRM,   # V6: Two-Stage prior must confirm
     "short_bias": Authority.ADVISE,   # v7.0: Soft advisory (was CONFIRM, halving longs - too aggressive per PENALIZE×0.7 intent)
     "funding_rate": Authority.ADVISE,  # [v9-PATCH-8] Carry-bias from funding rates
@@ -237,7 +237,7 @@ AUTHORITY_MATRIX_HIGH_VOL = {
     "macro": Authority.CAP,          # still cap leverage
     "lead_lag": Authority.EXECUTE,   # execution mode only
     "risk": Authority.VETO,          # hard override
-    # "model_alpha": Authority.ADVISE,  # NOT WIRED - agent exists but not initialized in main.py
+    # model_alpha: wired as ADVISE (line 165), promoted from CONTEXT 2026-04-11
     "two_stage": Authority.ADVISE,
     "short_bias": Authority.ADVISE,
     "funding_rate": Authority.ADVISE,
