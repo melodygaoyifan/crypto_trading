@@ -1,0 +1,87 @@
+{
+  "timestamp": "2026-04-12T00:46:40.771450+00:00",
+  "num_trades": 18,
+  "monte_carlo": {
+    "num_simulations": 1000,
+    "num_trades": 18,
+    "initial_capital": 10000,
+    "return_mean": -0.53,
+    "return_std": 0.0,
+    "return_5th_pct": -0.53,
+    "return_25th_pct": -0.53,
+    "return_median": -0.53,
+    "return_75th_pct": -0.53,
+    "return_95th_pct": -0.53,
+    "max_dd_mean": 0.66,
+    "max_dd_95th_pct": 0.82,
+    "max_dd_worst": 0.93,
+    "sharpe_mean": -1.29,
+    "sharpe_5th_pct": -1.29,
+    "bankruptcy_probability": 0.0,
+    "verdict": "PASS"
+  },
+  "walk_forward": {
+    "n_folds": 3,
+    "total_trades": 18,
+    "folds": [
+      {
+        "fold": 1,
+        "train_size": 6,
+        "val_size": 6,
+        "train_win_rate": 66.7,
+        "val_total_pnl": -72.76,
+        "val_win_rate": 0.0,
+        "val_mean_bps": -117.5,
+        "val_max_dd_pct": 0.73
+      },
+      {
+        "fold": 2,
+        "train_size": 12,
+        "val_size": 6,
+        "train_win_rate": 33.3,
+        "val_total_pnl": -2.38,
+        "val_win_rate": 50.0,
+        "val_mean_bps": 39.0,
+        "val_max_dd_pct": 0.15
+      }
+    ],
+    "avg_val_pnl": -37.57,
+    "avg_val_win_rate": 25.0,
+    "avg_val_max_dd": 0.44,
+    "verdict": "FAIL"
+  },
+  "fee_stress": {
+    "scenarios": [
+      {
+        "fee_multiplier": 1.0,
+        "total_pnl": -53.36,
+        "return_pct": -0.53,
+        "win_rate": 38.9,
+        "still_profitable": false
+      },
+      {
+        "fee_multiplier": 1.5,
+        "total_pnl": -74.73,
+        "return_pct": -0.75,
+        "win_rate": 22.2,
+        "still_profitable": false
+      },
+      {
+        "fee_multiplier": 2.0,
+        "total_pnl": -96.1,
+        "return_pct": -0.96,
+        "win_rate": 22.2,
+        "still_profitable": false
+      },
+      {
+        "fee_multiplier": 3.0,
+        "total_pnl": -138.85,
+        "return_pct": -1.39,
+        "win_rate": 22.2,
+        "still_profitable": false
+      }
+    ],
+    "break_even_multiplier": null,
+    "verdict": "MARGINAL"
+  }
+}
