@@ -1466,6 +1466,8 @@ class ProductionConfig:
     alpha_boost_config: Optional[Dict] = None
     # [P1.1] Sentiment gate config
     sentiment_gate_config: Optional[Dict] = None
+    # [V1] Smart Beta context layer config
+    smart_beta_config: Optional[Dict] = None
 
     # Regime Power Multiplier
     regime_power_enabled: bool = True
@@ -1795,6 +1797,7 @@ class ProductionConfig:
             # [P0-CAGR V2] Alpha Boost + Sentiment Gate configs
             alpha_boost_config=data.get("alpha_boost_config") or None,
             sentiment_gate_config=data.get("sentiment_gate_config") or None,
+            smart_beta_config=data.get("smart_beta_config") or None,
         )
 
 
@@ -3178,6 +3181,21 @@ class HMATSProductionRunner:
         # =====================================================================
         # [P0-CAGR] Alpha Boost Controller — transition aggression + expert gating + exec feedback
         # =====================================================================
+        # Smart Beta V1 Context Layer
+        self._smart_beta = None
+        try:
+            from core.smart_beta_controller import get_smart_beta_controller
+            _sb_cfg = getattr(self.config, 'smart_beta_config', None) or {}
+            if isinstance(_sb_cfg, dict):
+                self._smart_beta = get_smart_beta_controller(_sb_cfg)
+                _sb_mode = _sb_cfg.get("mode", "observe_only")
+                _sb_enabled = _sb_cfg.get("enabled", False)
+                logger.info(f"  SmartBeta V1: {'ACTIVE' if _sb_enabled else 'DISABLED'} (mode={_sb_mode})")
+            else:
+                logger.info("  SmartBeta V1: DISABLED (no config)")
+        except Exception as _sb_init_err:
+            logger.info(f"  SmartBeta V1: STUB ({_sb_init_err})")
+
         self._alpha_boost = None
         try:
             from core.alpha_boost import get_alpha_boost, AlphaBoostConfig
@@ -7791,6 +7809,23 @@ class HMATSProductionRunner:
                     f"gate_relax_short={_ra_gate_relax_short:.2f}, "
                     f"size_mult={agent_signals['_regime_position_size_mult']:.2f}"
                 )
+
+        # =================================================================
+        # [V1] SMART BETA CONTEXT LAYER
+        # Called AFTER regime aggression, BEFORE alpha_boost and engine.decide().
+        # Multiplies into _regime_alpha_gate_mult / _regime_position_size_mult
+        # using same pattern as alpha_boost. Bounded, feature-flagged, reversible.
+        # =================================================================
+        if hasattr(self, '_smart_beta') and self._smart_beta is not None:
+            try:
+                _sb_state = self._smart_beta.compute(
+                    asset=asset,
+                    market_data=market_data,
+                    agent_signals=agent_signals,
+                )
+                self._smart_beta.apply_to_agent_signals(_sb_state, agent_signals, asset)
+            except Exception as _sb_err:
+                logger.debug(f"[SMART_BETA] {asset}: compute failed: {_sb_err}")
 
         # =================================================================
         # [P0-CAGR] Alpha Boost: transition aggression + expert gating + exec feedback
