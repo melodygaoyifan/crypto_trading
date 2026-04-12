@@ -8432,10 +8432,12 @@ class HMATSProductionRunner:
                         f"score={_drift_metrics.overall_drift_score:.3f} "
                         f"kl={_drift_metrics.prediction_kl_divergence:.3f}"
                     )
-                    # [2026-04-11] DRL drift: log but do NOT demote. DRL stays ACTIVE.
+                    # DRL drift: log and store metric, but do NOT demote or reduce confidence.
+                    # DRL stays ACTIVE at full weight — insufficient trade data to justify penalizing.
                     if self._drl_authority_level not in ("DISABLED", "SHADOW"):
                         try:
-                            logger.warning("[DRL_DRIFT] Critical drift detected but demotion DISABLED — DRL stays ACTIVE")
+                            market_data["_drl_drift_critical"] = True
+                            logger.warning("[DRL_DRIFT] Critical drift detected — logged, DRL stays ACTIVE at full weight")
                         except ImportError:
                             pass
                 elif _drift_metrics.drift_status == DriftStatus.WARNING:
@@ -8527,9 +8529,12 @@ class HMATSProductionRunner:
                         # [2026-04-11] OOD hard switch: log but do NOT demote. DRL stays ACTIVE.
                         logger.warning(f"[OOD] {asset}: hard switch detected but demotion DISABLED — DRL stays ACTIVE")
                     elif _ood_result['is_ood']:
-                        agent_signals["_ood_confidence_mult"] = _ood_result['confidence_mult']
+                        # Log OOD but do NOT reduce DRL confidence — insufficient live data
+                        # to distinguish "model wrong" from "market shifted to new regime".
+                        # Store metric for monitoring without penalizing.
+                        market_data["_ood_soft_degrade"] = _ood_result['confidence_mult']
                         logger.info(
-                            f"[OOD] {asset}: soft degrade -dist={_ood_result['distance']:.2f}, "
+                            f"[OOD] {asset}: OOD detected (logged, no penalty) -dist={_ood_result['distance']:.2f}, "
                             f"mult={_ood_result['confidence_mult']:.3f}, "
                             f"consecutive={_ood_result['consecutive_ood']}"
                         )
