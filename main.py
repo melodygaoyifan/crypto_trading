@@ -12402,6 +12402,15 @@ class HMATSProductionRunner:
             logger.debug(f"[DIAG] Summary write failed: {_diag_err}")
         # ===== DIAG_END: SUMMARY =====
 
+        # [HEALTH] Layer 2: Per-tick invariant checks
+        if not hasattr(self, '_tick_health_checker'):
+            from core.health_validator import PerTickInvariantChecker
+            self._tick_health_checker = PerTickInvariantChecker()
+        try:
+            self._tick_health_checker.check(asset, intent, market_data, agent_signals, self)
+        except Exception:
+            pass  # health checker must never block the tick
+
         # ONE-TIME feature verification -COMPLETED Feb 25 (25-26 LIVE per asset)
         # Keep method _run_feature_verification() for manual invoke; auto-trigger disabled
         # To re-run: set self._feature_verify_done = False before tick
@@ -18966,6 +18975,20 @@ class HMATSProductionRunner:
                 f"[LIVE] ExecutionManager verified: exchange={type(self.execution_manager.exchange).__name__}, "
                 f"dry_run={self.execution_manager.dry_run}"
             )
+
+            # [HEALTH] Layer 1: Startup Health Validation
+            try:
+                from core.health_validator import StartupHealthValidator
+                _health = StartupHealthValidator().validate(self)
+                if not _health.healthy:
+                    logger.critical(
+                        f"[HEALTH] STARTUP VALIDATION FAILED: {_health.critical} critical issues. "
+                        f"Trading may be impaired. Review HEALTH_S* logs above."
+                    )
+                else:
+                    logger.info(f"[HEALTH] Startup validation PASSED: {_health.passed}/{len(_health.checks)} checks OK")
+            except Exception as _hv_err:
+                logger.warning(f"[HEALTH] Startup validator failed to run: {_hv_err}")
 
             while self._running:
                 # [GATE-6] Emergency flatten check -touch data/FORCE_FLAT to trigger
