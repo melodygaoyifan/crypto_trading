@@ -438,7 +438,10 @@ class NoTradeTriggerChecker:
         
         conflict_result = self._check_all_conflict_flat(signal_data)
         trigger_scores['signal_conflict'] = conflict_result[1]
-        if conflict_result[0]:
+        # [FIX] Quant vs DRL conflict alone (score=0.7) should NOT trigger NO_TRADE.
+        # Only escalate to NO_TRADE if conflict score >= 0.9 (reserved for 3+ agent conflict).
+        # Pure 2-agent conflict reduces confidence via fusion, not via NO_TRADE.
+        if conflict_result[0] and conflict_result[1] >= 0.9:
             active_conditions.append(NoTradeCondition(
                 trigger_type=NoTradeTriggerType.ALL_CONFLICT_FLAT,
                 is_active=True,
@@ -518,34 +521,39 @@ class NoTradeTriggerChecker:
         return score
     
     def _check_all_conflict_flat(self, signal_data: Dict) -> Tuple[bool, float, str]:
-        """Check for all-conflict-flat condition."""
-        
+        """Check for all-conflict-flat condition.
+
+        [FIX] Iron Law #34: Sentiment NEVER vetoes trades. Previously sentiment_direction
+        was included in conflict detection, causing NO_TRADE whenever F&G was extreme
+        (sentiment_dir=-1.0) and quant/DRL disagreed. This effectively gave sentiment
+        veto power through the conflict backdoor, blocking ALL trades for 10+ days.
+
+        Now: only quant vs DRL conflict triggers NO_TRADE. Sentiment is excluded.
+        """
+
         quant_dir = signal_data.get('quant_direction', 0)
         drl_dir = signal_data.get('drl_direction', 0)
-        sentiment_dir = signal_data.get('sentiment_direction', 0)
-        
-        # Check if all are strong
+        # [FIX] Sentiment excluded from conflict detection per Iron Law #34
+        # sentiment_dir was -1.0 during F&G=16 (extreme fear), creating permanent
+        # NO_TRADE when quant and DRL had any disagreement.
+
+        # Only check quant vs DRL conflict (the two DECIDE agents)
         quant_strong = abs(quant_dir) > self.CONFLICT_DIRECTION_THRESHOLD
         drl_strong = abs(drl_dir) > self.CONFLICT_DIRECTION_THRESHOLD
-        sentiment_strong = abs(sentiment_dir) > self.CONFLICT_DIRECTION_THRESHOLD
-        
-        if not (quant_strong and drl_strong and sentiment_strong):
+
+        if not (quant_strong and drl_strong):
             return (False, 0.0, "")
-        
-        # Check for opposing directions
-        signs = [
-            1 if quant_dir > 0 else -1,
-            1 if drl_dir > 0 else -1,
-            1 if sentiment_dir > 0 else -1
-        ]
-        
-        has_positive = any(s > 0 for s in signs)
-        has_negative = any(s < 0 for s in signs)
-        
-        if has_positive and has_negative:
-            details = f"Quant={quant_dir:.2f}, DRL={drl_dir:.2f}, Sentiment={sentiment_dir:.2f}"
-            return (True, 1.0, details)
-        
+
+        # Check for opposing directions between DECIDE agents only
+        quant_sign = 1 if quant_dir > 0 else -1
+        drl_sign = 1 if drl_dir > 0 else -1
+
+        if quant_sign != drl_sign:
+            details = f"Quant={quant_dir:.2f} vs DRL={drl_dir:.2f} (opposing DECIDE agents)"
+            # Return score 0.7 instead of 1.0 — conflict but not extreme
+            # (only two agents disagree, not three)
+            return (True, 0.7, details)
+
         return (False, 0.0, "")
 
 
