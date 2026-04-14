@@ -362,6 +362,7 @@ class PerTickInvariantChecker:
         report.checks.append(self._t6_veto_chain_not_stuck(asset, intent))
         report.checks.append(self._t7_sentiment_zscore_alive(asset, market_data))
         report.checks.append(self._t8_smart_beta_computed(asset, agent_signals))
+        report.checks.append(self._t9_no_trade_sentiment_backdoor(asset, market_data, agent_signals))
 
         # Only log non-PASS results to avoid spam
         for c in report.checks:
@@ -402,7 +403,8 @@ class PerTickInvariantChecker:
                            f"CHANGED {old}→{current} between ticks!", "Bug #1")
 
     def _t3_intent_actionable(self, asset, intent) -> HealthCheck:
-        """Track consecutive non-actionable ticks."""
+        """Track consecutive non-actionable ticks.
+        CRITICAL at 10+ consecutive blocks — this caught the 10-day no-trade bug."""
         actionable = getattr(intent, 'is_actionable', False) if intent else False
         strategy = getattr(intent, 'quant_strategy_id', '') or ''
         if actionable or strategy.lower() == 'hold':
@@ -411,11 +413,15 @@ class PerTickInvariantChecker:
                                f"actionable={actionable}, strategy={strategy}", "All wiring")
         self._consecutive_blocked[asset] = self._consecutive_blocked.get(asset, 0) + 1
         streak = self._consecutive_blocked[asset]
-        if streak > 20:
+        if streak >= 10:
+            return HealthCheck("T3", f"{asset} intent actionable", "CRITICAL",
+                               f"BLOCKED {streak} consecutive ticks — system cannot trade! "
+                               f"Check VETO_CHAIN logs for root cause.", "Bug #16: 10-day no-trade")
+        if streak >= 5:
             return HealthCheck("T3", f"{asset} intent actionable", "WARN",
-                               f"blocked {streak} consecutive ticks", "All wiring")
+                               f"blocked {streak} consecutive ticks (approaching critical)", "All wiring")
         return HealthCheck("T3", f"{asset} intent actionable", "PASS",
-                           f"blocked (streak={streak}, < 20 threshold)", "All wiring")
+                           f"blocked (streak={streak})", "All wiring")
 
     def _t4_signal_edge_consistent(self, asset, market_data, agent_signals) -> HealthCheck:
         """signal_edge_bps should be > 0 when |quant_direction| > 0.1."""
@@ -458,6 +464,37 @@ class PerTickInvariantChecker:
                                f"zscore={zscore:+.2f}", "Bug #9")
         return HealthCheck("T7", f"{asset} sentiment zscore", "WARN",
                            f"feed alive but zscore={zscore} (may be stuck at 0)", "Bug #9")
+
+    def _t9_no_trade_sentiment_backdoor(self, asset, market_data, agent_signals) -> HealthCheck:
+        """Detect if NO_TRADE is being triggered by sentiment indirectly.
+        This caught the 10-day no-trade bug where sentiment_direction=-1.0
+        (extreme fear F&G=16) participated in conflict detection, giving
+        sentiment effective veto power (violating Iron Law #34).
+
+        Checks: if NO_TRADE is active AND sentiment is extreme AND quant has
+        a valid signal, this is likely a sentiment backdoor veto."""
+        # Get NO_TRADE state from last engine decision
+        no_trade_active = bool(market_data.get("_no_trade_internal", False))
+        if not no_trade_active:
+            return HealthCheck("T9", f"{asset} sentiment backdoor", "PASS",
+                               "NO_TRADE not active", "Bug #16: sentiment veto")
+
+        sent_z = float(agent_signals.get("sentiment_zscore", 0))
+        quant_dir = float(agent_signals.get("quant_direction", 0))
+        strategy = str(agent_signals.get("primary_strategy", "")).lower()
+
+        # If sentiment is extreme AND quant has a real signal AND NO_TRADE is on
+        if abs(sent_z) > 1.5 and abs(quant_dir) > 0.3 and strategy != "hold":
+            return HealthCheck("T9", f"{asset} sentiment backdoor", "CRITICAL",
+                               f"NO_TRADE active with extreme sentiment (z={sent_z:+.2f}) "
+                               f"while quant has signal (dir={quant_dir:+.2f}, strategy={strategy}). "
+                               f"Possible Iron Law #34 violation — sentiment may be indirectly vetoing.",
+                               "Bug #16: sentiment veto backdoor")
+
+        return HealthCheck("T9", f"{asset} sentiment backdoor", "PASS",
+                           f"NO_TRADE active but not sentiment-driven "
+                           f"(sent_z={sent_z:+.1f}, quant_dir={quant_dir:+.2f})",
+                           "Bug #16: sentiment veto")
 
     def _t8_smart_beta_computed(self, asset, agent_signals) -> HealthCheck:
         """When Smart Beta enabled, state should be computed."""

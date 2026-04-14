@@ -214,6 +214,85 @@ class TestTickT2DRLStability:
         assert c.status == "CRITICAL"
 
 
+class TestTickT3CriticalStreak:
+    def test_critical_at_10_blocks(self):
+        """10 consecutive blocked ticks should be CRITICAL."""
+        checker = PerTickInvariantChecker()
+        intent = MagicMock()
+        intent.is_actionable = False
+        intent.quant_strategy_id = "momentum"
+        for i in range(10):
+            c = checker._t3_intent_actionable("BTC", intent)
+        assert c.status == "CRITICAL"
+        assert "BLOCKED 10" in c.detail
+
+    def test_warn_at_5_blocks(self):
+        """5 consecutive blocked ticks should be WARN."""
+        checker = PerTickInvariantChecker()
+        intent = MagicMock()
+        intent.is_actionable = False
+        intent.quant_strategy_id = "momentum"
+        for i in range(5):
+            c = checker._t3_intent_actionable("BTC", intent)
+        assert c.status == "WARN"
+
+    def test_reset_on_actionable(self):
+        """Streak resets when intent becomes actionable."""
+        checker = PerTickInvariantChecker()
+        intent_blocked = MagicMock()
+        intent_blocked.is_actionable = False
+        intent_blocked.quant_strategy_id = "momentum"
+        for _ in range(8):
+            checker._t3_intent_actionable("BTC", intent_blocked)
+        intent_ok = MagicMock()
+        intent_ok.is_actionable = True
+        intent_ok.quant_strategy_id = "momentum"
+        c = checker._t3_intent_actionable("BTC", intent_ok)
+        assert c.status == "PASS"
+        # Next block should restart from 1
+        c2 = checker._t3_intent_actionable("BTC", intent_blocked)
+        assert c2.status == "PASS"  # streak=1, well below threshold
+
+
+class TestTickT9SentimentBackdoor:
+    def test_critical_when_sentiment_extreme_and_notrade(self):
+        """Extreme sentiment + NO_TRADE + valid quant signal = backdoor detected."""
+        checker = PerTickInvariantChecker()
+        market_data = {"_no_trade_internal": True}
+        agent_signals = {
+            "sentiment_zscore": -2.0,
+            "quant_direction": 0.5,
+            "primary_strategy": "momentum",
+        }
+        c = checker._t9_no_trade_sentiment_backdoor("BTC", market_data, agent_signals)
+        assert c.status == "CRITICAL"
+        assert "Iron Law #34" in c.detail
+
+    def test_pass_when_no_trade_off(self):
+        """No backdoor if NO_TRADE is not active."""
+        checker = PerTickInvariantChecker()
+        market_data = {"_no_trade_internal": False}
+        agent_signals = {"sentiment_zscore": -2.0, "quant_direction": 0.5, "primary_strategy": "momentum"}
+        c = checker._t9_no_trade_sentiment_backdoor("BTC", market_data, agent_signals)
+        assert c.status == "PASS"
+
+    def test_pass_when_sentiment_neutral(self):
+        """No backdoor if sentiment is not extreme."""
+        checker = PerTickInvariantChecker()
+        market_data = {"_no_trade_internal": True}
+        agent_signals = {"sentiment_zscore": -0.5, "quant_direction": 0.5, "primary_strategy": "momentum"}
+        c = checker._t9_no_trade_sentiment_backdoor("BTC", market_data, agent_signals)
+        assert c.status == "PASS"
+
+    def test_pass_when_hold_strategy(self):
+        """No backdoor if strategy is HOLD (no signal to veto)."""
+        checker = PerTickInvariantChecker()
+        market_data = {"_no_trade_internal": True}
+        agent_signals = {"sentiment_zscore": -2.0, "quant_direction": 0.0, "primary_strategy": "hold"}
+        c = checker._t9_no_trade_sentiment_backdoor("BTC", market_data, agent_signals)
+        assert c.status == "PASS"
+
+
 class TestTickT5AgentOutputs:
     def test_pass_when_all_present(self):
         checker = PerTickInvariantChecker()
