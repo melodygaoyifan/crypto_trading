@@ -121,8 +121,10 @@ class TradeGateConfig:
     max_cached_orderbook_age_for_tick_grace_seconds: float = 120.0
     
     # DRL constraints (Part 7)
-    min_regime_confidence_for_drl: float = 0.6
-    max_drl_weight_unstable_regime: float = 0.3
+    # [FIX] Lowered from 0.6 — was blocking trades in STEADY_UPTREND (conf=0.60)
+    # when DRL is ACTIVE. DRL is now intentionally ACTIVE with full authority.
+    min_regime_confidence_for_drl: float = 0.4
+    max_drl_weight_unstable_regime: float = 0.5
     drl_confidence_penalty_threshold: float = 0.9  # Too confident = penalize
     
     # Volume constraints (Part 11)
