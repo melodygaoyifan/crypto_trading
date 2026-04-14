@@ -23,7 +23,8 @@ PID_FILE = ROOT / "data" / "detached_pid.json"
 STDERR_LOG = ROOT / "logs" / "live_stderr.log"
 STDOUT_LOG = ROOT / "logs" / "live_stdout.log"
 WATCHDOG_LOG = ROOT / "logs" / "watchdog.log"
-PYTHON = ROOT / "venv" / "Scripts" / "python.exe"
+IS_WIN = sys.platform == "win32"
+PYTHON = ROOT / ("venv/Scripts/python.exe" if IS_WIN else "venv/bin/python")
 
 # Thresholds
 MAX_LOG_STALE_SECONDS = 300       # 5 min no log activity = stuck
@@ -47,6 +48,18 @@ def log(msg: str):
 def is_alive(pid: int) -> bool:
     if not pid:
         return False
+    if not IS_WIN:
+        # Linux: signal 0 checks existence without affecting the process.
+        # PermissionError = process exists but owned by another user (still "alive").
+        try:
+            os.kill(pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        except Exception:
+            return False
     try:
         import ctypes
         kernel32 = ctypes.windll.kernel32
@@ -132,13 +145,18 @@ def restart_process():
     # This prevents orphan accumulation (Bug #4)
     try:
         import subprocess as _sp
-        result = _sp.run(
-            ["powershell.exe", "-NoProfile", "-Command",
-             "Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | "
-             "Where-Object { $_.CommandLine -match 'main.py.*live' } | "
-             "ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"],
-            capture_output=True, text=True, timeout=15
-        )
+        if IS_WIN:
+            _sp.run(
+                ["powershell.exe", "-NoProfile", "-Command",
+                 "Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | "
+                 "Where-Object { $_.CommandLine -match 'main.py.*live' } | "
+                 "ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"],
+                capture_output=True, text=True, timeout=15
+            )
+        else:
+            # Linux: pkill matches against full command line with -f
+            _sp.run(["pkill", "-9", "-f", "main.py.*live"],
+                    capture_output=True, text=True, timeout=15)
         log(f"Killed all live processes")
         time.sleep(3)
     except Exception as e:
@@ -165,13 +183,22 @@ def restart_process():
     try:
         stdout_f = open(STDOUT_LOG, "w", encoding="utf-8")
         stderr_f = open(STDERR_LOG, "w", encoding="utf-8")
+        _popen_kwargs = {
+            "stdout": stdout_f,
+            "stderr": stderr_f,
+            "cwd": str(ROOT),
+        }
+        if IS_WIN:
+            _popen_kwargs["creationflags"] = (
+                subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS
+            )
+        else:
+            # Linux: start_new_session detaches from controlling terminal
+            _popen_kwargs["start_new_session"] = True
         proc = subprocess.Popen(
             [str(PYTHON), "-X", "utf8", "-u", "main.py",
              "--mode", "live", "--config", config, "--confirm-live"],
-            stdout=stdout_f,
-            stderr=stderr_f,
-            cwd=str(ROOT),
-            creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS,
+            **_popen_kwargs,
         )
         new_pid = proc.pid
         PID_FILE.write_text(json.dumps({
@@ -196,16 +223,26 @@ _last_known_drl_level = None
 def check_orphan_processes() -> tuple[str, str]:
     """W1: Check for orphan main.py live processes."""
     try:
-        result = subprocess.run(
-            ["powershell.exe", "-NoProfile", "-Command",
-             "(Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | "
-             "Where-Object { $_.CommandLine -match 'main.py.*live' }).Count"],
-            capture_output=True, text=True, timeout=10
-        )
-        count = int(result.stdout.strip() or "0")
-        if count <= 2:  # 2 = parent+child (normal Windows behavior)
+        if IS_WIN:
+            result = subprocess.run(
+                ["powershell.exe", "-NoProfile", "-Command",
+                 "(Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | "
+                 "Where-Object { $_.CommandLine -match 'main.py.*live' }).Count"],
+                capture_output=True, text=True, timeout=10
+            )
+            count = int(result.stdout.strip() or "0")
+            threshold = 2  # 2 = parent+child (normal Windows behavior)
+        else:
+            # Linux: pgrep -c counts matching processes (single process is normal)
+            result = subprocess.run(
+                ["pgrep", "-cf", "main.py.*live"],
+                capture_output=True, text=True, timeout=10
+            )
+            count = int(result.stdout.strip() or "0")
+            threshold = 1
+        if count <= threshold:
             return "PASS", f"{count} process(es)"
-        return "WARN", f"{count} processes — {count-2} potential orphans"
+        return "WARN", f"{count} processes — {count - threshold} potential orphans"
     except Exception as e:
         return "SKIP", f"check failed: {e}"
 

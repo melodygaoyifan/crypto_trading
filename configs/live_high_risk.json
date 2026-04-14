@@ -15,6 +15,7 @@
     }
   },
   "risk": {
+    "_caps_authority_note": "risk.per_asset_caps is ADVISORY (not consumed by main.py). Live sizing uses exposure_caps (pre-leverage, read at main.py:7565/11259/11327) and post_leverage_caps (after leverage, main.py:12861). Keep values consistent across sections.",
     "initial_capital_env": "HMATS_INITIAL_CAPITAL",
     "initial_capital_default": 10000.0,
     "hard_drawdown_halt": 0.25,

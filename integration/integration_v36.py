@@ -1189,6 +1189,21 @@ class HMATSv36Engine:
             t.group.value == "A" for t in opportunity_state.active_triggers
         )
         
+        # [DP-24] Fail-closed: synthetic fallback data must not reach alpha gate for new entries.
+        # STALE_DATA in TradeGate catches prolonged outages via timestamp; this catches the
+        # single-tick case where fetch failed and pipeline returned generate_verification_data().
+        if not market_data.get("data_valid", True):
+            _dv_current_exp = abs(market_data.get("current_exposure", 0.0))
+            if _dv_current_exp < 0.001:
+                intent.veto_active = True
+                intent.veto_reason = "[DATA_INVALID] synthetic fallback data, new entries blocked"
+                intent.no_trade_triggers_internal = True
+                logger.warning(
+                    f"[DP-24] {market_data.get('asset', '?')}: data_valid=False "
+                    f"(_source={market_data.get('_source', '?')}) — new entry blocked"
+                )
+                return intent
+
         # [v6.7-P1] Regime-conditional alpha gate multiplier (injected by main.py)
         _alpha_gate_mult = agent_signals.get("_regime_alpha_gate_mult", 1.0)
 

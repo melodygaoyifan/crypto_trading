@@ -7456,6 +7456,17 @@ class HMATSProductionRunner:
                 # Sync ALL TradeGate instances (main veto_chain, authority_chain, p0_safety)
                 for tg in self._all_trade_gates():
                     tg.update_fee_tier(monthly_vol)
+                # [AG-15] Fee tier cliff warning: friction jumps 5->31bps (BTC) past $10K,
+                # pushing effective alpha threshold from ~5.5 to ~34bps.
+                if 8000.0 <= monthly_vol < 12000.0 and not getattr(self, "_fee_cliff_warned", False):
+                    logger.warning(
+                        f"[FEE_TIER_CLIFF] monthly_vol=${monthly_vol:,.0f} approaching "
+                        f"$10K free-tier boundary. Full fees (26bps taker) kick in at $12K; "
+                        f"alpha gate thresholds will jump ~6x. Prepare recalibration."
+                    )
+                    self._fee_cliff_warned = True
+                elif monthly_vol < 8000.0:
+                    self._fee_cliff_warned = False  # reset when back below warning band
             except Exception:
                 pass  # Non-fatal: defaults to free tier (0 fees)
 
@@ -9693,6 +9704,8 @@ class HMATSProductionRunner:
                     orderbook_fallback_reason=market_data.get("orderbook_fallback_reason", ""),
                     orderbook_cache_age_seconds=market_data.get("orderbook_cache_age_seconds"),
                     alpha_gate_passed=True,  # [VC-1] Constitution alpha gate already ran in engine.decide()
+                    # [VC-3] Structure breakout derived from pipeline's structure_break_pct (threshold 0.3%)
+                    is_structure_breakout=abs(float(market_data.get("structure_break_pct", 0.0) or 0.0)) >= 0.003,
                 )
                 
                 if gate_result.decision.name != "ALLOW":

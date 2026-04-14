@@ -586,3 +586,86 @@ ps aux | grep main.py
 4. `sudo systemctl restart hmats`
 
 > ⚠️ 建议先用 `live_phase1.json`（半仓位，2x 杠杆）运行 7 天，再切 `live_phase2.json`（全仓位，3x）。
+
+---
+
+## 附录: CPX31 快速部署流程 (2026-04 更新)
+
+适用于用户已选 CPX31 (4 vCPU / 8 GB / €14 mo), 直接切 live 模式。
+
+### 1. 本地准备 (laptop)
+```bash
+# 在 laptop 上打包同步 (exclude 训练产物 + 日志)
+rsync -avz --progress \
+  --exclude='.git' --exclude='training/' --exclude='logs/' \
+  --exclude='data/live_experiences/' --exclude='data/shadow_ledger/' \
+  --exclude='__pycache__' --exclude='*.pyc' \
+  /c/Users/melod/Downloads/hmats/ \
+  hetzner:~/hmats/
+```
+
+### 2. Hetzner 初始化 (一次性)
+```bash
+ssh hetzner
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker $USER && newgrp docker
+timedatectl set-ntp true && timedatectl status   # 确认 NTP on
+```
+
+### 3. 配置 secrets
+```bash
+scp .env hetzner:~/hmats/.env
+ssh hetzner "chmod 600 ~/hmats/.env"
+```
+
+### 4. Seed volumes (models + critical state)
+```bash
+ssh hetzner
+cd ~/hmats
+mkdir -p seed/models seed/data
+# 从 laptop 同步 models + critical state (在 laptop 跑)
+# rsync -avz /c/Users/melod/Downloads/hmats/models/ hetzner:~/hmats/seed/models/
+# scp data/drl_promotion_state.json data/tranche_state.json hetzner:~/hmats/seed/data/
+bash scripts/seed_volumes.sh
+```
+
+### 5. Kraken nonce safety: 停掉 laptop 的 live
+在切 cloud 之前必须先 **停 laptop 的 main.py live** (否则 nonce 冲突):
+```bash
+# 在 laptop
+python scripts/launch_live.py stop
+```
+
+### 6. Cloud verify → live
+```bash
+ssh hetzner
+cd ~/hmats
+# 先 verify 模式 (不下单, 只验证模型 + config 加载)
+docker compose -f docker-compose.hetzner.yml run --rm hmats-engine --mode verify
+# 无异常后, 切 live
+docker compose -f docker-compose.hetzner.yml up -d --build
+docker compose -f docker-compose.hetzner.yml logs -f hmats-engine
+```
+
+### 7. 验证 checklist (前 30 分钟)
+- [ ] `[CCXT] Kraken initialized` (API key 正确)
+- [ ] `[HEALTH_S1..S12]` 全部 PASS/WARN (无 CRITICAL)
+- [ ] `[DRL] FORCE_ACTIVE` (DRL 状态正确加载)
+- [ ] `[LIVE_DATA]` 每 ~34s 出现 3 个资产
+- [ ] `[ALPHA_GATE]` 阈值 5-13bps (合理区间)
+- [ ] `[VETO_CHAIN]` 主要 gate 显示 PASS
+- [ ] SSH tunnel 后 `curl http://127.0.0.1:8080/health` 返回 200
+
+### 8. 回滚
+如果云端 30 分钟内出现 CRITICAL 告警, 或持仓发生异常:
+```bash
+ssh hetzner "docker compose -f ~/hmats/docker-compose.hetzner.yml down"
+# 回到 laptop 恢复 live
+python scripts/launch_live.py start highrisk
+```
+Docker volumes 保留所有 state, 无数据损失.
+
+### 已知变更 (本次审计)
+- 所有 Windows-only 代码 (live_watchdog.py, launch_live.py, launch_paper.py, health_validator.py) 已加 `sys.platform == 'win32'` 守护, Linux 分支使用 `os.kill(pid, 0)` + `pkill -f` + `pgrep -cf`.
+- `docker-compose.hetzner.yml` 默认切 live 模式, 配置改指 `live_high_risk.json`, 资源上限升到 3 vCPU / 6 GB.
+- 新增 `scripts/seed_volumes.sh` 负责 models + critical state 初始化.

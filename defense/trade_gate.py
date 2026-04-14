@@ -329,14 +329,17 @@ class StructureConstraintChecker:
         """
         if not self.config.require_structure_for_trend:
             return True, "DISABLED"
-        
-        # Trend regimes require structure breakout
-        trend_regimes = ['STRONG_BULL', 'STRONG_BEAR', 'MODERATE_BULL', 'MODERATE_BEAR']
-        
-        if regime in trend_regimes:
+
+        # [VC-3] Include GMM regime names (legacy names kept for backward compat)
+        trend_regimes = {
+            'STRONG_BULL', 'STRONG_BEAR', 'MODERATE_BULL', 'MODERATE_BEAR',
+            'MOMENTUM_RALLY', 'PANIC_SELLOFF', 'STEADY_UPTREND', 'BULL_TREND', 'BEAR_TREND',
+        }
+
+        if regime.upper() in trend_regimes:
             if not is_structure_breakout:
                 return False, "NO_STRUCTURE_BREAKOUT"
-        
+
         return True, "OK"
 
 

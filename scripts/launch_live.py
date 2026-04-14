@@ -21,8 +21,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-ROOT = Path(r"c:\Users\melod\Downloads\hmats")
-PYTHON = ROOT / "venv" / "Scripts" / "python.exe"
+ROOT = Path(__file__).resolve().parent.parent
+IS_WIN = sys.platform == "win32"
+PYTHON = ROOT / ("venv/Scripts/python.exe" if IS_WIN else "venv/bin/python")
 PID_FILE = ROOT / "data" / "live_run.pid"
 STDOUT_LOG = ROOT / "logs" / "live_run_stdout.log"
 STDERR_LOG = ROOT / "logs" / "live_run_stderr.log"
@@ -45,6 +46,16 @@ def _read_pid() -> int | None:
 
 
 def _is_alive(pid: int) -> bool:
+    if not IS_WIN:
+        try:
+            os.kill(pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        except Exception:
+            return False
     try:
         import ctypes
         kernel32 = ctypes.windll.kernel32
@@ -167,13 +178,18 @@ def cmd_start(config: str | None = None) -> None:
         str(config_path),
         "--confirm-live",
     ]
-    proc = subprocess.Popen(
-        cmd,
-        stdout=stdout_f,
-        stderr=stderr_f,
-        cwd=str(ROOT),
-        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS,
-    )
+    _popen_kwargs = {
+        "stdout": stdout_f,
+        "stderr": stderr_f,
+        "cwd": str(ROOT),
+    }
+    if IS_WIN:
+        _popen_kwargs["creationflags"] = (
+            subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
+        )
+    else:
+        _popen_kwargs["start_new_session"] = True
+    proc = subprocess.Popen(cmd, **_popen_kwargs)
     _write_pid(proc.pid, config_path)
     print(f"Live run launched (PID {proc.pid})")
     print(f"  config  : {config_path}")
@@ -192,11 +208,19 @@ def cmd_stop() -> None:
         PID_FILE.unlink(missing_ok=True)
         return
 
-    print(f"[STOP] Sending CTRL_BREAK_EVENT to PID {pid}...")
-    try:
-        os.kill(pid, signal.CTRL_BREAK_EVENT)
-    except OSError:
-        subprocess.run(["taskkill", "/PID", str(pid)], capture_output=True)
+    if IS_WIN:
+        print(f"[STOP] Sending CTRL_BREAK_EVENT to PID {pid}...")
+        try:
+            os.kill(pid, signal.CTRL_BREAK_EVENT)
+        except OSError:
+            subprocess.run(["taskkill", "/PID", str(pid)], capture_output=True)
+    else:
+        print(f"[STOP] Sending SIGTERM to PID {pid}...")
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            PID_FILE.unlink(missing_ok=True)
+            return
     print("[STOP] Waiting for graceful shutdown (up to 15s)...")
     for i in range(15):
         time.sleep(1)
@@ -206,7 +230,10 @@ def cmd_stop() -> None:
             return
     print("[STOP] Process still alive after 15s. Force killing...")
     try:
-        subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True)
+        if IS_WIN:
+            subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True)
+        else:
+            os.kill(pid, signal.SIGKILL)
     except Exception:
         pass
     PID_FILE.unlink(missing_ok=True)
@@ -251,10 +278,13 @@ def cmd_tail() -> None:
         return
     print(f"[TAIL] Following {STDERR_LOG} (Ctrl+C to stop)\n")
     try:
-        subprocess.run(
-            ["powershell", "-Command", f"Get-Content '{STDERR_LOG}' -Tail 30 -Wait -Encoding UTF8"],
-            cwd=str(ROOT),
-        )
+        if IS_WIN:
+            subprocess.run(
+                ["powershell", "-Command", f"Get-Content '{STDERR_LOG}' -Tail 30 -Wait -Encoding UTF8"],
+                cwd=str(ROOT),
+            )
+        else:
+            subprocess.run(["tail", "-n", "30", "-f", str(STDERR_LOG)], cwd=str(ROOT))
     except KeyboardInterrupt:
         print("\n[TAIL] Stopped")
 

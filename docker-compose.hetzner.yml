@@ -18,21 +18,21 @@ services:
       - HMATS_STATE_DIR=/opt/hmats/data
       - HMATS_LOG_DIR=/opt/hmats/logs
       - HMATS_MODEL_DIR=/opt/hmats/models
-      - HMATS_CONFIG_FILE=/opt/hmats/configs/cloud_production.json
+      - HMATS_CONFIG_FILE=/opt/hmats/configs/live_high_risk.json
       - HMATS_RUNTIME_MODE=PROD
     volumes:
       - hmats-models:/opt/hmats/models:ro
       - hmats-data:/opt/hmats/data
       - hmats-logs:/opt/hmats/logs
-    command: ["--mode", "paper"]
+    command: ["--mode", "live", "--config", "configs/live_high_risk.json", "--confirm-live"]
     deploy:
       resources:
         limits:
-          cpus: "1.5"
-          memory: 2G
+          cpus: "3.0"
+          memory: 6G
         reservations:
-          cpus: "0.5"
-          memory: 512M
+          cpus: "1.0"
+          memory: 1G
     logging:
       driver: json-file
       options:

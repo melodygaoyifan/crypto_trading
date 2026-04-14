@@ -21,12 +21,13 @@ import json
 from pathlib import Path
 from datetime import datetime, timezone
 
-ROOT = Path(r"c:\Users\melod\Downloads\hmats")
+ROOT = Path(__file__).resolve().parent.parent
+IS_WIN = sys.platform == "win32"
 PID_FILE = ROOT / "data" / "paper_run.pid"
 MANUAL_RESTART_MARKER = ROOT / "data" / "manual_restart_marker.json"
 STDOUT_LOG = ROOT / "logs" / "paper_run_stdout.log"
 STDERR_LOG = ROOT / "logs" / "paper_run_stderr.log"
-PYTHON = ROOT / "venv" / "Scripts" / "python.exe"
+PYTHON = ROOT / ("venv/Scripts/python.exe" if IS_WIN else "venv/bin/python")
 DEFAULT_PROFILE = "HIGH_RISK"
 SMOKE_TIMEOUT_SECONDS = 180
 PROFILE_ALIASES = {
@@ -49,7 +50,17 @@ def _read_pid() -> int | None:
 
 
 def _is_alive(pid: int) -> bool:
-    """Check if a process with given PID is alive (Windows)."""
+    """Check if a process with given PID is alive (cross-platform)."""
+    if not IS_WIN:
+        try:
+            os.kill(pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        except Exception:
+            return False
     try:
         import ctypes
         kernel32 = ctypes.windll.kernel32
@@ -113,7 +124,10 @@ def _stop_process(proc: subprocess.Popen, label: str = "PROC"):
         return
 
     try:
-        os.kill(proc.pid, signal.CTRL_BREAK_EVENT)
+        if IS_WIN:
+            os.kill(proc.pid, signal.CTRL_BREAK_EVENT)
+        else:
+            os.kill(proc.pid, signal.SIGTERM)
         try:
             proc.wait(timeout=8)
             return
@@ -130,7 +144,10 @@ def _stop_process(proc: subprocess.Popen, label: str = "PROC"):
         pass
 
     try:
-        subprocess.run(["taskkill", "/F", "/PID", str(proc.pid)], capture_output=True, timeout=5)
+        if IS_WIN:
+            subprocess.run(["taskkill", "/F", "/PID", str(proc.pid)], capture_output=True, timeout=5)
+        else:
+            os.kill(proc.pid, signal.SIGKILL)
     except Exception:
         pass
 
@@ -212,13 +229,18 @@ def cmd_start(profile: str = DEFAULT_PROFILE):
     # Default to the explicit HIGH_RISK baseline; sample/profit overlays remain available.
     cmd = [str(PYTHON), "-X", "utf8", "-u", "main.py", "--mode", "paper",
            "--risk-profile", profile]
-    proc = subprocess.Popen(
-        cmd,
-        stdout=stdout_f,
-        stderr=stderr_f,
-        cwd=str(ROOT),
-        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS,
-    )
+    _popen_kwargs = {
+        "stdout": stdout_f,
+        "stderr": stderr_f,
+        "cwd": str(ROOT),
+    }
+    if IS_WIN:
+        _popen_kwargs["creationflags"] = (
+            subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
+        )
+    else:
+        _popen_kwargs["start_new_session"] = True
+    proc = subprocess.Popen(cmd, **_popen_kwargs)
 
     _write_pid(proc.pid, profile)
 
@@ -244,14 +266,20 @@ def cmd_stop():
         PID_FILE.unlink(missing_ok=True)
         return
 
-    print(f"[STOP] Sending CTRL_BREAK_EVENT to PID {pid}...")
-    try:
-        # CTRL_BREAK_EVENT is the clean way to stop a process group on Windows
-        # main.py has signal.signal(signal.SIGINT, signal_handler) which calls runner.stop()
-        os.kill(pid, signal.CTRL_BREAK_EVENT)
-    except OSError as e:
-        print(f"[WARN] os.kill failed: {e}. Trying taskkill...")
-        subprocess.run(["taskkill", "/PID", str(pid)], capture_output=True)
+    if IS_WIN:
+        print(f"[STOP] Sending CTRL_BREAK_EVENT to PID {pid}...")
+        try:
+            os.kill(pid, signal.CTRL_BREAK_EVENT)
+        except OSError as e:
+            print(f"[WARN] os.kill failed: {e}. Trying taskkill...")
+            subprocess.run(["taskkill", "/PID", str(pid)], capture_output=True)
+    else:
+        print(f"[STOP] Sending SIGTERM to PID {pid}...")
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            PID_FILE.unlink(missing_ok=True)
+            return
 
     # Wait up to 15s for graceful shutdown
     print("[STOP] Waiting for graceful shutdown (up to 15s)...")
@@ -265,7 +293,10 @@ def cmd_stop():
     # Force kill if still alive
     print(f"[STOP] Process still alive after 15s. Force killing...")
     try:
-        subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True)
+        if IS_WIN:
+            subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True)
+        else:
+            os.kill(pid, signal.SIGKILL)
     except Exception:
         pass
     PID_FILE.unlink(missing_ok=True)
@@ -419,8 +450,7 @@ def cmd_smoke(profile: str = DEFAULT_PROFILE):
     success = False
     runtime_error = None
     deadline = time.time() + SMOKE_TIMEOUT_SECONDS
-    proc = subprocess.Popen(
-        cmd,
+    _smoke_kwargs = dict(
         cwd=str(ROOT),
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -428,8 +458,12 @@ def cmd_smoke(profile: str = DEFAULT_PROFILE):
         encoding="utf-8",
         errors="replace",
         bufsize=1,
-        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
     )
+    if IS_WIN:
+        _smoke_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        _smoke_kwargs["start_new_session"] = True
+    proc = subprocess.Popen(cmd, **_smoke_kwargs)
 
     try:
         while True:

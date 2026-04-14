@@ -272,14 +272,22 @@ class StartupHealthValidator:
     def _s10_no_orphan_processes(self) -> HealthCheck:
         """Should be only 1 main.py live process (self)."""
         try:
-            import subprocess
-            result = subprocess.run(
-                ["powershell.exe", "-NoProfile", "-Command",
-                 "(Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | "
-                 "Where-Object { $_.CommandLine -match 'main.py.*live' }).Count"],
-                capture_output=True, text=True, timeout=10
-            )
-            count = int(result.stdout.strip() or "0")
+            import subprocess, sys
+            if sys.platform == "win32":
+                result = subprocess.run(
+                    ["powershell.exe", "-NoProfile", "-Command",
+                     "(Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | "
+                     "Where-Object { $_.CommandLine -match 'main.py.*live' }).Count"],
+                    capture_output=True, text=True, timeout=10
+                )
+                count = int(result.stdout.strip() or "0")
+            else:
+                # Linux: pgrep -cf counts processes whose full command line matches
+                result = subprocess.run(
+                    ["pgrep", "-cf", "main.py.*live"],
+                    capture_output=True, text=True, timeout=10
+                )
+                count = int(result.stdout.strip() or "0")
             # count includes self (the running process), so 1 = healthy
             if count <= 1:
                 return HealthCheck("S10", "No orphan processes", "PASS",
