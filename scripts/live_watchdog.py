@@ -128,15 +128,29 @@ def restart_process():
         log(f"ABORT: {len(_restart_times)} restarts in last hour, exceeds limit {MAX_RESTARTS_PER_HOUR}. Manual intervention needed.")
         return False
 
-    # Kill existing
-    pid = get_pid()
-    if pid and is_alive(pid):
-        log(f"Killing PID {pid}...")
-        try:
-            os.kill(pid, 9)
-            time.sleep(2)
-        except Exception as e:
-            log(f"Kill failed: {e}")
+    # Kill ALL existing main.py live processes (not just PID file)
+    # This prevents orphan accumulation (Bug #4)
+    try:
+        import subprocess as _sp
+        result = _sp.run(
+            ["powershell.exe", "-NoProfile", "-Command",
+             "Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | "
+             "Where-Object { $_.CommandLine -match 'main.py.*live' } | "
+             "ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"],
+            capture_output=True, text=True, timeout=15
+        )
+        log(f"Killed all live processes")
+        time.sleep(3)
+    except Exception as e:
+        # Fallback: kill by PID file
+        pid = get_pid()
+        if pid and is_alive(pid):
+            log(f"Killing PID {pid}...")
+            try:
+                os.kill(pid, 9)
+                time.sleep(2)
+            except Exception as e2:
+                log(f"Kill failed: {e2}")
 
     # Find config from PID file
     config = "configs/live_high_risk.json"
