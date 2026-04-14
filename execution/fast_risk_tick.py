@@ -85,6 +85,12 @@ class FastRiskTick:
         if anchor_price <= 0:
             return FastRiskResult(FastRiskAction.HOLD, "no_anchor", 0.0, now)
 
+        # [2026-04-14] Skip during warmup: if no anchor was explicitly set via set_4h_anchor(),
+        # the default current_price may be stale from cached pipeline data after network recovery.
+        # Only evaluate once at least one set_4h_anchor() call has occurred for this asset.
+        if asset not in self._last_4h_prices:
+            return FastRiskResult(FastRiskAction.HOLD, "warmup_no_anchor", 0.0, now)
+
         price_move_pct = abs(current_price - anchor_price) / anchor_price
         data_valid = bool(market_data.get("data_valid", True))
         if not data_valid:
