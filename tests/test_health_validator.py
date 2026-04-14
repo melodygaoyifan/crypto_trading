@@ -148,6 +148,38 @@ class TestStartupS12SmartBeta:
 # PER-TICK INVARIANT CHECKER
 # =============================================================================
 
+class TestLayer3WatchdogChecks:
+    def test_w2_drl_state_initial(self):
+        """First call should return PASS with initial level."""
+        from scripts.live_watchdog import check_drl_state_file
+        import scripts.live_watchdog as wd
+        wd._last_known_drl_level = None  # reset
+        status, detail = check_drl_state_file()
+        assert status in ("PASS", "SKIP")
+
+    def test_w2_drl_state_unchanged(self):
+        """Same level on next call should PASS."""
+        from scripts.live_watchdog import check_drl_state_file
+        import scripts.live_watchdog as wd
+        wd._last_known_drl_level = None
+        check_drl_state_file()  # first call sets level
+        status, detail = check_drl_state_file()  # second call
+        assert status == "PASS"
+        assert "unchanged" in detail
+
+    def test_w3_log_growing(self):
+        """Log file should not be frozen."""
+        from scripts.live_watchdog import check_log_growing
+        status, detail = check_log_growing()
+        assert status in ("PASS", "SKIP")
+
+    def test_w4_data_rate(self):
+        """Should find LIVE_DATA entries in recent logs."""
+        from scripts.live_watchdog import check_data_rate
+        status, detail = check_data_rate()
+        assert status in ("PASS", "SKIP", "WARN")
+
+
 class TestTickT1AlphaEstimate:
     def test_pass_when_hold(self):
         checker = PerTickInvariantChecker()

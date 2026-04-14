@@ -189,8 +189,86 @@ def restart_process():
         return False
 
 
+DRL_STATE_FILE = ROOT / "data" / "drl_promotion_state.json"
+_last_known_drl_level = None
+
+
+def check_orphan_processes() -> tuple[str, str]:
+    """W1: Check for orphan main.py live processes."""
+    try:
+        result = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-Command",
+             "(Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | "
+             "Where-Object { $_.CommandLine -match 'main.py.*live' }).Count"],
+            capture_output=True, text=True, timeout=10
+        )
+        count = int(result.stdout.strip() or "0")
+        if count <= 2:  # 2 = parent+child (normal Windows behavior)
+            return "PASS", f"{count} process(es)"
+        return "WARN", f"{count} processes — {count-2} potential orphans"
+    except Exception as e:
+        return "SKIP", f"check failed: {e}"
+
+
+def check_drl_state_file() -> tuple[str, str]:
+    """W2: Check DRL state file hasn't been unexpectedly overwritten."""
+    global _last_known_drl_level
+    try:
+        if not DRL_STATE_FILE.exists():
+            return "SKIP", "no state file"
+        with open(DRL_STATE_FILE) as f:
+            state = json.load(f)
+        current = state.get("authority_level", "UNKNOWN")
+        if _last_known_drl_level is None:
+            _last_known_drl_level = current
+            return "PASS", f"initial={current}"
+        if current == _last_known_drl_level:
+            return "PASS", f"level={current} (unchanged)"
+        old = _last_known_drl_level
+        _last_known_drl_level = current
+        return "WARN", f"CHANGED {old}→{current} — may have been overwritten"
+    except Exception as e:
+        return "SKIP", f"check failed: {e}"
+
+
+def check_log_growing() -> tuple[str, str]:
+    """W3: Check log file is growing (not frozen from stuck process)."""
+    try:
+        if not STDERR_LOG.exists():
+            return "SKIP", "no log file"
+        size = STDERR_LOG.stat().st_size
+        mtime = STDERR_LOG.stat().st_mtime
+        age = time.time() - mtime
+        if age > MAX_LOG_STALE_SECONDS:
+            return "WARN", f"log frozen {age:.0f}s (size={size:,})"
+        return "PASS", f"age={age:.0f}s, size={size:,}"
+    except Exception as e:
+        return "SKIP", f"check failed: {e}"
+
+
+def check_data_rate() -> tuple[str, str]:
+    """W4: Check LIVE_DATA log rate (should be ~3 assets per ~34s cycle)."""
+    try:
+        if not STDERR_LOG.exists():
+            return "SKIP", "no log file"
+        with open(STDERR_LOG, "rb") as f:
+            f.seek(0, 2)
+            size = f.tell()
+            f.seek(max(0, size - 20000))
+            tail = f.read().decode("utf-8", errors="replace")
+
+        count = tail.count("[LIVE_DATA]")
+        lines = tail.count("\n")
+        # In ~20KB of logs, expect at least a few LIVE_DATA entries
+        if count == 0:
+            return "WARN", f"zero LIVE_DATA in last {lines} lines"
+        return "PASS", f"{count} LIVE_DATA entries in last {lines} lines"
+    except Exception as e:
+        return "SKIP", f"check failed: {e}"
+
+
 def check_health() -> tuple[bool, str]:
-    """Returns (healthy, reason)."""
+    """Returns (healthy, reason). Runs W1-W4 + existing checks."""
     pid = get_pid()
     if not pid:
         return False, "no PID file"
@@ -210,6 +288,19 @@ def check_health() -> tuple[bool, str]:
 
 def run_once():
     healthy, reason = check_health()
+
+    # Layer 3 checks (W1-W4) — always run, even when healthy
+    w1_status, w1_detail = check_orphan_processes()
+    w2_status, w2_detail = check_drl_state_file()
+    w3_status, w3_detail = check_log_growing()
+    w4_status, w4_detail = check_data_rate()
+
+    # Log Layer 3 warnings
+    for wid, status, detail in [("W1", w1_status, w1_detail), ("W2", w2_status, w2_detail),
+                                  ("W3", w3_status, w3_detail), ("W4", w4_status, w4_detail)]:
+        if status == "WARN":
+            log(f"[HEALTH_{wid}] WARN: {detail}")
+
     if healthy:
         log(f"HEALTHY: {reason}")
     else:
