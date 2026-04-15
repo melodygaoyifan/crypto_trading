@@ -228,7 +228,7 @@ class ExecutionManager:
                 params={'userref': userref}
             )
             for order in orders:
-                if order.get('info', {}).get('userref') == str(userref):
+                if (order.get('info') or {}).get('userref') == str(userref):
                     self.logger.info(
                         f"[IDEMPOTENT] userref={userref} already executed: "
                         f"order_id={order.get('id')}"
@@ -841,7 +841,7 @@ class ExecutionManager:
                             requested_price=price, filled_price=_avg_price,
                             requested_size=size, filled_size=_total_filled,
                             slippage=(_avg_price - price) / price if price > 0 else 0,
-                            fee=(order_status.get('fee', {}).get('cost', 0) or 0)
+                            fee=((order_status.get('fee') or {}).get('cost', 0) or 0)
                                 + (_mkt_result.fee or 0),
                             status=OrderStatus.FILLED,
                         )
@@ -1196,7 +1196,21 @@ class ExecutionManager:
                 pass  # Fall through to direct fetch
 
             # Fallback: direct fetch_balance (costs 1 API call)
-            balance = self.exchange.fetch_balance()
+            # [NONCE-FIX 2026-04-15] Retry once on Invalid nonce.
+            try:
+                balance = self.exchange.fetch_balance()
+            except Exception as _e:
+                if "Invalid nonce" in str(_e):
+                    try:
+                        self.exchange.load_time_difference()
+                        self.logger.warning("[SIZE_CLAMP] nonce mismatch; reloaded timeDifference, retrying fetch_balance")
+                        balance = self.exchange.fetch_balance()
+                    except Exception as _e2:
+                        self.logger.warning(f"[SIZE_CLAMP] fetch_balance retry failed: {_e2}")
+                        return size  # fall through, use original size unclamped
+                else:
+                    self.logger.warning(f"[SIZE_CLAMP] fetch_balance failed: {_e}")
+                    return size
             if side == OrderSide.BUY:
                 usd_free = float(balance.get('USD', {}).get('free', 0) or 0)
                 if usd_free <= 0:

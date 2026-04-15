@@ -184,7 +184,7 @@ class TrancheManager:
         "PANIC_SELLOFF":        0.05,
     }
     PRICE_REVERSAL_THRESHOLD_DEFAULT = 0.025
-    VOLUME_COLLAPSE_THRESHOLD = 0.10  # Lowered from 0.3: partial Kraken 4H bars show vol_ratio 0.15-0.20 normally
+    VOLUME_COLLAPSE_THRESHOLD = 0.05  # [VOL-FIX 2026-04-15] 0.10 → 0.05: live data vol_ratio routinely 0.10-0.20 mid-bar; would force-abort fresh positions. Real collapse <0.05 still blocks.
 
     # Default escalation requirements (NORMAL mode - can be overridden by gambler mode or profile)
     _DEFAULT_T3_MIN_PROFIT_BPS = 0  # At least break-even

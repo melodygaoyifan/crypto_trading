@@ -223,14 +223,33 @@ class KrakenRESTClient:
         AuthenticationError and other errors are NOT retried.
         """
         last_error = None
+        _nonce_retried = False
         for attempt in range(MAX_RETRIES):
             try:
                 with self._lock:
                     self._request_count += 1
                     return func(*args, **kwargs)
 
-            except ccxt.AuthenticationError:
-                raise  # Never retry auth errors
+            except ccxt.AuthenticationError as e:
+                # [NONCE-FIX 2026-04-15] Kraken's "EAPI:Invalid nonce" is an
+                # AuthenticationError in ccxt. Reload time difference and retry
+                # ONCE — covers the case where a previous container left a
+                # higher last-seen nonce. Real auth failures (bad keys) re-raise
+                # because load_time_difference will succeed but next call still
+                # fails with auth-related error other than Invalid nonce.
+                if not _nonce_retried and "Invalid nonce" in str(e):
+                    _nonce_retried = True
+                    try:
+                        with self._lock:
+                            self._exchange.load_time_difference()
+                        logger.warning(
+                            f"[KrakenREST] {operation}: nonce mismatch, "
+                            f"reloaded timeDifference, retrying once"
+                        )
+                        continue
+                    except Exception as _td_err:
+                        logger.error(f"[KrakenREST] reload time_difference failed: {_td_err}")
+                raise  # Never retry other auth errors
 
             except ccxt.InsufficientFunds:
                 raise  # Never retry fund errors
