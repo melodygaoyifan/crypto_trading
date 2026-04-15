@@ -128,7 +128,12 @@ class TradeGateConfig:
     drl_confidence_penalty_threshold: float = 0.9  # Too confident = penalize
     
     # Volume constraints (Part 11)
-    min_volume_ratio: float = 0.5   # Reject if volume < 50% of average
+    # [VOL-FIX 2026-04-15] 0.5 → 0.20 — intrabar live data accumulates volume
+    # over the 4H bar; real-time vol_ratio_effective rarely hits 0.5 unless
+    # we're past mid-bar. 6 days of GATE_REJECT logs showed BTC/ETH long
+    # entries blocked here despite strong DRL+quant agreement. 0.20 still
+    # catches genuine 5x volume contraction events.
+    min_volume_ratio: float = 0.20
     
     # Structure constraints (Part 11)
     require_structure_for_trend: bool = True

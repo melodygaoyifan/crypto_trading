@@ -196,14 +196,37 @@ class AccountSyncManager:
         if self.exchange_client is None:
             self._state.status = EquityStatus.UNAVAILABLE
             return False, "No exchange client configured"
-        
+
+        # [NONCE-FIX 2026-04-15] Retry once on Invalid nonce after reloading
+        # Kraken time difference. Without this, a single nonce mismatch flips
+        # status to UNAVAILABLE and blocks all execution for MAX_EQUITY_AGE
+        # seconds. ccxt's nonce is local-time-based; if the previous container
+        # left Kraken with a higher last-seen nonce, our first call lags.
+        balance = None
+        for _attempt in range(2):
+            try:
+                balance = await asyncio.wait_for(
+                    asyncio.to_thread(self.exchange_client.fetch_balance),
+                    timeout=15.0,
+                )
+                break
+            except Exception as _e:
+                if _attempt == 0 and "Invalid nonce" in str(_e):
+                    try:
+                        await asyncio.to_thread(self.exchange_client.load_time_difference)
+                        logger.warning(
+                            "[ACCOUNT_SYNC] Nonce mismatch; reloaded timeDifference, retrying"
+                        )
+                        continue
+                    except Exception:
+                        pass
+                self._state.status = EquityStatus.UNAVAILABLE
+                self._failure_count += 1
+                self._last_error = str(_e)
+                logger.error(f"[ACCOUNT_SYNC] fetch_balance failed: {_e}")
+                return False, str(_e)
+
         try:
-            # Fetch balance from Kraken
-            # Using ccxt interface with 15s timeout to prevent hangs
-            balance = await asyncio.wait_for(
-                asyncio.to_thread(self.exchange_client.fetch_balance),
-                timeout=15.0,
-            )
             
             # Kraken returns balance in 'total' and 'free'
             # For futures, we need the USD-equivalent equity

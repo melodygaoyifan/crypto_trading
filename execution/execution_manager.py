@@ -652,10 +652,28 @@ class ExecutionManager:
                         break
 
             # Fallback to market if limit times out
-            # P2-01: Reprice loop handles its own retries - no market fallback
+            # [MARKET-FALLBACK 2026-04-15] Original P2-01 disabled market fallback
+            # after reprice loop, which left near-0% maker fills CANCELLED with
+            # NO order placed → 6+ days of zero fills on cloud despite valid
+            # alpha + DRL signals. Re-enable: if reprice exhausted with very
+            # low fill ratio (<10% of size), fall back to market to actually
+            # take the position. Accept the taker fee — it's better than no entry.
             _used_reprice = result.maker_reprice_attempts > 0
-            if not result.success and self.config.market_fallback_enabled and not _used_reprice:
-                self.logger.warning("Limit order failed, falling back to market")
+            _maker_starved = (
+                _used_reprice
+                and not result.success
+                and float(result.filled_size or 0.0) < 0.10 * float(size or 1.0)
+            )
+            if (
+                not result.success
+                and self.config.market_fallback_enabled
+                and (not _used_reprice or _maker_starved)
+            ):
+                self.logger.warning(
+                    f"Limit order failed (reprice_used={_used_reprice}, "
+                    f"filled={float(result.filled_size or 0):.4f}/{size}), "
+                    f"falling back to market"
+                )
                 result = self._execute_market_order(symbol, side, size, margin_params)
         else:
             result = self._execute_market_order(symbol, side, size, margin_params)
@@ -739,8 +757,8 @@ class ExecutionManager:
                         requested_size=size,
                         filled_size=order_status.get('filled', size),
                         slippage=slippage,
-                        fee=order_status.get('fee', {}).get('cost', 0),
-                        fee_currency=order_status.get('fee', {}).get('currency', ''),
+                        fee=(order_status.get('fee') or {}).get('cost', 0),
+                        fee_currency=(order_status.get('fee') or {}).get('currency', ''),
                         status=OrderStatus.FILLED,
                         raw_response=order_status
                     )
@@ -783,8 +801,8 @@ class ExecutionManager:
                     requested_size=size,
                     filled_size=filled_qty,
                     slippage=(filled_price - price) / price if price > 0 else 0,
-                    fee=order_status.get('fee', {}).get('cost', 0),
-                    fee_currency=order_status.get('fee', {}).get('currency', ''),
+                    fee=(order_status.get('fee') or {}).get('cost', 0),
+                    fee_currency=(order_status.get('fee') or {}).get('currency', ''),
                     status=OrderStatus.FILLED,
                     raw_response=order_status
                 )
@@ -1049,7 +1067,7 @@ class ExecutionManager:
                 except Exception:
                     avg_price = limit_price
                 weighted_price_sum += filled_this_attempt * avg_price
-                fee_cost = order_status.get('fee', {}).get('cost', 0) if order_status else 0
+                fee_cost = (order_status.get('fee') or {}).get('cost', 0) if order_status else 0
                 total_fee += fee_cost or 0
                 total_filled += filled_this_attempt
                 remaining_qty -= filled_this_attempt
@@ -1248,8 +1266,8 @@ class ExecutionManager:
                 requested_size=size,
                 filled_size=order.get('filled', size),
                 slippage=0,
-                fee=order.get('fee', {}).get('cost', 0),
-                fee_currency=order.get('fee', {}).get('currency', ''),
+                fee=(order.get('fee') or {}).get('cost', 0),
+                fee_currency=(order.get('fee') or {}).get('currency', ''),
                 status=OrderStatus.FILLED,
                 raw_response=order
             )
