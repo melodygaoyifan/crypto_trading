@@ -167,6 +167,11 @@ AUTHORITY_MATRIX_NORMAL = {
     "options": Authority.ADVISE,        # Put/call + max pain
     "vol_alpha": Authority.ADVISE,      # Vol compression/expansion
     "whale": Authority.ADVISE,          # Large order detection
+    # [SOLDEX-AUTHORITY 2026-04-15] Promoted from SHADOW: SolDex monitor exposes
+    # soldex_arb_direction / soldex_arb_strength / soldex_liquidity_score / soldex_arb_active
+    # via main.py:6022-6051. Without this matrix entry, fusion silently dropped them.
+    # ADVISE-only: SolDex DEX-CEX arb is opportunistic, never overrides quant/DRL.
+    "soldex": Authority.ADVISE,
 }
 
 AUTHORITY_MATRIX_OPPORTUNITY = {
@@ -196,6 +201,9 @@ AUTHORITY_MATRIX_OPPORTUNITY = {
     "options": Authority.ADVISE,        # Put/call + max pain
     "vol_alpha": Authority.ADVISE,      # Vol compression/expansion
     "whale": Authority.ADVISE,          # Large order detection
+    # [SOLDEX-AUTHORITY 2026-04-15] OPPORTUNITY mode: SolDex can TRIGGER
+    # opportunity entries (DEX-CEX arb is by definition an opportunity).
+    "soldex": Authority.TRIGGER,
 }
 
 # v6.7: DRL authority level (module-level, set by main.py at startup)

@@ -288,7 +288,14 @@ def evaluate_exit_triggers(
             if _w2_price > 0 and _w2_dir != 0:
                 _w2_regime = market_data.get("regime_state", "NEUTRAL")
                 _w2_regime_mult = adaptive_stop_regime_mult.get(_w2_regime, 1.0)
-                _w2_base_atr_mult = 3.5
+                # [TRAIL-TIGHTEN 2026-04-15] 3.5 → 2.5: cross-audit consensus
+                # (HMATS_PROFITABILITY_AUDIT D4.2). 3.5x ATR was too wide for
+                # 4H system — gave back 50-100bps of unrealized profit before
+                # trigger. 2.5x ATR locks gains faster, accepts ~10% more
+                # whipsaw stops in chop. Regime widening (×1.5 for trends)
+                # still applies, so trending regimes get effective 3.75x —
+                # close to old 3.5x baseline for trends, tighter for chop.
+                _w2_base_atr_mult = 2.5
                 _w2_effective_mult = _w2_base_atr_mult * _w2_regime_mult
                 adaptive_stop.config.atr_multiplier = _w2_effective_mult
                 adaptive_stop.update_stop(asset, _w2_price)
