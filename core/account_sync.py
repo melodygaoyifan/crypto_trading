@@ -247,16 +247,51 @@ class AccountSyncManager:
                 return False, _err_str
 
         try:
-            
+
             # Kraken returns balance in 'total' and 'free'
-            # For futures, we need the USD-equivalent equity
-            equity = balance.get('total', {}).get('USD', 0.0)
-            available = balance.get('free', {}).get('USD', 0.0)
-            
-            # If no USD, try USDT
-            if equity == 0:
-                equity = balance.get('total', {}).get('USDT', 0.0)
-                available = balance.get('free', {}).get('USDT', 0.0)
+            # [SPOT-EQUITY-FIX 2026-04-15] HMATS uses Kraken SPOT (not futures).
+            # For spot, "positions" ARE the crypto holdings — they're part of
+            # the account balance, not separate. The previous code only summed
+            # USD/USDT and treated crypto holdings as zero, causing equity to
+            # collapse by ~25% the moment we bought BTC/ETH/SOL (the USD
+            # decreased, the crypto balance increased, but equity ignored the
+            # crypto half). This made existence_fuse + drawdown logic see
+            # phantom losses on every buy.
+            #
+            # Fix: sum USD + USDT + (each crypto × ticker.last) for total equity.
+            usd_total = float(balance.get('total', {}).get('USD', 0.0) or 0.0)
+            usdt_total = float(balance.get('total', {}).get('USDT', 0.0) or 0.0)
+            usd_free = float(balance.get('free', {}).get('USD', 0.0) or 0.0)
+            usdt_free = float(balance.get('free', {}).get('USDT', 0.0) or 0.0)
+
+            # Sum stable balances first
+            equity = usd_total + usdt_total
+            available = usd_free + usdt_free
+
+            # Add USD value of crypto holdings (spot positions)
+            crypto_value_usd = 0.0
+            crypto_assets = ('BTC', 'XBT', 'ETH', 'SOL')
+            kraken_symbol_map = {'BTC': 'BTC/USD', 'XBT': 'BTC/USD', 'ETH': 'ETH/USD', 'SOL': 'SOL/USD'}
+            for sym in crypto_assets:
+                _amt = float(balance.get('total', {}).get(sym, 0.0) or 0.0)
+                if _amt > 1e-8:
+                    try:
+                        _ticker_sym = kraken_symbol_map[sym]
+                        _ticker = await asyncio.wait_for(
+                            asyncio.to_thread(self.exchange_client.fetch_ticker, _ticker_sym),
+                            timeout=10.0,
+                        )
+                        _price = float(_ticker.get('last', 0.0) or 0.0)
+                        if _price > 0:
+                            _val = _amt * _price
+                            crypto_value_usd += _val
+                            logger.debug(
+                                f"[ACCOUNT_SYNC] {sym}: {_amt:.6f} × ${_price:.2f} = ${_val:.2f}"
+                            )
+                    except Exception as _ce:
+                        logger.warning(f"[ACCOUNT_SYNC] {sym} valuation failed: {_ce}")
+            equity += crypto_value_usd
+            # available stays as USD/USDT only (can't trade crypto holdings as collateral atomically)
             
             # Fetch positions for margin calculation
             positions = []
