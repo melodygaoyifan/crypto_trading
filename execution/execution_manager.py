@@ -186,6 +186,12 @@ class ExecutionManager:
         
         # Slippage statistics
         self.slippage_history: List[float] = []
+        # [SLIPPAGE-PER-ASSET 2026-04-15] Per-asset rolling slippage (last 100 fills)
+        self.slippage_by_asset: Dict[str, List[float]] = {}
+        # [MAKER-TRACKER 2026-04-15] Track maker vs taker fill ratio + savings
+        self.maker_fills: int = 0
+        self.taker_fills: int = 0
+        self.maker_savings_usd: float = 0.0  # vs taker baseline (10bps diff)
 
         # [C8] Userref idempotency: userref -> order_id for dedup on reconnect
         self._userref_history: Dict[int, str] = {}
@@ -684,6 +690,34 @@ class ExecutionManager:
             self.filled_orders.append(result)
             if result.slippage != 0:
                 self.slippage_history.append(result.slippage)
+                # [SLIPPAGE-PER-ASSET 2026-04-15] also track per-asset
+                _asset_key = (result.symbol or symbol or "").split("/")[0].upper()
+                if _asset_key:
+                    bucket = self.slippage_by_asset.setdefault(_asset_key, [])
+                    bucket.append(float(result.slippage))
+                    if len(bucket) > 100:
+                        del bucket[:-100]
+            # [MAKER-TRACKER 2026-04-15] count maker vs taker fills
+            try:
+                _ot = (result.order_type or "").upper()
+                _filled_notional = float(result.filled_size or 0) * float(
+                    result.filled_price or result.requested_price or 0
+                )
+                if "LIMIT" in _ot and "MARKET" not in _ot:
+                    self.maker_fills += 1
+                    # Maker saves ~10bps vs taker (Kraken std fees 26 vs 16)
+                    self.maker_savings_usd += _filled_notional * 10 / 10000.0
+                else:
+                    self.taker_fills += 1
+                _total = self.maker_fills + self.taker_fills
+                if _total > 0 and _total % 5 == 0:
+                    self.logger.info(
+                        f"[MAKER_STATS] rate={self.maker_fills/_total:.0%} "
+                        f"({self.maker_fills}/{_total}), "
+                        f"savings=${self.maker_savings_usd:.2f}"
+                    )
+            except Exception:
+                pass
             if userref is not None:
                 self._userref_history[userref] = result.order_id
 
@@ -897,18 +931,36 @@ class ExecutionManager:
     ) -> float:
         """Compute limit price that stays on the maker side of the book.
 
-        For BUY: price = mid - improve_bps, clamped <= best_bid (never cross ask).
-        For SELL: price = mid + improve_bps, clamped >= best_ask (never cross bid).
+        [MAKER-PRICE-FIX 2026-04-15] Original formula `mid ± improve_bps × mid`
+        placed orders DEEP inside the book (e.g. 6bps below mid = $44 below
+        best_bid on BTC), guaranteeing 0% fill rate. `improve_bps` was treated
+        as "go deeper for safer maker", but on a 3bps spread book that means
+        sitting 14× deeper than the entire spread — never reached.
+
+        Correct semantics: post-only order should sit AT or JUST INSIDE the
+        best bid/ask (top of queue) for fastest maker fill. `improve_bps`
+        now controls how aggressively we improve the price WITHIN the
+        spread, capped by the opposite side to keep post_only valid.
+
+        For BUY:
+          - Start at best_bid + improve_bps (top of bid queue + small push)
+          - Never cross to/above best_ask (post_only would reject)
+        For SELL: mirror.
         """
-        offset = mid_price * improve_bps / 10000.0
+        if best_bid <= 0 or best_ask <= 0 or best_ask <= best_bid:
+            # Degenerate book — fall back to mid
+            return mid_price
+        improve_offset = mid_price * improve_bps / 10000.0
+        # Use 1 cent / 1bps as minimum tick step to stay valid
+        min_tick = max(mid_price * 1e-5, 0.01)
         if side == OrderSide.BUY:
-            price = mid_price - offset
-            # Must not cross the ask - stay at or below best_bid
-            return min(price, best_bid)
+            # Top of bid + improve, but strictly below best_ask
+            price = best_bid + improve_offset
+            return min(price, best_ask - min_tick)
         else:
-            price = mid_price + offset
-            # Must not cross the bid - stay at or above best_ask
-            return max(price, best_ask)
+            # Top of ask - improve, but strictly above best_bid
+            price = best_ask - improve_offset
+            return max(price, best_bid + min_tick)
 
     def _execute_limit_with_reprice(
         self,
