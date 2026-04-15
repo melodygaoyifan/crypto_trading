@@ -182,10 +182,24 @@ class KrakenRESTClient:
                 config['secret'] = self._api_secret
             
             self._exchange = ccxt.kraken(config)
-            
+
             if self._sandbox:
                 self._exchange.set_sandbox_mode(True)
-            
+
+            # [NONCE-FIX] Pre-warm time difference so first authenticated call
+            # uses a Kraken-aligned nonce. Without this, the very first auth call
+            # (e.g. dead-man switch on startup) sends a local-time-only nonce that
+            # may lag behind what Kraken last saw from a previous container.
+            if self._api_key and self._api_secret:
+                try:
+                    self._exchange.load_time_difference()
+                    logger.info(
+                        f"[KrakenREST] Time difference pre-loaded: "
+                        f"{self._exchange.options.get('timeDifference', 0)}ms"
+                    )
+                except Exception as _td_err:
+                    logger.warning(f"[KrakenREST] load_time_difference failed: {_td_err}")
+
             self._initialized = True
             logger.info("[KrakenREST] Client initialized")
             
@@ -439,19 +453,33 @@ class KrakenRESTClient:
             return False
 
         with self._lock:
-            try:
-                self._request_count += 1
-                timeout_ms = timeout_sec * 1000
-                result = self._exchange.cancel_all_orders_after(timeout_ms)
-                if timeout_sec > 0:
-                    logger.debug(f"[KrakenREST] Dead-man switch set: {timeout_sec}s")
-                else:
-                    logger.info("[KrakenREST] Dead-man switch disabled (timeout=0)")
-                return True
-            except Exception as e:
-                self._error_count += 1
-                logger.error(f"[KrakenREST] Dead-man switch failed: {e}")
-                return False
+            timeout_ms = timeout_sec * 1000
+            for attempt in range(2):
+                try:
+                    self._request_count += 1
+                    self._exchange.cancel_all_orders_after(timeout_ms)
+                    if timeout_sec > 0:
+                        logger.debug(f"[KrakenREST] Dead-man switch set: {timeout_sec}s")
+                    else:
+                        logger.info("[KrakenREST] Dead-man switch disabled (timeout=0)")
+                    return True
+                except Exception as e:
+                    self._error_count += 1
+                    # [NONCE-FIX] On nonce error, force time-difference reload and retry once.
+                    # Happens when a previous process left Kraken with a higher nonce baseline
+                    # than our current local-time-derived nonce.
+                    if attempt == 0 and "Invalid nonce" in str(e):
+                        try:
+                            self._exchange.load_time_difference()
+                            logger.warning(
+                                f"[KrakenREST] Nonce mismatch on dead-man switch; reloaded "
+                                f"timeDifference={self._exchange.options.get('timeDifference', 0)}ms, retrying"
+                            )
+                            continue
+                        except Exception as _td_err:
+                            logger.error(f"[KrakenREST] reload time_difference failed: {_td_err}")
+                    logger.error(f"[KrakenREST] Dead-man switch failed: {e}")
+                    return False
 
     def place_order(
         self,

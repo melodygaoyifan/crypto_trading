@@ -9704,8 +9704,6 @@ class HMATSProductionRunner:
                     orderbook_fallback_reason=market_data.get("orderbook_fallback_reason", ""),
                     orderbook_cache_age_seconds=market_data.get("orderbook_cache_age_seconds"),
                     alpha_gate_passed=True,  # [VC-1] Constitution alpha gate already ran in engine.decide()
-                    # [VC-3] Structure breakout derived from pipeline's structure_break_pct (threshold 0.3%)
-                    is_structure_breakout=abs(float(market_data.get("structure_break_pct", 0.0) or 0.0)) >= 0.003,
                 )
                 
                 if gate_result.decision.name != "ALLOW":

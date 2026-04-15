@@ -30,8 +30,11 @@ RUN groupadd --gid 1000 hmats && \
 
 # Python deps
 COPY --chown=hmats:hmats requirements-runtime.txt ./
-RUN pip install --no-cache-dir -r requirements-runtime.txt && \
-    pip install --no-cache-dir ccxt filterpy ta
+RUN pip install --no-cache-dir -r requirements-runtime.txt \
+    && pip install --no-cache-dir ccxt filterpy ta \
+    && pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu \
+    && pip install --no-cache-dir sb3-contrib stable-baselines3 joblib scikit-learn \
+    && pip install --no-cache-dir transformers
 
 # Application code
 COPY --chown=hmats:hmats main.py ./
@@ -57,6 +60,11 @@ COPY --chown=hmats:hmats data_mgmt/ ./data_mgmt/
 COPY --chown=hmats:hmats shadow/ ./shadow/
 COPY --chown=hmats:hmats tools/ ./tools/
 COPY --chown=hmats:hmats dashboard/ ./dashboard/
+
+# Training subset needed for DRL (TQC) + DT model deserialization
+COPY --chown=hmats:hmats training/__init__.py ./training/
+COPY --chown=hmats:hmats training/models/__init__.py training/models/film_extractor.py training/models/feature_extractors.py ./training/models/
+COPY --chown=hmats:hmats training/drl/__init__.py training/drl/features.py training/drl/model.py ./training/drl/
 
 VOLUME ["/opt/hmats/models", "/opt/hmats/data", "/opt/hmats/logs"]
 

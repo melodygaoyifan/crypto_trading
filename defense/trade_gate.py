@@ -330,13 +330,14 @@ class StructureConstraintChecker:
         if not self.config.require_structure_for_trend:
             return True, "DISABLED"
 
-        # [VC-3] Include GMM regime names (legacy names kept for backward compat)
-        trend_regimes = {
-            'STRONG_BULL', 'STRONG_BEAR', 'MODERATE_BULL', 'MODERATE_BEAR',
-            'MOMENTUM_RALLY', 'PANIC_SELLOFF', 'STEADY_UPTREND', 'BULL_TREND', 'BEAR_TREND',
-        }
+        # [VC-3 REVERT 2026-04-15] GMM regime names removed from this list:
+        # live verify showed real-time structure_break_pct rarely >= 0.3%, blocking
+        # ALL entries in MOMENTUM_RALLY. Restoring legacy-name-only behavior
+        # (effectively dormant since GMM migration). To re-enable, design a
+        # better breakout signal first (e.g. multi-bar persistence + ATR-relative).
+        trend_regimes = ['STRONG_BULL', 'STRONG_BEAR', 'MODERATE_BULL', 'MODERATE_BEAR']
 
-        if regime.upper() in trend_regimes:
+        if regime in trend_regimes:
             if not is_structure_breakout:
                 return False, "NO_STRUCTURE_BREAKOUT"
 
