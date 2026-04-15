@@ -47,9 +47,14 @@ class RiskConfig:
     """Risk management configuration."""
     
     # Hard drawdown limits [UNLEASH UL-5: synced with RULETABLE]
+    # [DD-CONSISTENCY 2026-04-15] critical_drawdown 0.35 → 0.15 to match
+    # canonical_config.CRITICAL_DRAWDOWN (15%, second safety wall). Live
+    # behavior unchanged (always overridden by configure_from_profile from
+    # main.py:2570 which reads from JSON config = 0.15). Default updated to
+    # eliminate confusion if dataclass instantiated without config injection.
     reduce_at_drawdown: float = 0.08    # 8% - start reducing
     halt_at_drawdown: float = 0.20      # 20% - halt trading
-    critical_drawdown: float = 0.35     # 35% - require manual review
+    critical_drawdown: float = 0.15     # 15% - require manual review
     
     # Position limits
     max_single_asset_pct: float = 0.80  # 80% in single asset (base)

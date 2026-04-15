@@ -445,46 +445,42 @@ class NoTradeTriggerChecker:
     
     def _check_all_conflict_flat(self, data: Dict) -> NoTradeCondition:
         """
-        Check for All-Conflict-Flat condition.
-        
-        Triggered when Quant, DRL, AND Sentiment all have strong
-        opposing directions (at least one positive, at least one negative).
+        Check for All-Conflict-Flat condition (Iron Law #34).
+
+        [SENTIMENT-VETO-FIX 2026-04-15] Mirrors defense/constitution.py
+        commit da18669: sentiment is ADVISE-only and MUST NOT veto trades.
+        Conflict is now defined as quant vs DRL only. Sentiment included
+        here previously caused 10-day no-trade lockouts when F&G hit
+        extreme fear/greed.
+
+        NOTE: this checker is currently NOT wired into the live decision
+        path (main.py uses defense/constitution.py instead). Fix applied
+        defensively so future refactors won't re-introduce the bug.
         """
-        
+
         quant_direction = data.get('quant_direction', 0)
         drl_direction = data.get('drl_direction', 0)
-        sentiment_direction = data.get('sentiment_direction', 0)
-        
-        # Check if all are non-neutral
+
+        # Check if both quant and DRL are non-neutral
         quant_strong = abs(quant_direction) > self.CONFLICT_DIRECTION_THRESHOLD
         drl_strong = abs(drl_direction) > self.CONFLICT_DIRECTION_THRESHOLD
-        sentiment_strong = abs(sentiment_direction) > self.CONFLICT_DIRECTION_THRESHOLD
-        
-        if not (quant_strong and drl_strong and sentiment_strong):
-            # At least one is neutral - no conflict
+
+        if not (quant_strong and drl_strong):
+            # At least one is neutral — no conflict
             return NoTradeCondition(
                 trigger_type=NoTradeTriggerType.ALL_CONFLICT_FLAT,
                 category=NoTradeTriggerCategory.HARD_CONFLICT,
                 is_active=False
             )
-        
-        # Check for opposing directions
-        directions = [
-            1 if quant_direction > 0 else -1,
-            1 if drl_direction > 0 else -1,
-            1 if sentiment_direction > 0 else -1
-        ]
-        
-        has_positive = any(d > 0 for d in directions)
-        has_negative = any(d < 0 for d in directions)
-        
-        if has_positive and has_negative:
+
+        # Conflict only when quant and DRL point in opposite directions
+        if (quant_direction > 0 and drl_direction < 0) or (quant_direction < 0 and drl_direction > 0):
             return NoTradeCondition(
                 trigger_type=NoTradeTriggerType.ALL_CONFLICT_FLAT,
                 category=NoTradeTriggerCategory.HARD_CONFLICT,
                 is_active=True,
                 triggered_at=datetime.now(timezone.utc),
-                details=f"Quant={quant_direction:.2f}, DRL={drl_direction:.2f}, Sentiment={sentiment_direction:.2f}",
+                details=f"Quant={quant_direction:.2f}, DRL={drl_direction:.2f} (sentiment excluded per Iron Law #34)",
                 severity="HARD"
             )
         

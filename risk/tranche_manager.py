@@ -163,11 +163,15 @@ class TrancheManager:
     _DEFAULT_T4_SIZE = 0.20  # 20%
 
     # Default cumulative sizes
+    # [TRANCHE-CONSISTENCY 2026-04-15] Aligned to canonical_config.TRANCHE_CUMULATIVE
+    # (35/65/90/100). Was 20/50/80/100 — silent fallback to a different schedule
+    # if JSON config dropped sizes_cumulative key. TranchePosition.cumulative_size()
+    # already used 35/65/90/100, so this default was internally inconsistent.
     _DEFAULT_CUMULATIVE = {
         TrancheLevel.NONE: 0.0,
-        TrancheLevel.TRANCHE_1: 0.20,
-        TrancheLevel.TRANCHE_2: 0.50,
-        TrancheLevel.TRANCHE_3: 0.80,
+        TrancheLevel.TRANCHE_1: 0.35,
+        TrancheLevel.TRANCHE_2: 0.65,
+        TrancheLevel.TRANCHE_3: 0.90,
         TrancheLevel.TRANCHE_4: 1.00,
     }
 

@@ -22,7 +22,11 @@ from typing import Dict, List, Optional, Tuple, Any
 from decimal import Decimal
 import threading
 
-from configs.canonical_config import KRAKEN_FREE_TIER_USD as _CC_FREE_TIER  # [FIX-33]
+from configs.canonical_config import (
+    KRAKEN_FREE_TIER_USD as _CC_FREE_TIER,  # [FIX-33]
+    KRAKEN_TAKER_BPS as _CC_TAKER_BPS,
+    KRAKEN_MAKER_BPS as _CC_MAKER_BPS,
+)
 
 logger = logging.getLogger("HMATS.TradeGate")
 
@@ -102,8 +106,9 @@ class TradeGateConfig:
     min_edge_multiplier_by_asset: Dict[str, float] = field(default_factory=dict)
     min_edge_multiplier_long_by_asset: Dict[str, float] = field(default_factory=dict)
     min_edge_multiplier_short_by_asset: Dict[str, float] = field(default_factory=dict)
-    kraken_taker_fee_bps: float = 26.0  # Default; overridden by update_fee_tier()
-    kraken_maker_fee_bps: float = 16.0  # Maker fee; used when post_only/PASSIVE_PREFERRED
+    # [FEE-CANONICAL 2026-04-15] Sourced from canonical_config (was hardcoded 26/16)
+    kraken_taker_fee_bps: float = _CC_TAKER_BPS  # Default; overridden by update_fee_tier()
+    kraken_maker_fee_bps: float = _CC_MAKER_BPS  # Maker fee; used when post_only/PASSIVE_PREFERRED
     use_maker_fee: bool = True  # v6.7: post_only maker orders enabled by default
     slippage_bps: float = 5.0
     latency_cost_bps: float = 2.0
@@ -430,12 +435,12 @@ class TradeGate:
         elif monthly_volume_usd < _FULL:
             # Blend zone: linear interpolation
             weight = (monthly_volume_usd - _FREE) / _BLEND_BAND
-            self.config.kraken_taker_fee_bps = 26.0 * weight
-            self.config.kraken_maker_fee_bps = 16.0 * weight
+            self.config.kraken_taker_fee_bps = _CC_TAKER_BPS * weight
+            self.config.kraken_maker_fee_bps = _CC_MAKER_BPS * weight
         else:
             # Full fee tier
-            self.config.kraken_taker_fee_bps = 26.0
-            self.config.kraken_maker_fee_bps = 16.0
+            self.config.kraken_taker_fee_bps = _CC_TAKER_BPS
+            self.config.kraken_maker_fee_bps = _CC_MAKER_BPS
 
     def _init_governors(self):
         """Initialize v6.1.3 governors."""

@@ -12259,9 +12259,9 @@ class HMATSProductionRunner:
         if self.config.tranche_config:
             _sc = self.config.tranche_config.get("sizes_cumulative", {})
             proof_line += (
-                f" | tranche_cfg=T1:{_sc.get('TRANCHE_1', 0.20):.0%}"
-                f"/T2:{_sc.get('TRANCHE_2', 0.50):.0%}"
-                f"/T3:{_sc.get('TRANCHE_3', 0.80):.0%}"
+                f" | tranche_cfg=T1:{_sc.get('TRANCHE_1', 0.35):.0%}"
+                f"/T2:{_sc.get('TRANCHE_2', 0.65):.0%}"
+                f"/T3:{_sc.get('TRANCHE_3', 0.90):.0%}"
                 f"/T4:{_sc.get('TRANCHE_4', 1.00):.0%}"
             )
         # P1-1D: Dynamic limits in proof log
