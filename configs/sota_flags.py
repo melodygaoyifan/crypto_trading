@@ -137,8 +137,7 @@ class SOTAFlags:
     # Full fees apply at: free_tier + blend_band = 12,000 USD
     KRAKEN_PLUS_BLEND_BAND_USD: float = 2_000.0
     
-    # PassiveAggressive Shadow - L1 鎵ц瑙傚療绾?(Post-trade analysis)
-    ENABLE_PASSIVE_AGGRESSIVE_SHADOW: bool = True
+    # [DEAD-FLAG-CLEANUP 2026-04-15] removed: ENABLE_PASSIVE_AGGRESSIVE_SHADOW (0 refs)
     
     # SolDex Monitor Shadow - L1 鐗瑰緛婧?(Feature-only)
     ENABLE_SOLDEX_MONITOR_SHADOW: bool = True
@@ -173,8 +172,7 @@ class SOTAFlags:
     # - veto_direction: Always "long" (blocks all LONG signals when active)
     # - Participates in Authority Fusion with CONFIRM authority
     
-    # Master switch - Default FALSE for safety
-    ENABLE_SHORT_BIAS_AGENT: bool = True
+    # [DEAD-FLAG-CLEANUP 2026-04-15] removed: ENABLE_SHORT_BIAS_AGENT (0 refs)
     
     # Maximum confidence output (prevents over-conviction)
     SHORT_BIAS_MAX_CONFIDENCE: float = 0.85
@@ -233,16 +231,13 @@ class SOTAFlags:
     # P2: VERIFICATION (Default True for verify/backtest modes)
     # =========================================================================
     
-    ENABLE_WALKFORWARD_VERIFY: bool = True
-    ENABLE_STATISTICAL_GATE: bool = True
-    ENABLE_EXTREME_VERIFY_SUITE: bool = True
+    # [DEAD-FLAG-CLEANUP 2026-04-15] removed: ENABLE_EXTREME_VERIFY_SUITE (0 refs)
     
     # =========================================================================
     # P3: INTEGRATION & DASHBOARD (Default True)
     # =========================================================================
     
-    ENABLE_SOTA_INTEGRATION_LAYER: bool = True
-    ENABLE_DASHBOARD_LIVE_STATE: bool = True
+    # [DEAD-FLAG-CLEANUP 2026-04-15] removed: ENABLE_DASHBOARD_LIVE_STATE (0 refs)
     
     # =========================================================================
     # ADDITIONAL RUNTIME OPTIONS
@@ -338,14 +333,14 @@ class SOTAFlags:
                                 "ENABLE_REGIME_TRANSITION_BUFFER",
                                 "ENABLE_CASCADE_EXHAUSTION_GOVERNOR"],
             "P1.6 (Shadow)": ["ENABLE_LEAD_LAG_SHADOW",
-                             "ENABLE_PASSIVE_AGGRESSIVE_SHADOW",
                              "ENABLE_SOLDEX_MONITOR_SHADOW"],
             "P1.7 (High-Risk)": ["ENABLE_HIGH_RISK_GAMBLER_MODE"],
             "P1.8 (Fee Blending)": ["ENABLE_KRAKEN_PLUS_FEE_BLENDING"],
             "P1.9 (Partial Consensus)": ["ENABLE_PARTIAL_CONSENSUS_ENTRY"],
-            "P2 (Verify)": ["ENABLE_WALKFORWARD_VERIFY", "ENABLE_STATISTICAL_GATE",
-                           "ENABLE_EXTREME_VERIFY_SUITE"],
-            "P3 (Integration)": ["ENABLE_SOTA_INTEGRATION_LAYER", "ENABLE_DASHBOARD_LIVE_STATE"],
+            # [DEAD-FLAG-CLEANUP 2026-04-15] removed P2 (Verify) + P3 (Integration)
+            # categories — flags ENABLE_WALKFORWARD_VERIFY, ENABLE_STATISTICAL_GATE,
+            # ENABLE_EXTREME_VERIFY_SUITE, ENABLE_SOTA_INTEGRATION_LAYER,
+            # ENABLE_DASHBOARD_LIVE_STATE all removed (0 refs across codebase).
         }
         
         for category, flags in categories.items():

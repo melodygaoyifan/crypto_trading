@@ -6012,6 +6012,11 @@ class HMATSProductionRunner:
                     )
 
         # [GAP-P1b] SOL DEX liquidity warnings ->confidence dampening
+        # [SOLDEX-PROMOTE 2026-04-15] Promoted from SHADOW to ACTIVE: in addition
+        # to confidence dampening, expose DEX-CEX arbitrage direction + liquidity
+        # score as ADVISE-authority signals to fusion. Direction sign convention:
+        # +1 = DEX premium (sell DEX / buy CEX direction bias = LONG bias on CEX)
+        # -1 = DEX discount (sell CEX / buy DEX = SHORT bias on CEX)
         if asset.upper().startswith("SOL"):
             if market_data.get("_sol_dex_liq_warning"):
                 agent_signals["quant_confidence"] = agent_signals.get("quant_confidence", 0.5) * 0.7
@@ -6019,6 +6024,30 @@ class HMATSProductionRunner:
             if market_data.get("_sol_dex_mev_warning"):
                 agent_signals["quant_confidence"] = agent_signals.get("quant_confidence", 0.5) * 0.85
                 logger.info(f"[SOL_DEX] MEV spike ->quant_confidence x0.85")
+            # Expose to fusion as ADVISE signals
+            try:
+                _sd_delta = float(market_data.get("sol_dex_cex_delta", 0.0) or 0.0)
+                _sd_liq = float(market_data.get("sol_liquidity_score", 0.0) or 0.0)
+                _sd_arb = float(market_data.get("sol_arb_opportunity", 0.0) or 0.0)
+                # Direction: significant arbitrage opportunity (>1 sigma normalized)
+                if abs(_sd_delta) > 0.5:
+                    agent_signals["soldex_arb_direction"] = 1.0 if _sd_delta > 0 else -1.0
+                    agent_signals["soldex_arb_strength"] = min(abs(_sd_delta), 1.0)
+                else:
+                    agent_signals["soldex_arb_direction"] = 0.0
+                    agent_signals["soldex_arb_strength"] = 0.0
+                agent_signals["soldex_liquidity_score"] = _sd_liq
+                agent_signals["soldex_arb_active"] = bool(_sd_arb > 0.5)
+                # Confidence: liquidity_score normalized [0,1]
+                agent_signals["soldex_confidence"] = max(0.0, min(_sd_liq, 1.0))
+                if abs(_sd_delta) > 0.5 or _sd_arb > 0.5:
+                    logger.info(
+                        f"[SOL_DEX] arb_dir={agent_signals['soldex_arb_direction']:+.0f} "
+                        f"strength={agent_signals['soldex_arb_strength']:.2f} "
+                        f"liq={_sd_liq:.2f} active={agent_signals['soldex_arb_active']}"
+                    )
+            except Exception as _sd_err:
+                logger.debug(f"[SOL_DEX] agent_signals wiring failed: {_sd_err}")
 
         # =================================================================
         # V6.2.3: GLOBAL CONTEXT MACRO SIGNAL

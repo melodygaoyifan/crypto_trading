@@ -140,13 +140,6 @@ class BatchVPINCalculator:
             return self._history[asset][-1]
         return None
 
-    def get_vpin_zscore(self, asset: str) -> float:
-        """Get z-score of current VPIN vs history."""
-        if asset not in self._history or len(self._history[asset]) < 10:
-            return 0.0
-        values = list(self._history[asset])
-        mean_val = np.mean(values)
-        std_val = np.std(values)
-        if std_val < 0.001:
-            return 0.0
-        return float((values[-1] - mean_val) / std_val)
+    # [DEAD-CLEANUP 2026-04-15] Removed get_vpin_zscore() — was a v3.1 engine
+    # design field with 0 callers in production code (only archive/engine_legacy
+    # used it). Current engines use raw `vpin` + `composite_toxicity` instead.
