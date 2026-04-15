@@ -20541,8 +20541,17 @@ class HMATSProductionRunner:
             except Exception:
                 pass
 
+        # 10. [F7-PERSIST] Final governor state snapshot (confidence/failure_memory/
+        # cascade/thesis/opportunity). Periodic save runs every 6 ticks; without
+        # this, up to 6 ticks of learned state is lost on clean shutdown.
+        try:
+            self._persist_governor_state()
+            logger.info("[SHUTDOWN] Governor state persisted")
+        except Exception as e:
+            logger.debug(f"[SHUTDOWN] Governor persist failed: {e}")
+
         logger.info("[SHUTDOWN] Complete")
-    
+
     def stop(self):
         """Stop the runner."""
         self._running = False
