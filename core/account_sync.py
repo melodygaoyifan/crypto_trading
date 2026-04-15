@@ -202,8 +202,11 @@ class AccountSyncManager:
         # status to UNAVAILABLE and blocks all execution for MAX_EQUITY_AGE
         # seconds. ccxt's nonce is local-time-based; if the previous container
         # left Kraken with a higher last-seen nonce, our first call lags.
+        # [G2-RATELIMIT 2026-04-15] Also retry on Kraken 429/RateLimitExceeded
+        # with exponential backoff (1s, 2s, 4s) to avoid IP-level ban.
         balance = None
-        for _attempt in range(2):
+        _max_attempts = 4  # 1 nonce retry + up to 3 rate-limit retries
+        for _attempt in range(_max_attempts):
             try:
                 balance = await asyncio.wait_for(
                     asyncio.to_thread(self.exchange_client.fetch_balance),
@@ -211,7 +214,9 @@ class AccountSyncManager:
                 )
                 break
             except Exception as _e:
-                if _attempt == 0 and "Invalid nonce" in str(_e):
+                _err_str = str(_e)
+                # Nonce: reload time + retry once
+                if _attempt == 0 and "Invalid nonce" in _err_str:
                     try:
                         await asyncio.to_thread(self.exchange_client.load_time_difference)
                         logger.warning(
@@ -220,11 +225,26 @@ class AccountSyncManager:
                         continue
                     except Exception:
                         pass
+                # Rate limit: exponential backoff (1, 2, 4 seconds)
+                _is_rate_limited = (
+                    "RateLimitExceeded" in type(_e).__name__
+                    or "EAPI:Rate limit exceeded" in _err_str
+                    or "429" in _err_str
+                    or "Too Many Requests" in _err_str
+                )
+                if _is_rate_limited and _attempt < _max_attempts - 1:
+                    _backoff = 2 ** _attempt
+                    logger.warning(
+                        f"[ACCOUNT_SYNC] Kraken rate limit; backoff {_backoff}s "
+                        f"(attempt {_attempt+1}/{_max_attempts-1})"
+                    )
+                    await asyncio.sleep(_backoff)
+                    continue
                 self._state.status = EquityStatus.UNAVAILABLE
                 self._failure_count += 1
-                self._last_error = str(_e)
+                self._last_error = _err_str
                 logger.error(f"[ACCOUNT_SYNC] fetch_balance failed: {_e}")
-                return False, str(_e)
+                return False, _err_str
 
         try:
             

@@ -1197,20 +1197,36 @@ class ExecutionManager:
 
             # Fallback: direct fetch_balance (costs 1 API call)
             # [NONCE-FIX 2026-04-15] Retry once on Invalid nonce.
-            try:
-                balance = self.exchange.fetch_balance()
-            except Exception as _e:
-                if "Invalid nonce" in str(_e):
-                    try:
-                        self.exchange.load_time_difference()
-                        self.logger.warning("[SIZE_CLAMP] nonce mismatch; reloaded timeDifference, retrying fetch_balance")
-                        balance = self.exchange.fetch_balance()
-                    except Exception as _e2:
-                        self.logger.warning(f"[SIZE_CLAMP] fetch_balance retry failed: {_e2}")
-                        return size  # fall through, use original size unclamped
-                else:
+            # [G2-RATELIMIT 2026-04-15] Retry on 429/RateLimitExceeded with backoff.
+            import time as _t
+            balance = None
+            for _attempt in range(4):
+                try:
+                    balance = self.exchange.fetch_balance()
+                    break
+                except Exception as _e:
+                    _err = str(_e)
+                    if _attempt == 0 and "Invalid nonce" in _err:
+                        try:
+                            self.exchange.load_time_difference()
+                            self.logger.warning("[SIZE_CLAMP] nonce mismatch; reloaded timeDifference, retrying")
+                            continue
+                        except Exception:
+                            pass
+                    _is_429 = (
+                        "RateLimitExceeded" in type(_e).__name__
+                        or "EAPI:Rate limit" in _err
+                        or "429" in _err
+                    )
+                    if _is_429 and _attempt < 3:
+                        _backoff = 2 ** _attempt
+                        self.logger.warning(f"[SIZE_CLAMP] rate limit; backoff {_backoff}s")
+                        _t.sleep(_backoff)
+                        continue
                     self.logger.warning(f"[SIZE_CLAMP] fetch_balance failed: {_e}")
-                    return size
+                    return size  # fall through, use original size unclamped
+            if balance is None:
+                return size
             if side == OrderSide.BUY:
                 usd_free = float(balance.get('USD', {}).get('free', 0) or 0)
                 if usd_free <= 0:

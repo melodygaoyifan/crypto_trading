@@ -465,6 +465,34 @@ class StrategyConfidenceScorer:
             "prev_confidence": dict(self._prev_confidence),
         }
 
+    def save_state(self, path=None) -> bool:
+        """[F7-PERSIST 2026-04-15] Persist confidence state to disk."""
+        from pathlib import Path
+        import json
+        path = Path(path) if path else Path("data/confidence_scorer_state.json")
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(self.to_dict(), indent=2), encoding="utf-8")
+            return True
+        except Exception as e:
+            logger.warning(f"[CONFIDENCE] save_state failed: {e}")
+            return False
+
+    def load_state(self, path=None) -> bool:
+        """[F7-PERSIST 2026-04-15] Restore confidence state from disk."""
+        from pathlib import Path
+        import json
+        path = Path(path) if path else Path("data/confidence_scorer_state.json")
+        if not path.exists():
+            return False
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            self.from_dict(data)
+            return True
+        except Exception as e:
+            logger.warning(f"[CONFIDENCE] load_state failed: {e}")
+            return False
+
     def from_dict(self, data: Dict):
         """Restore confidence state from persistence."""
         conf_data = data.get("confidence", {})
