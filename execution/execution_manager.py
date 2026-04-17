@@ -600,8 +600,8 @@ class ExecutionManager:
                     symbol=symbol,
                     side=side.value,
                     order_type=order_type.value,
-                    filled_price=existing.get('average', 0),
-                    filled_size=existing.get('filled', 0),
+                    filled_price=float(existing.get('average', 0) or 0),
+                    filled_size=float(existing.get('filled', 0) or 0),
                     status=OrderStatus.FILLED,
                     userref=userref,
                     raw_response=existing,
@@ -789,9 +789,9 @@ class ExecutionManager:
                         requested_price=price,
                         filled_price=filled_price,
                         requested_size=size,
-                        filled_size=order_status.get('filled', size),
+                        filled_size=float(order_status.get('filled', size) or 0),
                         slippage=slippage,
-                        fee=(order_status.get('fee') or {}).get('cost', 0),
+                        fee=float((order_status.get('fee') or {}).get('cost', 0) or 0),
                         fee_currency=(order_status.get('fee') or {}).get('currency', ''),
                         status=OrderStatus.FILLED,
                         raw_response=order_status
@@ -813,13 +813,13 @@ class ExecutionManager:
 
             # Timeout - check for partial fill before cancelling
             order_status = self.exchange.fetch_order(order_id, symbol)
-            filled_qty = order_status.get('filled', 0) or 0
+            filled_qty = float(order_status.get('filled', 0) or 0)
 
             self.exchange.cancel_order(order_id, symbol)
 
             if filled_qty > 0 and filled_qty >= size * 0.5:
                 # Partial fill ≥50% - accept it
-                filled_price = order_status.get('average', price)
+                filled_price = float(order_status.get('average', price) or price)
                 self.logger.info(
                     f"[LIMIT] Partial fill accepted: {filled_qty:.6f}/{size:.6f} "
                     f"({filled_qty/size*100:.0f}%)"
@@ -835,7 +835,7 @@ class ExecutionManager:
                     requested_size=size,
                     filled_size=filled_qty,
                     slippage=(filled_price - price) / price if price > 0 else 0,
-                    fee=(order_status.get('fee') or {}).get('cost', 0),
+                    fee=float((order_status.get('fee') or {}).get('cost', 0) or 0),
                     fee_currency=(order_status.get('fee') or {}).get('currency', ''),
                     status=OrderStatus.FILLED,
                     raw_response=order_status
@@ -859,12 +859,12 @@ class ExecutionManager:
                     _mkt_result = self._execute_market_order(symbol, side, _remaining, extra_params)
                     if _mkt_result.success:
                         # Combine partial limit fill + market fill
-                        _total_filled = filled_qty + _mkt_result.filled_size
+                        _total_filled = filled_qty + float(_mkt_result.filled_size or 0)
                         _avg_price = (
-                            (filled_qty * (order_status.get('average', price) or price)
-                             + _mkt_result.filled_size * _mkt_result.filled_price)
+                            (filled_qty * float(order_status.get('average', price) or price)
+                             + float(_mkt_result.filled_size or 0) * float(_mkt_result.filled_price or 0))
                             / _total_filled
-                        ) if _total_filled > 0 else _mkt_result.filled_price
+                        ) if _total_filled > 0 else float(_mkt_result.filled_price or 0)
                         self.logger.info(
                             f"[LIMIT→MARKET] Combined fill: {_total_filled:.6f}/{size:.6f} "
                             f"avg_price={_avg_price:.2f}"
@@ -875,8 +875,8 @@ class ExecutionManager:
                             requested_price=price, filled_price=_avg_price,
                             requested_size=size, filled_size=_total_filled,
                             slippage=(_avg_price - price) / price if price > 0 else 0,
-                            fee=((order_status.get('fee') or {}).get('cost', 0) or 0)
-                                + (_mkt_result.fee or 0),
+                            fee=float((order_status.get('fee') or {}).get('cost', 0) or 0)
+                                + float(_mkt_result.fee or 0),
                             status=OrderStatus.FILLED,
                         )
                     else:
@@ -1029,10 +1029,10 @@ class ExecutionManager:
             # Check if this exact attempt already executed
             existing = self.check_userref_executed(userref)
             if existing:
-                filled_qty = existing.get('filled', 0) or 0
+                filled_qty = float(existing.get('filled', 0) or 0)
                 if filled_qty > 0:
                     total_filled += filled_qty
-                    weighted_price_sum += filled_qty * (existing.get('average', limit_price))
+                    weighted_price_sum += filled_qty * float(existing.get('average', limit_price) or limit_price)
                     remaining_qty -= filled_qty
                     self.logger.info(
                         f"[REPRICE] Attempt {attempt} already filled via userref={userref}: "
@@ -1079,18 +1079,18 @@ class ExecutionManager:
                     status = order_status.get('status', '')
 
                     if status == 'closed':
-                        filled_this_attempt = order_status.get('filled', 0) or 0
+                        filled_this_attempt = float(order_status.get('filled', 0) or 0)
                         order_done = True
                         break
 
                     if status in ('canceled', 'expired'):
                         # Post-only rejected or exchange cancelled
-                        filled_this_attempt = order_status.get('filled', 0) or 0
+                        filled_this_attempt = float(order_status.get('filled', 0) or 0)
                         order_done = True
                         break
 
                     # Check partial fill progress
-                    filled_this_attempt = order_status.get('filled', 0) or 0
+                    filled_this_attempt = float(order_status.get('filled', 0) or 0)
 
                 except Exception as e:
                     self.logger.debug(f"[REPRICE] Poll error: {e}")
@@ -1102,7 +1102,7 @@ class ExecutionManager:
                 # Timeout - fetch final state and cancel remainder
                 try:
                     order_status = self.exchange.fetch_order(order_id, symbol)
-                    filled_this_attempt = order_status.get('filled', 0) or 0
+                    filled_this_attempt = float(order_status.get('filled', 0) or 0)
                 except Exception:
                     pass
 
@@ -1115,12 +1115,12 @@ class ExecutionManager:
 
             if filled_this_attempt > 0:
                 try:
-                    avg_price = order_status.get('average', limit_price)
+                    avg_price = float(order_status.get('average', limit_price) or limit_price)
                 except Exception:
                     avg_price = limit_price
                 weighted_price_sum += filled_this_attempt * avg_price
-                fee_cost = (order_status.get('fee') or {}).get('cost', 0) if order_status else 0
-                total_fee += fee_cost or 0
+                fee_cost = float((order_status.get('fee') or {}).get('cost', 0) or 0) if order_status else 0.0
+                total_fee += fee_cost
                 total_filled += filled_this_attempt
                 remaining_qty -= filled_this_attempt
 
@@ -1346,9 +1346,9 @@ class ExecutionManager:
                 requested_price=filled_price,
                 filled_price=filled_price,
                 requested_size=size,
-                filled_size=order.get('filled', size),
+                filled_size=float(order.get('filled', size) or 0),
                 slippage=0,
-                fee=(order.get('fee') or {}).get('cost', 0),
+                fee=float((order.get('fee') or {}).get('cost', 0) or 0),
                 fee_currency=(order.get('fee') or {}).get('currency', ''),
                 status=OrderStatus.FILLED,
                 raw_response=order

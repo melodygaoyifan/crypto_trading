@@ -14168,7 +14168,7 @@ class HMATSProductionRunner:
                     bid_depth_usd=market_data.get('bid_depth_usd', 50_000.0),
                     ask_depth_usd=market_data.get('ask_depth_usd', 50_000.0),
                 )
-                _h1_filled = getattr(_h1_last_result, 'filled_size', _h1_slice_size)
+                _h1_filled = float(getattr(_h1_last_result, 'filled_size', _h1_slice_size) or 0)
                 _h1_total_filled += _h1_filled
                 if not getattr(_h1_last_result, 'success', True):
                     logger.warning(f"[BUGFIX H1] Slice {_h1_i+1}/{_num_slices} failed for {asset} -stopping")
