@@ -307,11 +307,11 @@ class MarketDataProvider:
                     
                     asset_data = AssetMarketData(
                         asset=asset,
-                        open=ticker.get('open', current[1] if current else 0),
-                        high=ticker.get('high', current[2] if current else 0),
-                        low=ticker.get('low', current[3] if current else 0),
-                        close=ticker.get('last', current[4] if current else 0),
-                        volume=ticker.get('baseVolume', current[5] if current else 0),
+                        open=float(ticker.get('open', current[1] if current else 0) or 0),
+                        high=float(ticker.get('high', current[2] if current else 0) or 0),
+                        low=float(ticker.get('low', current[3] if current else 0) or 0),
+                        close=float(ticker.get('last', current[4] if current else 0) or 0),
+                        volume=float(ticker.get('baseVolume', current[5] if current else 0) or 0),
                         returns_4h=returns_4h,
                         volatility_4h=volatility_4h,
                         ohlcv_history=history

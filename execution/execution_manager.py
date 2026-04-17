@@ -637,10 +637,10 @@ class ExecutionManager:
                     # Refresh best price from exchange
                     try:
                         _l3_ticker = self.exchange.fetch_ticker(symbol)
-                        _l3_new_price = (
+                        _l3_new_price = float(
                             _l3_ticker.get('bid', price) if side == OrderSide.BUY
                             else _l3_ticker.get('ask', price)
-                        )
+                        ) or price
                         self.logger.info(
                             f"[ORDER_RETRY] Attempt {_l3_attempt + 2}/{_l3_max_retries + 1} "
                             f"for {symbol} at ${_l3_new_price:.2f} (was ${price:.2f})"
@@ -1335,8 +1335,8 @@ class ExecutionManager:
             if order is None:
                 raise RuntimeError("Exchange returned None for market order (possible nonce/auth error)")
 
-            filled_price = order.get('average', order.get('price', 0))
-            
+            filled_price = float(order.get('average', order.get('price', 0)) or 0)
+
             return OrderResult(
                 success=True,
                 order_id=order.get('id'),

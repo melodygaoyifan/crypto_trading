@@ -269,9 +269,9 @@ if exchange:
         # 2a. Ticker
         try:
             ticker = exchange.fetch_ticker(pair)
-            price = ticker.get('last', 0)
-            bid = ticker.get('bid', 0)
-            ask = ticker.get('ask', 0)
+            price = float(ticker.get('last', 0) or 0)
+            bid = float(ticker.get('bid', 0) or 0)
+            ask = float(ticker.get('ask', 0) or 0)
             check(f"{asset} ticker fetched (price=${price:,.2f})", price > 0,
                   f"price={price}")
             ticker_data[asset] = ticker
