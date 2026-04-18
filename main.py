@@ -19169,6 +19169,53 @@ class HMATSProductionRunner:
                 # [PATCH-2] Sleep until next 4H candle boundary (was fixed master_tick_seconds).
                 # Root cause: fixed 14400s sleep drifts from Kraken 4H candle boundaries.
                 # Paper loop already uses _seconds_until_next_4h_candle(); live must match.
+                # [HEARTBEAT] 4H tick summary → Discord
+                try:
+                    if self.audit_manager:
+                        _hb_equity = getattr(self, '_last_equity', 0.0)
+                        _hb_positions = {a: p.get("direction", 0) for a, p in self._paper_positions.items() if p}
+                        _hb_trades_this_tick = sum(
+                            1 for a in self.config.assets
+                            if self._dashboard_asset_runtime.get(a, {}).get("execution_status") == "FILLED"
+                        )
+                        _hb_reasons = {}
+                        for _hb_asset in self.config.assets:
+                            _hb_rt = self._dashboard_asset_runtime.get(_hb_asset, {})
+                            _hb_strat = _hb_rt.get("strategy", "?")
+                            _hb_regime = _hb_rt.get("regime", "?")
+                            _hb_veto = _hb_rt.get("veto_reason", "")
+                            _hb_alpha = _hb_rt.get("alpha_est_bps", 0)
+                            _hb_thresh = _hb_rt.get("alpha_thresh_bps", 0)
+                            if _hb_strat == "hold" or str(_hb_strat).startswith("hold"):
+                                _hb_reasons[_hb_asset] = f"hold ({_hb_regime})"
+                            elif _hb_veto:
+                                _hb_reasons[_hb_asset] = f"veto: {_hb_veto}"
+                            elif _hb_alpha and _hb_thresh and float(_hb_alpha) < float(_hb_thresh):
+                                _hb_reasons[_hb_asset] = f"alpha {_hb_alpha}<{_hb_thresh}bps"
+                            else:
+                                _hb_reasons[_hb_asset] = _hb_rt.get("execution_status", "no_signal")
+                        from datetime import datetime, timezone as _tz
+                        _hb_now = datetime.now(_tz.utc).strftime("%H:%M UTC")
+                        _hb_is_weekend = datetime.now(_tz.utc).weekday() >= 5
+                        from infra.persistence import AlertSeverity, AlertCategory
+                        _hb_msg = (
+                            f"**4H Heartbeat** ({_hb_now})"
+                            + (f" | WEEKEND 50% cap" if _hb_is_weekend else "")
+                        )
+                        _hb_details = {
+                            "Equity": f"${_hb_equity:,.2f}",
+                            "Positions": str(_hb_positions) if _hb_positions else "FLAT",
+                            "Trades": str(_hb_trades_this_tick),
+                        }
+                        for _hb_a, _hb_r in _hb_reasons.items():
+                            _hb_details[_hb_a] = _hb_r
+                        self.audit_manager.log_event(
+                            AlertSeverity.INFO, AlertCategory.TRADING,
+                            _hb_msg, details=_hb_details,
+                        )
+                except Exception as _hb_err:
+                    logger.debug(f"[HEARTBEAT] Discord push failed: {_hb_err}")
+
                 _wait_secs_live = self._seconds_until_next_4h_candle(offset_seconds=90)
                 logger.info(f"[LIVE] Next 4H candle in {_wait_secs_live:.0f}s")
                 deadline_ts = time.monotonic() + _wait_secs_live
