@@ -568,7 +568,7 @@ class DiscordNotifier:
             req = urllib.request.Request(
                 self.webhook_url,
                 data=data,
-                headers={"Content-Type": "application/json", "User-Agent": "HMATS/4.0"},
+                headers={"Content-Type": "application/json", "User-Agent": "HMATS/6.8 (https://github.com)"},
                 method="POST",
             )
             with urllib.request.urlopen(req, timeout=10) as resp:
