@@ -692,6 +692,37 @@ class DiscordNotifier:
 
 
 # =============================================================================
+# DISCORD LOG HANDLER — forward ERROR/CRITICAL to Discord
+# =============================================================================
+
+class DiscordLogHandler(logging.Handler):
+    """Forward ERROR/CRITICAL logs to Discord webhook with 5-min dedup."""
+
+    _DEDUP_WINDOW = 300
+
+    def __init__(self, notifier: 'DiscordNotifier', min_level=logging.ERROR):
+        super().__init__(level=min_level)
+        self._notifier = notifier
+        self._dedup: Dict[str, float] = {}
+
+    def emit(self, record: logging.LogRecord):
+        try:
+            msg = self.format(record)
+            _key = f"{record.name}:{record.getMessage()[:100]}"
+            _now = time.time()
+            if _key in self._dedup and _now - self._dedup[_key] < self._DEDUP_WINDOW:
+                return
+            self._dedup[_key] = _now
+            if len(self._dedup) > 200:
+                cutoff = _now - self._DEDUP_WINDOW
+                self._dedup = {k: v for k, v in self._dedup.items() if v > cutoff}
+            severity = AlertSeverity.CRITICAL if record.levelno >= logging.CRITICAL else AlertSeverity.WARNING
+            self._notifier.send_alert(severity, AlertCategory.SYSTEM, msg[:1900])
+        except Exception:
+            pass
+
+
+# =============================================================================
 # UNIFIED PERSISTENCE & ALERTING MANAGER
 # =============================================================================
 

@@ -181,6 +181,7 @@ async def run_shadow_execution(
             ctx.position_entry_times = pre_exec_snapshot["position_entry_times"]
             ctx.rebuild_cooldown = pre_exec_snapshot["rebuild_cooldown"]
             ctx.exit_trigger_tag = pre_exec_snapshot["exit_trigger_tag"]
+            ctx.ac2_fill_ticks = pre_exec_snapshot.get("ac2_fill_ticks", {})
         else:
             # Fallback: deep copy current (post-execution) state — less accurate
             ctx.paper_positions = copy.deepcopy(runner._paper_positions)

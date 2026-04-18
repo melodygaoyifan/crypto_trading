@@ -2859,6 +2859,14 @@ class HMATSProductionRunner:
                 )
                 self.audit_manager.start()
                 logger.info("  AuditManager: ACTIVE (SQLite + Discord)")
+                try:
+                    from infra.persistence import DiscordLogHandler
+                    _discord_handler = DiscordLogHandler(self.audit_manager.discord)
+                    _discord_handler.setFormatter(logging.Formatter('%(name)s | %(message)s'))
+                    logging.getLogger().addHandler(_discord_handler)
+                    logger.info("  Discord error alerts: ACTIVE")
+                except Exception as _dh_err:
+                    logger.warning(f"  Discord error alerts: FAILED ({_dh_err})")
             except Exception as e:
                 logger.warning(f"  AuditManager: STUB ({e})")
 
@@ -11799,6 +11807,7 @@ class HMATSProductionRunner:
                             "position_entry_times": _shadow_copy.deepcopy(self._position_entry_times),
                             "rebuild_cooldown": _shadow_copy.deepcopy(self._rebuild_cooldown),
                             "exit_trigger_tag": _shadow_copy.deepcopy(getattr(self, '_exit_trigger_tag', {})),
+                            "ac2_fill_ticks": _shadow_copy.deepcopy(getattr(self, '_ac2_fill_ticks', {})),
                             "intent": _shadow_dc.replace(intent),
                             "market_data": dict(market_data),
                         }
