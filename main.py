@@ -19169,49 +19169,62 @@ class HMATSProductionRunner:
                 # [PATCH-2] Sleep until next 4H candle boundary (was fixed master_tick_seconds).
                 # Root cause: fixed 14400s sleep drifts from Kraken 4H candle boundaries.
                 # Paper loop already uses _seconds_until_next_4h_candle(); live must match.
-                # [HEARTBEAT] 4H tick summary → Discord
+                # [HEARTBEAT] 4H tick deep summary → Discord
                 try:
                     if self.audit_manager:
                         _hb_equity = getattr(self, '_last_equity', 0.0)
-                        _hb_positions = {a: p.get("direction", 0) for a, p in self._paper_positions.items() if p}
+                        _hb_positions = {
+                            a: f"{'L' if p.get('direction',0)>0 else 'S'} ${abs(p.get('notional',0)):,.0f}"
+                            for a, p in self._paper_positions.items() if p and p.get('direction', 0) != 0
+                        }
                         _hb_trades_this_tick = sum(
                             1 for a in self.config.assets
                             if self._dashboard_asset_runtime.get(a, {}).get("execution_status") == "FILLED"
                         )
-                        _hb_reasons = {}
+                        from datetime import datetime, timezone as _tz
+                        _hb_now_dt = datetime.now(_tz.utc)
+                        _hb_now = _hb_now_dt.strftime("%H:%M UTC")
+                        _hb_is_weekend = _hb_now_dt.weekday() >= 5 or (_hb_now_dt.weekday() == 4 and _hb_now_dt.hour >= 21)
+                        _hb_lines = []
                         for _hb_asset in self.config.assets:
                             _hb_rt = self._dashboard_asset_runtime.get(_hb_asset, {})
+                            _hb_price = _live_prices.get(_hb_asset, 0)
                             _hb_strat = _hb_rt.get("strategy", "?")
                             _hb_regime = _hb_rt.get("regime", "?")
                             _hb_veto = _hb_rt.get("veto_reason", "")
                             _hb_alpha = _hb_rt.get("alpha_est_bps", 0)
                             _hb_thresh = _hb_rt.get("alpha_thresh_bps", 0)
+                            _hb_conf = _hb_rt.get("quant_confidence", 0)
+                            _hb_dir = _hb_rt.get("quant_direction", 0)
                             if _hb_strat == "hold" or str(_hb_strat).startswith("hold"):
-                                _hb_reasons[_hb_asset] = f"hold ({_hb_regime})"
+                                _hb_reason = f"Best-of-N=hold"
                             elif _hb_veto:
-                                _hb_reasons[_hb_asset] = f"veto: {_hb_veto}"
+                                _hb_reason = f"VETOED: {_hb_veto}"
                             elif _hb_alpha and _hb_thresh and float(_hb_alpha) < float(_hb_thresh):
-                                _hb_reasons[_hb_asset] = f"alpha {_hb_alpha}<{_hb_thresh}bps"
+                                _hb_reason = f"alpha {_hb_alpha}<{_hb_thresh}bps"
+                            elif _hb_rt.get("execution_status") == "FILLED":
+                                _hb_reason = "TRADED"
                             else:
-                                _hb_reasons[_hb_asset] = _hb_rt.get("execution_status", "no_signal")
-                        from datetime import datetime, timezone as _tz
-                        _hb_now = datetime.now(_tz.utc).strftime("%H:%M UTC")
-                        _hb_is_weekend = datetime.now(_tz.utc).weekday() >= 5
+                                _hb_reason = _hb_rt.get("execution_status", "no_signal")
+                            _hb_lines.append(
+                                f"**{_hb_asset}** ${_hb_price:,.2f} | {_hb_regime} | "
+                                f"{_hb_strat}(dir={_hb_dir:+.2f} conf={_hb_conf:.2f}) | {_hb_reason}"
+                            )
                         from infra.persistence import AlertSeverity, AlertCategory
                         _hb_msg = (
-                            f"**4H Heartbeat** ({_hb_now})"
-                            + (f" | WEEKEND 50% cap" if _hb_is_weekend else "")
+                            f"**4H Tick #{self._live_round_count}** ({_hb_now})"
+                            + (" | WEEKEND" if _hb_is_weekend else "")
+                            + f" | Trades: {_hb_trades_this_tick}"
                         )
-                        _hb_details = {
-                            "Equity": f"${_hb_equity:,.2f}",
-                            "Positions": str(_hb_positions) if _hb_positions else "FLAT",
-                            "Trades": str(_hb_trades_this_tick),
-                        }
-                        for _hb_a, _hb_r in _hb_reasons.items():
-                            _hb_details[_hb_a] = _hb_r
+                        _hb_detail_str = "\n".join(_hb_lines)
                         self.audit_manager.log_event(
                             AlertSeverity.INFO, AlertCategory.TRADING,
-                            _hb_msg, details=_hb_details,
+                            _hb_msg,
+                            details={
+                                "Equity": f"${_hb_equity:,.2f}",
+                                "Positions": ", ".join(f"{a}={v}" for a, v in _hb_positions.items()) if _hb_positions else "FLAT",
+                                "Analysis": _hb_detail_str,
+                            },
                         )
                 except Exception as _hb_err:
                     logger.debug(f"[HEARTBEAT] Discord push failed: {_hb_err}")
