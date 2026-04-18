@@ -19395,7 +19395,19 @@ class HMATSProductionRunner:
     def _sync_drl_authority(self, level: Optional[str] = None) -> None:
         """Propagate DRL authority to fusion/runtime surfaces from the main promotion gate."""
         resolved = str(level or getattr(self, "_drl_authority_level", "DISABLED") or "DISABLED").upper()
+        _prev = getattr(self, '_drl_authority_level', 'DISABLED')
         self._drl_authority_level = resolved
+        if _prev != resolved and self.audit_manager:
+            try:
+                from infra.persistence import AlertSeverity, AlertCategory
+                self.audit_manager.log_event(
+                    AlertSeverity.WARNING if resolved == "ACTIVE" else AlertSeverity.CRITICAL,
+                    AlertCategory.SYSTEM,
+                    f"DRL authority changed: {_prev} → {resolved}",
+                    details={"previous": _prev, "new": resolved},
+                )
+            except Exception:
+                pass
         try:
             if getattr(self, "engine", None) is not None and getattr(self.engine, "drl_gate", None) is not None:
                 current = self.engine.drl_gate.get_authority().value
