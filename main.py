@@ -11814,28 +11814,14 @@ class HMATSProductionRunner:
                     except Exception:
                         pass
 
-                # Execute order (OLD path — authoritative)
-                exec_result = await self._execute_intent(
-                    asset,
-                    intent,
-                    market_data,
+                # [CUTOVER 2026-04-18] Execute via extracted execution_service.py
+                from core.execution_context import ExecutionContext
+                from core.execution_service import execute_intent_v2
+                _exec_ctx = ExecutionContext.build_from_runner(self)
+                exec_result = await execute_intent_v2(
+                    _exec_ctx, asset, intent, market_data,
                     agent_signals=agent_signals,
                 )
-
-                # [SHADOW] Run new execution path in background for comparison
-                if _shadow_state_snapshot is not None:
-                    try:
-                        from core.execution_shadow import run_shadow_execution
-                        asyncio.ensure_future(run_shadow_execution(
-                            self, asset,
-                            _shadow_state_snapshot["intent"],
-                            _shadow_state_snapshot["market_data"],
-                            exec_result,
-                            agent_signals=agent_signals,
-                            pre_exec_snapshot=_shadow_state_snapshot,
-                        ))
-                    except Exception as _shadow_err:
-                        logger.debug(f"[SHADOW] Launch failed: {_shadow_err}")
 
                 _exec_status = str(exec_result.get("status", "") or "").upper()
                 _exec_success = bool(exec_result.get("success", False))
