@@ -198,8 +198,8 @@ async def execute_intent_v2(
             return {"status": "REJECTED", "reason": f"[P0_FAIL_CLOSED] Equity unavailable: {e}"}
     else:
         # Fallback for backtest mode (no account_sync)
-        # [BUGFIX M2] Conservative fallback $1K (not $100K) -prevents oversized positions on missing equity
-        account_equity = market_data.get("account_equity", 1_000.0)
+        _fallback_equity = getattr(ctx.config, 'initial_capital', 10_000.0)
+        account_equity = market_data.get("account_equity", _fallback_equity)
 
     # =====================================================================
     # P0 FIX STEP 2: Convert exposure fraction to base quantity
@@ -534,12 +534,12 @@ async def execute_intent_v2(
             base_quantity = _close_notional / current_price
         elif P0_MODULES_AVAILABLE and _close_exposure > 0:
             try:
-                base_quantity = exposure_to_quantity(
+                base_quantity = float(exposure_to_quantity(
                     exposure_fraction=_close_exposure,
                     account_equity=account_equity,
                     price=current_price,
                     asset=asset,
-                )
+                ) or 0)
             except Exception as e:
                 logger.error(f"[P0_UNIT_SYSTEM] Full-exit conversion failed: {e}")
                 return {"status": "REJECTED", "reason": f"[P0_UNIT_SYSTEM] {e}"}
@@ -548,12 +548,12 @@ async def execute_intent_v2(
     elif P0_MODULES_AVAILABLE:
         try:
             validate_exposure_fraction(exposure_fraction)
-            base_quantity = exposure_to_quantity(
+            base_quantity = float(exposure_to_quantity(
                 exposure_fraction=exposure_fraction,
                 account_equity=account_equity,
                 price=current_price,
                 asset=asset,
-            )
+            ) or 0)
         except Exception as e:
             logger.error(f"[P0_UNIT_SYSTEM] Conversion failed: {e}")
             return {"status": "REJECTED", "reason": f"[P0_UNIT_SYSTEM] {e}"}
@@ -1560,7 +1560,7 @@ async def execute_intent_v2(
                 size=_h1_slice_size,
                 price=execution_price,
                 order_type=order_type,
-                leverage=math.ceil(regime_leverage) if regime_leverage > 1.0 else None,  # [T3] was int(); 1.5->
+                leverage=int(round(regime_leverage)) if regime_leverage > 1.0 else None,
                 spread_bps=market_data.get('spread_bps', 10.0),
                 tick_id=ctx.tick_count,
                 taker_allowed=_taker_allowed,
@@ -1588,7 +1588,7 @@ async def execute_intent_v2(
             size=base_quantity,
             price=execution_price,
             order_type=order_type,
-            leverage=math.ceil(regime_leverage) if regime_leverage > 1.0 else None,  # [T3] was int(); 1.5->
+            leverage=int(round(regime_leverage)) if regime_leverage > 1.0 else None,
             spread_bps=market_data.get('spread_bps', 10.0),
             tick_id=ctx.tick_count,
             taker_allowed=_taker_allowed,
@@ -1910,14 +1910,15 @@ async def execute_intent_v2(
                     pnl_pct = (exit_price - entry_price) / entry_price * pos_dir
                     pnl_usd = pnl_pct * pos_notional
                     # [REGIME-LEV] Track margin costs for leveraged trades
-                    if regime_leverage > 1.0:
+                    _pos_regime_lev = float(old_pos.get("regime_leverage", regime_leverage) or 1.0)
+                    if _pos_regime_lev > 1.0:
                         _rl_entry_info = ctx.position_entry_times.get(asset)
                         _rl_hold_bars = 1
                         if _rl_entry_info:
                             _rl_held_s = (datetime.now(timezone.utc) - _rl_entry_info["entry_time"]).total_seconds()
                             _rl_hold_bars = max(1, int(_rl_held_s / 14400))
                         ctx.margin_tracker.record_trade(
-                            notional_usd=pos_notional, leverage=regime_leverage,
+                            notional_usd=pos_notional, leverage=_pos_regime_lev,
                             holding_bars=_rl_hold_bars, pnl_usd=pnl_usd,
                         )
                 else:
@@ -2083,7 +2084,7 @@ async def execute_intent_v2(
                         _a_qty = pos_notional / exit_price if exit_price > 0 else 0.0
                         _a_side = "BUY" if pos_dir < 0 else "SELL"
                         _a_fee = _exit_fee_usd
-                        _a_oid = exec_result.get("order_id", exec_result.get("id", ""))
+                        _a_oid = exec_result.get("order_id", exec_result.get("id", "")) or ""
                         ctx.audit_manager.log_trade_execution(AuditTradeExecution(
                             execution_id=f"{asset}_{int(time.time())}_close",
                             intent_id=f"{asset}_{ctx.tick_count}",
@@ -2296,7 +2297,7 @@ async def execute_intent_v2(
                             crack_weight_at_entry=old_pos.get("crack_weight", 0.0),
                             pnl_bps=_c13_pnl_bps,
                             bars_to_outcome=_c13_bars,
-                            max_drawdown_bps=0.0,
+                            max_drawdown_bps=abs(min(_c13_pnl_bps, 0.0)),
                         )
                         _c13_mods = ctx.failure_memory.get_modifiers()
                         if _c13_mods.in_caution_mode:
@@ -2806,7 +2807,7 @@ async def execute_intent_v2(
                 _effective_entry_exposure = max(0.0, float(notional_usd) / float(account_equity))
             _m4_new_pos = {
                 "exposure": _effective_entry_exposure,
-                "original_entry_exposure": _effective_entry_exposure,  # [FIX-3a] freeze actual filled exposure for pyramid
+                "original_entry_exposure": old_pos.get("original_entry_exposure", _effective_entry_exposure) if old_pos else _effective_entry_exposure,
                 "direction": direction_sign,
                 "tranche": tranche,
                 "entry_price": fill_price,
