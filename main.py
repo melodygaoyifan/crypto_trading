@@ -2044,7 +2044,7 @@ class HMATSProductionRunner:
 
         # [SHADOW] Execution path shadow mode — compare old vs new execute_intent
         # Set to True to enable dual-path comparison logging to data/shadow_exec_comparison.jsonl
-        self._enable_execution_shadow = True
+        self._enable_execution_shadow = False
         self._ac0_requires_entry_block = False
         self._ac0_restored_assets: set[str] = set()
 

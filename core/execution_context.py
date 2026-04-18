@@ -250,6 +250,7 @@ class ExecutionContext:
         ctx.tick_count = runner._tick_count
         ctx.last_aging_check = getattr(runner, '_last_aging_check', 0.0)
         ctx.drawdown_tracker = getattr(runner, '_drawdown_tracker', None)
+        ctx.current_drawdown_pct = getattr(runner, '_current_drawdown_pct', 0.0)
         ctx.dynamic_limits_result = getattr(runner, '_dynamic_limits_result', None)
         ctx.warmup_tracker = runner._warmup_tracker
         ctx.anti_churn = runner._anti_churn

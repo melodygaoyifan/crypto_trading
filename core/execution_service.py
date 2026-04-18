@@ -41,6 +41,21 @@ except ImportError:
     validate_exposure_fraction = None
 
 try:
+    from risk.unified_position_sizer import TrancheLevel as UPSTrancheLevel
+except ImportError:
+    UPSTrancheLevel = None
+
+try:
+    from configs.canonical_config import get_drawdown_multiplier as _get_drawdown_multiplier
+except ImportError:
+    def _get_drawdown_multiplier(dd: float) -> float:
+        if dd >= 0.25: return 0.0
+        if dd >= 0.15: return 0.25
+        if dd >= 0.08: return 0.50
+        if dd >= 0.05: return 0.75
+        return 1.0
+
+try:
     from execution.execution_manager import OrderType, OrderSide, OrderResult
 except ImportError:
     OrderType = OrderSide = OrderResult = None
@@ -152,7 +167,7 @@ async def execute_intent_v2(
             _side_str = "long" if intent.direction > 0 else "short"
             _drl_conf = market_data.get("drl_confidence", 0.5)
             # [BUGFIX M7] Fallback=0.0 (not 0.5) -DRL gets zero weight when disabled/unavailable
-            _drl_weight = ctx.fn_get_drl_weight() if hasattr(self, '_get_drl_weight') else 0.0
+            _drl_weight = ctx.fn_get_drl_weight() if ctx.fn_get_drl_weight else 0.0
             _guard_ok, _guard_mode, _guard_details = ctx.execution_guard.check_execution(
                 asset=asset,
                 side=_side_str,
@@ -361,7 +376,7 @@ async def execute_intent_v2(
             )
             _asset_exp = abs(_pos.get("exposure", 0))
             _dd_status = "NORMAL"
-            if hasattr(self, '_drawdown_tracker'):
+            if ctx.drawdown_tracker is not None:
                 _dd = getattr(ctx.drawdown_tracker, 'current_drawdown_pct', 0)
                 if _dd > get_rule("hard_drawdown_halt", _is_opportunity):  # [RULETABLE] HARD=0.20
                     _dd_status = "CRITICAL"
@@ -419,8 +434,8 @@ async def execute_intent_v2(
 
     # [CFG-7] Drawdown gradient -continuous size multiplier
     try:
-        _dd_pct = getattr(self, '_current_drawdown_pct', 0.0)
-        _dd_mult = get_drawdown_multiplier(_dd_pct)
+        _dd_pct = getattr(ctx, 'current_drawdown_pct', 0.0)
+        _dd_mult = _get_drawdown_multiplier(_dd_pct)
         if _dd_mult < 1.0:
             _dd_old_exp = exposure_fraction
             exposure_fraction *= _dd_mult
@@ -1091,7 +1106,7 @@ async def execute_intent_v2(
             _ct_tox_rate = float(_ct_fill_metrics.get("toxicity_rate", 0.0) or 0.0)
 
             _ct_pr = 0.0
-            _ct_last_fill = getattr(self, "_recent_fill_state", {}).get(asset, {}) or {}
+            _ct_last_fill = getattr(ctx, "recent_fill_state", {}).get(asset, {}) or {}
             if _ct_last_fill and current_price > 0:
                 try:
                     _ct_fill_ts = float(_ct_last_fill.get("timestamp", 0.0) or 0.0)
@@ -1595,7 +1610,7 @@ async def execute_intent_v2(
         _tier_tag = "FREE" if _fc_local.get("in_free_tier") else "POST"
         _tier_adj = getattr(intent, 'timing_score', None)
         # Check if tier adjustment was applied via timing score object
-        _timing_score_obj = getattr(ctx.engine, '_last_timing_score', None) if hasattr(self, 'engine') else None
+        _timing_score_obj = getattr(ctx.engine, '_last_timing_score', None) if ctx.engine is not None else None
         _adj_str = ""
         if hasattr(intent, 'execution_mode'):
             _adj_str = f" exec_mode={intent.execution_mode.value if hasattr(intent.execution_mode, 'value') else intent.execution_mode}"
@@ -1969,7 +1984,7 @@ async def execute_intent_v2(
                 )
 
                 # Shadow ledger
-                if hasattr(self, 'p0_integrator') and ctx.p0_integrator:
+                if ctx.p0_integrator is not None and ctx.p0_integrator:
                     try:
                         close_side = "BUY" if pos_dir < 0 else "SELL"
                         order_id = exec_result.get("order_id", exec_result.get("id", f"paper_{asset}_{int(datetime.now(timezone.utc).timestamp())}"))
@@ -2002,7 +2017,7 @@ async def execute_intent_v2(
 
                 # [HIT-RATE] Update alpha gate performance factor from trade outcome
                 try:
-                    _alc = getattr(getattr(getattr(self, 'engine', None), 'guarantees', None), 'alpha_calculator', None)
+                    _alc = getattr(getattr(getattr(ctx, 'engine', None), 'guarantees', None), 'alpha_calculator', None)
                     if _alc and hasattr(_alc, 'update_hit_rate'):
                         _alc.update_hit_rate(won=_net_pnl_usd > 0)
                 except Exception:
@@ -2459,7 +2474,7 @@ async def execute_intent_v2(
             }
 
             # Shadow ledger -partial close fill
-            if hasattr(self, 'p0_integrator') and ctx.p0_integrator:
+            if ctx.p0_integrator is not None and ctx.p0_integrator:
                 try:
                     close_side = "BUY" if pos_dir < 0 else "SELL"  # [FIX-8] close direction, not intent direction
                     order_id = exec_result.get("order_id", exec_result.get("id", f"paper_{asset}_{int(datetime.now(timezone.utc).timestamp())}"))
@@ -2492,7 +2507,7 @@ async def execute_intent_v2(
 
             # [HIT-RATE] Update alpha gate performance factor from partial trade outcome
             try:
-                _alc = getattr(getattr(getattr(self, 'engine', None), 'guarantees', None), 'alpha_calculator', None)
+                _alc = getattr(getattr(getattr(ctx, 'engine', None), 'guarantees', None), 'alpha_calculator', None)
                 if _alc and hasattr(_alc, 'update_hit_rate'):
                     _alc.update_hit_rate(won=_partial_net_pnl_usd > 0)
             except Exception:
@@ -2661,7 +2676,7 @@ async def execute_intent_v2(
                     )
                     # [HIT-RATE] Update alpha gate performance factor from flip outcome
                     try:
-                        _alc = getattr(getattr(getattr(self, 'engine', None), 'guarantees', None), 'alpha_calculator', None)
+                        _alc = getattr(getattr(getattr(ctx, 'engine', None), 'guarantees', None), 'alpha_calculator', None)
                         if _alc and hasattr(_alc, 'update_hit_rate'):
                             _alc.update_hit_rate(won=_flip_net_pnl_usd > 0)
                     except Exception:
@@ -2676,7 +2691,7 @@ async def execute_intent_v2(
                         except Exception as _tb_err:
                             logger.warning(f"[SOTA L1] ThesisBudget record_fill (flip) failed: {_tb_err}")
                     # [FIX-9] Shadow ledger -record close side of flip
-                    if hasattr(self, 'p0_integrator') and ctx.p0_integrator:
+                    if ctx.p0_integrator is not None and ctx.p0_integrator:
                         try:
                             _flip_close_side = "BUY" if _flip_dir < 0 else "SELL"
                             _flip_qty = _flip_notional / fill_price if fill_price > 0 else 0.0
@@ -2877,7 +2892,7 @@ async def execute_intent_v2(
                 except Exception as _fb_err:
                     logger.warning(f"[SOTA L1] FeedbackLoop open_position failed: {_fb_err}")
             # Shadow ledger -entry fill
-            if hasattr(self, 'p0_integrator') and ctx.p0_integrator:
+            if ctx.p0_integrator is not None and ctx.p0_integrator:
                 try:
                     fill_fee = _entry_fee_usd
                     order_id = exec_result.get("order_id", exec_result.get("id", f"paper_{asset}_{int(datetime.now(timezone.utc).timestamp())}"))
