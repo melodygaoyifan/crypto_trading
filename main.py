@@ -19175,7 +19175,8 @@ class HMATSProductionRunner:
                         _hb_equity = 0.0
                         if self.account_sync:
                             try:
-                                _hb_equity = self.account_sync.get_equity() or 0.0
+                                _hb_eq, _hb_valid = self.account_sync.get_equity_safe()
+                                _hb_equity = _hb_eq if _hb_valid else _hb_eq
                             except Exception:
                                 pass
                         _hb_positions = {
