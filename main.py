@@ -19172,7 +19172,12 @@ class HMATSProductionRunner:
                 # [HEARTBEAT] 4H tick deep summary → Discord
                 try:
                     if self.audit_manager:
-                        _hb_equity = getattr(self, '_last_equity', 0.0)
+                        _hb_equity = 0.0
+                        if self.account_sync:
+                            try:
+                                _hb_equity = self.account_sync.get_equity() or 0.0
+                            except Exception:
+                                pass
                         _hb_positions = {
                             a: f"{'L' if p.get('direction',0)>0 else 'S'} ${abs(p.get('notional',0)):,.0f}"
                             for a, p in self._paper_positions.items() if p and p.get('direction', 0) != 0
@@ -19187,28 +19192,24 @@ class HMATSProductionRunner:
                         _hb_is_weekend = _hb_now_dt.weekday() >= 5 or (_hb_now_dt.weekday() == 4 and _hb_now_dt.hour >= 21)
                         _hb_lines = []
                         for _hb_asset in self.config.assets:
-                            _hb_rt = self._dashboard_asset_runtime.get(_hb_asset, {})
                             _hb_price = _live_prices.get(_hb_asset, 0)
-                            _hb_strat = _hb_rt.get("strategy", "?")
-                            _hb_regime = _hb_rt.get("regime", "?")
-                            _hb_veto = _hb_rt.get("veto_reason", "")
-                            _hb_alpha = _hb_rt.get("alpha_est_bps", 0)
-                            _hb_thresh = _hb_rt.get("alpha_thresh_bps", 0)
-                            _hb_conf = _hb_rt.get("quant_confidence", 0)
-                            _hb_dir = _hb_rt.get("quant_direction", 0)
-                            if _hb_strat == "hold" or str(_hb_strat).startswith("hold"):
-                                _hb_reason = f"Best-of-N=hold"
+                            _hb_regime = self._prev_regime_state.get(_hb_asset, "?")
+                            _hb_ad = _live_asset_data.get(_hb_asset, {})
+                            _hb_strat = _hb_ad.get("strategy", "?")
+                            _hb_dir = float(self._last_quant_directions.get(_hb_asset, 0) or 0)
+                            _hb_veto = self._dashboard_asset_runtime.get(_hb_asset, {}).get("veto_reason", "")
+                            _hb_exec = self._dashboard_asset_runtime.get(_hb_asset, {}).get("execution_status", "")
+                            if _hb_strat in ("hold", "?") or abs(_hb_dir) < 0.15:
+                                _hb_reason = "Best-of-N=hold"
                             elif _hb_veto:
                                 _hb_reason = f"VETOED: {_hb_veto}"
-                            elif _hb_alpha and _hb_thresh and float(_hb_alpha) < float(_hb_thresh):
-                                _hb_reason = f"alpha {_hb_alpha}<{_hb_thresh}bps"
-                            elif _hb_rt.get("execution_status") == "FILLED":
+                            elif _hb_exec == "FILLED":
                                 _hb_reason = "TRADED"
                             else:
-                                _hb_reason = _hb_rt.get("execution_status", "no_signal")
+                                _hb_reason = _hb_exec or "no_signal"
                             _hb_lines.append(
                                 f"**{_hb_asset}** ${_hb_price:,.2f} | {_hb_regime} | "
-                                f"{_hb_strat}(dir={_hb_dir:+.2f} conf={_hb_conf:.2f}) | {_hb_reason}"
+                                f"dir={_hb_dir:+.2f} | {_hb_reason}"
                             )
                         from infra.persistence import AlertSeverity, AlertCategory
                         _hb_msg = (
@@ -19216,14 +19217,13 @@ class HMATSProductionRunner:
                             + (" | WEEKEND" if _hb_is_weekend else "")
                             + f" | Trades: {_hb_trades_this_tick}"
                         )
-                        _hb_detail_str = "\n".join(_hb_lines)
                         self.audit_manager.log_event(
                             AlertSeverity.INFO, AlertCategory.TRADING,
                             _hb_msg,
                             details={
                                 "Equity": f"${_hb_equity:,.2f}",
                                 "Positions": ", ".join(f"{a}={v}" for a, v in _hb_positions.items()) if _hb_positions else "FLAT",
-                                "Analysis": _hb_detail_str,
+                                "Analysis": "\n".join(_hb_lines),
                             },
                         )
                 except Exception as _hb_err:
