@@ -19227,6 +19227,11 @@ class HMATSProductionRunner:
                                 "Analysis": "\n".join(_hb_lines),
                             },
                         )
+                        logger.info(
+                            f"[HEARTBEAT] {_hb_msg} | equity=${_hb_equity:,.2f} | "
+                            f"positions={len(_hb_positions)} | "
+                            + " || ".join(_hb_lines).replace("**", "")
+                        )
                 except Exception as _hb_err:
                     logger.debug(f"[HEARTBEAT] Discord push failed: {_hb_err}")
 
