@@ -99,6 +99,55 @@ def analyze_agents(outcome_files: List[Path]) -> Dict[str, Dict[str, Any]]:
     return result
 
 
+def analyze_equity(base: Path, days: int) -> Dict[str, Any]:
+    """Compute rolling Sharpe from equity_history.jsonl."""
+    eq_file = base / "data" / "equity_history.jsonl"
+    if not eq_file.exists():
+        return {"sharpe": None, "n_snapshots": 0, "start_equity": None, "end_equity": None, "return_pct": 0.0}
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    equities = []
+    for rec in load_jsonl(eq_file):
+        try:
+            ts = datetime.fromisoformat(rec["ts"].replace("Z", "+00:00"))
+            if ts >= cutoff:
+                equities.append((ts, float(rec["equity"])))
+        except Exception:
+            continue
+
+    if len(equities) < 3:
+        return {"sharpe": None, "n_snapshots": len(equities), "start_equity": None, "end_equity": None, "return_pct": 0.0}
+
+    equities.sort(key=lambda x: x[0])
+    vals = [e[1] for e in equities]
+
+    # Bar-returns (per 4H tick)
+    returns = []
+    for i in range(1, len(vals)):
+        if vals[i-1] > 0:
+            returns.append((vals[i] - vals[i-1]) / vals[i-1])
+    if not returns:
+        return {"sharpe": None, "n_snapshots": len(vals), "start_equity": vals[0], "end_equity": vals[-1], "return_pct": 0.0}
+
+    import statistics
+    mean_ret = statistics.mean(returns)
+    std_ret = statistics.stdev(returns) if len(returns) > 1 else 0.0
+    # Annualize: 4H bars → 6/day × 365 = 2190 per year
+    bars_per_year = 2190
+    sharpe = (mean_ret / std_ret) * (bars_per_year ** 0.5) if std_ret > 0 else None
+    total_return_pct = ((vals[-1] / vals[0]) - 1.0) * 100 if vals[0] > 0 else 0.0
+
+    return {
+        "sharpe": sharpe,
+        "n_snapshots": len(vals),
+        "start_equity": vals[0],
+        "end_equity": vals[-1],
+        "return_pct": total_return_pct,
+        "mean_bar_return_bps": mean_ret * 10000,
+        "std_bar_return_bps": std_ret * 10000,
+    }
+
+
 def analyze_vetos(ledger_files: List[Path]) -> Dict[str, Any]:
     """Precise VETO rate + gate breakdown from shadow ledger."""
     intent_count = 0
@@ -138,10 +187,26 @@ def analyze_vetos(ledger_files: List[Path]) -> Dict[str, Any]:
     }
 
 
-def format_report(agent_stats: Dict, veto_stats: Dict, days: int) -> tuple[str, Dict]:
+def format_report(agent_stats: Dict, veto_stats: Dict, eq_stats: Dict, days: int) -> tuple[str, Dict]:
     """Returns (discord_msg, details_dict)."""
     lines = []
     lines.append(f"**HMATS Weekly Agent Report** (last {days}d)")
+
+    # --- Sharpe / Equity section ---
+    if eq_stats.get("sharpe") is not None:
+        lines.append(
+            f"\n**Equity**  start=${eq_stats['start_equity']:,.2f}  "
+            f"end=${eq_stats['end_equity']:,.2f}  "
+            f"return={eq_stats['return_pct']:+.2f}%  "
+            f"Sharpe(annualized)={eq_stats['sharpe']:.2f}"
+        )
+    elif eq_stats.get("n_snapshots", 0) > 0:
+        lines.append(
+            f"\n**Equity** n={eq_stats['n_snapshots']} snapshots "
+            f"(insufficient for Sharpe, need ≥3)"
+        )
+    else:
+        lines.append("\n**Equity** no history yet (populating)")
 
     # --- VETO section ---
     vr = veto_stats["veto_rate_pct"]
@@ -240,8 +305,12 @@ def main():
 
     agent_stats = analyze_agents(outcome_files)
     veto_stats = analyze_vetos(ledger_files)
+    eq_stats = analyze_equity(base, args.days)
 
-    msg, details = format_report(agent_stats, veto_stats, args.days)
+    msg, details = format_report(agent_stats, veto_stats, eq_stats, args.days)
+    if eq_stats.get("sharpe") is not None:
+        details["Sharpe"] = f"{eq_stats['sharpe']:.2f}"
+        details["Return"] = f"{eq_stats['return_pct']:+.2f}%"
     print("\n" + "=" * 60)
     print(msg)
     print("\nDetails:", json.dumps(details, indent=2))

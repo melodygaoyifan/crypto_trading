@@ -6437,14 +6437,39 @@ class HMATSProductionRunner:
         _SHORT_BIAS_SKIP_REGIMES = {"QUIET_ACCUMULATION", "WEAK_CONSOLIDATION", "NEUTRAL_DRIFT"}
         if self.short_bias_agent and not p0_abort_tick and _regime_for_short_bias not in _SHORT_BIAS_SKIP_REGIMES:
             try:
+                # [WHALE-PROXY] Derive whale_flow_usd from OI change + funding direction.
+                # Positive OI + negative funding = shorts building (bearish pressure).
+                # Positive OI + positive funding = longs building (bullish pressure).
+                # Real CryptoQuant would provide direct inflow/outflow; this is a proxy
+                # from free data (Coinglass OI + funding + CryptoCompare large_tx).
+                _wp_oi = float(market_data.get('open_interest', 0.0) or 0.0)
+                _wp_oi_chg = float(market_data.get('oi_change_24h_pct', 0.0) or 0.0) / 100.0
+                _wp_funding = float(market_data.get('funding_rate', 0.0) or 0.0)
+                _wp_price = float(market_data.get('current_price', 0.0) or 0.0)
+                _wp_large_tx = float(market_data.get('large_transaction_count', 0.0) or 0.0)
+                _wp_avg_tx = float(market_data.get('average_transaction_value', 0.0) or 0.0)
+                # OI-delta notional: + = longs+shorts build, sign indicates which side pays
+                _wp_oi_delta_usd = _wp_oi * _wp_oi_chg
+                # Sign: negative funding (shorts pay) + rising OI = bearish whale flow
+                _wp_sign = -1.0 if _wp_funding < -0.0002 else (1.0 if _wp_funding > 0.0002 else 0.0)
+                _wp_whale_flow = _wp_oi_delta_usd * _wp_sign
+                # Large-tx proxy in USD (independent signal)
+                _wp_large_tx_usd = _wp_large_tx * _wp_avg_tx * _wp_price
                 short_bias_signal = self.short_bias_agent.analyze(
                     market_data=market_data,
                     derivatives_data={
-                        'funding_rate': market_data.get('funding_rate', 0.0),
-                        'open_interest': market_data.get('open_interest', 0.0),
+                        'funding_rate': _wp_funding,
+                        'open_interest': _wp_oi,
+                        'oi_change_24h': _wp_oi_chg,
                     },
                     sentiment_data={
                         'fear_greed_index': market_data.get('fear_greed_index', 0.5),
+                    },
+                    onchain_data={
+                        'whale_flow_usd': _wp_whale_flow,
+                        'exchange_inflow': max(0.0, -_wp_whale_flow),  # proxy: outflow→inflow
+                        'large_transaction_count': _wp_large_tx,
+                        'large_transaction_value_usd': _wp_large_tx_usd,
                     },
                 )
                 
@@ -6681,6 +6706,21 @@ class HMATSProductionRunner:
                         market_data.setdefault(_oga_pk, _oga_pv)
             except Exception as _oga_err:
                 logger.debug(f"[WIRE-OGA] SOL skipped: {_oga_err}")
+
+        # [WIRE-BINANCE] Fetch Binance top-of-book + taker flows for cross-exchange lag detection
+        if not p0_abort_tick:
+            try:
+                from data_mgmt.feeds.binance_ticker import fetch_binance_snapshot
+                _bin_snap = await fetch_binance_snapshot(asset, timeout=3.0)
+                if _bin_snap:
+                    for _bk, _bv in _bin_snap.items():
+                        market_data[_bk] = _bv
+                    logger.debug(
+                        f"[BINANCE_LOB] {asset} bid={_bin_snap['binance_bid']:.2f} "
+                        f"ask={_bin_snap['binance_ask']:.2f}"
+                    )
+            except Exception as _bin_err:
+                logger.debug(f"[BINANCE_LOB] {asset} skipped: {_bin_err}")
 
         # [WIRE-MICRO] Microstructure Agent -OB imbalance, lag, taker flow (ADVISE)
         if self._microstructure_agent is not None and not p0_abort_tick:
@@ -19234,6 +19274,23 @@ class HMATSProductionRunner:
                         )
                 except Exception as _hb_err:
                     logger.debug(f"[HEARTBEAT] Discord push failed: {_hb_err}")
+
+                # [EQUITY-LOG] Append equity snapshot for Sharpe computation
+                try:
+                    if _hb_equity > 0:
+                        from pathlib import Path as _PathEq
+                        _eq_path = _PathEq("data/equity_history.jsonl")
+                        _eq_path.parent.mkdir(parents=True, exist_ok=True)
+                        _eq_rec = {
+                            "ts": datetime.now(timezone.utc).isoformat(),
+                            "equity": round(_hb_equity, 4),
+                            "tick": self._live_round_count,
+                            "positions": len(_hb_positions),
+                        }
+                        with open(_eq_path, "a") as _eqf:
+                            _eqf.write(json.dumps(_eq_rec) + "\n")
+                except Exception as _eq_err:
+                    logger.debug(f"[EQUITY-LOG] {_eq_err}")
 
                 _wait_secs_live = self._seconds_until_next_4h_candle(offset_seconds=90)
                 logger.info(f"[LIVE] Next 4H candle in {_wait_secs_live:.0f}s")

@@ -41,6 +41,7 @@ logger = logging.getLogger(__name__)
 class LOBDataSource(Enum):
     """订单簿数据源"""
     KRAKEN = "kraken"
+    BINANCE = "binance"
     MOCK = "mock"
 
 
