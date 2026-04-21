@@ -6715,9 +6715,17 @@ class HMATSProductionRunner:
                 if _bin_snap:
                     for _bk, _bv in _bin_snap.items():
                         market_data[_bk] = _bv
-                    logger.debug(
-                        f"[BINANCE_LOB] {asset} bid={_bin_snap['binance_bid']:.2f} "
-                        f"ask={_bin_snap['binance_ask']:.2f}"
+                    # Also populate unprefixed taker volumes if not already set by Kraken feed
+                    # (micro agent reads taker_buy_volume / taker_sell_volume without prefix)
+                    if "taker_buy_volume" not in market_data:
+                        market_data["taker_buy_volume"] = _bin_snap["binance_taker_buy_volume"]
+                    if "taker_sell_volume" not in market_data:
+                        market_data["taker_sell_volume"] = _bin_snap["binance_taker_sell_volume"]
+                    logger.info(
+                        f"[BINANCE_LOB] {asset} bid=${_bin_snap['binance_bid']:.2f} "
+                        f"ask=${_bin_snap['binance_ask']:.2f} "
+                        f"taker_buy={_bin_snap['binance_taker_buy_volume']:.2f} "
+                        f"taker_sell={_bin_snap['binance_taker_sell_volume']:.2f}"
                     )
             except Exception as _bin_err:
                 logger.debug(f"[BINANCE_LOB] {asset} skipped: {_bin_err}")
