@@ -2283,8 +2283,8 @@ class HMATSv36Engine:
         # =================================================================
 
         # 1. Kraken Quant Agent: 12-strategy matrix (ADVISE — supplements Best-of-N)
-        _kq_dir = agent_signals.get("kraken_quant_direction", 0.0)
-        _kq_conf = agent_signals.get("kraken_quant_confidence", 0.0)
+        _kq_dir = agent_signals.get("kq_direction", 0.0)
+        _kq_conf = agent_signals.get("kq_confidence", 0.0)
         if abs(_kq_dir) > 0.01 and _kq_conf > 0.1:
             signals["kraken_quant"] = AgentSignal(
                 direction=_kq_dir,
