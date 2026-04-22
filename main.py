@@ -6107,7 +6107,117 @@ class HMATSProductionRunner:
                 agent_signals.setdefault('macro_caution_flags', [])
                 agent_signals.setdefault('macro_short_opportunity', 0.5)
                 agent_signals.setdefault('macro_vix_urgency', 0.0)
-        
+
+        # ================================================================
+        # [EXTERNAL-COMPOSITE 2026-04-22] Cross-source signal amplifiers
+        # Unifies LunarCrush + CryptoPanic + FRED NFCI + Coinglass + CC OnChain
+        # into 5 composite signals that directly influence decision.
+        # ================================================================
+        try:
+            _ec_asset = asset.replace("/USD", "").upper()
+
+            # --- [P0-1] LunarCrush bullish_pct → crowding alert ---
+            _ec_bullish_pct = 0.0
+            _ec_galaxy = 0.0
+            _ec_social_dom = 0.0
+            try:
+                if self.lunarcrush_feed:
+                    _lc = self.lunarcrush_feed.get_latest() if hasattr(self.lunarcrush_feed, 'get_latest') else None
+                    if _lc and hasattr(_lc, 'metrics') and isinstance(_lc.metrics, dict):
+                        _lc_m = _lc.metrics.get(_ec_asset)
+                        if _lc_m is not None:
+                            # LunarCrushMetrics is a dataclass — use getattr
+                            _ec_bullish_pct = float(getattr(_lc_m, 'bullish_pct', 0.0) or 0.0)
+                            _ec_galaxy = float(getattr(_lc_m, 'galaxy_score', 0.0) or 0.0)
+                            _ec_social_dom = float(getattr(_lc_m, 'social_dominance', 0.0) or 0.0)
+            except Exception:
+                pass
+            agent_signals['lc_bullish_pct'] = _ec_bullish_pct
+            agent_signals['lc_galaxy_score'] = _ec_galaxy
+            _ec_lc_crowding = bool(_ec_bullish_pct > 0.80)  # >80% bullish = contrarian
+            agent_signals['lc_crowding_alert'] = _ec_lc_crowding
+            if _ec_lc_crowding:
+                market_data['_lc_crowding_alert'] = True
+                logger.info(
+                    f"[EC-CROWDING] {_ec_asset}: bullish_pct={_ec_bullish_pct:.1%} "
+                    f"galaxy={_ec_galaxy:.0f} → REDUCE LONG SIZE"
+                )
+
+            # --- [P0-2] CryptoPanic news_velocity → catalyst window ---
+            _ec_news_vel = 0.0
+            _ec_narr_int = 0.0
+            try:
+                if self.cryptopanic_feed:
+                    _cp = self.cryptopanic_feed.get_latest()
+                    if _cp is not None:
+                        _ec_news_vel = float(getattr(_cp, 'news_velocity', {}).get(_ec_asset, 0.0) or 0.0)
+                        _ec_narr_int = float(getattr(_cp, 'narrative_intensity', {}).get(_ec_asset, 0.0) or 0.0)
+            except Exception:
+                pass
+            agent_signals['cp_news_velocity'] = _ec_news_vel
+            agent_signals['cp_narrative_intensity'] = _ec_narr_int
+            _ec_catalyst = bool(_ec_news_vel > 2.0)  # 2σ = catalyst
+            agent_signals['catalyst_window'] = _ec_catalyst
+            if _ec_catalyst:
+                logger.info(
+                    f"[EC-CATALYST] {_ec_asset}: news_vel={_ec_news_vel:.2f}σ "
+                    f"narr_int={_ec_narr_int:.2f} → momentum×1.5, mean_revert×0.5"
+                )
+
+            # --- [P0-3] FRED NFCI → adaptive leverage cap ---
+            _ec_nfci = 0.0
+            try:
+                if self.fred_feed:
+                    _fd = self.fred_feed.get_latest() if hasattr(self.fred_feed, 'get_latest') else None
+                    if _fd and hasattr(_fd, 'nfci') and _fd.nfci is not None:
+                        _ec_nfci = float(_fd.nfci)
+            except Exception:
+                pass
+            agent_signals['fred_nfci'] = _ec_nfci
+            _ec_nfci_stress = bool(_ec_nfci > 0.5)  # positive = tightening
+            if _ec_nfci_stress:
+                # Dampen leverage as NFCI rises: 0.5→4x, 1.0→2x, linear
+                _ec_lev_cap_adj = max(2.0, 4.0 - _ec_nfci * 2.0)
+                _ec_existing_cap = float(agent_signals.get('macro_leverage_cap', 1.0) or 1.0)
+                agent_signals['macro_leverage_cap'] = min(_ec_existing_cap, _ec_lev_cap_adj / 4.0)
+                agent_signals['nfci_stress'] = True
+                logger.warning(
+                    f"[EC-NFCI] {_ec_asset}: NFCI={_ec_nfci:.2f} (tight) → "
+                    f"leverage_cap capped at {_ec_lev_cap_adj:.1f}x"
+                )
+            else:
+                agent_signals['nfci_stress'] = False
+
+            # --- [P0-4] Panic Amplifier composite ---
+            _ec_vix = float(agent_signals.get('macro_vix_urgency', 0.0) or 0.0)
+            _ec_panic = float(market_data.get('_ssc_panic', market_data.get('panic_score', 0.0)) or 0.0)
+            _ec_liq_imb = abs(float(market_data.get('liquidation_imbalance', 0.0) or 0.0))
+            _ec_panic_amp = _ec_panic * 0.5 + _ec_vix * 0.3 + _ec_liq_imb * 0.2
+            agent_signals['ec_panic_amplifier'] = round(_ec_panic_amp, 3)
+            _ec_panic_extreme = _ec_panic_amp > 0.75
+            if _ec_panic_extreme:
+                market_data['_panic_extreme'] = True
+                logger.warning(
+                    f"[EC-PANIC] {_ec_asset}: panic={_ec_panic:.2f} vix={_ec_vix:.2f} "
+                    f"liq_imb={_ec_liq_imb:.2f} → amp={_ec_panic_amp:.2f} EXTREME"
+                )
+
+            # --- [P0-5] Whale cascade (CC OnChain large_tx × liq imbalance) ---
+            _ec_large_tx = float(market_data.get('large_transaction_count', 0.0) or 0.0)
+            _ec_liq_imb_signed = float(market_data.get('liquidation_imbalance', 0.0) or 0.0)
+            # rough zscore proxy: large_tx > 5× typical is notable
+            _ec_large_tx_zscore = min(5.0, _ec_large_tx / max(1.0, 5000.0)) if _ec_large_tx > 0 else 0.0
+            agent_signals['ec_large_tx_zscore'] = round(_ec_large_tx_zscore, 2)
+            _ec_whale_cascade = bool(_ec_large_tx_zscore > 2.0 and _ec_liq_imb_signed < -0.4)
+            agent_signals['ec_whale_cascade'] = _ec_whale_cascade
+            if _ec_whale_cascade:
+                logger.warning(
+                    f"[EC-WHALE] {_ec_asset}: large_tx_z={_ec_large_tx_zscore:.1f} "
+                    f"liq_imb={_ec_liq_imb_signed:.2f} → LIQUIDATION_CASCADE setup"
+                )
+        except Exception as _ec_err:
+            logger.debug(f"[EXTERNAL-COMPOSITE] {asset} skipped: {_ec_err}")
+
         # [GAP-P1a] Data quality ->signal confidence graduation
         # Uses existing DataHealthMonitor degradation level (already in market_data)
         _dh_level = market_data.get("data_health_level", "none")
@@ -7986,6 +8096,64 @@ class HMATSProductionRunner:
                     logger.info(f"[ALPHA_BOOST] {asset}: {_ab_proof}")
             except Exception as _ab_err:
                 logger.debug(f"[ALPHA_BOOST] {asset} skipped: {_ab_err}")
+
+        # ================================================================
+        # [EXTERNAL-COMPOSITE-APPLY 2026-04-22] Apply composite signals to
+        # position size + alpha gate multipliers. Stacks with AlphaBoost.
+        # ================================================================
+        _ec_size_mult = 1.0
+        _ec_gate_mult = 1.0
+        _ec_reasons = []
+
+        # P0-1: LunarCrush crowding → reduce LONG size 30%
+        if agent_signals.get('lc_crowding_alert', False):
+            _intent_dir_guess = float(agent_signals.get('quant_direction', 0.0) or 0.0)
+            if _intent_dir_guess > 0:  # only dampen longs
+                _ec_size_mult *= 0.70
+                _ec_reasons.append(f"LC_CROWDING(long×0.7)")
+
+        # P0-2: Catalyst window → strategy weight adjustment
+        _ec_strat = str(agent_signals.get('quant_strategy', agent_signals.get('primary_strategy', '')) or '').lower()
+        if agent_signals.get('catalyst_window', False):
+            if 'mean_revert' in _ec_strat:
+                _ec_size_mult *= 0.5
+                _ec_reasons.append("CATALYST(mean_revert×0.5)")
+            elif 'momentum' in _ec_strat or 'volume_breakout' in _ec_strat:
+                _ec_size_mult *= 1.5
+                _ec_reasons.append("CATALYST(momentum×1.5)")
+
+        # P0-3: NFCI stress — already capped macro_leverage_cap above (done in signal block)
+        # P0-4: Panic amplifier extreme → long×0.5, short×1.3
+        if agent_signals.get('ec_panic_amplifier', 0.0) > 0.75:
+            _intent_dir_guess = float(agent_signals.get('quant_direction', 0.0) or 0.0)
+            if _intent_dir_guess > 0:
+                _ec_size_mult *= 0.5
+                _ec_reasons.append("PANIC_EXTREME(long×0.5)")
+            elif _intent_dir_guess < 0:
+                _ec_size_mult *= 1.3
+                _ec_gate_mult *= 0.8  # lower threshold for shorts in panic
+                _ec_reasons.append("PANIC_EXTREME(short×1.3)")
+
+        # P0-5: Whale cascade → boost short confidence 20%
+        if agent_signals.get('ec_whale_cascade', False):
+            _intent_dir_guess = float(agent_signals.get('quant_direction', 0.0) or 0.0)
+            if _intent_dir_guess < 0:
+                _ec_size_mult *= 1.20
+                _ec_reasons.append("WHALE_CASCADE(short×1.2)")
+
+        # Apply to existing multipliers (stacking)
+        if _ec_size_mult != 1.0:
+            _cur_size = float(agent_signals.get("_regime_position_size_mult", 1.0) or 1.0)
+            agent_signals["_regime_position_size_mult"] = _cur_size * _ec_size_mult
+        if _ec_gate_mult != 1.0:
+            _cur_gate = float(agent_signals.get("_regime_alpha_gate_mult", 1.0) or 1.0)
+            agent_signals["_regime_alpha_gate_mult"] = _cur_gate * _ec_gate_mult
+        if _ec_reasons:
+            agent_signals['ec_applied_reasons'] = _ec_reasons
+            logger.info(
+                f"[EC-APPLY] {asset}: size×{_ec_size_mult:.2f} gate×{_ec_gate_mult:.2f} "
+                f"reasons={_ec_reasons}"
+            )
 
         # [P1.1] Sentiment participation gate
         if self._sentiment_gate:
