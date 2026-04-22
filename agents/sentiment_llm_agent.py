@@ -1329,6 +1329,32 @@ async def fetch_headlines_with_meta(
         meta["newest_headline_age_s"] = round(newest_age, 1) if newest_age is not None else None
         if not meta["headlines"] and cache_is_empty:
             meta["error"] = "empty_cache"
+
+        # [CC_NEWS_BLEND] Add CryptoCompare News as secondary source (redundancy +
+        # different editorial bias). Dedup by title, cap at 50 combined.
+        try:
+            from data_mgmt.feeds.cryptocompare_news_feed import get_cc_news_feed
+            cc_feed = get_cc_news_feed()
+            cc_items = await cc_feed.fetch_headlines(asset=asset, limit=25)
+            cc_added = 0
+            for ci in cc_items:
+                tl = ci.title.strip().lower()
+                if not tl or tl in seen_titles:
+                    continue
+                seen_titles.add(tl)
+                headlines.append(ci.title)
+                cc_added += 1
+                if ci.published_at and ci.published_at >= cutoff:
+                    age_s = (now - ci.published_at).total_seconds()
+                    if newest_age is None or age_s < newest_age:
+                        newest_age = age_s
+            meta["cc_news_added"] = cc_added
+            meta["headlines"] = headlines[:50]
+            if newest_age is not None:
+                meta["newest_headline_age_s"] = round(newest_age, 1)
+        except Exception as _cc_err:
+            meta["cc_news_error"] = str(_cc_err)[:100]
+
         return meta
     except Exception as e:
         meta["error"] = str(e)[:100]

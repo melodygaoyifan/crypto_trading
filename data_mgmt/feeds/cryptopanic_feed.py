@@ -130,7 +130,7 @@ class CryptoPanicFeed:
     Measures panic level and crowd fragmentation.
     """
 
-    BASE_URL = "https://cryptopanic.com/api/developer/v2"
+    BASE_URL = "https://cryptopanic.com/api/growth/v2"
 
     def __init__(
         self,
