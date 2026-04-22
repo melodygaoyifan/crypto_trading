@@ -19398,6 +19398,29 @@ class HMATSProductionRunner:
             except Exception as _hv_err:
                 logger.warning(f"[HEALTH] Startup validator failed to run: {_hv_err}")
 
+            # [FIX-LIVE-BG 2026-04-22] Start background async loops for LIVE mode.
+            # run_paper() starts these but run_live() was missing all 3 dispatches,
+            # causing SolanaOnChainAgent + LeadLagAlphaEngine + OnChainFeed to stay
+            # dormant → dead signals (data_quality=0) for months.
+            if self.onchain_feed and not getattr(self.onchain_feed, '_running', False):
+                try:
+                    asyncio.create_task(self.onchain_feed.start())
+                    logger.info("[W9-LIVE] OnChainFeed: async start() dispatched")
+                except Exception as _oc_err:
+                    logger.warning(f"[W9-LIVE] OnChainFeed start failed: {_oc_err}")
+            if self._lead_lag_engine and not getattr(self._lead_lag_engine, '_running', False):
+                try:
+                    asyncio.create_task(self._lead_lag_engine.start())
+                    logger.info("[P1b-LIVE] LeadLagAlphaEngine: async start() dispatched")
+                except Exception as _ll_err:
+                    logger.warning(f"[P1b-LIVE] LeadLagAlphaEngine start failed: {_ll_err}")
+            if getattr(self, '_sol_onchain_agent', None) is not None and not getattr(self._sol_onchain_agent, '_running', False):
+                try:
+                    asyncio.create_task(self._sol_onchain_agent.start())
+                    logger.info("[WIRE-SOL-OC-LIVE] SolanaOnChainAgent: async start() dispatched")
+                except Exception as _soc_err:
+                    logger.warning(f"[WIRE-SOL-OC-LIVE] start failed: {_soc_err}")
+
             while self._running:
                 # [GATE-6] Emergency flatten check -touch data/FORCE_FLAT to trigger
                 if await self._check_and_execute_force_flat():
