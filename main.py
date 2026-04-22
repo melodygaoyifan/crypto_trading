@@ -8155,6 +8155,66 @@ class HMATSProductionRunner:
                 f"reasons={_ec_reasons}"
             )
 
+        # ================================================================
+        # [EC-ORPHAN-WIRE 2026-04-22] Wire previously-orphaned signals to
+        # real decisions. Before this block, these keys were only written
+        # to diag/dashboard and never influenced intent.
+        # ================================================================
+        _ow_size_mult = 1.0
+        _ow_gate_mult = 1.0
+        _ow_reasons = []
+
+        # --- ETF Flow Streak (macro_btc/eth_flow_streak) ---
+        #  Positive streak = persistent inflow = bullish institutional bias
+        #  Threshold: ≥3 consecutive days
+        _ow_btc_streak = float(agent_signals.get('macro_btc_flow_streak', 0) or 0)
+        _ow_eth_streak = float(agent_signals.get('macro_eth_flow_streak', 0) or 0)
+        _ow_asset_streak = _ow_btc_streak if asset.upper().startswith("BTC") else (
+            _ow_eth_streak if asset.upper().startswith("ETH") else 0.0
+        )
+        if abs(_ow_asset_streak) >= 3:
+            _ow_intent_dir = float(agent_signals.get('quant_direction', 0.0) or 0.0)
+            if _ow_intent_dir * _ow_asset_streak > 0:
+                # Direction aligned with flow → confirmation boost
+                _ow_size_mult *= 1.15
+                _ow_reasons.append(f"FLOW_STREAK({asset}={_ow_asset_streak:+.0f}d,align,×1.15)")
+            elif _ow_intent_dir * _ow_asset_streak < 0:
+                # Fighting the flow → dampen
+                _ow_size_mult *= 0.80
+                _ow_reasons.append(f"FLOW_STREAK({asset}={_ow_asset_streak:+.0f}d,against,×0.80)")
+
+        # --- Options put/call ratio + max_pain distance ---
+        # PCR > 1.3 = bearish options crowd; PCR < 0.7 = bullish crowd
+        # max_pain_distance > 3% = price far from max pain → expiry pin risk
+        _ow_pcr = float(agent_signals.get('options_put_call_ratio', 1.0) or 1.0)
+        _ow_pain_dist = abs(float(agent_signals.get('options_max_pain_distance', 0.0) or 0.0))
+        _ow_intent_dir = float(agent_signals.get('quant_direction', 0.0) or 0.0)
+        if _ow_pcr > 1.3 and _ow_intent_dir < 0:
+            _ow_size_mult *= 1.10
+            _ow_reasons.append(f"OPTIONS_PCR({_ow_pcr:.2f},short×1.10)")
+        elif _ow_pcr < 0.7 and _ow_intent_dir > 0:
+            _ow_size_mult *= 1.10
+            _ow_reasons.append(f"OPTIONS_PCR({_ow_pcr:.2f},long×1.10)")
+        if _ow_pain_dist > 3.0:
+            # Far from max pain → expect mean-reversion to pain price
+            _ow_strat = str(agent_signals.get('quant_strategy', '') or '').lower()
+            if 'mean_revert' in _ow_strat:
+                _ow_size_mult *= 1.10
+                _ow_reasons.append(f"MAX_PAIN_DIST({_ow_pain_dist:.1f}%,mean_revert×1.10)")
+
+        # Apply to existing multiplier stack
+        if _ow_size_mult != 1.0:
+            _ow_cur = float(agent_signals.get("_regime_position_size_mult", 1.0) or 1.0)
+            agent_signals["_regime_position_size_mult"] = _ow_cur * _ow_size_mult
+        if _ow_gate_mult != 1.0:
+            _ow_cur_gate = float(agent_signals.get("_regime_alpha_gate_mult", 1.0) or 1.0)
+            agent_signals["_regime_alpha_gate_mult"] = _ow_cur_gate * _ow_gate_mult
+        if _ow_reasons:
+            agent_signals['ec_orphan_wire_reasons'] = _ow_reasons
+            logger.info(
+                f"[EC-ORPHAN] {asset}: size×{_ow_size_mult:.2f} reasons={_ow_reasons}"
+            )
+
         # [P1.1] Sentiment participation gate
         if self._sentiment_gate:
             try:
