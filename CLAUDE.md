@@ -19,7 +19,7 @@
 | **Sentiment L1 (F&G)** | ACTIVE | `DeterministicSentimentEngine`, writes `sentiment_direction`/`sentiment_confidence` |
 | **Sentiment LLM (Haiku)** | ACTIVE | `SentimentLLMAgent`, CryptoPanic + CC News blend |
 | **Quant (Best-of-N)** | ACTIVE (DECIDE) | 4 strategies: mean_revert, momentum, volume_breakout, vrp (+ hold) |
-| **kraken_quant (12 strat)** | ACTIVE (ADVISE) | Per-strategy stats in `data/kq_firing_stats.json` |
+| **kraken_quant (12 strat)** | ACTIVE (**DECIDE**) | Promoted 2026-04-22 from ADVISE+×0.5 dampen. 12 institutional strategies now full-weight. Per-strategy stats in `data/kq_firing_stats.json` |
 | **onchain_sol** | ACTIVE | Singleton agent, `.start()` dispatched in `run_live()` as well as `run_paper()` |
 | **Binance WS (micro)** | ACTIVE | taker flow + mark price for cross-exchange microstructure |
 | **Discord alerts** | ACTIVE | webhook in `.env` → `DiscordLogHandler` forwards ERROR/CRITICAL + 4H heartbeat |
@@ -95,7 +95,7 @@ the other 6 are architecturally non-directional (risk/macro/lead_lag/cvd/structu
 | 15 | squeeze | ADVISE | squeeze_risk (bridged from squeeze_score at main.py:7662) | fusion (veto above 0.7) |
 | 16 | cvd | ADVISE | cvd_divergence | fusion (one-sided) |
 | 17 | risk_appetite | ADVISE | macro_risk_appetite | fusion (derived direction) |
-| 18 | kraken_quant | ADVISE | kq_direction, kq_confidence | fusion + attribution |
+| 18 | kraken_quant | **DECIDE** (was ADVISE) | kq_direction, kq_confidence | fusion + attribution; **×0.5 dampen removed 2026-04-22** — full weight |
 | 19 | microstructure | ADVISE | micro_imbalance, micro_confidence, micro_direction | fusion + attribution |
 | 20 | model_alpha | ADVISE | model_alpha_direction, model_alpha_weight | fusion + attribution |
 | 21 | onchain_graph (SOL) | ADVISE | onchain_graph_direction, onchain_graph_confidence | fusion + attribution |

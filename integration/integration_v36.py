@@ -2282,13 +2282,18 @@ class HMATSv36Engine:
         # All wired as ADVISE (supplementary context, not direction authority).
         # =================================================================
 
-        # 1. Kraken Quant Agent: 12-strategy matrix (ADVISE — supplements Best-of-N)
+        # 1. Kraken Quant Agent: 12-strategy institutional matrix.
+        # [PROMOTE 2026-04-22] DECIDE authority (was ADVISE with ×0.5 dampen).
+        # 12 institutional stat-arb strategies (Hurst/Shannon/Kalman/ETF-spot/OB
+        # imbalance/OU/dark-pool/delta-neutral funding) are structurally richer
+        # than the 5 TA-based Best-of-N strategies feeding "quant". Full
+        # confidence weight so DECIDE vote carries its real conviction.
         _kq_dir = agent_signals.get("kq_direction", 0.0)
         _kq_conf = agent_signals.get("kq_confidence", 0.0)
         if abs(_kq_dir) > 0.01 and _kq_conf > 0.1:
             signals["kraken_quant"] = AgentSignal(
                 direction=_kq_dir,
-                confidence=_kq_conf * 0.5,  # dampen: supplementary to main quant
+                confidence=_kq_conf,  # full weight (was ×0.5)
             )
 
         # 2. Microstructure Agent: OB imbalance + taker flow (ADVISE — execution context)

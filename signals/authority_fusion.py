@@ -160,7 +160,14 @@ AUTHORITY_MATRIX_NORMAL = {
     "cvd": Authority.ADVISE,            # [FIX-L1-07] CVD divergence signal
     "risk_appetite": Authority.ADVISE,  # [FIX-L1-07] Macro risk appetite
     # [FIX-GHOST] Previously ghost agents now wired
-    "kraken_quant": Authority.ADVISE,   # 12-strategy quant matrix
+    # [PROMOTE 2026-04-22] kraken_quant ADVISE -> DECIDE. The 12-strategy institutional
+    # matrix (Hurst, Shannon entropy, Kalman/ETF-spot cointegration, OB imbalance,
+    # Ornstein-Uhlenbeck, dark-pool volume, delta-neutral funding, etc.) is
+    # structurally more sophisticated than the 5 TA-based Best-of-N strategies
+    # powering the legacy "quant" DECIDE slot. Prior ADVISE + fusion 0.5 dampening
+    # meant 14d of kraken_quant output never actually swayed direction. Both
+    # restrictions removed simultaneously today.
+    "kraken_quant": Authority.DECIDE,
     "microstructure": Authority.ADVISE, # OB imbalance + taker flow
     "model_alpha": Authority.ADVISE,    # LSTM/GRU ensemble
     "onchain_graph": Authority.ADVISE,  # Whale/cluster on-chain
@@ -194,7 +201,8 @@ AUTHORITY_MATRIX_OPPORTUNITY = {
     "cvd": Authority.ADVISE,            # [FIX-L1-07] CVD divergence signal
     "risk_appetite": Authority.ADVISE,  # [FIX-L1-07] Macro risk appetite
     # [FIX-GHOST] Previously ghost agents now wired
-    "kraken_quant": Authority.ADVISE,   # 12-strategy quant matrix
+    # [PROMOTE 2026-04-22] kraken_quant DECIDE in OPPORTUNITY too (consistency)
+    "kraken_quant": Authority.DECIDE,
     "microstructure": Authority.ADVISE, # OB imbalance + taker flow
     "model_alpha": Authority.ADVISE,    # LSTM/GRU ensemble
     "onchain_graph": Authority.ADVISE,  # Whale/cluster on-chain
