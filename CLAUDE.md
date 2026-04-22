@@ -99,7 +99,7 @@ the other 6 are architecturally non-directional (risk/macro/lead_lag/cvd/structu
 | 19 | microstructure | ADVISE | micro_imbalance, micro_confidence, micro_direction | fusion + attribution |
 | 20 | model_alpha | ADVISE | model_alpha_direction, model_alpha_weight | fusion + attribution |
 | 21 | onchain_graph (SOL) | ADVISE | onchain_graph_direction, onchain_graph_confidence | fusion + attribution |
-| 22 | options | ADVISE | options_short_confirmation, options_confidence | fusion |
+| 22 | options | ADVISE | options_short_confirmation, options_confidence | fusion; **×0.5 dampen removed 2026-04-22** — full weight |
 | 23 | vol_alpha | ADVISE | vol_alpha_direction (always 0; runs via intensity) | **fusion branch REMOVED** — affects execution only |
 | 24 | whale | ADVISE | whale_flow_direction, whale_confidence (bridged at main.py:7402) | fusion + attribution |
 | 25 | soldex (SOL) | ADVISE | soldex_arb_direction, soldex_confidence | fusion + attribution |
@@ -172,8 +172,14 @@ Authority matrix (`signals/authority_fusion.py`) + writer (`main.py` somewhere i
 
 ### P9. The quant DECIDE agent is NOT in agents/quant_agent.py
 - **Symptom:** Looking for the "quant agent" class, finding `agents/quant_agent.py`, assuming it's the DECIDE signal source. Trying to edit its behavior has zero runtime effect.
-- **Reality:** `agents/quant_agent.py` is orphan legacy code (only referenced by `core/runtime_spine.py`, which itself is not on the live call path). The actual quant DECIDE signal comes from the Best-of-N strategy selector in `data_mgmt/market_data_pipeline.py:1244`.
-- **Mitigation:** When you need to modify quant behavior, edit `data_mgmt/market_data_pipeline.py` (strategy fitness, confidence formula, alpha gate). `startup_agent_wiring_truth.py` will correctly flag quant_agent.py as DEAD.
+- **Reality:** `agents/quant_agent.py` is orphan legacy code (only referenced by `core/runtime_spine.py`, which itself is not on the live call path). The actual quant DECIDE signal comes from the Best-of-N strategy selector in `data_mgmt/market_data_pipeline.py:1244`. The 12-strategy institutional matrix `agents/kraken_quant_agent.py` (DIFFERENT FILE) is also DECIDE as of 2026-04-22.
+- **Mitigation:** When you need to modify quant behavior, edit `data_mgmt/market_data_pipeline.py` (Best-of-N strategies) OR `agents/kraken_quant_agent.py` (12 institutional strategies). `startup_agent_wiring_truth.py` will correctly flag `agents/quant_agent.py` as DEAD.
+
+### P10. TWO SEPARATE DRL systems — don't confuse them
+- **`drl/ensemble.py` + `models/retrained/{ASSET}/fold_3/.../best_model.zip`** — the **TQC direction DRL** we activated 2026-04-22. Predicts direction+confidence, feeds `agent_signals["drl_direction"]`/`drl_confidence`, authority ACTIVE, Sharpe +9 on val backtest. **This is the main DRL.**
+- **`agents/drl_agent.py` DRLAgent class** — a completely separate **tranche/exit optimization DRL** designed for local execution timing (T2→T3 escalation, exit pressure, runner hold/release). Per the file's own docstring: "DRL DOES NOT DECIDE direction". Requires a DIFFERENT trained model (env var `HMATS_DRL_MODEL_PATH`) which we don't have, so it runs with `mode=DISABLED` and returns neutral. **Not dead code — dormant Phase-2 scaffolding.**
+- **Symptom of confusion:** `startup_agent_wiring_truth.py` flags `DRLAgent` as INSTANTIATED_BUT_UNUSED. That's accurate for this class (no model → no methods called), but does NOT mean "DRL is off". The TQC direction DRL is separately wired via `drl/ensemble.py` and is ACTIVE.
+- **Mitigation:** Run `python scripts/startup_drl_truth.py` to see both systems at once. The `DRLAuthorityGate` (from `drl/promotion_gate.py`) is the authority for the TQC direction signal — that's the "is DRL ACTIVE" question.
 
 ---
 

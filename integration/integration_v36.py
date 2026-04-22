@@ -2324,12 +2324,15 @@ class HMATSv36Engine:
             )
 
         # 5. Options Sentiment: put/call ratio + max pain (ADVISE — derivatives context)
+        # [FIX 2026-04-22] Removed ×0.5 dampening. Deribit WS is stable and
+        # OptionsSentimentAgent has its own sparsity-handling internally.
+        # Artificial ×0.5 on top was double-penalizing.
         _opt_conf = agent_signals.get("options_confidence", 0.0)
         _opt_short = agent_signals.get("options_short_confirmation", 0.0)
         if _opt_conf > 0.1:
             signals["options"] = AgentSignal(
                 direction=-1.0 if _opt_short > 0.5 else (1.0 if _opt_short < -0.5 else 0.0),
-                confidence=_opt_conf * 0.5,  # dampen: options data can be sparse
+                confidence=_opt_conf,  # full ADVISE weight (was ×0.5)
             )
 
         # 6. Volatility Alpha: [REMOVED 2026-04-22] Dead fusion branch deleted.
