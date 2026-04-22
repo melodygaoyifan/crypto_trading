@@ -18603,6 +18603,16 @@ class HMATSProductionRunner:
             except Exception as _ll_err:
                 logger.warning(f"[P1b] LeadLagAlphaEngine start failed: {_ll_err}")
 
+        # [FIX-SOL-OC 2026-04-22] Start SolanaOnChainAgent background update loop.
+        # Previously initialized but never started → current_metrics stayed None →
+        # generate_signal_safe() always returned data_quality=0 neutral.
+        if getattr(self, '_sol_onchain_agent', None) is not None and not getattr(self._sol_onchain_agent, '_running', False):
+            try:
+                asyncio.create_task(self._sol_onchain_agent.start())
+                logger.info("[WIRE-SOL-OC] SolanaOnChainAgent: async start() dispatched")
+            except Exception as _soc_err:
+                logger.warning(f"[WIRE-SOL-OC] start failed: {_soc_err}")
+
         try:
             while self._running:
                 # [GATE-6] Emergency flatten check -touch data/FORCE_FLAT to trigger
