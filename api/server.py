@@ -100,11 +100,18 @@ app = FastAPI(
 
 @app.get("/health")
 def health():
-    """Liveness + freshness check."""
+    """Liveness + freshness check.
+
+    [FIX 2026-04-22] max_age_seconds raised 600 -> 15000. Engine writes
+    dashboard_state.json once per 4H tick (14400s cadence), so a 600s
+    threshold guaranteed "degraded" between ticks, spamming 503s. 15000s
+    = 4H + 10min buffer lets us detect truly-stuck ticks without false
+    alarms during normal inter-tick waits.
+    """
     state = _dashboard()
-    fresh = _is_fresh(state, max_age_seconds=600)
+    fresh = _is_fresh(state, max_age_seconds=15000)
     positions = _positions_file()
-    pos_fresh = _is_fresh(positions, max_age_seconds=600)
+    pos_fresh = _is_fresh(positions, max_age_seconds=15000)
 
     status = "healthy" if (fresh or pos_fresh) else "degraded"
     code = 200 if status == "healthy" else 503

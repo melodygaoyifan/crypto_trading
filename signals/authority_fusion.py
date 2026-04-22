@@ -105,6 +105,10 @@ class FusionResult:
     # Authority tracking
     decider_agent: str = ""
     authority_matrix_used: str = ""
+    # [FIX 2026-04-22] Primary agent for per-agent PnL attribution.
+    # Populated by consensus() when multiple DECIDE agents contribute.
+    # Empty string = single-decider or no decider.
+    primary_agent: str = ""
     
     # Vetoes/Caps applied
     vetoes_active: List[str] = field(default_factory=list)
@@ -555,6 +559,8 @@ class AuthorityFusionEngine:
             )
 
         result.decider_agent = decider_agent
+        # [FIX 2026-04-22] Propagate primary agent for PnL attribution
+        result.primary_agent = best_agent if 'best_agent' in locals() else decider_agent
         result.direction = decider_signal.direction
         
         # [FIX-L1] Base exposure from confidence, with configurable scale factor

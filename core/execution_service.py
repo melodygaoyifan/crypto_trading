@@ -1999,6 +1999,8 @@ async def execute_intent_v2(
                                 "funding_pnl": _funding_pnl,
                                 "trade_fee_usd": _exit_fee_usd,
                                 "margin_opening_fee_usd": 0.0,
+                                # [FIX 2026-04-22] PnL attribution — who "caused" this trade
+                                "primary_agent": getattr(ctx.intent, "primary_agent", "") or "",
                             },
                         )
                         _note_shadow_fill(bool(_shadow_fill_ok))
@@ -2489,6 +2491,8 @@ async def execute_intent_v2(
                             "funding_pnl": _partial_funding_pnl,
                             "trade_fee_usd": _partial_exit_fee_usd,
                             "margin_opening_fee_usd": 0.0,
+                            # [FIX 2026-04-22] PnL attribution
+                            "primary_agent": getattr(ctx.intent, "primary_agent", "") or "",
                         },
                     )
                     _note_shadow_fill(bool(_shadow_fill_ok))
@@ -2707,6 +2711,8 @@ async def execute_intent_v2(
                                     "funding_pnl": _flip_funding_pnl,
                                     "trade_fee_usd": _flip_fee,
                                     "margin_opening_fee_usd": 0.0,
+                                    # [FIX 2026-04-22] PnL attribution
+                                    "primary_agent": getattr(ctx.intent, "primary_agent", "") or "",
                                 },
                             )
                             _note_shadow_fill(bool(_shadow_fill_ok))
@@ -2906,6 +2912,8 @@ async def execute_intent_v2(
                             "trade_fee_usd": _entry_trade_fee_usd,
                             "margin_opening_fee_usd": _entry_margin_opening_fee_usd,
                             "requires_margin": bool(_order_fee_result.get("requires_margin", False)),
+                            # [FIX 2026-04-22] PnL attribution — entry-side stamp
+                            "primary_agent": getattr(ctx.intent, "primary_agent", "") or "",
                         },
                     )
                     _note_shadow_fill(bool(_shadow_fill_ok))

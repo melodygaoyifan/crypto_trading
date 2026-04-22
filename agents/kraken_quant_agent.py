@@ -233,7 +233,11 @@ class LiquidationCascadeHunter(BaseStrategy):
         self.price_velocity_threshold = -0.005  # -0.5% price drop
         self.liquidation_threshold_sigma = 2.5
         self.absorption_threshold = 1.0  # Taker ratio for exit
-        
+        # [PORT 2026-04-22] CVD z-score threshold ported from
+        # agents/quant_agent.py:LiquidationCascadeHunter. Previously missing —
+        # adds "aggressive selling" signal dimension to cascade detection.
+        self.cvd_zscore_threshold = -1.5
+
         # Buffers
         self.oi_buffer: Dict[str, deque] = {
             'BTC': deque(maxlen=100),
@@ -250,7 +254,13 @@ class LiquidationCascadeHunter(BaseStrategy):
             'ETH': deque(maxlen=50),
             'SOL': deque(maxlen=50),
         }
-        
+        # [PORT 2026-04-22] CVD buffer for z-score-based cascade detection
+        self.cvd_buffer: Dict[str, deque] = {
+            'BTC': deque(maxlen=100),
+            'ETH': deque(maxlen=100),
+            'SOL': deque(maxlen=100),
+        }
+
         # Cascade state
         self.cascade_active = False
         self.cascade_start_time = 0.0
@@ -287,11 +297,25 @@ class LiquidationCascadeHunter(BaseStrategy):
         """Check if buying absorption is occurring."""
         if len(self.taker_ratio_buffer[asset]) < 5:
             return False
-        
+
         recent = list(self.taker_ratio_buffer[asset])[-5:]
         avg_ratio = np.mean(recent)
-        
+
         return avg_ratio > self.absorption_threshold
+
+    def _calculate_cvd_zscore(self, asset: str) -> float:
+        """[PORT 2026-04-22] Rolling z-score of CVD (Cumulative Volume Delta).
+        Ported from agents/quant_agent.py:LiquidationCascadeHunter.
+        Strongly negative z-score (< -1.5) = aggressive selling, cascade fuel.
+        """
+        buf = self.cvd_buffer[asset]
+        if len(buf) < 10:
+            return 0.0
+        cvd_array = np.array(buf)
+        current = cvd_array[-1]
+        mean_cvd = np.mean(cvd_array)
+        std_cvd = np.std(cvd_array) + 1e-10
+        return (current - mean_cvd) / std_cvd
     
     def update(self, market_data: Dict) -> Optional[Signal]:
         """
@@ -316,29 +340,37 @@ class LiquidationCascadeHunter(BaseStrategy):
                 self.liquidation_buffer[asset].append(market_data['liquidations'][asset])
             if asset in market_data.get('taker_ratio', {}):
                 self.taker_ratio_buffer[asset].append(market_data['taker_ratio'][asset])
-        
+            # [PORT 2026-04-22] CVD buffer — optional, graceful fallback if key missing
+            if asset in market_data.get('cvd', {}):
+                self.cvd_buffer[asset].append(market_data['cvd'][asset])
+
         # Need enough data
         if len(self.price_buffer['BTC']) < 20:
             return None
-        
+
         # Check for cascade on BTC (leading indicator)
         btc_oi_velocity = self._calculate_oi_velocity('BTC')
         btc_liq_intensity, btc_liq_zscore = self._calculate_liquidation_intensity('BTC')
-        
+        btc_cvd_zscore = self._calculate_cvd_zscore('BTC')
+
         # Calculate BTC price velocity
         btc_prices = np.array(self.price_buffer['BTC'])
         btc_price_velocity = (btc_prices[-1] - btc_prices[-5]) / btc_prices[-5] if len(btc_prices) >= 5 else 0
-        
-        # Cascade detection
+
+        # [PORT 2026-04-22] Cascade detection — 4 conditions now (CVD z-score added).
+        # CVD check is tolerant: counts as "unknown" (neutral) when buffer is cold,
+        # counts as "confirming" when cvd_zscore < -1.5 (aggressive selling).
         cascade_conditions = {
             'oi_dropping': btc_oi_velocity < self.oi_velocity_threshold,
             'price_dropping': btc_price_velocity < self.price_velocity_threshold,
             'liquidation_spike': btc_liq_zscore > self.liquidation_threshold_sigma,
+            'cvd_aggressive_selling': btc_cvd_zscore < self.cvd_zscore_threshold,
         }
-        
+
         conditions_met = sum(cascade_conditions.values())
-        
-        # Entry logic
+        # [PORT 2026-04-22] Keep threshold at 3 (not 4) so cold-CVD buffers don't
+        # block signals. When CVD is present and confirming, hits 4/4 and
+        # signal gets a stronger confidence bump (below).
         if conditions_met >= 3 and not self.cascade_active:
             self.cascade_active = True
             self.cascade_start_time = timestamp
@@ -348,13 +380,17 @@ class LiquidationCascadeHunter(BaseStrategy):
             # Short SOL (highest beta)
             sol_price = market_data['prices'].get('SOL', 0)
             
-            # Calculate signal strength
+            # [PORT 2026-04-22] Signal strength — CVD component added (matches
+            # quant_agent weight scheme: 0.35 liq + 0.25 vel + 0.25 cvd + 0.15 oi).
+            # Default weights preserved; CVD replaces old OI weight when active.
+            cvd_component = min(1.0, abs(btc_cvd_zscore) / 3.0) if btc_cvd_zscore < 0 else 0.0
             strength = (
-                0.35 * min(1.0, abs(btc_oi_velocity) / 0.05) +
-                0.35 * min(1.0, abs(btc_price_velocity) / 0.02) +
-                0.30 * min(1.0, btc_liq_zscore / 5)
+                0.30 * min(1.0, abs(btc_oi_velocity) / 0.05) +
+                0.30 * min(1.0, abs(btc_price_velocity) / 0.02) +
+                0.25 * min(1.0, btc_liq_zscore / 5) +
+                0.15 * cvd_component
             )
-            
+
             return Signal(
                 timestamp=timestamp,
                 strategy_id=self.strategy_id,
@@ -371,6 +407,7 @@ class LiquidationCascadeHunter(BaseStrategy):
                     'btc_oi_velocity': btc_oi_velocity,
                     'btc_price_velocity': btc_price_velocity,
                     'btc_liq_zscore': btc_liq_zscore,
+                    'btc_cvd_zscore': btc_cvd_zscore,  # [PORT 2026-04-22]
                     'conditions': cascade_conditions,
                 }
             )
@@ -1081,14 +1118,20 @@ class FundingDivergenceStrategy(BaseStrategy):
     """
     Strategy 5: Funding Rate Divergence
     ====================================
-    
+
     Uses Kraken Futures Funding Rate Index (KFRI).
-    
-    Logic:
-        - Rising predicted funding + flat price = aggressive longs entering
-        - When price breaks 4H high -> momentum squeeze
+
+    Logic (two-sided detection after [PORT 2026-04-22]):
+      BULLISH (original): rising funding + flat price + 4H high breakout
+                          → aggressive longs entering → momentum squeeze
+      BEARISH (ported from quant_agent.py:FundingDivergence):
+          price_momentum > -1.0 (flat/rising)
+          AND funding_momentum < -1.5σ (funding collapsing)
+          AND oi_growth > 5% (smart money building shorts)
+          AND predicted_funding < funding_rate (forward curve bearish)
+          → smart-money short build-up → spot eventually dumps
     """
-    
+
     def __init__(self):
         super().__init__(
             strategy_id=5,
@@ -1096,56 +1139,127 @@ class FundingDivergenceStrategy(BaseStrategy):
             regime=Regime.BULL,
             lookback=200
         )
-        
+
         self.funding_buffer: Dict[str, deque] = {
             'BTC': deque(maxlen=100),
             'ETH': deque(maxlen=100),
             'SOL': deque(maxlen=100),
         }
         self.high_4h: Dict[str, float] = {'BTC': 0, 'ETH': 0, 'SOL': 0}
-        
+        # [PORT 2026-04-22] Buffers for bearish-divergence detection
+        self.oi_buffer_fd: Dict[str, deque] = {
+            'BTC': deque(maxlen=48),
+            'ETH': deque(maxlen=48),
+            'SOL': deque(maxlen=48),
+        }
+        # Bearish divergence thresholds (from quant_agent.py)
+        self.bearish_funding_mom_thresh = -1.5       # σ
+        self.bearish_oi_growth_thresh = 0.05         # +5% OI
+        self.bearish_price_mom_min = -1.0            # σ (price NOT crashing yet)
+
     def update(self, market_data: Dict) -> Optional[Signal]:
-        """Detect funding divergence for momentum entries."""
+        """Detect funding divergence for momentum entries (bullish OR bearish)."""
         timestamp = market_data.get('timestamp', time.time())
-        
+
         # Update buffers
         for asset in ['BTC', 'ETH', 'SOL']:
             if asset in market_data.get('prices', {}):
                 self.price_buffer[asset].append(market_data['prices'][asset])
             if asset in market_data.get('funding_rate', {}):
                 self.funding_buffer[asset].append(market_data['funding_rate'][asset])
-        
+            # [PORT 2026-04-22] OI for bearish-divergence branch
+            if asset in market_data.get('open_interest', {}):
+                self.oi_buffer_fd[asset].append(market_data['open_interest'][asset])
+
         # Track 4H high (simplified: rolling 240-minute high)
         for asset in ['BTC', 'ETH', 'SOL']:
             if len(self.price_buffer[asset]) >= 240:
                 self.high_4h[asset] = max(list(self.price_buffer[asset])[-240:])
-        
+
         if len(self.funding_buffer['SOL']) < 20:
             return None
-        
-        # Calculate funding trend
+
+        # Calculate funding trend (used by both branches)
         sol_funding = np.array(self.funding_buffer['SOL'])
         funding_trend = (sol_funding[-1] - sol_funding[-10]) if len(sol_funding) >= 10 else 0
-        
+
         # Price trend
         sol_prices = np.array(self.price_buffer['SOL'])
         price_trend = (sol_prices[-1] - sol_prices[-10]) / sol_prices[-10] if len(sol_prices) >= 10 else 0
-        
-        # Bullish divergence: Funding rising, price flat
+
         current_price = sol_prices[-1]
+
+        # =====================================================================
+        # [PORT 2026-04-22] BEARISH divergence branch — checked FIRST because
+        # smart-money short-build signal is higher conviction than breakout chase.
+        # =====================================================================
+        predicted_funding = market_data.get('predicted_funding', {}).get('SOL')
+        sol_oi = list(self.oi_buffer_fd['SOL'])
+        if (
+            predicted_funding is not None
+            and len(sol_oi) >= 24
+            and not self.state.in_position
+        ):
+            # Funding momentum in σ units (vs full-buffer std)
+            funding_std = np.std(sol_funding) + 1e-10
+            funding_mom_sigma = (sol_funding[-1] - sol_funding[0]) / funding_std
+
+            # Price momentum in σ units (vs return std × √N)
+            price_returns = np.diff(np.log(sol_prices))
+            price_vol = np.std(price_returns) + 1e-10
+            price_mom_sigma = (
+                (sol_prices[-1] - sol_prices[0])
+                / (price_vol * np.sqrt(len(sol_prices)))
+            )
+
+            # OI growth
+            oi_growth = (sol_oi[-1] - sol_oi[0]) / (sol_oi[0] + 1e-10)
+
+            bearish_conditions = [
+                price_mom_sigma > self.bearish_price_mom_min,
+                funding_mom_sigma < self.bearish_funding_mom_thresh,
+                oi_growth > self.bearish_oi_growth_thresh,
+                predicted_funding < sol_funding[-1],   # forward curve lower
+            ]
+            if sum(bearish_conditions) >= 4:
+                self.state.in_position = True
+                self.state.position_side = 'short'
+                return Signal(
+                    timestamp=timestamp,
+                    strategy_id=self.strategy_id,
+                    strategy_name=self.name,
+                    regime=self.regime,
+                    asset="SOL",
+                    signal_type=SignalType.AGGRESSIVE_SHORT,
+                    size_pct=0.8,
+                    confidence=0.78,
+                    entry_price=current_price,
+                    stop_loss=current_price * 1.03,
+                    take_profit=current_price * 0.94,
+                    metadata={
+                        'branch': 'bearish_divergence_ported',
+                        'funding_mom_sigma': funding_mom_sigma,
+                        'price_mom_sigma': price_mom_sigma,
+                        'oi_growth': oi_growth,
+                        'predicted_funding': predicted_funding,
+                        'current_funding': sol_funding[-1],
+                    }
+                )
+
+        # =====================================================================
+        # BULLISH divergence branch (original kraken_quant logic)
+        # =====================================================================
         bullish_divergence = (
-            funding_trend > 0.00002 and  # [FIX-AG2] Was 0.0001 (never fired). Kraken 8h funding 10-period delta typical: 0.00001-0.00005
-            abs(price_trend) < 0.02 and  # Price relatively flat
-            current_price > self.high_4h.get('SOL', 0) * 0.99  # Near 4H high
+            funding_trend > 0.00002 and  # [FIX-AG2] Kraken 8h typical delta
+            abs(price_trend) < 0.02 and
+            current_price > self.high_4h.get('SOL', 0) * 0.99
         )
-        
-        # Breakout confirmation
         breakout = current_price > self.high_4h.get('SOL', 0)
-        
+
         if bullish_divergence and breakout and not self.state.in_position:
             self.state.in_position = True
             self.state.position_side = 'long'
-            
+
             return Signal(
                 timestamp=timestamp,
                 strategy_id=self.strategy_id,
@@ -1159,12 +1273,13 @@ class FundingDivergenceStrategy(BaseStrategy):
                 stop_loss=current_price * 0.97,
                 take_profit=current_price * 1.06,
                 metadata={
+                    'branch': 'bullish_divergence_original',
                     'funding_trend': funding_trend,
                     'price_trend': price_trend,
                     'high_4h': self.high_4h.get('SOL', 0),
                 }
             )
-        
+
         return None
 
 

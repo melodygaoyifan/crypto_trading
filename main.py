@@ -5854,18 +5854,30 @@ class HMATSProductionRunner:
                 # Prefer explicit daily portfolio vol; fall back to 4H vol proxy.
                 # Previous code used market_data["volatility"] default=0.02, but this
                 # key is often absent and caused persistent fake 100% utilization.
-                _port_vol = market_data.get("portfolio_vol_daily")
-                if _port_vol is None:
-                    _port_vol = market_data.get("volatility_daily")
-                if _port_vol is None:
-                    _vol_4h = market_data.get("volatility_4h")
-                    if isinstance(_vol_4h, (int, float)) and _vol_4h > 0:
-                        _port_vol = float(_vol_4h) * (6.0 ** 0.5)  # 4H -> daily
+                # [FIX 2026-04-22] When NO positions held, portfolio vol must be 0
+                # regardless of market vol. Previously we fell back to
+                # volatility_4h × √6 which is MARKET vol, not portfolio vol —
+                # producing fake 127% utilization with zero exposure and
+                # spurious "CRITICAL" alerts.
+                _any_position = any(
+                    abs(float((p or {}).get("exposure", 0.0) or 0.0)) > 1e-9
+                    for p in getattr(self, "_paper_positions", {}).values()
+                )
+                if not _any_position:
+                    _port_vol = 0.0
+                else:
+                    _port_vol = market_data.get("portfolio_vol_daily")
+                    if _port_vol is None:
+                        _port_vol = market_data.get("volatility_daily")
+                    if _port_vol is None:
+                        _vol_4h = market_data.get("volatility_4h")
+                        if isinstance(_vol_4h, (int, float)) and _vol_4h > 0:
+                            _port_vol = float(_vol_4h) * (6.0 ** 0.5)  # 4H -> daily
 
                 _is_bear = market_data.get("regime_state", "UNKNOWN") in (
                     "CRISIS", "STRONG_BEAR", "PANIC_SELLOFF",
                 )
-                if isinstance(_port_vol, (int, float)) and _port_vol > 0:
+                if isinstance(_port_vol, (int, float)) and _port_vol >= 0:
                     _port_vol = max(0.0, min(float(_port_vol), 5.0))
                     self.vol_alpha_risk.update_portfolio_vol(_port_vol, is_bear_market=_is_bear)
                 else:

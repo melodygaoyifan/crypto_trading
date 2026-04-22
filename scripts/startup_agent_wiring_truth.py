@@ -232,19 +232,36 @@ def check_class_wiring(main_src: str, cls_name: str, file_path: str) -> Dict[str
             l2 = True
             break
 
-    # L3: attribute set (via any alias)
-    l3_matches: List[str] = []
+    # L3: attribute OR local-variable assignment
+    # [FIX 2026-04-22] Added local-var match. Many utilities are bound to a
+    # local name inside a method (e.g. `_attr_tracker = get_attribution_tracker()`
+    # at main.py:8298) — the prior `self.xxx = ...`-only check produced false
+    # SOMETHING_CREATED verdicts.
+    l3_self_matches: List[str] = []
+    l3_local_matches: List[str] = []
     for n in names:
-        l3_matches += re.findall(rf'self\.(\w+)\s*=\s*{re.escape(n)}\s*\(', main_src)
-    l3 = bool(l3_matches)
+        l3_self_matches += re.findall(rf'self\.(\w+)\s*=\s*{re.escape(n)}\s*\(', main_src)
+        # Local var pattern: `_var = Name(...)` at indented line start.
+        # Skip if assignment target starts with self. or contains a dot.
+        for m in re.finditer(rf'(?m)^\s+(\w+)\s*=\s*{re.escape(n)}\s*\(', main_src):
+            var = m.group(1)
+            if var != 'self':
+                l3_local_matches.append(var)
+    l3 = bool(l3_self_matches) or bool(l3_local_matches)
 
-    # L4: method called on instance attribute
+    # L4: method called on instance (self.attr OR local var)
     called_methods: Set[str] = set()
-    for attr_name in set(l3_matches):
-        call_pattern = rf'self\.{re.escape(attr_name)}\.(\w+)\s*\('
-        for m in re.finditer(call_pattern, main_src):
+    for attr_name in set(l3_self_matches):
+        for m in re.finditer(rf'self\.{re.escape(attr_name)}\.(\w+)\s*\(', main_src):
+            called_methods.add(m.group(1))
+    for var_name in set(l3_local_matches):
+        # Local-var call: `var.method(...)` — not preceded by `.` to avoid false
+        # matches on `something.var.method()`
+        for m in re.finditer(rf'(?<![.\w]){re.escape(var_name)}\.(\w+)\s*\(', main_src):
             called_methods.add(m.group(1))
     l4 = bool(called_methods)
+    # Alias: keep the combined list for backward-compat
+    l3_matches = l3_self_matches + l3_local_matches
 
     if l1 and l2 and l3 and l4:
         verdict = 'ACTIVE'

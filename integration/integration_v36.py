@@ -190,6 +190,12 @@ class TradeIntentV36:
     
     # Quant info
     quant_strategy_id: str = ""
+
+    # [FIX 2026-04-22] Primary decision agent for per-agent PnL attribution.
+    # Copied from FusionResult.primary_agent. Flows into shadow_ledger FILL
+    # records via extra={"primary_agent": ...} so agent_audit_16.py DIM 4
+    # can compute real $-PnL per agent.
+    primary_agent: str = ""
     quant_confidence: float = 0.0
     
     # v3.6.1: Constitution guarantees tracking
@@ -1343,6 +1349,8 @@ class HMATSv36Engine:
         intent.allow_escalation = fusion_result.allow_escalation
         intent.max_tranche_tier = getattr(fusion_result, 'max_tranche_tier', 4)
         intent.urgency = fusion_result.urgency
+        # [FIX 2026-04-22] Propagate primary_agent for PnL attribution
+        intent.primary_agent = getattr(fusion_result, 'primary_agent', '') or getattr(fusion_result, 'decider_agent', '')
         
         # Apply v3.5 failure memory aggressiveness
         intent.target_exposure *= failure_modifiers.aggressiveness_modifier
