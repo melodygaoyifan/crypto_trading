@@ -27,11 +27,26 @@
 
 **Verification commands** (run these when in doubt):
 ```bash
-# Container state + TQC load + agent activity
+# ---------- TRUTH-LEVEL (static, no runtime needed) ----------
+# Is DRL really ACTIVE? Check all config declarations + instantiated classes:
+python -X utf8 scripts/startup_drl_truth.py
+# Expected: DRLAuthorityGate.get_authority() = ACTIVE; is_shadow_mode() = False
+# If config says ACTIVE but runtime says SHADOW → volume mount bug (P1)
+
+# Which agent/ classes are actually wired into main.py?
+python -X utf8 scripts/startup_agent_wiring_truth.py
+# Expected: ~120/142 ACTIVE. Dead classes = legacy code in agents/quant_agent.py
+# (real quant decision is in data_mgmt/market_data_pipeline.py Best-of-N).
+
+# ---------- RUNTIME-LEVEL (needs live container) ----------
+# Container state + TQC load + startup health
 ssh hmats "docker ps && docker logs hmats-engine --since 10m 2>&1 | grep -iE 'TQC loaded|DRL.*ACTIVE|HEALTH_S[0-9]'"
 
 # Per-tick per-agent signal dump (last tick)
 ssh hmats "ls /var/lib/docker/volumes/hmats-logs/_data/attribution/signals_*.jsonl | tail -1 | xargs tail -1 | python3 -m json.tool | head -80"
+
+# [AGENT-TRACE] one-line per-tick per-agent snapshot (added 2026-04-22)
+ssh hmats "docker logs hmats-engine --since 8h 2>&1 | grep AGENT-TRACE | tail -10"
 
 # DRL promotion state
 ssh hmats "docker exec hmats-engine cat /opt/hmats/data/drl_promotion_state.json"
@@ -40,11 +55,18 @@ ssh hmats "docker exec hmats-engine cat /opt/hmats/data/drl_promotion_state.json
 ssh hmats "docker logs hmats-engine --since 4h 2>&1 | grep HEARTBEAT"
 
 # kraken_quant 12-strategy firing breakdown (after 1+ tick)
-docker exec hmats-engine python -X utf8 scripts/kq_strategy_diagnostic.py
+ssh hmats "docker exec hmats-engine python -X utf8 scripts/kq_strategy_diagnostic.py"
 
-# 16-agent audit
-docker exec hmats-engine python -X utf8 scripts/agent_audit_16.py
+# 16-agent attribution audit
+ssh hmats "docker exec hmats-engine python -X utf8 scripts/agent_audit_16.py"
 ```
+
+**Where the "quant DECIDE" signal actually lives** (important — commonly confused):
+`data_mgmt/market_data_pipeline.py:1244` Best-of-N strategy selector produces
+`quant_direction`/`quant_confidence`. The file `agents/quant_agent.py` is **orphan
+legacy code** (only referenced from `core/runtime_spine.py`, which itself is not on
+the live call path). Don't go looking for the quant agent class expecting it to be
+the decision maker — it isn't.
 
 ---
 
@@ -147,6 +169,11 @@ Adding a new agent requires **3 files**: agent_signals write site + `_attr_colle
 
 ### P8. Three places to update when adding/removing a fusion agent
 Authority matrix (`signals/authority_fusion.py`) + writer (`main.py` somewhere in tick loop) + `_build_fusion_signals` consumer (`integration/integration_v36.py`). Missing any one → agent is a ghost.
+
+### P9. The quant DECIDE agent is NOT in agents/quant_agent.py
+- **Symptom:** Looking for the "quant agent" class, finding `agents/quant_agent.py`, assuming it's the DECIDE signal source. Trying to edit its behavior has zero runtime effect.
+- **Reality:** `agents/quant_agent.py` is orphan legacy code (only referenced by `core/runtime_spine.py`, which itself is not on the live call path). The actual quant DECIDE signal comes from the Best-of-N strategy selector in `data_mgmt/market_data_pipeline.py:1244`.
+- **Mitigation:** When you need to modify quant behavior, edit `data_mgmt/market_data_pipeline.py` (strategy fitness, confidence formula, alpha gate). `startup_agent_wiring_truth.py` will correctly flag quant_agent.py as DEAD.
 
 ---
 
