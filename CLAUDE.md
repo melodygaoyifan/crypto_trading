@@ -35,8 +35,13 @@ python -X utf8 scripts/startup_drl_truth.py
 
 # Which agent/ classes are actually wired into main.py?
 python -X utf8 scripts/startup_agent_wiring_truth.py
-# Expected: ~120/142 ACTIVE. Dead classes = legacy code in agents/quant_agent.py
-# (real quant decision is in data_mgmt/market_data_pipeline.py Best-of-N).
+# Expected (2026-04-22): 122/130 ACTIVE (93.8%).
+#   - 7 INSTANTIATED_BUT_UNUSED = all in agents/drl_agent.py (P10 tranche/exit
+#     scaffolding, mode=DISABLED — not a bug).
+#   - 1 DEAD = AgentSignalEnvelope dataclass (constructed via wrap_agent_signal
+#     factory, not directly — cosmetic script false-positive).
+# Script detects BOTH `self.xxx = Foo(...)` AND local-var `_var = Foo(...)`
+# patterns (local-var added 2026-04-22 for AttributionTracker detection).
 
 # ---------- RUNTIME-LEVEL (needs live container) ----------
 # Container state + TQC load + startup health
@@ -177,6 +182,11 @@ Authority matrix (`signals/authority_fusion.py`) + writer (`main.py` somewhere i
   - TA-based Best-of-N (mean_revert/momentum/volume_breakout/vrp/hold) → `data_mgmt/market_data_pipeline.py:1244` → `quant_direction`
   - 12 institutional stat-arb strategies → `agents/kraken_quant_agent.py` → `kq_direction`
   - Both are DECIDE authority in fusion, alongside DRL (TQC) when ACTIVE.
+
+### P11. [FIXED 2026-04-22] Local-var instantiation hidden from naive wiring scans
+- **Historical symptom:** `AttributionTracker` and `AgentScorecard` appeared as `SOMETHING_CREATED` in `startup_agent_wiring_truth.py`, suggesting "imported, instantiated, but methods never called". Led to mistakenly concluding 2 agents were half-wired.
+- **Reality:** `_attr_tracker = get_attribution_tracker()` (local var at main.py:8298) + `.record_signals()` / `.resolve_outcome()` / `.get_decay_alerts()` calls via that local var. Not a `self.xxx` attribute, so the old regex missed both the L3 assignment and all L4 method calls.
+- **Resolution:** Script updated (commit 540167d) to match **both** `self.xxx = Foo(...)` AND indented `^\s+_var = Foo(...)` local-var patterns, plus method calls on locals. Wiring score 84.5% → 93.8% ACTIVE as a result. If another SOMETHING_CREATED verdict appears, check whether the class is consumed via a local var in a long function before assuming it's really unused.
 
 ### P10. TWO SEPARATE DRL systems — don't confuse them
 - **`drl/ensemble.py` + `models/retrained/{ASSET}/fold_3/.../best_model.zip`** — the **TQC direction DRL** we activated 2026-04-22. Predicts direction+confidence, feeds `agent_signals["drl_direction"]`/`drl_confidence`, authority ACTIVE, Sharpe +9 on val backtest. **This is the main DRL.**
