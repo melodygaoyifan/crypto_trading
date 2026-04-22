@@ -22,7 +22,8 @@ import pandas as pd
 logger = logging.getLogger("HMATS.ObsBuilder")
 
 # Best folds per asset (must match drl/ensemble.py BEST_FOLDS)
-BEST_FOLDS = {"BTC": "fold_3", "ETH": "fold_1", "SOL": "fold_3"}
+# [FIX 2026-04-22] ETH fold_1 -> fold_3 (stale metadata). See ensemble.py.
+BEST_FOLDS = {"BTC": "fold_3", "ETH": "fold_3", "SOL": "fold_3"}
 
 
 def _fix_drl_shadowing():

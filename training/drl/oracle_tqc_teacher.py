@@ -42,11 +42,14 @@ N_STACK = 8
 SINGLE_OBS_DIM = 126   # 122 features + 4 env state
 STACKED_OBS_DIM = N_STACK * SINGLE_OBS_DIM  # 1008
 
-# Best fold per asset (from models/retrained/{ASSET}/results.json best_fold field)
+# Best fold per asset. [FIX 2026-04-22] ETH fold_1 -> fold_3:
+# results.json reported fold_1 reward=1400 but train_rows=0/train_time=0 — stale
+# checkpoint with corrupted metadata. fold_3 (reward=1029, train_rows=10028) is
+# the real-trained best. DT val acc jumped 35.1% -> 58.8% after switching.
 BEST_FOLDS = {
-    "BTC": "fold_3",   # mean_reward=891
-    "ETH": "fold_1",   # mean_reward=1400
-    "SOL": "fold_3",   # mean_reward=744
+    "BTC": "fold_3",   # mean_reward=891  (v6 val acc 53.2%)
+    "ETH": "fold_3",   # mean_reward=1029 (v6 val acc 58.8%)
+    "SOL": "fold_3",   # mean_reward=744  (v6 val acc 65.2%)
 }
 
 

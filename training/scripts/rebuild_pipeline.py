@@ -292,6 +292,17 @@ def merge_external_data(df_4h: pd.DataFrame, asset: str) -> pd.DataFrame:
 
     ext_cols = [c for c in EXTERNAL_FEATURE_COLS if c != "has_external_data"]
 
+    # [FIX 2026-04-22] When Coinglass + Futures files are missing, daily is empty
+    # with object-dtype timestamp column; merge_asof rejects the type mismatch
+    # against the UTC datetime64 left side. Short-circuit and backfill zeros.
+    if len(daily) == 0:
+        for col in ext_cols:
+            df[col] = 0.0
+        df["has_external_data"] = 0.0
+        logger.info(f"    External data: 0/{len(df)} bars — no Coinglass/Futures files "
+                    f"({asset}), filled with zeros")
+        return df
+
     # merge_asof: for each 4H bar, use most recent daily data <= that timestamp
     df = pd.merge_asof(df, daily[["timestamp"] + ext_cols],
                        on="timestamp", direction="backward")

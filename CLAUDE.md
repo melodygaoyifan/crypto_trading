@@ -25,7 +25,9 @@ HMATS v6.8.0 — Hierarchical Multi-Agent Trading System for SOL, ETH, BTC on Kr
 ### DRL Authority Policy
 - **Mode: FULL** — DRL participates in both entry and exit decisions via Authority Fusion when in ACTIVE mode
 - **Auto-demotion:** Consecutive loss threshold (5) or drawdown trigger (15%) → demotes to EXIT_ONLY for 3 days
-- **Current status:** DISABLED (training in progress). Will activate after training completes + 30 shadow trades
+- **Current status (2026-04-22):** **ACTIVE.** TQC val-period backtest showed Sharpe +9.22 (BTC), +7.32 (ETH), +10.29 (SOL) — validated that deterministic TQC policy generalizes to truly-unseen post-2026-02-27 window. Promoted via one-shot manual `promote("ACTIVE")` after verifying `models_ready=3` in the production container.
+- **DO NOT downgrade to SHADOW again** unless auto-demotion fires. Running without DRL ACTIVE throws away the Sharpe-+9 alpha source we already trained.
+- **Docker-volume gotcha:** TQC models are in external volume `hmats-models`. Compose-managed `app_hmats-models` is incorrect and was silently empty — that's why DRL kept booting at SHADOW (`models_ready=0`). `docker-compose.hetzner.yml` now declares volumes as `external: true` to prevent the regression.
 - **Config:**
   ```
   DRL_AUTO_DEMOTE = {

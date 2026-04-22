@@ -1732,6 +1732,21 @@ def main():
     parser.add_argument('--save-dir', type=str, default='./models', help='保存目录')
     parser.add_argument('--simple', action='store_true', help='🆕 简化模式: 禁用所有高级特性用于诊断')
     parser.add_argument('--legacy-arch', action='store_true', help='Use legacy 8-layer/384-hidden architecture (pre-v5 regularization)')
+    # [TIER-2 2026-04-22] Cross-asset pretraining + per-asset finetune args
+    parser.add_argument(
+        '--extra-assets', type=str, default=None,
+        help='Comma-separated extra assets to merge into training data (Tier 2 pretrain). '
+             'Each extra asset uses its own TQC teacher. Example: --asset BTC --extra-assets ETH,SOL'
+    )
+    parser.add_argument(
+        '--init-from', type=str, default=None,
+        help='Load pretrained state dict before training (Tier 2 finetune). '
+             'Pass path to .pt file. Scaler is re-fit on current asset.'
+    )
+    parser.add_argument(
+        '--save-suffix', type=str, default='',
+        help='Suffix appended to saved filename (e.g. "_pretrain", "_finetune")'
+    )
     args = parser.parse_args()
 
     # Auto-resolve data path from --asset if --data not specified
@@ -1867,6 +1882,12 @@ def main():
 
     # [TIER-1 KD-BeT] Oracle selection: future_return (default) | tqc_teacher
     if args.oracle_mode == 'tqc_teacher':
+        # Ensure project root is on sys.path so `training.drl.*` resolves
+        # when the script is invoked directly from the project root.
+        import sys as _sys, os as _os
+        _proj_root = _os.path.abspath(_os.path.join(_os.path.dirname(__file__), '..', '..'))
+        if _proj_root not in _sys.path:
+            _sys.path.insert(0, _proj_root)
         from training.drl.oracle_tqc_teacher import TQCTeacherOracle
         expert = TQCTeacherOracle(
             asset=args.asset, tqc_model_path=args.tqc_model_path,
@@ -1907,6 +1928,45 @@ def main():
         logger.warning("Validation dataset is empty, skipping validation")
         val_ds = None
 
+    # [TIER-2 2026-04-22] Cross-asset pretrain: merge extra assets' trajectories.
+    # Each extra asset gets its own TQC teacher (via BEST_FOLDS) and its own scaler
+    # (per-asset normalization — features live in same [-1,1]-ish range after scaling).
+    # Val set stays primary-asset only so val_acc is an honest measurement.
+    if args.extra_assets:
+        extras = [a.strip().upper() for a in args.extra_assets.split(',') if a.strip()]
+        logger.info(f"[TIER-2] Merging trajectories from extra assets: {extras}")
+        for _ex in extras:
+            _ex_candidates = [
+                f"training/training_data/drl_training/{_ex}_4H_full.parquet",
+                f"data/drl_training/{_ex}_4H_full.parquet",
+            ]
+            _ex_path = next((p for p in _ex_candidates if os.path.exists(p)), None)
+            if _ex_path is None:
+                logger.warning(f"[TIER-2] Skipping {_ex}: parquet not found")
+                continue
+            _ex_df = pd.read_parquet(_ex_path)
+            _ex_split = int(len(_ex_df) * (1 - config.val_ratio))
+            _ex_train = _ex_df.iloc[:_ex_split].reset_index(drop=True)
+            # Build per-asset oracle
+            if args.oracle_mode == 'tqc_teacher':
+                _ex_oracle = TQCTeacherOracle(asset=_ex)
+            else:
+                _ex_oracle = RegimeAwareExpert(config)
+            # Build extra dataset with its own fresh scaler (asset-specific normalization)
+            _ex_cfg = type(config)(**{**config.__dict__, 'asset': _ex})
+            _ex_ds = TrajectoryDatasetV32(
+                _ex_train, _ex_cfg, feature_eng, _ex_oracle, is_train=True,
+                feature_cols=feature_cols, no_scale_cols=no_scale_cols,
+            )
+            # Extend primary dataset's trajectory pool
+            train_ds.trajectories.extend(_ex_ds.trajectories)
+            logger.info(f"[TIER-2] {_ex}: added {len(_ex_ds.trajectories)} trajectories "
+                        f"(total train pool = {len(train_ds.trajectories)})")
+        # Re-sort by difficulty for curriculum learning
+        if train_ds.trajectories:
+            train_ds.trajectories.sort(key=lambda x: x['difficulty'])
+            train_ds.difficulties = [t['difficulty'] for t in train_ds.trajectories]
+
     logger.info(f"Dataset ready: train={len(train_ds)} trajectories, "
                 f"val={len(val_ds) if val_ds else 0} trajectories, state_dim=126")
 
@@ -1915,6 +1975,21 @@ def main():
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     logger.info(f"Model params: {n_params/1e6:.2f}M (state_encoder: Linear(126, {config.hidden_size}))")
 
+    # [TIER-2] Load pretrained weights if --init-from supplied
+    if args.init_from:
+        if not os.path.exists(args.init_from):
+            logger.error(f"[TIER-2] --init-from path not found: {args.init_from}")
+            return
+        _init_state = torch.load(args.init_from, map_location='cpu', weights_only=False)
+        if isinstance(_init_state, dict) and 'model_state_dict' in _init_state:
+            _init_state = _init_state['model_state_dict']
+        _missing, _unexpected = model.load_state_dict(_init_state, strict=False)
+        logger.info(f"[TIER-2] Loaded pretrained weights from {args.init_from}")
+        if _missing:
+            logger.info(f"[TIER-2] Missing keys (expected for arch changes): {len(_missing)}")
+        if _unexpected:
+            logger.info(f"[TIER-2] Unexpected keys: {len(_unexpected)}")
+
     # Save directory per-asset
     save_dir = os.path.join(args.save_dir, 'decision_transformer', config.asset)
 
@@ -1922,13 +1997,23 @@ def main():
     trainer = TrainerV32(model, train_ds, val_ds, config, device)
     history = trainer.train(save_dir)
 
-    # Save scaler alongside model for runtime inference
+    # Save scaler alongside model for runtime inference.
+    # [TIER-2] Honor --save-suffix to avoid overwriting Tier-1 models.
     try:
         import joblib
-        scaler_path = os.path.join(save_dir, 'dt_scaler.pkl')
+        _fname_scaler = f"dt_scaler{args.save_suffix}.pkl"
+        scaler_path = os.path.join(save_dir, _fname_scaler)
         os.makedirs(save_dir, exist_ok=True)
         joblib.dump(train_ds.scaler, scaler_path)
         logger.info(f"Scaler saved: {scaler_path}")
+        # Also copy best_model to suffixed filename if suffix was set
+        if args.save_suffix:
+            _best_default = os.path.join(save_dir, 'dt_v32_best.pt')
+            _best_suffixed = os.path.join(save_dir, f'dt_v32_best{args.save_suffix}.pt')
+            if os.path.exists(_best_default) and _best_default != _best_suffixed:
+                import shutil
+                shutil.copy2(_best_default, _best_suffixed)
+                logger.info(f"Model copied to suffixed path: {_best_suffixed}")
     except Exception as e:
         logger.warning(f"Failed to save scaler: {e}")
 

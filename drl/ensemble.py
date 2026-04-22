@@ -34,7 +34,11 @@ N_STACK = 8
 SINGLE_OBS_DIM = 126  # 122 features + 4 env state
 
 # Best folds from training results
-BEST_FOLDS = {"BTC": "fold_3", "ETH": "fold_1", "SOL": "fold_3"}
+# [FIX 2026-04-22] ETH fold_1 -> fold_3. results.json reports fold_1 reward=1400
+# but train_rows=0/train_time=0 — stale checkpoint with bogus metadata.
+# fold_3 (reward=1029, train_rows=10028) is the real best. Same fix in
+# training/drl/oracle_tqc_teacher.py BEST_FOLDS.
+BEST_FOLDS = {"BTC": "fold_3", "ETH": "fold_3", "SOL": "fold_3"}
 
 # Backward compat - main.py imports this
 REGIME_WEIGHTS = {}

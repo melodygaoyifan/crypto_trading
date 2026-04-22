@@ -94,9 +94,16 @@ services:
       retries: 3
 
 volumes:
+  # [FIX 2026-04-22] Declared `external` so compose reuses the existing
+  # hmats-models volume (synced by scripts/hetzner_deploy.sh) instead of
+  # creating a new, empty `app_hmats-models`. Without this, DRL models
+  # silently failed to load (models_ready=0 → DRL stuck in SHADOW).
   hmats-models:
-    driver: local
+    external: true
+    name: hmats-models
   hmats-data:
-    driver: local
+    external: true
+    name: hmats-data
   hmats-logs:
-    driver: local
+    external: true
+    name: hmats-logs
