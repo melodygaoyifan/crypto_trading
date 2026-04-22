@@ -10930,6 +10930,29 @@ class HMATSProductionRunner:
                 logger.debug(f"[WIRE-G6b] Skipped: {_g6b_err}")
 
         # =================================================================
+        # [WIRE-REGIME-SIZE 2026-04-22] Close consumption loop for
+        # _regime_position_size_mult. Previously only smart_beta wrote-back
+        # to this key; nothing applied it to intent.target_exposure.
+        # Consumers upstream (EC-APPLY, AlphaBoost, RegimeAggressor, VR
+        # dampener, smart_beta) all STACK into this key — now it flows
+        # into the actual trade size.
+        # =================================================================
+        if intent.is_actionable and not intent.veto_active:
+            try:
+                _rsz_mult = float(agent_signals.get("_regime_position_size_mult", 1.0) or 1.0)
+                # Clamp to safe range: 0.2× to 2.0×
+                _rsz_mult = max(0.2, min(2.0, _rsz_mult))
+                if abs(_rsz_mult - 1.0) > 0.01:
+                    _rsz_old = float(getattr(intent, 'target_exposure', 0.0) or 0.0)
+                    intent.target_exposure = _rsz_old * _rsz_mult
+                    logger.info(
+                        f"[WIRE-REGIME-SIZE] {asset}: size_mult={_rsz_mult:.2f} "
+                        f"exposure {_rsz_old:.4f}→{intent.target_exposure:.4f}"
+                    )
+            except Exception as _rsz_err:
+                logger.debug(f"[WIRE-REGIME-SIZE] Skipped: {_rsz_err}")
+
+        # =================================================================
         # [G6] PortfolioBrain ASSET-level weight consumption
         # Multiplier relative to equal-weight baseline (1/3).
         # Sizing authority only: never changes direction or veto state.
