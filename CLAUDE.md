@@ -1,164 +1,223 @@
 # HMATS — Project Status & Development Guidelines
 
-## Project Overview
-HMATS v6.8.0 — Hierarchical Multi-Agent Trading System for SOL, ETH, BTC on Kraken.
+**Last updated:** 2026-04-22
+**Version:** HMATS v6.8.0
+**Live mode:** Kraken, Hetzner CPX21, `configs/live_high_risk.json`
 
-**Entry point:** `main.py`
-**Decision spine:** `integration/integration_v36.py`
-**Config:** `configs/cloud_production.json`
-
----
-
-## Paper Trading Progress (Feb 11)
-
-- **GMM Retrained (Feb 8):** 6 regimes, 721 bars/asset, reg_covar=1e-2. Confidence cap REMOVED — only distribution-shift guard (>30% features |z|>3σ → ADX fallback)
-- **RegimeSmoother:** persistence=2, flip rate 30%→14%, eliminates ping-pong. Applied identically in training + runtime
-- **Best-of-N Strategy:** 4 independent strategies (mean_revert, momentum, volume_breakout, vrp). Strongest signal wins per regime fitness
-- **Alpha Gate:** Dynamic volume-aware thresholds. Free tier (<$10K/mo): NORMAL=14bps, OPPORTUNITY=8bps. Standard: NORMAL=66bps, OPPORTUNITY=38bps
-- **DRL Ultimate Training (Feb 11):** In progress — BTC 6.8%, ETH 5.8%, SOL 4.9%. ULTIMATE preset: ent_coef=0.1 fixed, 4-fold CV, position_direction feature (+1 dim = 126 total)
-- **v6.7 Deployment:** Regime leverage, maker orders, sentiment L1, cash-and-carry, funding arb all active in paper run
+> **⚠️ CLAUDE.md discipline**: When you finish a non-trivial change, update the relevant
+> sections here in the same commit. Specifically: runtime-state (ACTIVE/SHADOW), authority
+> matrix changes, known-pitfalls. Stale CLAUDE.md = repeat bugs. See §Pitfalls for incidents.
 
 ---
 
-## Safety Architecture
+## Current Runtime State (cloud, 2026-04-22)
 
-### DRL Authority Policy
-- **Mode: FULL** — DRL participates in both entry and exit decisions via Authority Fusion when in ACTIVE mode
-- **Auto-demotion:** Consecutive loss threshold (5) or drawdown trigger (15%) → demotes to EXIT_ONLY for 3 days
-- **Current status (2026-04-22):** **ACTIVE.** TQC val-period backtest showed Sharpe +9.22 (BTC), +7.32 (ETH), +10.29 (SOL) — validated that deterministic TQC policy generalizes to truly-unseen post-2026-02-27 window. Promoted via one-shot manual `promote("ACTIVE")` after verifying `models_ready=3` in the production container.
-- **DO NOT downgrade to SHADOW again** unless auto-demotion fires. Running without DRL ACTIVE throws away the Sharpe-+9 alpha source we already trained.
-- **Docker-volume gotcha:** TQC models are in external volume `hmats-models`. Compose-managed `app_hmats-models` is incorrect and was silently empty — that's why DRL kept booting at SHADOW (`models_ready=0`). `docker-compose.hetzner.yml` now declares volumes as `external: true` to prevent the regression.
-- **Config:**
-  ```
-  DRL_AUTO_DEMOTE = {
-      'enable': True,
-      'consecutive_loss_threshold': 5,
-      'drawdown_trigger_pct': 0.15,
-      'demote_to': 'EXIT_ONLY',
-      'recovery_period_days': 3,
-  }
-  ```
+| Component | State | Notes |
+|---|---|---|
+| **DRL (TQC)** | **ACTIVE** | 3/3 TQC models loaded from volume `hmats-models`. Backtest Sharpe BTC +9.22 / ETH +7.32 / SOL +10.29 |
+| **Best fold per asset** | BTC fold_3, ETH fold_3, SOL fold_3 | ETH fold_1 was stale (train_rows=0) — permanently switched to fold_3 |
+| **Sentiment L1 (F&G)** | ACTIVE | `DeterministicSentimentEngine`, writes `sentiment_direction`/`sentiment_confidence` |
+| **Sentiment LLM (Haiku)** | ACTIVE | `SentimentLLMAgent`, CryptoPanic + CC News blend |
+| **Quant (Best-of-N)** | ACTIVE (DECIDE) | 4 strategies: mean_revert, momentum, volume_breakout, vrp (+ hold) |
+| **kraken_quant (12 strat)** | ACTIVE (ADVISE) | Per-strategy stats in `data/kq_firing_stats.json` |
+| **onchain_sol** | ACTIVE | Singleton agent, `.start()` dispatched in `run_live()` as well as `run_paper()` |
+| **Binance WS (micro)** | ACTIVE | taker flow + mark price for cross-exchange microstructure |
+| **Discord alerts** | ACTIVE | webhook in `.env` → `DiscordLogHandler` forwards ERROR/CRITICAL + 4H heartbeat |
+| **Attribution tracker** | ACTIVE | 16-agent coverage (see §Authority Matrix) |
 
-### Authority Matrix
-| Agent | Authority | Notes |
-|-------|-----------|-------|
-| Quant (Best-of-N) | DECIDE | Primary signal source via regime-fitted strategy selection |
-| DRL Agent | DECIDE | Entry + exit signals via fusion weights (FULL authority when ACTIVE) |
-| Risk Agent | VETO | Can reduce/block but not increase exposure |
-| Sentiment Agent | ADVISE | Modulates confidence, does not generate independent signals |
-| Short Bias Agent | PENALIZE | Soft penalty ×0.7 for longs (was hard veto, converted v6.5.2) |
+**Verification commands** (run these when in doubt):
+```bash
+# Container state + TQC load + agent activity
+ssh hmats "docker ps && docker logs hmats-engine --since 10m 2>&1 | grep -iE 'TQC loaded|DRL.*ACTIVE|HEALTH_S[0-9]'"
 
-### Non-Negotiable Rules
-1. **Constitution is supreme** — No trade without alpha gate pass
+# Per-tick per-agent signal dump (last tick)
+ssh hmats "ls /var/lib/docker/volumes/hmats-logs/_data/attribution/signals_*.jsonl | tail -1 | xargs tail -1 | python3 -m json.tool | head -80"
+
+# DRL promotion state
+ssh hmats "docker exec hmats-engine cat /opt/hmats/data/drl_promotion_state.json"
+
+# 4H heartbeat (latest equity + positions)
+ssh hmats "docker logs hmats-engine --since 4h 2>&1 | grep HEARTBEAT"
+
+# kraken_quant 12-strategy firing breakdown (after 1+ tick)
+docker exec hmats-engine python -X utf8 scripts/kq_strategy_diagnostic.py
+
+# 16-agent audit
+docker exec hmats-engine python -X utf8 scripts/agent_audit_16.py
+```
+
+---
+
+## Authority Matrix (v6.8)
+
+`signals/authority_fusion.py` declares **25 agents** in `AUTHORITY_MATRIX_NORMAL`.
+`_build_fusion_signals` actually reads and uses **19** of them for direction/confidence;
+the other 6 are architecturally non-directional (risk/macro/lead_lag/cvd/structure/options).
+
+| # | Agent | Authority | Keys in agent_signals | Consumed by |
+|---|---|---|---|---|
+| 1 | quant | DECIDE | quant_direction, quant_confidence | fusion + attribution |
+| 2 | regime | CONFIRM | regime_direction, regime_confidence | fusion |
+| 3 | drl | ADVISE (ACTIVE → DECIDE) | drl_direction, drl_confidence | fusion + attribution |
+| 4 | sentiment | ADVISE | sentiment_direction, sentiment_confidence | fusion + attribution |
+| 5 | macro | CAP | macro_leverage_cap | fusion (leverage cap only) |
+| 6 | lead_lag | EXECUTE | lead_lag_edge, lead_lag_confidence | fusion (timing only) |
+| 7 | risk | VETO | risk_veto | fusion (veto only) |
+| 8 | two_stage | CONFIRM | two_stage_direction, two_stage_confidence | fusion + attribution |
+| 9 | short_bias | ADVISE (PENALIZE) | short_bias_direction, short_bias_confidence | fusion + attribution |
+| 10 | funding_rate | ADVISE | funding_direction, funding_confidence | fusion + attribution |
+| 11 | onchain (BTC/ETH) | ADVISE | onchain_direction, onchain_confidence | fusion + attribution |
+| 12 | llm_sentiment | ADVISE | llm_sentiment_direction, llm_sentiment_confidence | fusion + attribution |
+| 13 | flow | ADVISE | flow_direction (whale+exchange+ETF net) | fusion + attribution |
+| 14 | structure | CONFIRM | structure_confirmed (bool) | fusion (boolean only) |
+| 15 | squeeze | ADVISE | squeeze_risk (bridged from squeeze_score at main.py:7662) | fusion (veto above 0.7) |
+| 16 | cvd | ADVISE | cvd_divergence | fusion (one-sided) |
+| 17 | risk_appetite | ADVISE | macro_risk_appetite | fusion (derived direction) |
+| 18 | kraken_quant | ADVISE | kq_direction, kq_confidence | fusion + attribution |
+| 19 | microstructure | ADVISE | micro_imbalance, micro_confidence, micro_direction | fusion + attribution |
+| 20 | model_alpha | ADVISE | model_alpha_direction, model_alpha_weight | fusion + attribution |
+| 21 | onchain_graph (SOL) | ADVISE | onchain_graph_direction, onchain_graph_confidence | fusion + attribution |
+| 22 | options | ADVISE | options_short_confirmation, options_confidence | fusion |
+| 23 | vol_alpha | ADVISE | vol_alpha_direction (always 0; runs via intensity) | **fusion branch REMOVED** — affects execution only |
+| 24 | whale | ADVISE | whale_flow_direction, whale_confidence (bridged at main.py:7402) | fusion + attribution |
+| 25 | soldex (SOL) | ADVISE | soldex_arb_direction, soldex_confidence | fusion + attribution |
+
+**Attribution tracker** (`main.py:8299`) covers 16 direction-producing agents.
+Adding a new agent requires **3 files**: agent_signals write site + `_attr_collected` + `_EXTRACTORS` dict in `agents/signal_envelope.py`.
+
+---
+
+## Non-Negotiable Rules
+
+1. **Constitution is supreme** — no trade without alpha gate pass
 2. **P0 Safety cannot be bypassed** — kill switch, stale data guard, rate limiter
 3. **Existence Fuse** — 28d window, -5% PnL → system halt, manual recovery only
-4. **DRL Authority:** DRL participates in both entry and exit decisions when in ACTIVE mode. Auto-demotion to EXIT_ONLY triggers on consecutive losses or drawdown threshold
-5. **Single exchange** — Kraken only (Binance/Deribit in legacy/)
+4. **DRL Authority** — ACTIVE since 2026-04-22. Auto-demote to EXIT_ONLY on 5 consecutive losses or 15% DD. Recovery after 3 days.
+5. **Single exchange** — Kraken only (Binance/Deribit in `legacy/` for historical refs)
+6. **Three trade_gate call sites** — main veto_chain, authority_chain, AND p0_safety_integrator ALL call `trade_gate.check()`. Fix ALL three when changing the gate API.
+7. **CLAUDE.md discipline** — runtime-state changes, new pitfalls, and authority-matrix edits MUST update this file in the same commit.
 
 ---
 
-## Completed Work
+## Known Pitfalls (source of repeat bugs — read this before deploying)
 
-| # | Item | Status |
-|---|------|--------|
-| 1 | GMM Retrained | 6 regimes, 721 bars/asset, cross_asset_correlation default fixed (0.65→0.87) |
-| 2 | RegimeSmoother | persistence=2, flip rate 30%→14%, wired in training + runtime |
-| 3 | GMM Confidence Cap | REMOVED hard cap. Only distribution-shift guard (>30% features |z|>3σ → ADX fallback) |
-| 4 | Best-of-N Strategy | Replaced fixed-weight composite with 4 independent strategies |
-| 5 | Alpha Gate Calibration | Dynamic volume-aware: NORMAL ×2.0, OPPORTUNITY ×1.15. Free tier: 14/8bps |
-| 6 | Dead-man switch | Kraken CancelAllOrdersAfter API, 60s timeout, refreshed each tick |
-| 7 | Cancel-on-disconnect | HeartbeatWatchdog → handle_disconnect() → cancel_all |
-| 8 | Tick exception handling | process_4h_tick split into wrapper + _process_4h_tick_inner |
-| 9 | Disconnect race | Early exit at tick start + mid-tick check before execution |
-| 10 | Proof log memory cap | `List[str]` → `deque(maxlen=1000)` |
-| 11 | Reconnect sync | handle_reconnect() reconciles positions with exchange |
-| 12 | MEAN_REVERT power | 0.0→0.3 (BB/RSI extremes work best in mean-revert) |
-| 13 | Size cap per asset | MAX_EXPOSURE_FRACTION: BTC/ETH 25%, SOL 20% |
-| 14 | Warmup logging | First 2 ticks per asset flagged in proof log |
-| 15 | Cache age enforcement | BTC cache expires after 300s |
-| 16 | Crowd strictness | Pre-computed before false breakout detection |
-| 17 | Tranche cold-start | constitution.py skips abort check when position.level == NONE |
-| 18 | DeadlockResolution enum | Fixed CONTINUE→NONE in integration_v36.py |
-| 19 | Profit max adapter wiring | sentiment/macro/crowd params now passed from main.py |
-| 20 | GMM regime→regime_state | _predict_gmm_regime() stores regime in raw["regime_state"] |
-| 21 | Per-asset price history | Fixed FLASH_CRASH false positive (was shared across assets) |
-| 22 | DRL training infra | ent_coef fixed (TQC_1=0.2, TQC_2=0.1), GPU params, new regime names |
-| 23 | Risk Governor daily loss | Fixed false veto: RiskManager.initialize(balance) + guard |
-| 24 | Volume Collapse abort | Fixed enter→abort→flatten loop: position-age + vol validity guard |
-| 25 | Short-bias → soft penalty | veto_direction removed, longs penalized ×0.7 (not blocked). Funding arb override ×0.95 |
-| 26 | Regime-conditional leverage ⏳ | VOLATILE_CHOP=3x, MOMENTUM_RALLY/PANIC_SELLOFF=2x, others=1x. Kraken isolated margin |
-| 27 | Maker orders (post-only) ⏳ | oflags='post' + postOnly=True, 120s timeout, partial fill ≥50% accepted |
-| 28 | Dynamic alpha gate ⏳ | Volume-aware friction: <$10K free tier (0 fees), >$10K standard Kraken fees |
-| 29 | Compounding ⏳ | account_sync.update_dry_run_pnl() wired after paper trades |
-| 30 | Sentiment L1 ⏳ | SentimentFeed(alternative.me) + DeterministicSentimentEngine in tick loop |
-| 31 | Cash-and-carry ⏳ | Delta-neutral module, signal-only Phase 1 (Kraken Futures not wired) |
-| 32 | Funding rate arb ⏳ | ShortBiasAgent: funding>0.24%/8h → short +15%, funding<-0.16%/8h → long ×0.95 |
-| 33 | Deployment configs ⏳ | live_phase1.json (Day 7, half pos, 2x lev) + live_phase2.json (Day 14, full, 3x) |
-| 34 | DRL training ⏳ | training/train_drl_full.py: ULTIMATE preset, 3-fold, position_direction feature, 126 dims, early stopping, Optuna |
+### P1. Docker volume name mismatch → silent empty models
+- **Symptom:** `[WIRE] TQC models: 0/3 loaded`, `models_ready=0`, DRL stuck in SHADOW even though force-ACTIVE logic exists at [main.py:4696](main.py#L4696).
+- **Cause:** `docker compose up` creates project-prefixed volumes (`app_hmats-models`). Deploy script synced to un-prefixed `hmats-models`. Container mounted empty new volume.
+- **Mitigation:** `docker-compose.hetzner.yml` now has `external: true` + explicit `name:` for each volume. If this ever regresses, check `docker inspect hmats-engine | grep Mounts` — should show `hmats-models` NOT `app_hmats-models`.
+
+### P2. Agent signal key mismatch between writer and consumer
+- **Symptom:** Agent appears to run but its signal is zero everywhere downstream.
+- **Historical incidents:**
+  - `micro_direction` was only written to `market_data`, not `agent_signals`. Downstream readers saw 0 for 14 days.
+  - `kq_direction` writer vs `kraken_quant_direction` reader — 12-strategy matrix silently ignored.
+  - `whale_direction` (str) vs `whale_flow_direction` (float) — fusion branch dead.
+  - `squeeze_score` writer vs `squeeze_risk` reader — squeeze veto never fired.
+- **Mitigation:** When adding any agent, trace the keys **all the way** from writer (`agent_signals[...] = ...`) → fusion (`agent_signals.get(...)`) → attribution (`_attr_collected[...]`) → extractor (`_EXTRACTORS[...]`). Four places, must match.
+
+### P3. Attribution `signal_envelope._EXTRACTORS` silently zeros unknown agents
+- **Symptom:** New agent in `_attr_collected` but attribution JSONL shows direction=0, reasoning="unknown_agent".
+- **Cause:** `agents/signal_envelope.py` has a hardcoded `_EXTRACTORS` dict. Agents not listed get the fallback that zeros direction+confidence.
+- **Mitigation:** Add an extractor to `_EXTRACTORS` dict for any new agent name used in attribution.
+
+### P4. ETH fold_1 stale checkpoint
+- **Symptom:** ETH TQC `results.json` reports `best_fold: fold_1` with reward=1400, but `train_rows=0, train_time=0`.
+- **Reality:** fold_1 is an aborted/stale run; fold_3 (reward=1029, train_rows=10028) is the genuine best.
+- **Mitigation:** `BEST_FOLDS` in `drl/ensemble.py` + `drl/runtime_obs_builder.py` + `training/drl/oracle_tqc_teacher.py` all hardcode ETH→fold_3. `results.json` updated to best_fold=fold_3. **Check `train_rows>0` on every fold before trusting reward.**
+
+### P5. Pickle models from `__main__` can't be loaded cross-script
+- **Symptom:** `AttributeError: module '__main__' has no attribute 'DTConfigV32'` when loading saved DT/TQC from a different script.
+- **Cause:** Training scripts saved models embed `__main__.ClassName` pickle refs.
+- **Mitigation:** Before `torch.load`, register classes in `__main__`:
+  ```python
+  import __main__
+  from training.drl import train_decision_transformer_v32 as _t
+  for name in ("DTConfigV32", "DecisionTransformerV32", ...):
+      setattr(__main__, name, getattr(_t, name))
+  ```
+
+### P6. DT val_acc measures DT-vs-TQC imitation, not market prediction
+- **Symptom:** Trained DT shows val_acc 70-80% but Sharpe is NEGATIVE on backtest.
+- **Cause:** Training loss uses `true_dir = sign(TQC action)`. DT learns to imitate TQC's policy structure, not predict actual next-bar direction.
+- **Mitigation:** Always verify DT with `training/drl/eval_dt_val_sharpe.py` (real returns). TQC teacher is better used directly than through KD imitation on small datasets.
+
+### P7. ent_coef must be a fixed float
+- **Symptom:** NaN in DRL loss / rewards; 0.2 → 10^23 gradient explosion.
+- **Mitigation:** `ent_coef` in TQC config = float literal (`0.1`, `0.2`). Never `"auto"`.
+
+### P8. Three places to update when adding/removing a fusion agent
+Authority matrix (`signals/authority_fusion.py`) + writer (`main.py` somewhere in tick loop) + `_build_fusion_signals` consumer (`integration/integration_v36.py`). Missing any one → agent is a ghost.
+
+---
+
+## Architecture Rules (unchanged invariants)
+
+- **DRL state space** = 126 dims (122 features + 4 env state: position_ratio, position_direction, pnl_ratio, drawdown)
+- **VecFrameStack n_stack=8** in training → TQC expects 1008-dim stacked obs at inference
+- **RegimeSmoother persistence=2** must match training + runtime (prevents regime flip ping-pong)
+- **GMM feature defaults must match training distribution** — e.g., `cross_asset_correlation=0.87`, `spread_percentile` per-asset (BTC=5, ETH=8, SOL=12 bps)
+- **Constitution schema** requires: `dvol_zscore`, `vpin`, `correlation_btc_eth_sol`, `orderbook_depth_1pct_usd`
+- **Data age** uses exchange timestamp, `MAX_DATA_AGE_SECONDS=10.0`
+- **pandas_ta broken** on Python 3.14 → use `ta` library instead
 
 ---
 
 ## Development Guidelines
 
 ### When Making Changes
+1. **Read before edit.** Verify assumptions, don't trust documentation blindly.
+2. **Check all call sites.** When modifying a method signature or a dict key name, verify EVERY reader and writer.
+3. **Trace 4 layers** for any agent change (Pitfall P2): writer → fusion → attribution → extractor.
+4. **Use `-X utf8`** on Windows (avoids GBK encoding errors).
+5. **Set-Location -LiteralPath** for paths with `()` in PowerShell.
+6. **Test commands:**
+   - `python -X utf8 main.py --mode verify` — quick smoke
+   - `python -X utf8 main.py --mode paper` — full paper tick
+   - `pytest tests/test_black_swan_hold.py tests/test_strategy_selection.py tests/test_alpha_gate.py` — strategy-layer regression
+7. **Update CLAUDE.md in the same commit** if you change runtime state, add agent, or hit a pitfall.
 
-1. **Read before edit.** Always read existing code before modifying.
-2. **Match patterns.** Follow the existing code style and naming conventions.
-3. **Check call sites.** When modifying method signatures, verify ALL callers pass the new params.
-4. **Three trade_gate paths.** main veto_chain, authority_chain, AND p0_safety_integrator ALL call trade_gate.check() — fix ALL three.
-5. **Test with verify mode.** `python -X utf8 main.py --mode verify` for quick smoke test.
-6. **Test with paper mode.** `python -X utf8 main.py --mode paper` for live data validation.
-7. **Use `-X utf8`** on Windows to avoid GBK encoding issues.
-8. **Quoted paths.** Use `Set-Location -LiteralPath` for paths with parentheses (e.g., `training`).
-9. **Track verification status.** Use these markers in Completed Work:
-   - (no marker) = verified in production
-   - ⏳ = code deployed, awaiting production verification
-
-### Key Architecture Rules
-
-- **ent_coef must be fixed float** — "auto" causes gradient explosion (0.2→10^23→NaN)
-- **TQC_1 = 0.2, TQC_2 = 0.1** — proven stable for RTX 5090. ULTIMATE preset uses 0.1
-- **RegimeSmoother must match** between training (train_tqc.py) and runtime (main.py)
-- **GMM feature defaults must match training distribution** — e.g., cross_asset_correlation=0.87, spread_percentile per-asset (BTC=5, ETH=8, SOL=12 bps)
-- **Constitution schema** requires `dvol_zscore`, `vpin`, `correlation_btc_eth_sol`, `orderbook_depth_1pct_usd`
-- **Data age** uses exchange timestamp, MAX_DATA_AGE_SECONDS=10.0
-- **pandas_ta broken** on Python 3.14 — use `ta` library instead
-- **DRL state space** = 126 dims (122 features + 4 env state including position_direction)
-
-### Training Commands (Ultimate)
+### Training Commands
 
 ```bash
-# All assets use training/train_drl_full.py with ULTIMATE preset
+# DRL (TQC) — v5090 rig
 python -X utf8 -u training/train_drl_full.py --asset BTC --no-progress-bar
-python -X utf8 -u training/train_drl_full.py --asset ETH --no-progress-bar
-python -X utf8 -u training/train_drl_full.py --asset SOL --no-progress-bar
+
+# DT (with TQC teacher, Tier 2 pretrain + finetune)
+python -X utf8 -u training/drl/train_decision_transformer_v32.py \
+    --asset BTC --extra-assets ETH,SOL --oracle-mode tqc_teacher \
+    --epochs 300 --save-suffix _pretrain
+python -X utf8 -u training/drl/train_decision_transformer_v32.py \
+    --asset BTC --oracle-mode tqc_teacher --epochs 800 --lr 1e-5 \
+    --init-from models/decision_transformer/BTC/dt_v32_best_pretrain.pt \
+    --save-suffix _ft800
+
+# Data prep
+python -X utf8 training/fetch_binance_full.py               # 3y 1H OHLCV
+python -X utf8 training/scripts/rebuild_pipeline.py --smooth 2  # → 122-feat parquets
 ```
 
-### Monitoring
+### Deployment
 
-- **Health monitor:** `python scripts/paper_run_monitor.py`
-- **Training:** Watch for NaN in loss/rewards, verify ent_coef stays fixed (0.1)
-- **Paper run logs:** `logs/proof_log_*.log`, `data/shadow_ledger/*.jsonl`
+```bash
+# Push local commits + redeploy
+git push origin main
+bash scripts/hetzner_deploy.sh hmats
 
----
+# If container shows "Conflict" errors:
+ssh hmats "docker stop hmats-engine hmats-api; docker rm hmats-engine hmats-api"
+bash scripts/hetzner_deploy.sh hmats
 
-## Pre-Live Checklist
-
-- [ ] DRL Ultimate training completes (all 3 assets, 4 folds each) — BTC fold_2 in progress
-- [ ] DRL models deployed + 30 shadow trades for promotion
-- [x] Paper run produces trades on tick 2+ consistently — verified Feb 13
-- [x] Shadow ledger shows correct PnL tracking — FILL records with price/fee/realized_pnl, verified Feb 13
-- [ ] Health monitor shows no CRITICAL alerts for 24h
-- [x] Dead-man switch verified with Kraken API — SET/REFRESH/DISABLE all pass, verified Feb 13
-- [x] StartupReconciler sub-flags enabled — paper: balance=True, live: all=True, verified Feb 13
-- [x] Regime leverage verified in proof logs — MOMENTUM_RALLY=2x visible in proof logs
-- [x] Sentiment L1 scores visible in proof logs — F&G=50 (neutral) visible
-- [x] live_phase1.json tested with Kraken API — 29/29 tests pass, balance=$10,565, all tickers OK, verified Feb 13
+# Force rebuild image (after code change that must affect runtime)
+ssh hmats "cd /home/hmats/hmats/app && docker compose -f docker-compose.hetzner.yml build hmats-engine && docker compose -f docker-compose.hetzner.yml up -d --force-recreate hmats-engine"
+```
 
 ---
 
-## Known Non-Critical Errors (Paper Run)
+## Historical Notes (for archaeology only)
 
-- ~~`GateDecision.EXIT_ONLY` attribute missing~~ — **RESOLVED**: member exists in trade_gate.py:35
-- ~~`KrakenRateLimitManager.can_proceed` missing~~ — **RESOLVED**: method exists in rate_limit_manager.py:338
-- ~~`ReconciliationResult.__init__() missing 'status'`~~ — **FIXED**: added default `status=PENDING` in startup_reconciler.py
+Completed-work table and verification history from Feb-April 2026 has been moved to
+`archive/CLAUDE_history.md` (if it exists). If you need to trace when a specific
+fix landed, use `git log --all --oneline -S "<marker>" -- path/to/file`.
+
+Active markers in code that point to completed fixes:
+- `[FIX-...]`, `[WIRE-...]`, `[AUDIT ...]`, `[TIER-...]`, `[P0-...]`, `[FIX 2026-04-22]`

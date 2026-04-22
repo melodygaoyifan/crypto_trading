@@ -8391,6 +8391,24 @@ class HMATSProductionRunner:
                 _attr_envelopes.append(wrap_agent_signal(_aname, _aauth, _araw, _attr_asset))
             _attr_tracker.record_signals(_attr_tick_id, _attr_asset, _attr_envelopes)
 
+            # [AGENT-DECISION-TRACE 2026-04-22] Compact per-tick snapshot so any future
+            # audit can see which agent contributed what WITHOUT parsing attribution JSONL.
+            # Logged at INFO so it's always visible. Dropping to DEBUG risks the same
+            # "is X active?" confusion that cost us 14 days on micro_direction.
+            try:
+                _trace_parts = []
+                for _env in _attr_envelopes:
+                    _d = _env.direction
+                    _c = _env.confidence
+                    _dq = _env.data_quality
+                    _mark = "●" if abs(_d) > 0.05 and _c > 0.1 else "○"
+                    _trace_parts.append(
+                        f"{_mark}{_env.agent_name}={_d:+.2f}/{_c:.2f}/dq{_dq:.1f}"
+                    )
+                logger.info(f"[AGENT-TRACE] {_attr_asset}: " + " | ".join(_trace_parts))
+            except Exception as _trace_err:
+                logger.debug(f"[AGENT-TRACE] skipped: {_trace_err}")
+
             # Store for next tick's outcome resolution
             self._attribution_prev_tick_id[_attr_asset] = _attr_tick_id
             self._attribution_prev_price[_attr_asset] = _attr_now_price

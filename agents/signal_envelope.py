@@ -121,6 +121,74 @@ def _extract_kraken_quant(raw: Dict) -> Dict[str, Any]:
     }
 
 
+# [FIX 2026-04-22] Extractors for 8 agents added to attribution in main.py:8299.
+# Prior code routed these through "unknown_agent" fallback which zeroed out
+# direction+confidence, corrupting attribution + hit-rate metrics.
+
+def _extract_drl(raw: Dict) -> Dict[str, Any]:
+    return {
+        "direction": float(raw.get("direction", 0.0)),
+        "confidence": float(raw.get("confidence", 0.0)),
+        "reasoning": "drl_ensemble",
+    }
+
+
+def _extract_two_stage(raw: Dict) -> Dict[str, Any]:
+    return {
+        "direction": float(raw.get("direction", 0.0)),
+        "confidence": float(raw.get("confidence", 0.0)),
+        "reasoning": "two_stage_prior",
+    }
+
+
+def _extract_funding(raw: Dict) -> Dict[str, Any]:
+    return {
+        "direction": float(raw.get("direction", 0.0)),
+        "confidence": float(raw.get("confidence", 0.0)),
+        "reasoning": "funding_carry",
+    }
+
+
+def _extract_llm_sentiment(raw: Dict) -> Dict[str, Any]:
+    return {
+        "direction": float(raw.get("direction", 0.0)),
+        "confidence": float(raw.get("confidence", 0.0)),
+        "reasoning": "llm_haiku",
+    }
+
+
+def _extract_flow(raw: Dict) -> Dict[str, Any]:
+    return {
+        "direction": float(raw.get("direction", 0.0)),
+        "confidence": float(raw.get("confidence", 0.0)),
+        "reasoning": "whale_exchange_etf_flow",
+    }
+
+
+def _extract_onchain(raw: Dict) -> Dict[str, Any]:
+    return {
+        "direction": float(raw.get("direction", 0.0)),
+        "confidence": float(raw.get("confidence", 0.0)),
+        "reasoning": "btc_eth_onchain",
+    }
+
+
+def _extract_soldex(raw: Dict) -> Dict[str, Any]:
+    return {
+        "direction": float(raw.get("direction", 0.0)),
+        "confidence": float(raw.get("confidence", 0.0)),
+        "reasoning": "soldex_arb",
+    }
+
+
+def _extract_onchain_graph(raw: Dict) -> Dict[str, Any]:
+    return {
+        "direction": float(raw.get("direction", 0.0)),
+        "confidence": float(raw.get("confidence", 0.0)),
+        "reasoning": "sol_whale_cluster",
+    }
+
+
 _EXTRACTORS = {
     "quant": _extract_quant,
     "short_bias": _extract_short_bias,
@@ -130,6 +198,15 @@ _EXTRACTORS = {
     "micro": _extract_micro,
     "model_alpha": _extract_model_alpha,
     "kraken_quant": _extract_kraken_quant,
+    # [FIX 2026-04-22] 8 new direction-producing agents
+    "drl": _extract_drl,
+    "two_stage": _extract_two_stage,
+    "funding": _extract_funding,
+    "llm_sentiment": _extract_llm_sentiment,
+    "flow": _extract_flow,
+    "onchain": _extract_onchain,
+    "soldex": _extract_soldex,
+    "onchain_graph": _extract_onchain_graph,
 }
 
 
