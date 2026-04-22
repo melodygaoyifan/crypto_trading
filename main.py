@@ -18060,7 +18060,10 @@ class HMATSProductionRunner:
                 "equity": equity,
                 "cumulative_pnl": cumulative_pnl,
                 "peak_equity": getattr(self, "_peak_equity", equity),
-                "mode": "PAPER",
+                # [FIX 2026-04-22] was hardcoded "PAPER"; now reflects actual runtime mode.
+                # API /health endpoint and dashboard would misreport LIVE runs as PAPER.
+                "mode": (self.config.mode.value if hasattr(self.config.mode, "value")
+                         else str(self.config.mode)).upper(),
                 "risk_profile": self.config.risk_profile,
                 "drl": _drl_runtime,
                 "sentiment": {

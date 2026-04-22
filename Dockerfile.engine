@@ -64,7 +64,7 @@ COPY --chown=hmats:hmats dashboard/ ./dashboard/
 # Training subset needed for DRL (TQC) + DT model deserialization
 COPY --chown=hmats:hmats training/__init__.py ./training/
 COPY --chown=hmats:hmats training/models/__init__.py training/models/film_extractor.py training/models/feature_extractors.py ./training/models/
-COPY --chown=hmats:hmats training/drl/__init__.py training/drl/features.py training/drl/model.py ./training/drl/
+COPY --chown=hmats:hmats training/drl/__init__.py training/drl/features.py training/drl/model.py training/drl/train_decision_transformer_v32.py training/drl/oracle_tqc_teacher.py ./training/drl/
 
 VOLUME ["/opt/hmats/models", "/opt/hmats/data", "/opt/hmats/logs"]
 
