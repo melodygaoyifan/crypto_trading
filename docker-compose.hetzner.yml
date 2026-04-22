@@ -28,11 +28,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "3.0"
-          memory: 6G
+          cpus: "1.7"   # CPX21 has 2 vCPU; reserve 0.3 for hmats-api + system
+          memory: 3G    # CPX21 has 4GB total; reserve 1GB for system + api
         reservations:
-          cpus: "1.0"
-          memory: 1G
+          cpus: "0.5"
+          memory: 512M
     logging:
       driver: json-file
       options:
