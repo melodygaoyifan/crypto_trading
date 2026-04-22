@@ -7285,6 +7285,12 @@ class HMATSProductionRunner:
         # [#2+#3+#9] Create formal AgentSignal objects for L1 and L3 sentiment
         # per Step 18 spec: signals["sentiment_l1"] and signals["sentiment"] with veto_active=False
         _sent_conf = min(abs(_sent_z) / 3.0, 1.0)
+        # [FIX-SENT-CONF 2026-04-22] Write sentiment_confidence/data_quality to
+        # agent_signals so fusion + attribution tracker + cross-agent consumers
+        # see real confidence (was recorded as 0.0 for 14 days — bug found via
+        # Active%=93% Conf=0 in agent diagnostic)
+        agent_signals['sentiment_confidence'] = round(_sent_conf, 4)
+        agent_signals['sentiment_data_quality'] = 1.0 if abs(_sent_z) > 0.0 else 0.0
         agent_signals['_sentiment_l1_agent_signal'] = {
             'direction': float(agent_signals.get('sentiment_direction', 0.0)),
             'confidence': _sent_conf,
