@@ -1096,6 +1096,16 @@ class TrajectoryDatasetV32(Dataset):
         else:
             features_scaled = features_raw
 
+        # [TIER-1] If oracle supports pre-scaled context (e.g. TQCTeacherOracle),
+        # wire the scaled feature matrix once before trajectory construction.
+        if hasattr(expert, 'set_context'):
+            try:
+                expert.set_context(features_scaled)
+                logger.info(f"   Oracle context wired: scaled feature matrix "
+                            f"({features_scaled.shape[0]} rows, {features_scaled.shape[1]} feats)")
+            except Exception as _ctx_err:
+                logger.warning(f"   Oracle set_context failed: {_ctx_err}")
+
         # --- Create trajectories ---
         ctx = config.context_length
         n_skipped_nan = 0
@@ -1110,6 +1120,10 @@ class TrajectoryDatasetV32(Dataset):
                 if np.isnan(feat_block).any():
                     n_skipped_nan += 1
                     continue
+
+                # Reset oracle rollout state at start of each trajectory
+                if hasattr(expert, 'reset_rollout'):
+                    expert.reset_rollout()
 
                 # Expert actions and rewards
                 actions = []
@@ -1702,6 +1716,19 @@ def main():
     parser.add_argument('--no-amp', action='store_true', help='禁用混合精度')
     parser.add_argument('--no-regime', action='store_true', help='禁用 Regime 感知')
     parser.add_argument('--no-smart-oracle', action='store_true', help='禁用智能 Oracle')
+    parser.add_argument(
+        '--oracle-mode',
+        choices=['future_return', 'tqc_teacher'],
+        default='future_return',
+        help='Oracle label source: future_return (RegimeAwareExpert, default) | '
+             'tqc_teacher (KD-BeT style, uses trained TQC as teacher)'
+    )
+    parser.add_argument(
+        '--tqc-model-path',
+        type=str,
+        default=None,
+        help='Override TQC teacher checkpoint path (default: best fold per asset)'
+    )
     parser.add_argument('--save-dir', type=str, default='./models', help='保存目录')
     parser.add_argument('--simple', action='store_true', help='🆕 简化模式: 禁用所有高级特性用于诊断')
     parser.add_argument('--legacy-arch', action='store_true', help='Use legacy 8-layer/384-hidden architecture (pre-v5 regularization)')
@@ -1837,7 +1864,20 @@ def main():
 
     # Feature engineering (kept ONLY for get_regime() - features come from parquet)
     feature_eng = FeatureEngineerV32(config)
-    expert = RegimeAwareExpert(config)
+
+    # [TIER-1 KD-BeT] Oracle selection: future_return (default) | tqc_teacher
+    if args.oracle_mode == 'tqc_teacher':
+        from training.drl.oracle_tqc_teacher import TQCTeacherOracle
+        expert = TQCTeacherOracle(
+            asset=args.asset, tqc_model_path=args.tqc_model_path,
+        )
+        logger.info(
+            f"[DT-v6] Using TQC teacher oracle for {args.asset} "
+            f"(KD-BeT distillation; expect denoised labels vs future_return)"
+        )
+    else:
+        expert = RegimeAwareExpert(config)
+        logger.info(f"[DT-v5] Using RegimeAwareExpert (future_return oracle)")
 
     # Train/val split
     split_idx = int(len(df) * (1 - config.val_ratio))
