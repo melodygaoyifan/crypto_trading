@@ -4529,7 +4529,7 @@ class HMATSProductionRunner:
         if KQ_AVAILABLE:
             try:
                 self._kraken_quant_agent = _get_kq()
-                logger.info("  [WIRE-KQ] KrakenQuantAgentV6: ACTIVE (12 strategies, ADVISE)")
+                logger.info("  [WIRE-KQ] KrakenQuantAgentV6: ACTIVE (12 strategies, DECIDE)")
             except Exception as e:
                 logger.warning(f"  [WIRE-KQ] KrakenQuantAgentV6 init failed: {e}")
 
