@@ -18041,7 +18041,12 @@ class HMATSProductionRunner:
             cumulative_pnl = 0.0
             if self.account_sync and self.account_sync.dry_run:
                 cumulative_pnl = float(self.account_sync._dry_run_pnl or 0.0)
-            _runtime_ts = datetime.now(timezone.utc).isoformat() + "Z"
+            # [FIX 2026-04-22] was `.isoformat() + "Z"` which produced
+            # malformed "...+00:00Z" (double tz marker). API /health
+            # datetime.fromisoformat then failed silently -> fresh=False ->
+            # container marked unhealthy. Match the pattern used elsewhere
+            # (line 16965): replace "+00:00" with "Z".
+            _runtime_ts = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
             _drl_runtime = self._get_drl_runtime_snapshot()
             _realized_pnl_summary = self._get_realized_pnl_summary()
             _execution_advisory = self._get_execution_advisory_config_snapshot()
