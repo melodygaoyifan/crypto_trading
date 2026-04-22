@@ -95,7 +95,7 @@ the other 6 are architecturally non-directional (risk/macro/lead_lag/cvd/structu
 | 15 | squeeze | ADVISE | squeeze_risk (bridged from squeeze_score at main.py:7662) | fusion (veto above 0.7) |
 | 16 | cvd | ADVISE | cvd_divergence | fusion (one-sided) |
 | 17 | risk_appetite | ADVISE | macro_risk_appetite | fusion (derived direction) |
-| 18 | kraken_quant | **DECIDE** (was ADVISE) | kq_direction, kq_confidence | fusion + attribution; **×0.5 dampen removed 2026-04-22** — full weight |
+| 18 | kraken_quant | **DECIDE** (was ADVISE) | kq_direction, kq_confidence | fusion + attribution; ×0.5 dampen removed 2026-04-22; CVD z-score + bearish funding-divergence branches ported from archived quant_agent.py 2026-04-22 |
 | 19 | microstructure | ADVISE | micro_imbalance, micro_confidence, micro_direction | fusion + attribution |
 | 20 | model_alpha | ADVISE | model_alpha_direction, model_alpha_weight | fusion + attribution |
 | 21 | onchain_graph (SOL) | ADVISE | onchain_graph_direction, onchain_graph_confidence | fusion + attribution |
@@ -170,10 +170,13 @@ Adding a new agent requires **3 files**: agent_signals write site + `_attr_colle
 ### P8. Three places to update when adding/removing a fusion agent
 Authority matrix (`signals/authority_fusion.py`) + writer (`main.py` somewhere in tick loop) + `_build_fusion_signals` consumer (`integration/integration_v36.py`). Missing any one → agent is a ghost.
 
-### P9. The quant DECIDE agent is NOT in agents/quant_agent.py
-- **Symptom:** Looking for the "quant agent" class, finding `agents/quant_agent.py`, assuming it's the DECIDE signal source. Trying to edit its behavior has zero runtime effect.
-- **Reality:** `agents/quant_agent.py` is orphan legacy code (only referenced by `core/runtime_spine.py`, which itself is not on the live call path). The actual quant DECIDE signal comes from the Best-of-N strategy selector in `data_mgmt/market_data_pipeline.py:1244`. The 12-strategy institutional matrix `agents/kraken_quant_agent.py` (DIFFERENT FILE) is also DECIDE as of 2026-04-22.
-- **Mitigation:** When you need to modify quant behavior, edit `data_mgmt/market_data_pipeline.py` (Best-of-N strategies) OR `agents/kraken_quant_agent.py` (12 institutional strategies). `startup_agent_wiring_truth.py` will correctly flag `agents/quant_agent.py` as DEAD.
+### P9. [ARCHIVED 2026-04-22] agents/quant_agent.py moved to archive/legacy_agents/
+- **Historical symptom:** Prior readers finding `agents/quant_agent.py` assumed it was the DECIDE signal source and tried to edit it — zero runtime effect.
+- **Resolution:** File moved to `archive/legacy_agents/quant_agent.py`. Its two unique signals (CVD z-score cascade confirmation + predicted-funding bearish divergence) were ported into `agents/kraken_quant_agent.py` (LiquidationCascadeHunter and FundingDivergenceStrategy respectively). See commit 540167d.
+- **Where quant DECIDE lives now:**
+  - TA-based Best-of-N (mean_revert/momentum/volume_breakout/vrp/hold) → `data_mgmt/market_data_pipeline.py:1244` → `quant_direction`
+  - 12 institutional stat-arb strategies → `agents/kraken_quant_agent.py` → `kq_direction`
+  - Both are DECIDE authority in fusion, alongside DRL (TQC) when ACTIVE.
 
 ### P10. TWO SEPARATE DRL systems — don't confuse them
 - **`drl/ensemble.py` + `models/retrained/{ASSET}/fold_3/.../best_model.zip`** — the **TQC direction DRL** we activated 2026-04-22. Predicts direction+confidence, feeds `agent_signals["drl_direction"]`/`drl_confidence`, authority ACTIVE, Sharpe +9 on val backtest. **This is the main DRL.**
