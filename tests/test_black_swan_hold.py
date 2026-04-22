@@ -71,16 +71,19 @@ class TestBlackSwanSentinel:
 # =============================================================================
 
 class TestConfidenceBucketing:
-    """Test N1: confidence clamping by signal direction."""
+    """Test N1: symmetric confidence clamping by signal direction.
+
+    [UPDATED 2026-04-22] Was asymmetric (LONG [0.30,1.00], SHORT [0.10,0.60]).
+    14d paper run showed the asymmetry forced 88% LONG bias and handicapped
+    SHORT confidence; symmetrized to [0.30, 1.00] for both directions.
+    """
 
     @staticmethod
     def _bucket(quant_dir: float, quant_conf: float) -> float:
-        """Replicate bucketing logic from pipeline."""
-        if quant_dir > 0.05:      # bullish
+        """Replicate bucketing logic from pipeline (post-symmetrization)."""
+        if abs(quant_dir) > 0.05:  # directional (LONG or SHORT)
             return max(0.30, min(1.00, quant_conf))
-        elif quant_dir < -0.05:   # bearish
-            return max(0.10, min(0.60, quant_conf))
-        else:                     # neutral
+        else:                      # neutral
             return max(0.40, min(0.70, quant_conf))
 
     def test_bullish_floor_is_030(self):
@@ -91,26 +94,27 @@ class TestConfidenceBucketing:
         """Bullish signal can reach confidence = 1.00."""
         assert self._bucket(0.5, 1.50) == 1.00
 
-    def test_bearish_ceiling_is_060(self):
-        """Bearish signal capped at confidence = 0.60."""
-        assert self._bucket(-0.5, 0.90) == 0.60
+    def test_bearish_ceiling_is_100(self):
+        """Bearish signal can also reach confidence = 1.00 (symmetric)."""
+        assert self._bucket(-0.5, 0.90) == 0.90  # no clamp at 0.60 anymore
+        assert self._bucket(-0.5, 1.50) == 1.00
 
-    def test_bearish_floor_is_010(self):
-        """Bearish signal can't have confidence < 0.10."""
-        assert self._bucket(-0.5, 0.05) == 0.10
+    def test_bearish_floor_is_030(self):
+        """Bearish signal floored at 0.30 (symmetric with bullish)."""
+        assert self._bucket(-0.5, 0.05) == 0.30
 
     def test_neutral_clamped_to_040_070(self):
         """Neutral signal clamped to [0.40, 0.70]."""
         assert self._bucket(0.0, 0.10) == 0.40
         assert self._bucket(0.0, 0.90) == 0.70
 
-    def test_slight_bullish_uses_bullish_range(self):
-        """Direction = 0.06 (just above 0.05 threshold) → bullish bucketing."""
+    def test_slight_bullish_uses_directional_range(self):
+        """Direction = 0.06 (just above 0.05 threshold) → directional bucketing."""
         assert self._bucket(0.06, 0.20) == 0.30  # clamped to floor
 
-    def test_slight_bearish_uses_bearish_range(self):
-        """Direction = -0.06 → bearish bucketing."""
-        assert self._bucket(-0.06, 0.80) == 0.60  # clamped to ceiling
+    def test_slight_bearish_uses_directional_range(self):
+        """Direction = -0.06 → directional bucketing, no asymmetric cap."""
+        assert self._bucket(-0.06, 0.80) == 0.80  # no longer clamped to 0.60
 
 
 # =============================================================================

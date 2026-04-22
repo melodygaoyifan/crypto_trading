@@ -6866,6 +6866,10 @@ class HMATSProductionRunner:
                     # Root cause: naming drift between agent output and fusion consumer.
                     agent_signals['micro_imbalance'] = _micro_sig.get('order_book_imbalance', 0.0)
                     agent_signals['micro_confidence'] = _micro_sig.get('micro_confidence', 0.0)
+                    # [ATTR-FIX] micro_direction was only in market_data; mirror to agent_signals
+                    # so attribution tracker + downstream readers (main.py:11874) see it.
+                    agent_signals['micro_direction'] = _micro_sig.get('micro_direction', 0.0)
+                    agent_signals['micro_data_quality'] = _micro_sig.get('data_quality', 1.0)
                     if abs(_micro_sig.get("micro_direction", 0)) > 0.3:
                         logger.info(
                             f"[WIRE-MICRO] {asset}: dir={_micro_sig['micro_direction']:+.2f} "
@@ -7395,6 +7399,21 @@ class HMATSProductionRunner:
         agent_signals.setdefault('exchange_flow', 0.0)
         agent_signals.setdefault('etf_flow', 0.0)
         agent_signals.setdefault('flow_direction', 0.0)
+
+        # [WHALE-BRIDGE 2026-04-22] WhaleDetector pipeline writes whale_direction (str)
+        # and whale_net_pressure (float) to market_data (pipeline:1826-1830), but fusion
+        # reads whale_flow_direction + whale_confidence (integration_v36.py:2340-2346).
+        # Bridge converts the key names so the fusion "whale" branch stops being dead code.
+        _wh_net = float(market_data.get('whale_net_pressure', 0.0) or 0.0)
+        if _wh_net > 0.3:
+            agent_signals['whale_flow_direction'] = 1.0
+            agent_signals['whale_confidence'] = min(abs(_wh_net), 1.0)
+        elif _wh_net < -0.3:
+            agent_signals['whale_flow_direction'] = -1.0
+            agent_signals['whale_confidence'] = min(abs(_wh_net), 1.0)
+        else:
+            agent_signals['whale_flow_direction'] = 0.0
+            agent_signals['whale_confidence'] = 0.0
 
         # [v3.3-B18] OnChain Sentiment Fusion -per-asset on-chain + sentiment alpha
         if self._onchain_fusion:
@@ -8296,10 +8315,17 @@ class HMATSProductionRunner:
             _attr_tick_id = (
                 f"{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')}_{_attr_asset}"
             )
+            # [ATTR-EXPAND] Extended tracker: 16/25 matrix agents with direction+confidence.
+            # Skipped (non-direction by architecture): regime, macro, lead_lag, risk,
+            # structure, squeeze, cvd, risk_appetite, options, whale.
             _ATTR_AUTHORITY = {
                 "quant": "DECIDE", "short_bias": "ADVISE", "sentiment": "ADVISE",
                 "onchain_sol": "ADVISE", "vol_alpha": "ADVISE", "micro": "TRIGGER",
                 "model_alpha": "ADVISE", "kraken_quant": "ADVISE",
+                # [ATTR-EXPAND] newly tracked
+                "drl": "ADVISE", "two_stage": "CONFIRM", "funding": "ADVISE",
+                "onchain": "ADVISE", "llm_sentiment": "ADVISE", "flow": "ADVISE",
+                "soldex": "ADVISE", "onchain_graph": "ADVISE",
             }
             _attr_collected = {
                 "quant": {k: agent_signals.get(k, 0.0) for k in
@@ -8318,10 +8344,46 @@ class HMATSProductionRunner:
                     ["kq_direction", "kq_confidence", "kq_data_quality"]},
                 "vol_alpha": {k: agent_signals.get(k, 0.0) for k in
                     ["vol_alpha_direction", "vol_alpha_bias", "vol_alpha_data_quality"]},
+                # [ATTR-EXPAND] direction-producing agents previously dropped by tracker
+                "drl": {
+                    "direction": agent_signals.get("drl_direction", 0.0),
+                    "confidence": agent_signals.get("drl_confidence", 0.0),
+                },
+                "two_stage": {
+                    "direction": agent_signals.get("two_stage_direction", 0.0),
+                    "confidence": agent_signals.get("two_stage_confidence", 0.0),
+                },
+                "funding": {
+                    "direction": agent_signals.get("funding_direction", 0.0),
+                    "confidence": agent_signals.get("funding_confidence", 0.0),
+                },
+                "llm_sentiment": {
+                    "direction": agent_signals.get("llm_sentiment_direction", 0.0),
+                    "confidence": agent_signals.get("llm_sentiment_confidence", 0.0),
+                },
+                "flow": {
+                    "direction": float(agent_signals.get("flow_direction", 0.0) or 0.0),
+                    # flow has no native confidence — proxy from whale_flow magnitude
+                    "confidence": min(1.0, abs(float(agent_signals.get("whale_flow", 0.0) or 0.0)) / 1e7),
+                },
             }
             if _attr_asset == "SOL":
                 _attr_collected["onchain_sol"] = {k: agent_signals.get(k, 0.0) for k in
                     ["onchain_direction", "onchain_confidence", "onchain_data_quality"]}
+                _attr_collected["soldex"] = {
+                    "direction": agent_signals.get("soldex_arb_direction", 0.0),
+                    "confidence": agent_signals.get("soldex_confidence", 0.0),
+                }
+                _attr_collected["onchain_graph"] = {
+                    "direction": agent_signals.get("onchain_graph_direction", 0.0),
+                    "confidence": agent_signals.get("onchain_graph_confidence", 0.0),
+                }
+            else:
+                # BTC/ETH onchain (HeliusFeed/Birdeye for non-SOL assets)
+                _attr_collected["onchain"] = {
+                    "direction": agent_signals.get("onchain_direction", 0.0),
+                    "confidence": agent_signals.get("onchain_confidence", 0.0),
+                }
 
             _attr_envelopes = []
             for _aname, _araw in _attr_collected.items():
@@ -19589,6 +19651,20 @@ class HMATSProductionRunner:
                             _eqf.write(json.dumps(_eq_rec) + "\n")
                 except Exception as _eq_err:
                     logger.debug(f"[EQUITY-LOG] {_eq_err}")
+
+                # [KQ-DIAG] Persist per-strategy firing stats for offline inspection
+                try:
+                    if getattr(self, "_kraken_quant_agent", None) is not None:
+                        from pathlib import Path as _PathKq
+                        _kq_stats = self._kraken_quant_agent.get_firing_stats()
+                        _kq_stats["ts"] = datetime.now(timezone.utc).isoformat()
+                        _kq_stats["tick"] = self._live_round_count
+                        _kq_path = _PathKq("data/kq_firing_stats.json")
+                        _kq_path.parent.mkdir(parents=True, exist_ok=True)
+                        with open(_kq_path, "w") as _kqf:
+                            json.dump(_kq_stats, _kqf, indent=2)
+                except Exception as _kq_err:
+                    logger.debug(f"[KQ-DIAG] persist failed: {_kq_err}")
 
                 _wait_secs_live = self._seconds_until_next_4h_candle(offset_seconds=90)
                 logger.info(f"[LIVE] Next 4H candle in {_wait_secs_live:.0f}s")

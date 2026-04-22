@@ -98,10 +98,20 @@ REGIME_STRATEGY_FIT = {
         # is ambiguous — price can trend, not just revert. 0.7 reduces mean_revert
         # dominance, allowing momentum/other strategies to compete when signals align.
         "NEUTRAL_DRIFT": 0.9, "STEADY_UPTREND": 0.4,
+        # [FIX 2026-04-22] Raise mean_revert fit in MOMENTUM_RALLY from default 0.5 → 0.9.
+        # GMM labels MOMENTUM_RALLY only after ADX>30 AND ema>0.3 — trend is mature/topping.
+        # RegimeSmoother persistence=2 holds label 2 ticks past actual peak.
+        # 14d paper run: momentum-only best-of-N in this regime hit 0/98.
+        # Bump MR to 0.9 so mean_revert can win best-of-N when rally exhausts.
+        "MOMENTUM_RALLY": 0.9,
         "_default": 0.5,
     },
     "momentum": {
-        "MOMENTUM_RALLY": 1.3, "PANIC_SELLOFF": 1.3, "STEADY_UPTREND": 1.1,
+        # [FIX 2026-04-22] MOMENTUM_RALLY reduced 1.3 → 0.7. Momentum signal uses
+        # lagging indicators (EMA, MACD) so by the time regime fires, we buy the top.
+        # 0/98 hit-rate empirical. 0.7 keeps momentum competitive but no longer
+        # auto-wins best-of-N; mean_revert at 0.9 now dominates late-rally ticks.
+        "MOMENTUM_RALLY": 0.7, "PANIC_SELLOFF": 1.3, "STEADY_UPTREND": 1.1,
         "NEUTRAL_DRIFT": 0.5, "QUIET_ACCUMULATION": 0.3, "WEAK_CONSOLIDATION": 0.3,
         "_default": 0.35,
     },
@@ -1214,22 +1224,22 @@ class MarketDataPipeline:
                 quant_conf *= 0.90             # -10%
             # 3-5% normal, <3% favorable → no penalty
 
-            # [N1] Confidence bucketing by signal direction (Munger pattern):
+            # [N1][FIX 2026-04-22] Symmetric confidence bucketing (Munger pattern).
             # Prevents contradictory combos like dir=+0.8 conf=0.15.
-            # Bullish: conf clamped to [0.30, 1.00] — at least 30% confident
-            # Bearish: conf clamped to [0.10, 0.60] — cap bearish confidence
-            # Neutral (hold): conf clamped to [0.40, 0.70]
-            if quant_dir > 0.05:      # bullish
+            # Directional: clamped to [0.30, 1.00] — same for LONG and SHORT.
+            # Neutral (hold): clamped to [0.40, 0.70].
+            # Prior asymmetric cap (SHORT at 0.60) created 88% LONG bias and
+            # handicapped SHORT signals through alpha gate; see 14d hit-rate audit.
+            if abs(quant_dir) > 0.05:  # directional (LONG or SHORT)
                 quant_conf = max(0.30, min(1.00, quant_conf))
-            elif quant_dir < -0.05:   # bearish
-                quant_conf = max(0.10, min(0.60, quant_conf))
-            else:                     # neutral/hold
+            else:                      # neutral/hold
                 quant_conf = max(0.40, min(0.70, quant_conf))
 
-            # [P3-LONG-BIAS] In consolidation regimes, add slight LONG bias.
-            _LONG_BIAS_REGIMES = {"QUIET_ACCUMULATION", "WEAK_CONSOLIDATION"}
-            if gmm_regime_name in _LONG_BIAS_REGIMES:
-                quant_dir = float(np.clip(quant_dir + 0.10, -1.0, 1.0))
+            # [REMOVED 2026-04-22] P3-LONG-BIAS deleted: added unconditional +0.10 LONG
+            # to quant_dir in QUIET_ACCUMULATION + WEAK_CONSOLIDATION (59% of ticks in
+            # 14d paper run), flipping borderline-bearish signals to bullish.
+            # Empirical: contributed to 88% LONG bias / 31% LONG hit-rate vs
+            # 50% SHORT hit-rate. No tests or data justified the +0.10.
 
             raw["quant_direction"] = quant_dir
             raw["quant_confidence"] = quant_conf

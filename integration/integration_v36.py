@@ -2327,14 +2327,16 @@ class HMATSv36Engine:
                 confidence=_opt_conf * 0.5,  # dampen: options data can be sparse
             )
 
-        # 6. Volatility Alpha: compression/expansion detection (ADVISE — regime context)
-        _va_dir = agent_signals.get("vol_alpha_direction", 0.0)
-        _va_conf = agent_signals.get("vol_alpha_confidence", 0.0)
-        if abs(_va_dir) > 0.01 and _va_conf > 0.1:
-            signals["vol_alpha"] = AgentSignal(
-                direction=_va_dir,
-                confidence=_va_conf * 0.5,  # dampen: supplementary
-            )
+        # 6. Volatility Alpha: [REMOVED 2026-04-22] Dead fusion branch deleted.
+        # Per agents/volatility_alpha_agent.py:955, vol_alpha_direction is ALWAYS 0.0
+        # by design — the agent is "direction-agnostic" (measures vol regime, not
+        # long/short). The prior `abs(_va_dir) > 0.01` check was therefore permanently
+        # false, and signals["vol_alpha"] was never set.
+        # vol_alpha's real impact flows through execution: vol_alpha_intensity
+        # (main.py:6754) + vol_convex_long_stop/short_stop (main.py:6757-6762)
+        # + leverage_cap_soft, NOT via fusion direction. No change to that path.
+        # If vol_alpha is ever promoted to produce directional signals, restore
+        # this branch and remove the "ALWAYS 0.0" contract in the agent.
 
         # 7. Whale Detector: large order detection (ADVISE — flow context)
         _wh_dir = agent_signals.get("whale_flow_direction", 0.0)
@@ -2343,6 +2345,20 @@ class HMATSv36Engine:
             signals["whale"] = AgentSignal(
                 direction=_wh_dir,
                 confidence=_wh_conf,
+            )
+
+        # 8. SolDex DEX-CEX arb monitor (ADVISE — SOL only, opportunistic)
+        # [FIX 2026-04-22] soldex was in AUTHORITY_MATRIX_NORMAL (authority_fusion.py:174)
+        # but _build_fusion_signals never read any soldex key — signal was produced
+        # at main.py:6042-6050 and silently dropped. Wiring as ADVISE since the arb
+        # is exchange-microstructure specific, not directional authority.
+        _sdx_dir = float(agent_signals.get("soldex_arb_direction", 0.0) or 0.0)
+        _sdx_conf = float(agent_signals.get("soldex_confidence", 0.0) or 0.0)
+        _sdx_active = bool(agent_signals.get("soldex_arb_active", False))
+        if _sdx_active and abs(_sdx_dir) > 0.01 and _sdx_conf > 0.1:
+            signals["soldex"] = AgentSignal(
+                direction=_sdx_dir,
+                confidence=_sdx_conf * 0.5,  # dampen: arb signal, not primary direction
             )
 
         return signals

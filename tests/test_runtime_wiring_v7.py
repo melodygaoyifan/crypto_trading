@@ -384,37 +384,12 @@ class TestProofLogs:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# SECTION G: kraken_quant_agent containment
+# [REMOVED 2026-04-22] SECTION G: kraken_quant_agent containment
+# Stale — early architecture treated kraken_quant as deprecated and required
+# main.py to stay clear of it. Current architecture intentionally uses
+# agents.kraken_quant_agent.KrakenQuantAgentV6 in main.py (12-strategy matrix
+# via _kraken_quant_agent attr), so the containment assertions no longer apply.
 # ═══════════════════════════════════════════════════════════════════════════════
-
-class TestKrakenQuantAgentContainment:
-    """Validate kraken_quant_agent is not on production import path."""
-
-    def test_main_does_not_import_kraken_quant(self):
-        """G1: main.py has zero references to KrakenQuantAgent."""
-        main_path = Path(__file__).parent.parent / "main.py"
-        content = main_path.read_text(encoding="utf-8")
-        assert "KrakenQuantAgent" not in content
-        assert "kraken_quant_agent" not in content
-
-    def test_deprecation_warning_on_import(self):
-        """G2: Importing from exchange.kraken.kraken_quant_agent raises DeprecationWarning."""
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            try:
-                import importlib
-                mod = importlib.import_module("exchange.kraken.kraken_quant_agent")
-                # Check if any DeprecationWarning was issued
-                depr = [x for x in w if issubclass(x.category, DeprecationWarning)]
-                assert len(depr) >= 1, "Expected DeprecationWarning on import"
-            except ImportError:
-                pytest.skip("kraken_quant_agent not importable (OK)")
-
-    def test_agents_kraken_quant_has_v6_status(self):
-        """G3: agents/kraken_quant_agent.py has V6-compatible status."""
-        agent_path = Path(__file__).parent.parent / "agents" / "kraken_quant_agent.py"
-        content = agent_path.read_text(encoding="utf-8")
-        assert "HMATS v6 compatible" in content
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

@@ -2149,7 +2149,16 @@ class StrategyAllocator:
         
         # Kill switch state
         self.killed = False
-        
+
+        # [KQ-DIAG] Per-strategy firing telemetry: name -> {attempts, fires}
+        # attempts = how many times strategy.update() was invoked (regime-gated)
+        # fires    = how many times it returned a non-None Signal
+        from collections import Counter as _Counter
+        self._strategy_attempts: _Counter = _Counter()
+        self._strategy_fires: _Counter = _Counter()
+        self._regime_ticks: _Counter = _Counter()  # per-regime tick count
+        self._diag_started_at = time.time()
+
     def calculate_ir_weights(self, regime: Regime) -> np.ndarray:
         """
         Calculate Information Ratio Softmax weights.
@@ -2219,7 +2228,10 @@ class StrategyAllocator:
         
         # Get active strategies for regime
         strategies = self.strategies[regime]
-        
+
+        # [KQ-DIAG] record which regime bucket ran this tick
+        self._regime_ticks[regime.value] += 1
+
         # Calculate IR weights
         weights = self.calculate_ir_weights(regime)
         
@@ -2239,9 +2251,13 @@ class StrategyAllocator:
         signals = []
         
         for i, strategy in enumerate(strategies):
+            # [KQ-DIAG] count attempt (every regime-gated update call)
+            self._strategy_attempts[strategy.name] += 1
             signal = strategy.update(market_data)
-            
+
             if signal:
+                # [KQ-DIAG] count fire (strategy returned a real Signal)
+                self._strategy_fires[strategy.name] += 1
                 # Apply weight and vol adjustment
                 adjusted_size = signal.size_pct * weights[i] * vol_mult
                 
@@ -2272,10 +2288,10 @@ class StrategyAllocator:
     def get_strategy_summary(self) -> Dict:
         """Get summary of all strategy states."""
         summary = {}
-        
+
         for regime, strategies in self.strategies.items():
             weights = self.calculate_ir_weights(regime)
-            
+
             summary[regime.value] = [
                 {
                     'id': s.strategy_id,
@@ -2287,8 +2303,48 @@ class StrategyAllocator:
                 }
                 for i, s in enumerate(strategies)
             ]
-        
+
         return summary
+
+    def get_firing_stats(self) -> Dict:
+        """[KQ-DIAG] Return per-strategy firing statistics.
+
+        Structure:
+          {
+            'uptime_sec': float,
+            'regime_ticks': {'BEAR': int, 'BULL': int, 'SIDEWAYS': int},
+            'by_regime': {
+                'BEAR': [{'name', 'attempts', 'fires', 'fire_rate'}, ...],
+                ...
+            },
+            'never_fired': [strategy_name, ...]
+          }
+        """
+        uptime = time.time() - self._diag_started_at
+        by_regime: Dict = {}
+        never_fired = []
+        for regime, strategies in self.strategies.items():
+            rows = []
+            for s in strategies:
+                att = int(self._strategy_attempts.get(s.name, 0))
+                fires = int(self._strategy_fires.get(s.name, 0))
+                rate = (fires / att) if att > 0 else 0.0
+                rows.append({
+                    'name': s.name,
+                    'id': s.strategy_id,
+                    'attempts': att,
+                    'fires': fires,
+                    'fire_rate': round(rate, 4),
+                })
+                if fires == 0:
+                    never_fired.append(s.name)
+            by_regime[regime.value] = rows
+        return {
+            'uptime_sec': round(uptime, 1),
+            'regime_ticks': dict(self._regime_ticks),
+            'by_regime': by_regime,
+            'never_fired': never_fired,
+        }
 
 
 # =============================================================================
@@ -2516,6 +2572,13 @@ class KrakenQuantAgentV6:
     def get_last_payload(self, asset: str) -> KrakenQuantPayload:
         """Return the most recently cached payload (or neutral)."""
         return self._last_payloads.get(asset, _neutral_payload(asset))
+
+    def get_firing_stats(self) -> Dict:
+        """[KQ-DIAG] Proxy to allocator per-strategy firing telemetry."""
+        try:
+            return self.allocator.get_firing_stats()
+        except Exception as exc:
+            return {"error": str(exc)}
 
     def reset_state(self, asset: Optional[str] = None):
         """Clear cached payloads (single asset or all)."""
