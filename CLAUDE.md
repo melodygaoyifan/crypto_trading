@@ -24,6 +24,7 @@
 | **Binance WS (micro)** | ACTIVE | taker flow + mark price for cross-exchange microstructure |
 | **Discord alerts** | ACTIVE | webhook in `.env` → `DiscordLogHandler` forwards ERROR/CRITICAL + 4H heartbeat |
 | **Attribution tracker** | ACTIVE | 16-agent coverage (see §Authority Matrix) |
+| **Execution shadow** | ACTIVE | Re-enabled 2026-04-24 after self→ctx bugs fixed + AC-2 snapshot. Watch `data/shadow_exec_comparison.jsonl` for CRITICAL MISMATCH rate before cutover |
 
 **Verification commands** (run these when in doubt):
 ```bash
@@ -207,6 +208,24 @@ Authority matrix (`signals/authority_fusion.py`) + writer (`main.py` somewhere i
 - **Cause:** `integration_v36.py:1679` promoted ANY `signal_conflict > 0.5` to `1.0` before calling the risk classifier, which treats `>= 1.0` as HARD VETO. But `constitution.py:441-444` explicitly says 2-agent conflict (score 0.7) should only reduce confidence via fusion — not veto — and only 3-agent conflict (score 0.9+) is NO_TRADE-worthy. DRL ACTIVE with +0.9 signals frequently disagreed with quant Best-of-N, generating score 0.7 every tick → auto-promoted to 1.0 → HARD VETO → no trades.
 - **Fix:** Threshold aligned with constitution.py (commit 607ab10). Only `>= 0.9` (true 3-agent conflict) escalates.
 - **Mitigation:** When adding a DECIDE agent, check cross-agent conflict handling — the existence of an additional DECIDE voter can trigger this kind of interaction bug.
+
+### P16. [FIXED 2026-04-24] Dummy ENABLE_* flags — declared but never gated
+- **Symptom:** `configs/sota_flags.py` declared `ENABLE_STRUCTURE_ANALYZER`, `ENABLE_ENHANCED_REGIME_NAVIGATOR`, `ENABLE_SOLDEX_MONITOR_SHADOW` all defaulting to `True`. Flipping any of them to `False` produced zero runtime effect — operators thought they had kill switches they did not have.
+- **Cause:** Instantiation sites in main.py guarded only on `_AVAILABLE` imports (e.g. `if STRUCTURE_ANALYZER_AVAILABLE: self.structure_analyzer = ...`), never on the flag itself. `ENABLE_SOLDEX_MONITOR_SHADOW`'s only real consumer was `archive/shadow/shadow_observers.py` — off the live path since the 2026-04-15 soldex SHADOW→ACTIVE promotion.
+- **Fix:** Wrapped StructureBreakAnalyzer ([main.py:3817-3838](main.py#L3817-L3838)) and EnhancedMarketRegimeNavigator ([main.py:3311-3327](main.py#L3311-L3327)) with real `getattr(flags, ENABLE_X, True)` checks. Dropped `ENABLE_SOLDEX_MONITOR_SHADOW` entirely (dead-flag cleanup pattern per 2026-04-15 `ENABLE_PASSIVE_AGGRESSIVE_SHADOW` precedent).
+- **Mitigation:** New `ENABLE_*` flag must include (a) real runtime check at every instantiation/call site, (b) `DISABLED` log message branch so operators can verify the kill switch engaged. If the flag has no live consumer, delete it; do not leave "future-proofing" stubs.
+
+### P17. [CLEANUP 2026-04-24] canonical_config.py single-source-of-truth drift
+- **Symptom:** `configs/canonical_config.py` self-labeled "Single Source of Truth" but 13 of its constants (`CORRELATION_COLLAPSE`, `REGIME_LEVERAGE_MAP`, `MASTER_TICK_SECONDS`, `EXECUTION_LOOP_MS`, `DMS_TIMEOUT_SECONDS`, `SCALE_OUT_PCT`, `SCALE_OUT_MIN_PROFIT_BPS`, `SCALE_OUT_MIN_BARS`, `RUNNER_INITIAL_TRAIL_PCT`, `RUNNER_TIGHT_TRAIL_PCT`, `STOP_ATR_MULTIPLIER`, `STOP_MIN_PCT`, `MAX_HOLDING_HOURS`) had zero importers. Authoritative values lived in `configs/high_risk_mode.py` dict literals, `defense/constitution.py` class attributes, or local module constants — while canonical_config's copies silently rotted.
+- **Fix:** Removed the 13 dead constants. Left breadcrumb comments pointing to where the live values actually live (e.g. `SCALE_OUT_PCT` → `configs/high_risk_mode.py`).
+- **Mitigation:** Before tweaking any config value, run `grep -rn "from configs.canonical_config import"` to confirm the constant is actually on the hot path. If the module is supposed to be authoritative, new additions need at least one real importer — otherwise they are documentation masquerading as config.
+
+### P18. [FIXED 2026-04-24] Two dead-reads missed in P14 (market_data-vs-agent_signals + pre-write read)
+- **Symptom:** After P14 fixed 4 dead-reads, a deeper trace of the remaining 25 audit false-positives turned up **2 more real silent bugs**:
+  1. `cascade_phase` — writer at `main.py:5459` writes to **market_data**, reader at `main.py:12099` (PartialConsensus `DisableConditions`) reads from **agent_signals`. Namespace mismatch → reader always got `'NONE'` → cascade-driven disable of partial-consensus entries never fired. Dormant today because `ENABLE_PARTIAL_CONSENSUS_ENTRY=False`, but activates the moment PC flips on.
+  2. `quant_strategy_id` — reader at `main.py:7155` (StrategyAllocator) reads `agent_signals.get('quant_strategy_id', 'momentum')` BEFORE intent is built. The key is set as `intent.quant_strategy_id` at `integration_v36.py:1167`, never mirrored to agent_signals. Allocator always looked up 'momentum' weight regardless of actual selected strategy. Impact limited because `allocator_authority='SHADOW'` (advisory), but still wrong.
+- **Fix:** Both readers bridged. `cascade_phase` falls back to `market_data.get('cascade_phase')`; `quant_strategy_id` falls back to `agent_signals.get('primary_strategy')`.
+- **Mitigation:** The audit's dead-read list is worth tracing by hand even when most are false positives — among 25 "definitely-false-positive" keys, 2 turned out real. Dict-literal writes and dict-unpack writes are invisible to the audit regex, but so are market_data→agent_signals namespace mismatches. Whenever a `.get()` reader lives far from the writer, spot-check the namespace explicitly.
 
 ### P13. [FIXED 2026-04-24] kraken_quant cross-asset data starvation
 - **Symptom:** kraken_quant 12-strategy matrix wired as DECIDE and ACTIVE, but 30 ticks over 39h all showed `○kraken_quant=+0.00/0.00/dq1.0` in AGENT-TRACE. Looked like "ACTIVE but never fires".

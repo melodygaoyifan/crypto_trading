@@ -138,10 +138,12 @@ class SOTAFlags:
     KRAKEN_PLUS_BLEND_BAND_USD: float = 2_000.0
     
     # [DEAD-FLAG-CLEANUP 2026-04-15] removed: ENABLE_PASSIVE_AGGRESSIVE_SHADOW (0 refs)
-    
-    # SolDex Monitor Shadow - L1 鐗瑰緛婧?(Feature-only)
-    ENABLE_SOLDEX_MONITOR_SHADOW: bool = True
-    
+    # [DEAD-FLAG-CLEANUP 2026-04-24] removed: ENABLE_SOLDEX_MONITOR_SHADOW
+    #   Original consumer (archive/shadow/shadow_observers.py) is off the live path.
+    #   Live soldex signal (main.py:6048+) was promoted SHADOW->ACTIVE on 2026-04-15
+    #   and writes unconditionally when asset starts with SOL. No runtime gate needed.
+
+
     # =========================================================================
     # P1.9: PARTIAL CONSENSUS ENTRY (v6.2.3)
     # =========================================================================
@@ -332,8 +334,7 @@ class SOTAFlags:
             "P1.5 (Governors)": ["ENABLE_OPPORTUNITY_BUDGET_GOVERNOR", 
                                 "ENABLE_REGIME_TRANSITION_BUFFER",
                                 "ENABLE_CASCADE_EXHAUSTION_GOVERNOR"],
-            "P1.6 (Shadow)": ["ENABLE_LEAD_LAG_SHADOW",
-                             "ENABLE_SOLDEX_MONITOR_SHADOW"],
+            "P1.6 (Shadow)": ["ENABLE_LEAD_LAG_SHADOW"],
             "P1.7 (High-Risk)": ["ENABLE_HIGH_RISK_GAMBLER_MODE"],
             "P1.8 (Fee Blending)": ["ENABLE_KRAKEN_PLUS_FEE_BLENDING"],
             "P1.9 (Partial Consensus)": ["ENABLE_PARTIAL_CONSENSUS_ENTRY"],

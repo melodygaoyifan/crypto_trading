@@ -82,7 +82,9 @@ def get_drawdown_multiplier(drawdown_pct: float) -> float:
 # =============================================================================
 
 CORRELATION_CRISIS = 0.98           # ≥0.98 -> flatten (UL-4)
-CORRELATION_COLLAPSE = 0.30         # Collapse detection threshold
+# [CLEANUP 2026-04-24] CORRELATION_COLLAPSE removed — never imported.
+#   Live threshold lives inline in defense/constitution.py:312 (0.92) and
+#   signals/no_trade_triggers.py:96 (0.92) as class attributes.
 
 # =============================================================================
 # EXPOSURE CAPS
@@ -116,36 +118,12 @@ KRAKEN_TAKER_BPS = 26.0
 KRAKEN_MAKER_BPS = 16.0
 
 # =============================================================================
-# REGIME LEVERAGE
-# =============================================================================
-
-REGIME_LEVERAGE_MAP = {
-    "VOLATILE_CHOP": 3.0,
-    "MOMENTUM_RALLY": 2.0,
-    "PANIC_SELLOFF": 2.0,
-    "WEAK_CONSOLIDATION": 1.0,
-    "QUIET_ACCUMULATION": 1.0,
-    "EXTREME_VOLATILITY": 1.0,
-    # Legacy regime names
-    "STRONG_TREND": 2.0,
-    "TREND": 1.5,
-    "BULL_TREND": 1.5,
-    "BEAR_TREND": 1.0,
-    "UNCERTAIN": 1.0,
-    "MEAN_REVERT": 1.0,
-    "TRANSITION": 1.0,
-    "SIDEWAYS": 1.0,
-    "UNKNOWN": 1.0,
-}
-
-# =============================================================================
-# TIMING
-# =============================================================================
-
-MASTER_TICK_SECONDS = 14_400        # 4H = 14400s
-EXECUTION_LOOP_MS = 200             # 200ms execution modifiers
-DMS_TIMEOUT_SECONDS = 60            # Dead-man switch timeout
-
+# [CLEANUP 2026-04-24] REGIME_LEVERAGE_MAP removed — never imported.
+#   Live per-regime leverage lives in configs/high_risk_mode.py dict literals
+#   and risk/sota_risk_controller.py regime_adjustments.
+# [CLEANUP 2026-04-24] Timing constants removed — never imported.
+#   MASTER_TICK_SECONDS lives in main.py ProductionConfig.
+#   EXECUTION_LOOP_MS / DMS_TIMEOUT_SECONDS: not used at runtime.
 # =============================================================================
 # MARGIN COSTS (Kraken)
 # =============================================================================
@@ -185,23 +163,13 @@ MODE_TTL_CONFIDENCE_FLOOR = 0.20    # Below this -> expire
 MODE_TTL_BLEND_BARS = 1             # Bars to blend on expiry
 
 # =============================================================================
-# EXIT ALPHA
-# =============================================================================
-
-SCALE_OUT_PCT = 0.10                # 10% first exit
-SCALE_OUT_MIN_PROFIT_BPS = 500.0    # 5% min profit before scale
-SCALE_OUT_MIN_BARS = 3              # Min bars held before scale
-RUNNER_INITIAL_TRAIL_PCT = 0.03     # 3% initial trail
-RUNNER_TIGHT_TRAIL_PCT = 0.015      # 1.5% tight trail
-
-# =============================================================================
-# STOP MANAGEMENT
-# =============================================================================
-
-STOP_ATR_MULTIPLIER = 3.5           # ATR multiplier for initial stop
-STOP_MIN_PCT = 0.01                 # 1% minimum stop
-MAX_HOLDING_HOURS = 336             # 14 days (OPPORTUNITY mode)
-
+# [CLEANUP 2026-04-24] EXIT ALPHA constants removed — never imported.
+#   Live values live in configs/high_risk_mode.py (scale_out_pct, trail_pct)
+#   and signals/exit_alpha.py class attributes.
+# [CLEANUP 2026-04-24] STOP MANAGEMENT constants removed — never imported.
+#   Live STOP_ATR_MULTIPLIER lives in defense/stop_manager.py.
+#   MAX_HOLDING_HOURS is enforced via OPPORTUNITY_RULE_TABLE in core/constants.py
+#   (max_hold_hours: normal 72 / opportunity 336).
 # =============================================================================
 # DEADLOCK RESOLUTION
 # =============================================================================

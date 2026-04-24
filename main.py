@@ -2044,7 +2044,10 @@ class HMATSProductionRunner:
 
         # [SHADOW] Execution path shadow mode — compare old vs new execute_intent
         # Set to True to enable dual-path comparison logging to data/shadow_exec_comparison.jsonl
-        self._enable_execution_shadow = False
+        # Re-enabled 2026-04-24 after self->ctx bugs fixed (commit 2078098) and
+        # AC-2 snapshot fix (commit 19ead46). Observe data/shadow_exec_comparison.jsonl
+        # for CRITICAL MISMATCH rate before cutover.
+        self._enable_execution_shadow = True
         self._ac0_requires_entry_block = False
         self._ac0_restored_assets: set[str] = set()
 
@@ -3305,13 +3308,23 @@ class HMATSProductionRunner:
         # === END V10 WIRING ===
 
         # 3. Enhanced Regime Navigator - Market state awareness
+        # [FIX 2026-04-24] ENABLE_ENHANCED_REGIME_NAVIGATOR flag was declared in
+        # configs/sota_flags.py:199 but never enforced — flipping to False had
+        # zero effect. Added real gate so operators can disable as kill switch.
         self.regime_navigator = None
-        if REGIME_NAVIGATOR_AVAILABLE:
+        try:
+            from configs.sota_flags import get_sota_flags as _get_sf_rn
+            _rn_enabled = getattr(_get_sf_rn(), "ENABLE_ENHANCED_REGIME_NAVIGATOR", True)
+        except Exception:
+            _rn_enabled = True
+        if REGIME_NAVIGATOR_AVAILABLE and _rn_enabled:
             try:
                 self.regime_navigator = EnhancedMarketRegimeNavigator(use_gpu=False)
                 logger.info("  EnhancedRegimeNavigator: ACTIVE (v6.2.3e P0 wiring)")
             except Exception as e:
                 logger.warning(f"  EnhancedRegimeNavigator: STUB ({e})")
+        elif REGIME_NAVIGATOR_AVAILABLE and not _rn_enabled:
+            logger.info("  EnhancedRegimeNavigator: DISABLED (ENABLE_ENHANCED_REGIME_NAVIGATOR=False)")
 
         # 3b. Pretrained GMM Regime Classifier (12-feature, per-asset v7)
         # Per-asset GMMs: each asset has its own k, regime names, and scaler
@@ -3815,13 +3828,23 @@ class HMATSProductionRunner:
                 logger.warning(f"  ImpactCalibrationTable: STUB ({e})")
 
         # W2: Williams Fractal Structure Analyzer
+        # [FIX 2026-04-24] ENABLE_STRUCTURE_ANALYZER flag was declared in
+        # configs/sota_flags.py:204 but never enforced — flipping to False had
+        # zero effect. Added real gate so operators can disable as kill switch.
         self.structure_analyzer = None
-        if STRUCTURE_ANALYZER_AVAILABLE:
+        try:
+            from configs.sota_flags import get_sota_flags as _get_sf_sa
+            _sa_enabled = getattr(_get_sf_sa(), "ENABLE_STRUCTURE_ANALYZER", True)
+        except Exception:
+            _sa_enabled = True
+        if STRUCTURE_ANALYZER_AVAILABLE and _sa_enabled:
             try:
                 self.structure_analyzer = StructureBreakAnalyzer()
                 logger.info("  StructureBreakAnalyzer: ACTIVE (Williams Fractal filter)")
             except Exception as e:
                 logger.warning(f"  StructureBreakAnalyzer: STUB ({e})")
+        elif STRUCTURE_ANALYZER_AVAILABLE and not _sa_enabled:
+            logger.info("  StructureBreakAnalyzer: DISABLED (ENABLE_STRUCTURE_ANALYZER=False)")
 
         # W3: Unified Position Sizer (tranche + drawdown + cap)
         self.unified_sizer = None
@@ -7129,7 +7152,14 @@ class HMATSProductionRunner:
                 _sa_regime_str = market_data.get("regime_state", "UNKNOWN")
                 from risk.strategy_allocator import Regime as _SARegime
                 _sa_regime = _SARegime(_sa_regime_str) if _sa_regime_str in [r.value for r in _SARegime] else _SARegime.UNKNOWN
-                _sa_strategy = agent_signals.get('quant_strategy_id', 'momentum')
+                # [FIX 2026-04-24 P18] `quant_strategy_id` is set as an attribute on
+                # `intent` later (integration_v36.py:1167), not in agent_signals. Reading
+                # it here always defaulted to 'momentum' -> StrategyAllocator sized
+                # against the wrong strategy for mean_revert / volume_breakout / vrp.
+                # Fall back to primary_strategy which IS populated in agent_signals at
+                # main.py:5973.
+                _sa_strategy = agent_signals.get('quant_strategy_id',
+                                                 agent_signals.get('primary_strategy', 'momentum'))
                 _sa_result = self._strategy_allocator.allocate(_sa_regime)
                 if _sa_result:
                     _sa_weight = _sa_result.weights.get(_sa_strategy, 0.0)
@@ -12073,7 +12103,12 @@ class HMATSProductionRunner:
                     signals=pc_signals,
                     authority_matrix=pc_authority,
                     disable_conditions=DisableConditions(
-                        cascade_phase=agent_signals.get('cascade_phase', 'NONE'),
+                        # [FIX 2026-04-24 P18] cascade_phase lives in market_data (written
+                        # at main.py:5459 from CascadeGovernor), never mirrored to
+                        # agent_signals. Reading from agent_signals always returned 'NONE'
+                        # -> PartialConsensus cascade-disable logic permanently off.
+                        cascade_phase=agent_signals.get('cascade_phase',
+                                                        market_data.get('cascade_phase', 'NONE')),
                         dvol_zscore=market_data.get('dvol_zscore', 0.0),
                     ),
                 )
