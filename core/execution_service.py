@@ -2112,6 +2112,25 @@ async def execute_intent_v2(
                     except Exception as e:
                         logger.debug(f"[THESIS_BUDGET] record_fill (full exit) failed: {e}")
 
+                # [FIX 2026-04-24] Feed v521 AdaptiveWeightManager so Sharpe/Calmar/
+                # WinRate can actually adjust strategy weights. Without this the 915-line
+                # v521 system sits at neutral (weight=1.0) forever because record_trade
+                # never gets called.
+                if ctx.strategic_coordinator:
+                    try:
+                        _rt_strategy = old_pos.get("strategy", intent.quant_strategy_id or "momentum")
+                        _rt_entry_price = float(old_pos.get("entry_price", 0.0) or 0.0)
+                        _rt_pnl_pct = (_net_pnl_usd / max(pos_notional, 1e-6)) if pos_notional else 0.0
+                        _rt_duration = float(old_pos.get("hold_hours", 0.0) or 0.0)
+                        ctx.strategic_coordinator.record_trade_completed(
+                            strategy=_rt_strategy,
+                            pnl=_net_pnl_usd,
+                            pnl_pct=_rt_pnl_pct,
+                            duration_hours=_rt_duration,
+                        )
+                    except Exception as e:
+                        logger.debug(f"[V521-WEIGHT] record_trade_completed failed: {e}")
+
                 # [Section E] ConfidenceScorer -record outcome at close (feedback loop)
                 if ctx.confidence_scorer is not None and asset in ctx.confidence_signal_times:
                     try:

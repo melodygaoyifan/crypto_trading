@@ -90,6 +90,7 @@ class ExecutionContext:
     failure_memory: Any = None          # FailureAwareMetaMemory
     confidence_scorer: Any = None       # ConfidenceScorer
     trade_attributor: Any = None        # TradeAttributor
+    strategic_coordinator: Any = None   # [FIX 2026-04-24] For v521 adaptive weight feedback
     sq_tracker: Any = None              # SignalQualityTracker
     ea_tracker: Any = None              # ExitAlphaTracker
     exec_quality_logger: Any = None     # ExecutionQualityLogger
@@ -185,6 +186,11 @@ class ExecutionContext:
         ctx.leverage_guard = getattr(runner, 'leverage_guard', None)
         ctx.unified_sizer = getattr(runner, 'unified_sizer', None)
         ctx.p0_integrator = getattr(runner, 'p0_integrator', None)
+        # [FIX 2026-04-24] Wire strategic_coordinator so execution_service can
+        # feed realized PnL into v521 AdaptiveWeightManager (record_trade_completed).
+        # Without this, 915-line Sharpe/Calmar/WinRate adaptive weight system is
+        # a no-op (no trade data -> all strategies stay at neutral weight 1.0).
+        ctx.strategic_coordinator = getattr(runner, 'strategic_coordinator', None)
         ctx.dead_man_switch = getattr(runner, 'dead_man_switch', None)
 
         # Execution components
