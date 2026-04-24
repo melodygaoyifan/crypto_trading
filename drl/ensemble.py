@@ -272,7 +272,13 @@ def load_best_model(
     if results_path.exists():
         with open(results_path) as f:
             results = json.load(f)
-        best_fold = results.get("best_fold", BEST_FOLDS.get(asset, "fold_1"))
+        # [FIX 2026-04-24 P4-regression] BEST_FOLDS must override results.json.
+        # results.json can report stale best_fold (e.g. ETH fold_1 with
+        # train_rows=0 from an aborted run), while BEST_FOLDS is the hand-verified
+        # authoritative map. Previously `results.get("best_fold", BEST_FOLDS...)`
+        # made results.json win — ETH inference loaded fold_1 model but
+        # ObsBuilder/OOD used fold_3 scaler (mixed-fold pairing => broken math).
+        best_fold = BEST_FOLDS.get(asset) or results.get("best_fold", "fold_3")
 
         for subdir in ["LSTM_FILM_A", "ULTIMATE"]:
             candidate = base / best_fold / "logs" / subdir / "best_model" / "best_model.zip"
