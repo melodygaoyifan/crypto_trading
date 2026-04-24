@@ -33,6 +33,12 @@ python -X utf8 scripts/startup_drl_truth.py
 # Expected: DRLAuthorityGate.get_authority() = ACTIVE; is_shadow_mode() = False
 # If config says ACTIVE but runtime says SHADOW → volume mount bug (P1)
 
+# Full-system 5-hop completeness audit (23 directories, 1122 classes)
+# Writes /tmp/hmats_audit/{inventory,wiring_analysis,final_report}.json
+python -X utf8 scripts/completeness_audit.py
+# Expected: ~1.4% ACTIVE (strict 5-hop: import→instantiate→method→decision→impact).
+# Check `agent_signals_flow.dead_reads` section for silent bugs.
+
 # Which agent/ classes are actually wired into main.py?
 python -X utf8 scripts/startup_agent_wiring_truth.py
 # Expected (2026-04-22): 122/130 ACTIVE (93.8%).
@@ -182,6 +188,15 @@ Authority matrix (`signals/authority_fusion.py`) + writer (`main.py` somewhere i
   - TA-based Best-of-N (mean_revert/momentum/volume_breakout/vrp/hold) → `data_mgmt/market_data_pipeline.py:1244` → `quant_direction`
   - 12 institutional stat-arb strategies → `agents/kraken_quant_agent.py` → `kq_direction`
   - Both are DECIDE authority in fusion, alongside DRL (TQC) when ACTIVE.
+
+### P14. [FIXED 2026-04-24] 4 silent dead-read bugs found via completeness audit
+- **Symptom:** `scripts/completeness_audit.py` flagged 27 `agent_signals.get(KEY)` calls with no matching writer. 23/27 false positives (dynamic dict-unpack like `for k,v in sig.items(): agent_signals[k]=v` bypasses regex), but 4 are real silent bugs.
+- **Fixed in commit 1d72baf:**
+  1. `quant_strategy` — 3 readers expected it; only `primary_strategy` exists. Max-pain strategy gate silently always-off.
+  2. `_ood_score` — reader expected normalized [0,1]; OOD detector writes `_ood_distance`. Bridge added.
+  3. `_vr_bounce_pct` — local var in `_diag_record()` never mirrored to `agent_signals`; reader in different method always got 0. V-reversal SHORT-override guard disabled.
+  4. `cross_asset_divergence` — CHAOS NO_TRADE veto (>0.9 triggers safety halt) never populated. Derived from `cross_asset_correlation` as `1 - |corr|`.
+- **Mitigation:** Run `python scripts/completeness_audit.py` monthly. Compare the `agent_signals_flow.dead_reads` list — verify each real miss with `grep -rn "agent_signals\[['\"]KEY['\"]\] ="` across whole codebase (not just main.py).
 
 ### P12. [FIXED 2026-04-24] 2-agent conflict score 0.7 force-promoted to HARD VETO 1.0
 - **Symptom:** After DRL went ACTIVE on 2026-04-22, cloud produced zero fills for 48 hours. Shadow ledger full of `[PROD] HARD VETO: ALL_CONFLICT_FLAT` on every tick.
