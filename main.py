@@ -7951,8 +7951,14 @@ class HMATSProductionRunner:
                 _pos = sum(1 for d in _directions if d > 0)
                 _neg = sum(1 for d in _directions if d < 0)
                 _chaos = 1.0 - abs(_pos - _neg) / len(_directions)
+                # [FIX 2026-04-24] cross_asset_divergence was never written by anything —
+                # CHAOS NO_TRADE veto silently stuck at 0. Derive from cross_asset_correlation
+                # (already computed): high correlation = low divergence, and vice versa.
                 _divergence = agent_signals.get('cross_asset_divergence',
                                                 market_data.get('cross_asset_divergence', 0.0))
+                if _divergence == 0.0:
+                    _xcorr_val = abs(float(market_data.get('cross_asset_correlation', 0.0) or 0.0))
+                    _divergence = max(0.0, min(1.0, 1.0 - _xcorr_val))
                 agent_signals['_chaos_index'] = _chaos
                 if _chaos > 0.9 and _divergence > 0.9:
                     logger.warning(
@@ -8094,6 +8100,10 @@ class HMATSProductionRunner:
                 _vr_price = market_data.get('current_price', 0.0)
                 _vr_low = market_data.get('low_4h', market_data.get('low', _vr_price))
                 _vr_bounce_pct = (_vr_price - _vr_low) / _vr_low if _vr_low > 0 else 0.0
+                # [FIX 2026-04-24] Mirror to agent_signals so downstream reader at
+                # _allow_short_mean_revert_resistance_override() (main.py:10674) can see it.
+                # Previously local-only → downstream always read 0.
+                agent_signals["_vr_bounce_pct"] = _vr_bounce_pct
                 if _vr_bounce_pct > 0.015:  # >1.5% bounce from 4H low
                     _vr_dampen = max(0.4, 1.0 - _vr_bounce_pct * 10)  # 1.5%->0.85, 3%->0.70, 6%->0.40
                     agent_signals["_regime_position_size_mult"] *= _vr_dampen
@@ -8267,7 +8277,9 @@ class HMATSProductionRunner:
             _ow_reasons.append(f"OPTIONS_PCR({_ow_pcr:.2f},long×1.10)")
         if _ow_pain_dist > 3.0:
             # Far from max pain → expect mean-reversion to pain price
-            _ow_strat = str(agent_signals.get('quant_strategy', '') or '').lower()
+            # [FIX 2026-04-24] was reading 'quant_strategy' which is never written;
+            # pipeline writes 'primary_strategy'. Same key quant_agent.py uses.
+            _ow_strat = str(agent_signals.get('primary_strategy', agent_signals.get('quant_strategy', '')) or '').lower()
             if 'mean_revert' in _ow_strat:
                 _ow_size_mult *= 1.10
                 _ow_reasons.append(f"MAX_PAIN_DIST({_ow_pain_dist:.1f}%,mean_revert×1.10)")
@@ -8374,7 +8386,9 @@ class HMATSProductionRunner:
             }
             _attr_collected = {
                 "quant": {k: agent_signals.get(k, 0.0) for k in
-                    ["quant_direction", "quant_confidence", "quant_strategy", "data_quality"]},
+                    # [FIX 2026-04-24] 'quant_strategy' is never written; 'primary_strategy' is
+                    # the actual key from pipeline Best-of-N. Keep both for back-compat.
+                    ["quant_direction", "quant_confidence", "primary_strategy", "data_quality"]},
                 "short_bias": {
                     "direction": agent_signals.get("short_bias_direction", 0.0),
                     "confidence": agent_signals.get("short_bias_confidence", 0.0),
@@ -8994,6 +9008,10 @@ class HMATSProductionRunner:
                     )
                     agent_signals["_ood_distance"] = _ood_result['distance']
                     agent_signals["_ood_threshold"] = _ood_result['threshold']
+                    # [FIX 2026-04-24] Legacy reader (main.py:8312) expects '_ood_score'
+                    # as normalized [0,1]. Compute as distance/threshold clamped.
+                    _ood_thr = _ood_result['threshold'] or 1.0
+                    agent_signals["_ood_score"] = min(1.0, max(0.0, _ood_result['distance'] / _ood_thr))
                     agent_signals["_ood_distance_raw"] = _ood_result.get('distance_raw', _ood_result['distance'])
                     agent_signals["_ood_threshold_raw"] = _ood_result.get('threshold_raw', _ood_result['threshold'])
                     agent_signals["_ood_consecutive"] = _ood_result['consecutive_ood']
