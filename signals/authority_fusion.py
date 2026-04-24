@@ -155,6 +155,13 @@ AUTHORITY_MATRIX_NORMAL = {
     # model_alpha: wired as ADVISE (line 165), promoted from CONTEXT 2026-04-11
     "two_stage": Authority.CONFIRM,   # V6: Two-Stage prior must confirm
     "short_bias": Authority.ADVISE,   # v7.0: Soft advisory (was CONFIRM, halving longs - too aggressive per PENALIZE×0.7 intent)
+    # [WIRE-DERIV 2026-04-24] ShortBias applies to ALL execution routes (spot,
+    # margin, derivatives). v2.0 Part 2.4 proposed route-specific penalty
+    # (skip on DERIVATIVES), but HMATS runs fusion BEFORE routing, so penalty
+    # is already baked in by the time ExecutionRouter decides. Given ADVISE
+    # authority (soft ±15% confidence modulation, not veto), no functional
+    # restoration is needed for derivatives longs — the penalty is small enough
+    # that perp longs with sufficient edge still fire.
     "funding_rate": Authority.ADVISE,  # [v9-PATCH-8] Carry-bias from funding rates
     "onchain": Authority.ADVISE,       # OnChain intelligence (Helius/Birdeye)
     "llm_sentiment": Authority.ADVISE, # LLM sentiment (Haiku)

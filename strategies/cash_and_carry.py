@@ -14,7 +14,7 @@ Concept:
     - Target: 8-12% annualized from funding alone
 
 Entry Conditions:
-    1. Funding rate > entry_threshold (default 0.01%/8h = ~4.5% annualized)
+    1. Funding rate > entry_threshold (default 0.01%/h = ~87.6% annualized)
     2. Funding trend is stable or rising (not one-off spike)
     3. Spot-perp basis > min_basis_bps (spread is profitable)
     4. No extreme volatility (avoid liquidation on perp side)
@@ -27,11 +27,11 @@ Exit Conditions:
 
 Kraken Futures:
     - Symbols: PF_XBTUSD, PF_ETHUSD, PF_SOLUSD
-    - Requires separate krakenfutures ccxt instance
-    - Funding period: 4h (Kraken) vs 8h (Binance)
-
-NOTE: This module provides signal generation only. Execution through
-the main pipeline requires Kraken Futures API integration (Phase 2).
+    - Funding period: **1 hour** on Kraken PF_* perpetuals (NOT 4h, NOT 8h).
+      Previously mis-documented as 4h/8h — caused thresholds to silently
+      under-fire by 8x because annualization divided by 3 periods/day instead
+      of 24. Fixed 2026-04-24.
+    - Execution via DerivativesExecutor (see execution/derivatives_executor.py).
 ================================================================================
 """
 
@@ -55,10 +55,14 @@ class CashAndCarryConfig:
     # Enable/disable
     enabled: bool = True
 
-    # Funding rate thresholds (per 8h period)
-    entry_funding_threshold: float = 0.0001   # 0.01%/8h = ~4.5% annualized
-    exit_funding_threshold: float = 0.00005   # 0.005%/8h = exit when near zero
-    extreme_funding_boost: float = 0.0005     # 0.05%/8h = boost allocation
+    # Funding rate thresholds — Kraken PF_* perpetuals pay hourly.
+    # [FIX 2026-04-24] Previously labeled "/8h" but math used *3*365, so any
+    # downstream annualization was correct for 8h but thresholds were calibrated
+    # for Binance-style 8h funding. On Kraken's 1h cadence, the same numeric
+    # threshold triggers on different annualized yields. Aligned to v2.0 spec.
+    entry_funding_threshold: float = 0.0001   # 0.01%/h  = ~87.6% annualized — aggressive, fires only in extreme funding
+    exit_funding_threshold: float = 0.00003   # 0.003%/h = ~26.3% annualized — exit when yield compresses
+    extreme_funding_boost: float = 0.0005     # 0.05%/h  = extreme, scale up allocation
 
     # Basis thresholds (spot-perp spread)
     min_basis_bps: float = 5.0          # Min 5bps basis to enter
@@ -177,7 +181,9 @@ class CashAndCarryStrategy:
 
         Args:
             asset: Asset symbol (BTC, ETH, SOL)
-            funding_rate: Current 8h funding rate (e.g., 0.0001 = 0.01%)
+            funding_rate: Current 1-hour funding rate (e.g., 0.0001 = 0.01%/h).
+                          For Kraken PF_* perpetuals, supply the RELATIVE rate
+                          (fundingRate ÷ markPrice, per CLAUDE.md Data Feeds note).
             spot_price: Current spot price
             perp_price: Current perpetual price (None = use spot)
             account_equity: Current account equity
@@ -205,8 +211,9 @@ class CashAndCarryStrategy:
             # No perp price available - estimate from funding
             basis_bps = funding_rate * 10000 * 3  # Rough: basis ≈ 3x funding
 
-        # Annualize funding (3 periods/day * 365 days)
-        funding_annualized = funding_rate * 3 * 365
+        # [FIX 2026-04-24] Kraken PF_* perpetuals pay hourly (24 periods/day),
+        # NOT 8h (3 periods/day). Previous math understated annualized yield by 8x.
+        funding_annualized = funding_rate * 24 * 365
 
         current_state = self._states.get(asset, CarryState.IDLE)
 

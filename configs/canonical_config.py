@@ -191,3 +191,23 @@ SOL_FLASH_MOVE_PCT = 0.03           # 3% move
 # =============================================================================
 
 REBUILD_COOLDOWN_EXEMPT_ADDON = True  # [CFG-9] Pyramid add-on exempt from cooldown
+
+# =============================================================================
+# DERIVATIVES (Kraken Perpetual Futures) — added 2026-04-24
+# =============================================================================
+# Kill switch (read as env var: DERIVATIVES_ENABLED)
+# HARD CAPS live in execution/derivatives_executor.py as class constants —
+# NOT configurable from here. Only tunables live below.
+
+# Cash-carry entry / exit funding thresholds (per hour — Kraken PF_* is hourly)
+DERIVATIVES_FUNDING_OPEN_THRESHOLD_H = 0.0001    # 0.01%/h  = ~87.6% annualized
+DERIVATIVES_FUNDING_CLOSE_THRESHOLD_H = 0.00003  # 0.003%/h = ~26.3% annualized
+DERIVATIVES_BASIS_MAX_PCT = 0.02                  # 2% max spot-perp basis for carry entry
+
+# Short directional via perp: only routes when funding >= this threshold (funding paid to shorts)
+DERIVATIVES_SHORT_FUNDING_THRESHOLD_H = 0.0001   # 0.01%/h
+
+# First-week absolute $ cap per position (read as env: DERIVATIVES_INITIAL_SIZE_USD_CAP)
+# Remove after Day 8 if no CRITICAL alerts. Default None disables the extra cap.
+# (Normal per-position cap of 15% NAV still applies from executor HARD CAPS.)
+DERIVATIVES_INITIAL_SIZE_USD_CAP_DEFAULT = 250.0

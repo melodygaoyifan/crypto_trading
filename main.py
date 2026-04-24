@@ -835,14 +835,11 @@ except ImportError as e:
 # [WIRE-MICRO] MicrostructureAgent -merged into WIRE-MICRO block below (line ~876)
 MICROSTRUCTURE_AGENT_AVAILABLE = False  # Legacy flag, kept for compat; use MICRO_AGENT_AVAILABLE
 
-# [WIRE-G2] Delta-Neutral Carry Executor
-DELTA_NEUTRAL_OK = False
-try:
-    from execution.delta_neutral_executor import DeltaNeutralExecutor
-    DELTA_NEUTRAL_OK = True
-    logger.info("[OK]DeltaNeutralExecutor loaded")
-except ImportError as e:
-    logger.debug(f"DeltaNeutralExecutor not available: {e}")
+# [WIRE-DERIV 2026-04-24] DeltaNeutralExecutor replaced by DerivativesExecutor.
+# Old carry-only executor archived at archive/legacy_derivatives/delta_neutral_executor.py
+# (never fired in production — zero CARRY OPENED log lines across paper+live; API key
+# bug used SPOT keys for ccxt.krakenfutures; 8h funding math mismatched Kraken's 1h
+# cadence). New DerivativesExecutor supports directional + carry in one class.
 
 # [WIRE-SEM] SOLExposureManager -Portfolio exposure mode controller
 SEM_AVAILABLE = False
@@ -4448,23 +4445,47 @@ class HMATSProductionRunner:
         # [WIRE] W-5: MicrostructureAgent -merged into [WIRE-MICRO] block below
 
         # =====================================================================
-        # [WIRE-G2] Delta-Neutral Carry Executor
+        # [WIRE-DERIV 2026-04-24] DerivativesExecutor + ExecutionRouter
+        # Wired after audit_manager + existing execution path are initialized
+        # so the router can take spot_margin as a callable and alerts flow to Discord.
+        # Activated only when DERIVATIVES_ENABLED env var is true AND
+        # KrakenDerivativesClient is in LIVE mode with valid API keys.
         # =====================================================================
-        self._delta_neutral = None
-        if DELTA_NEUTRAL_OK and self.config.mode in [RunMode.PAPER, RunMode.LIVE]:
-            try:
-                _dn_dry = (self.config.mode == RunMode.PAPER)
-                self._delta_neutral = DeltaNeutralExecutor(
-                    dry_run=_dn_dry,
-                    spot_exchange=getattr(self, '_ccxt_exchange', None),
-                )
-                # Restore carry positions from saved state
-                _dn_saved = getattr(self, '_loaded_carry_state', {})
-                if _dn_saved:
-                    self._delta_neutral.from_dict(_dn_saved)
-                logger.info(f"  [WIRE-G2] DeltaNeutralExecutor: {'PAPER' if _dn_dry else 'LIVE'}")
-            except Exception as e:
-                logger.warning(f"  [WIRE-G2] DeltaNeutralExecutor: STUB ({e})")
+        self._derivatives_executor = None
+        self._execution_router = None
+        self._derivatives_gate = None
+        try:
+            _deriv_enabled = os.environ.get("DERIVATIVES_ENABLED", "false").strip().lower() in ("true", "1", "yes", "on")
+            if _deriv_enabled and self.config.mode in [RunMode.PAPER, RunMode.LIVE]:
+                from infra.kraken_derivatives_client import get_derivatives_client
+                from execution.derivatives_executor import DerivativesExecutor
+                from risk.derivatives_risk_gate import DerivativesRiskGate
+                from execution.execution_router import ExecutionRouter
+
+                _kdc = get_derivatives_client()
+                if _kdc is None:
+                    logger.warning("  [WIRE-DERIV] Executor DISABLED: KrakenDerivativesClient not initialized (check KRAKEN_DERIVS_MODE)")
+                else:
+                    self._derivatives_executor = DerivativesExecutor(
+                        kraken_deriv_client=_kdc,
+                        spot_exchange=getattr(self, '_ccxt_exchange', None),
+                        risk_callback=lambda: (self.account_sync.get_equity() if self.account_sync else self.config.initial_capital),
+                        discord_alerter=(self.audit_manager.discord if hasattr(self, 'audit_manager') and self.audit_manager else None),
+                    )
+                    self._derivatives_gate = DerivativesRiskGate(executor=self._derivatives_executor)
+                    # Router is instantiated lazily in the tick loop once spot_margin callable is known
+                    self._execution_router = None  # set later in _init_execution_router()
+                    logger.info(
+                        f"  [WIRE-DERIV] DerivativesExecutor: "
+                        f"{'LIVE' if _kdc.is_execution_enabled() else 'DATA_ONLY'}"
+                    )
+                    # Reconcile exchange state BEFORE first tick
+                    if self.config.mode == RunMode.LIVE and _kdc.is_execution_enabled():
+                        self._derivatives_executor.reconcile_on_startup()
+            elif not _deriv_enabled:
+                logger.info("  [WIRE-DERIV] DerivativesExecutor: DISABLED (DERIVATIVES_ENABLED=false)")
+        except Exception as _de_err:
+            logger.warning(f"  [WIRE-DERIV] DerivativesExecutor init failed: {_de_err}")
 
         # =====================================================================
         # [WIRE-SEM] SOLExposureManager -portfolio exposure mode controller
@@ -12301,10 +12322,46 @@ class HMATSProductionRunner:
                 from core.execution_context import ExecutionContext
                 from core.execution_service import execute_intent_v2
                 _exec_ctx = ExecutionContext.build_from_runner(self)
-                exec_result = await execute_intent_v2(
-                    _exec_ctx, asset, intent, market_data,
-                    agent_signals=agent_signals,
-                )
+
+                # [WIRE-DERIV 2026-04-24] Pre-flight router check: if intent
+                # should route to derivatives (cash-carry, leveraged long, or
+                # short+positive funding), dispatch there first. Only falls
+                # through to spot/margin when router returns SPOT_MARGIN.
+                exec_result = None
+                if self._derivatives_executor is not None:
+                    try:
+                        if self._execution_router is None:
+                            from execution.execution_router import ExecutionRouter
+                            self._execution_router = ExecutionRouter(
+                                spot_margin_executor=None,  # not used for DERIVATIVES branch
+                                derivatives_executor=self._derivatives_executor,
+                                derivatives_gate=self._derivatives_gate,
+                            )
+                        _deriv_ctx = {
+                            "funding_rate_h": market_data.get("funding_rate", 0.0),
+                            "spot_price": market_data.get("current_price", 0.0),
+                        }
+                        _route = self._execution_router.decide_route(intent, _deriv_ctx)
+                        if _route.route.value == "DERIVATIVES":
+                            exec_result = await self._execution_router.route_and_execute(
+                                intent, context=_deriv_ctx,
+                            )
+                            if exec_result:
+                                logger.info(
+                                    f"[WIRE-DERIV] Routed {asset}: {_route.reason} "
+                                    f"success={exec_result.get('success')} "
+                                    f"status={exec_result.get('status')}"
+                                )
+                    except Exception as _route_err:
+                        logger.warning(f"[WIRE-DERIV] Router error, falling back to spot: {_route_err}")
+                        exec_result = None
+
+                # Default spot/margin path (also used when router returned SPOT_MARGIN)
+                if exec_result is None:
+                    exec_result = await execute_intent_v2(
+                        _exec_ctx, asset, intent, market_data,
+                        agent_signals=agent_signals,
+                    )
 
                 _exec_status = str(exec_result.get("status", "") or "").upper()
                 _exec_success = bool(exec_result.get("success", False))
@@ -12679,39 +12736,9 @@ class HMATSProductionRunner:
             agent_signals['carry_annualized'] = carry_signal.funding_annualized
             agent_signals['carry_allocation_pct'] = carry_signal.allocation_pct
 
-        # [WIRE-G2] Delta-Neutral Carry Execution
-        if self._delta_neutral is not None:
-            try:
-                # 1. Check exit conditions for existing carry positions
-                _g2_exit = self._delta_neutral.tick(asset, market_data)
-                if _g2_exit:
-                    _g2_spot = market_data.get('current_price', 0)
-                    _g2_close = self._delta_neutral.close_carry(asset, _g2_spot, reason=_g2_exit)
-                    if _g2_close and self.cash_and_carry:
-                        self.cash_and_carry.on_position_closed(asset)
-                        self._save_paper_positions(force=True)
-
-                # 2. Open new carry if signal says ENTER and no active position
-                elif (carry_signal is not None
-                      and carry_signal.action == "ENTER"
-                      and asset not in self._delta_neutral.active_positions):
-                    _g2_equity = self.config.initial_capital
-                    if self.account_sync:
-                        try:
-                            _g2_equity = self.account_sync.get_equity()
-                        except Exception:
-                            pass
-                    _g2_size = carry_signal.allocation_pct * _g2_equity
-                    _g2_spot = market_data.get('current_price', 0)
-                    if self._delta_neutral.open_carry(
-                        asset, _g2_size, _g2_spot,
-                        carry_signal.funding_rate, nav=_g2_equity,
-                    ):
-                        if self.cash_and_carry:
-                            self.cash_and_carry.on_position_opened(asset, carry_signal.funding_rate)
-                        self._save_paper_positions(force=True)
-            except Exception as _g2_err:
-                logger.debug(f"[WIRE-G2] Delta-neutral tick error: {_g2_err}")
+        # [WIRE-DERIV 2026-04-24] Cash-and-carry execution dispatches via ExecutionRouter
+        # once DerivativesExecutor is wired. Until then, carry_signal is signal-only
+        # (modulates directional intent at [WIRE-G2] signal consumption block above).
 
         # Store proof log with regime + strategy detail
         proof_line = intent.to_proof_log()
@@ -16863,7 +16890,7 @@ class HMATSProductionRunner:
                 "confidence_scorer_state": confidence_scorer_state,
                 "opportunity_budget_state": opportunity_budget_state,
                 "gambler_state": gambler_state,
-                "carry_positions": self._delta_neutral.to_dict() if self._delta_neutral else {},
+                "carry_positions": self._derivatives_executor.to_dict() if self._derivatives_executor else {},
                 "alpha_boost_state": alpha_boost_state,
                 "drl_shadow_diag_state": drl_shadow_diag_state,
                 # L4-14: Regime smoother state for restart continuity
@@ -18502,16 +18529,16 @@ class HMATSProductionRunner:
                 except Exception:
                     pass
 
-            # [WIRE-G2] Restore carry positions
+            # [WIRE-DERIV 2026-04-24] Derivatives positions restored via
+            # DerivativesExecutor.reconcile_on_startup() (queries exchange truth,
+            # not local JSON) — see _init_derivatives().
+            # Legacy "carry_positions" JSON key retained for forward-compat.
             carry_data = data.get("carry_positions", {})
-            if carry_data and self._delta_neutral:
+            if carry_data and self._derivatives_executor:
                 try:
-                    self._delta_neutral.from_dict(carry_data)
-                    _n = len(self._delta_neutral.active_positions)
-                    if _n > 0:
-                        logger.info(f"[WIRE-G2] Restored {_n} carry positions")
+                    self._derivatives_executor.from_dict(carry_data)
                 except Exception as e:
-                    logger.warning(f"[WIRE-G2] Carry position restore failed: {e}")
+                    logger.debug(f"[WIRE-DERIV] Legacy carry restore skipped: {e}")
 
             # [AC-5] Restore daily fill budget via AntiChurnManager
             self._anti_churn.from_dict(data)

@@ -13,6 +13,13 @@ Phase 5: Derivatives market data fields exposed to cost/risk/signal consumers.
 import os
 import logging
 import time
+import base64
+import hashlib
+import hmac
+import urllib.parse
+import urllib.request
+import urllib.error
+import json as _json
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional
@@ -20,6 +27,9 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger("HMATS.KrakenDerivatives")
 
 PUBLIC_BASE = "https://futures.kraken.com/derivatives/api/v3"
+# Path prefix included in Authent signing string (per Kraken Futures REST spec).
+# Full URL is https://futures.kraken.com{_SIGN_PATH_PREFIX}/<endpoint>.
+_SIGN_PATH_PREFIX = "/api/v3"
 
 # Static fallback map — used ONLY when /instruments query fails
 _FALLBACK_PERP_MAP = {
@@ -280,12 +290,179 @@ class KrakenDerivativesClient:
     def is_execution_enabled(self) -> bool:
         return self.mode == DerivativesMode.LIVE and bool(self.config.api_key)
 
+    # ------------------------------------------------------------------
+    # Authentication (Kraken Futures REST spec)
+    # ------------------------------------------------------------------
+    # Signing algorithm (per docs.kraken.com/api/docs/guides/futures-rest/):
+    #   1. sha256_digest = SHA256(postData + nonce + endpointPath)
+    #   2. secret_bytes  = base64_decode(api_secret)
+    #   3. hmac_digest   = HMAC-SHA512(secret_bytes, sha256_digest)
+    #   4. Authent       = base64_encode(hmac_digest)
+    # Headers sent: APIKey, Authent, Nonce (optional but recommended).
+    # ------------------------------------------------------------------
+    def _sign(self, endpoint_path: str, post_data: str, nonce: str) -> str:
+        """Generate Authent header for a Kraken Futures private endpoint.
+
+        endpoint_path is the path AFTER /derivatives (e.g. "/api/v3/sendorder"),
+        matching _SIGN_PATH_PREFIX + the endpoint name.
+        """
+        if not self.config.api_secret:
+            raise RuntimeError("API secret not configured")
+        message = (post_data + nonce + endpoint_path).encode("utf-8")
+        sha256_digest = hashlib.sha256(message).digest()
+        try:
+            secret_bytes = base64.b64decode(self.config.api_secret)
+        except Exception as e:
+            raise RuntimeError(f"API secret is not valid base64: {e}")
+        hmac_digest = hmac.new(secret_bytes, sha256_digest, hashlib.sha512).digest()
+        return base64.b64encode(hmac_digest).decode("utf-8")
+
+    def _auth_headers(self, endpoint_path: str, post_data: str) -> Dict[str, str]:
+        nonce = str(int(time.time() * 1000))
+        authent = self._sign(endpoint_path, post_data, nonce)
+        return {
+            "APIKey": self.config.api_key,
+            "Authent": authent,
+            "Nonce": nonce,
+            "User-Agent": "HMATS/6.8",
+        }
+
+    def _private_request(
+        self,
+        method: str,
+        endpoint: str,
+        params: Optional[Dict[str, Any]] = None,
+        timeout: int = 15,
+    ) -> Optional[Dict[str, Any]]:
+        """Authenticated request helper.
+
+        endpoint: e.g. "sendorder" (without leading /api/v3/ prefix)
+        method:   "GET" or "POST"
+        params:   dict of params. For POST they go in body; for GET in query string.
+        """
+        if not self.is_execution_enabled():
+            logger.warning(f"[DERIVS] Private call {endpoint} refused: execution not enabled")
+            return None
+
+        endpoint_path = f"{_SIGN_PATH_PREFIX}/{endpoint}"
+        params = params or {}
+        post_data = urllib.parse.urlencode(sorted(params.items()))
+
+        if method.upper() == "GET":
+            url = f"{PUBLIC_BASE}/{endpoint}"
+            if post_data:
+                url = f"{url}?{post_data}"
+            data_bytes = None
+        else:
+            url = f"{PUBLIC_BASE}/{endpoint}"
+            data_bytes = post_data.encode("utf-8") if post_data else b""
+
+        headers = self._auth_headers(endpoint_path, post_data)
+        if method.upper() == "POST":
+            headers["Content-Type"] = "application/x-www-form-urlencoded"
+
+        try:
+            req = urllib.request.Request(url, data=data_bytes, headers=headers, method=method.upper())
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                body = resp.read().decode("utf-8", errors="replace")
+                return _json.loads(body)
+        except urllib.error.HTTPError as e:
+            body = e.read().decode("utf-8", errors="replace")[:400]
+            logger.error(f"[DERIVS] HTTP {e.code} on {endpoint}: {body}")
+            return {"result": "error", "http_status": e.code, "body": body}
+        except Exception as e:
+            logger.error(f"[DERIVS] {endpoint} failed: {e}")
+            return None
+
+    # ------------------------------------------------------------------
+    # Order execution (Phase 6: LIVE execution)
+    # ------------------------------------------------------------------
+    def send_order(
+        self,
+        symbol: str,
+        side: str,                 # "buy" or "sell"
+        size: float,               # contract size (NOT USD — already converted by caller)
+        order_type: str = "lmt",   # "lmt" | "mkt" | "post" | "stp" | "take_profit" | "ioc"
+        limit_price: Optional[float] = None,
+        stop_price: Optional[float] = None,
+        reduce_only: bool = False,
+        cli_ord_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Place an order on Kraken Futures.
+
+        POST /derivatives/api/v3/sendorder
+
+        Returns the parsed JSON response. On success, response has
+        result="success" and contains sendStatus with order_id + status.
+        """
+        params: Dict[str, Any] = {
+            "orderType": order_type,
+            "symbol": symbol,
+            "side": side,
+            "size": f"{size:.8f}".rstrip("0").rstrip("."),
+        }
+        if limit_price is not None:
+            params["limitPrice"] = f"{limit_price:.8f}".rstrip("0").rstrip(".")
+        if stop_price is not None:
+            params["stopPrice"] = f"{stop_price:.8f}".rstrip("0").rstrip(".")
+        if reduce_only:
+            params["reduceOnly"] = "true"
+        if cli_ord_id:
+            params["cliOrdId"] = cli_ord_id
+        return self._private_request("POST", "sendorder", params)
+
+    def cancel_order(self, order_id: str) -> Optional[Dict[str, Any]]:
+        """POST /derivatives/api/v3/cancelorder"""
+        return self._private_request("POST", "cancelorder", {"order_id": order_id})
+
+    def get_open_positions(self) -> List[Dict[str, Any]]:
+        """GET /derivatives/api/v3/openpositions — used for reconciliation.
+
+        Returns list of position dicts with: symbol, side, size, price, fillTime,
+        unrealizedFunding, pnlCurrency.
+        """
+        resp = self._private_request("GET", "openpositions")
+        if not resp or resp.get("result") != "success":
+            return []
+        return resp.get("openPositions", []) or []
+
+    def get_open_orders(self) -> List[Dict[str, Any]]:
+        """GET /derivatives/api/v3/openorders"""
+        resp = self._private_request("GET", "openorders")
+        if not resp or resp.get("result") != "success":
+            return []
+        return resp.get("openOrders", []) or []
+
+    def get_accounts(self) -> Optional[Dict[str, Any]]:
+        """GET /derivatives/api/v3/accounts — margin + balance state."""
+        resp = self._private_request("GET", "accounts")
+        if not resp or resp.get("result") != "success":
+            return None
+        return resp.get("accounts")
+
     def get_margin_state(self) -> Optional[Dict[str, Any]]:
         """Get account margin state (LIVE mode only). Returns None if unavailable."""
-        if not self.is_execution_enabled():
+        return self.get_accounts()
+
+    # ------------------------------------------------------------------
+    # Mark price helper (convenience for DerivativesExecutor)
+    # ------------------------------------------------------------------
+    def get_mark_price(self, asset_or_symbol: str) -> Optional[float]:
+        """Return latest cached mark price for an asset (e.g. "BTC") or symbol
+        (e.g. "PF_XBTUSD"). Triggers a fetch if cache is stale."""
+        # Resolve asset from symbol if needed
+        if asset_or_symbol in self._instruments:
+            asset = asset_or_symbol
+        else:
+            asset = next(
+                (a for a, i in self._instruments.items() if i.symbol == asset_or_symbol),
+                None,
+            )
+        if asset is None:
             return None
-        # Requires authenticated API — not implemented until LIVE mode is activated
-        return None
+        data = self.fetch_market_data()
+        md = data.get(asset)
+        return md.mark_price if md and md.mark_price > 0 else None
 
 
 # ------------------------------------------------------------------
