@@ -189,7 +189,11 @@ Authority matrix (`signals/authority_fusion.py`) + writer (`main.py` somewhere i
   - 12 institutional stat-arb strategies → `agents/kraken_quant_agent.py` → `kq_direction`
   - Both are DECIDE authority in fusion, alongside DRL (TQC) when ACTIVE.
 
-### P14. [FIXED 2026-04-24] 4 silent dead-read bugs found via completeness audit
+### P15. [FIXED 2026-04-24] v521 AdaptiveWeightManager feedback loop never closed
+- **Symptom:** `signals/adaptive_weight_v521.py` (915 lines, self-labeled "CANONICAL v5.4.0") appeared DEAD in completeness_audit (0/5 hops). Deeper inspection showed it IS wired via `main.py → strategic_coordinator.pre_decision_check → v521.get_adjusted_weights → agent_signals["v6_adjusted_weights"] → integration_v36 fusion`. But the INPUT side (trade outcomes) was never fed.
+- **Cause:** `strategic_coordinator.record_trade_completed()` defined but zero callers. Without trade data, `StrategyMetrics.sufficient_data=False`, `compute_weight()` returns 1.0 neutral (line 504-505). Every strategy got multiplier=1.0 forever → `v6_adjusted_weights == base_weights` → 915 lines of Sharpe/Calmar/WinRate math was permanent no-op.
+- **Fix (commit db029e6):** Added `strategic_coordinator` to `ExecutionContext`; after full-exit `thesis_budget.record_fill()` (execution_service.py:2107), also call `ctx.strategic_coordinator.record_trade_completed(strategy, pnl, pnl_pct, duration_hours)`.
+- **Mitigation:** When auditing claims like "v5.4.0 CANONICAL", verify BOTH the read side (who reads the outputs) AND the write side (who feeds the feedback signal). A half-wired feedback loop looks connected at a glance but produces neutral outputs.
 - **Symptom:** `scripts/completeness_audit.py` flagged 27 `agent_signals.get(KEY)` calls with no matching writer. 23/27 false positives (dynamic dict-unpack like `for k,v in sig.items(): agent_signals[k]=v` bypasses regex), but 4 are real silent bugs.
 - **Fixed in commit 1d72baf:**
   1. `quant_strategy` — 3 readers expected it; only `primary_strategy` exists. Max-pain strategy gate silently always-off.
