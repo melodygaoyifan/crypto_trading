@@ -1676,8 +1676,15 @@ class HMATSv36Engine:
             dvol_zscore=market_data.get("dvol_zscore", 0.0),
             correlation=system_state.get("correlation", 0.0),
             liquidity_usd=market_data.get("orderbook_depth_1pct_usd", float('inf')),
-            signal_conflict_score=1.0 if (self._last_no_trade_state and 
-                self._last_no_trade_state.trigger_scores.get("signal_conflict", 0) > 0.5) else 0.0,
+            # [FIX 2026-04-24] Threshold >0.5 was promoting 2-agent conflict (score 0.7
+            # from constitution.py:555) to HARD VETO (1.0 in production_reliability.py:501).
+            # This blocked ALL trades for 2 days after DRL went ACTIVE (DRL dir +0.9
+            # vs quant Best-of-N often opposite = score 0.7 every tick).
+            # constitution.py:441-444 intent: only 3-agent conflict (score >=0.9) should
+            # be NO_TRADE-worthy. 2-agent conflict reduces confidence via fusion, not veto.
+            # Aligned threshold with constitution.py logic (>= 0.9).
+            signal_conflict_score=1.0 if (self._last_no_trade_state and
+                self._last_no_trade_state.trigger_scores.get("signal_conflict", 0) >= 0.9) else 0.0,
             data_valid=True,  # Already validated in Step 0
             execution_failures=self._execution_failures,
             flash_crash_active=market_data.get("flash_crash_active", False) and not _skip_flash_for_existing,

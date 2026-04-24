@@ -6775,12 +6775,45 @@ class HMATSProductionRunner:
             except Exception:
                 pass
 
-        # [WIRE-KQ] Kraken Quant Agent -12-strategy ADVISE signal
+        # [WIRE-KQ] Kraken Quant Agent — 12-strategy DECIDE signal
+        # [FIX 2026-04-24] Cross-asset snapshot: kraken_quant's stat-arb
+        # strategies (Kalman cointegration, ETF-spot cointegration, relative
+        # strength, etc.) need BTC+ETH+SOL data TOGETHER. Previously we passed
+        # only per-asset market_data and strategies bailed on missing peers.
+        # Cache per-asset snapshots across ticks and inject suffixed keys.
+        if not hasattr(self, "_kq_xasset_cache"):
+            self._kq_xasset_cache = {}
+        _kq_snapshot = {
+            "current_price": market_data.get("current_price", market_data.get("price", 0.0)),
+            "price": market_data.get("price", market_data.get("current_price", 0.0)),
+            "close": market_data.get("close", 0),
+            "open_interest": market_data.get("open_interest", 0),
+            "funding_rate": market_data.get("funding_rate", 0),
+            "liquidation_volume": market_data.get("total_liquidations_24h", 0),
+            "taker_ratio": market_data.get("taker_ratio", 1.0),
+            "bid_depth": market_data.get("orderbook_depth_1pct_usd", 0) / 2,
+            "ask_depth": market_data.get("orderbook_depth_1pct_usd", 0) / 2,
+        }
+        self._kq_xasset_cache[asset] = _kq_snapshot
+
         if self._kraken_quant_agent is not None and not p0_abort_tick:
             try:
+                # Build cross-asset-suffixed market_data for kraken_quant converter
+                _kq_mkt = dict(market_data)
+                for _kq_a in ("BTC", "ETH", "SOL"):
+                    _kq_al = _kq_a.lower()
+                    _cache = self._kq_xasset_cache.get(_kq_a, {})
+                    if _cache:
+                        _kq_mkt[f"price_{_kq_al}"] = _cache.get("current_price", 0)
+                        _kq_mkt[f"open_interest_{_kq_al}"] = _cache.get("open_interest", 0)
+                        _kq_mkt[f"funding_rate_{_kq_al}"] = _cache.get("funding_rate", 0)
+                        _kq_mkt[f"liquidation_volume_{_kq_al}"] = _cache.get("liquidation_volume", 0)
+                        _kq_mkt[f"taker_ratio_{_kq_al}"] = _cache.get("taker_ratio", 1.0)
+                        _kq_mkt[f"bid_depth_{_kq_al}"] = _cache.get("bid_depth", 0)
+                        _kq_mkt[f"ask_depth_{_kq_al}"] = _cache.get("ask_depth", 0)
                 _kq_payload = self._kraken_quant_agent.generate_signal(
                     asset=asset,
-                    market_data=market_data,
+                    market_data=_kq_mkt,
                     regime=market_data.get("regime_state"),
                     price=market_data.get("current_price", market_data.get("price", 0.0)),
                 )
