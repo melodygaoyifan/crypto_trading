@@ -183,6 +183,18 @@ Authority matrix (`signals/authority_fusion.py`) + writer (`main.py` somewhere i
   - 12 institutional stat-arb strategies → `agents/kraken_quant_agent.py` → `kq_direction`
   - Both are DECIDE authority in fusion, alongside DRL (TQC) when ACTIVE.
 
+### P12. [FIXED 2026-04-24] 2-agent conflict score 0.7 force-promoted to HARD VETO 1.0
+- **Symptom:** After DRL went ACTIVE on 2026-04-22, cloud produced zero fills for 48 hours. Shadow ledger full of `[PROD] HARD VETO: ALL_CONFLICT_FLAT` on every tick.
+- **Cause:** `integration_v36.py:1679` promoted ANY `signal_conflict > 0.5` to `1.0` before calling the risk classifier, which treats `>= 1.0` as HARD VETO. But `constitution.py:441-444` explicitly says 2-agent conflict (score 0.7) should only reduce confidence via fusion — not veto — and only 3-agent conflict (score 0.9+) is NO_TRADE-worthy. DRL ACTIVE with +0.9 signals frequently disagreed with quant Best-of-N, generating score 0.7 every tick → auto-promoted to 1.0 → HARD VETO → no trades.
+- **Fix:** Threshold aligned with constitution.py (commit 607ab10). Only `>= 0.9` (true 3-agent conflict) escalates.
+- **Mitigation:** When adding a DECIDE agent, check cross-agent conflict handling — the existence of an additional DECIDE voter can trigger this kind of interaction bug.
+
+### P13. [FIXED 2026-04-24] kraken_quant cross-asset data starvation
+- **Symptom:** kraken_quant 12-strategy matrix wired as DECIDE and ACTIVE, but 30 ticks over 39h all showed `○kraken_quant=+0.00/0.00/dq1.0` in AGENT-TRACE. Looked like "ACTIVE but never fires".
+- **Cause:** main.py's `market_data` dict is built per-asset (one tick = one call per asset). kraken_quant's 12 strategies (Kalman cointegration, ETF-spot cointegration, relative strength, Hurst, etc.) ALL need BTC+ETH+SOL prices/OI/funding simultaneously for cross-asset stat-arb. `_convert_market_data` expected `price_btc`/`price_eth`/`price_sol` suffixed keys but only got flat `market_data["price"]` for the current asset → 2/3 assets see zeros → strategies bail.
+- **Fix:** Added `self._kq_xasset_cache: Dict[str, Dict]` in main.py. Each per-asset tick updates the cache; before calling `kraken_quant.generate_signal`, inject `price_{asset}`, `open_interest_{asset}`, `funding_rate_{asset}`, `liquidation_volume_{asset}`, `taker_ratio_{asset}`, `bid_depth_{asset}`, `ask_depth_{asset}` from all 3 cached asset snapshots. Cross-asset data is ≤1-tick stale (acceptable for 4H stat-arb).
+- **Mitigation:** When a multi-asset agent produces no signals despite being ACTIVE, check its input-dict expectations against the per-asset loop structure.
+
 ### P11. [FIXED 2026-04-22] Local-var instantiation hidden from naive wiring scans
 - **Historical symptom:** `AttributionTracker` and `AgentScorecard` appeared as `SOMETHING_CREATED` in `startup_agent_wiring_truth.py`, suggesting "imported, instantiated, but methods never called". Led to mistakenly concluding 2 agents were half-wired.
 - **Reality:** `_attr_tracker = get_attribution_tracker()` (local var at main.py:8298) + `.record_signals()` / `.resolve_outcome()` / `.get_decay_alerts()` calls via that local var. Not a `self.xxx` attribute, so the old regex missed both the L3 assignment and all L4 method calls.
