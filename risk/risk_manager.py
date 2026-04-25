@@ -503,12 +503,26 @@ class RiskManager:
                 if matrix is not None:
                     base_a = self._strip_to_base(sym_a)
                     base_b = self._strip_to_base(sym_b)
-                    live_corr = matrix.get(base_a, base_b)
+                    # [P47 2026-04-25] Was `matrix.get(base_a, base_b)` — dict.get(k, d)
+                    # has TWO args (key, default), so `base_b` was being passed as the
+                    # DEFAULT value, not as a second key. Live correlation lookup ALWAYS
+                    # returned `base_b` (a string like "ETH"), `live_corr is not None`
+                    # was True, then `f"{live_corr:.3f}"` would have raised TypeError on
+                    # the string format — but the surrounding `try: ... except: pass`
+                    # swallowed it. Net: live correlation has been silently broken
+                    # since this code was written, always falling back to the static
+                    # 6-pair hardcoded matrix below.
+                    live_corr = matrix.get((base_a, base_b))
                     if live_corr is not None:
-                        self.logger.debug(
-                            f"[CORR] Live={live_corr:.3f} for {sym_a}/{sym_b}"
-                        )
-                        return live_corr
+                        try:
+                            live_corr_f = float(live_corr)
+                        except (TypeError, ValueError):
+                            live_corr_f = None
+                        if live_corr_f is not None:
+                            self.logger.debug(
+                                f"[CORR] Live={live_corr_f:.3f} for {sym_a}/{sym_b}"
+                            )
+                            return live_corr_f
             except Exception:
                 pass  # Fall through to hardcoded
 

@@ -524,15 +524,22 @@ class StrategicCoordinator:
             logger.error(f"Signal fusion failed: {e}")
             return 0.0, 0.0
     
-    def record_trade_result(
+    def record_trade_completed(
         self,
         strategy: str,
         pnl: float,
         pnl_pct: float,
         duration_hours: float,
     ):
-        """
-        ?
+        """Record a completed trade for adaptive weight learning.
+
+        [P47 2026-04-25] Renamed from `record_trade_result` to match the
+        single caller site at `core/execution_service.py:2171`. The mismatch
+        was silent — caller wrapped the call in try/except, swallowing the
+        AttributeError at debug level. P15 (FIXED 2026-04-24) said this
+        was wired but the call has been failing for every trade since.
+        Result: `_weight_manager.record_trade()` never invoked → all
+        strategies stayed at compute_weight()=1.0 forever.
         """
         if self._weight_manager is None:
             return

@@ -5923,6 +5923,15 @@ class HMATSProductionRunner:
                 market_data["data_health_level"] = _dh_snap.degradation_level.value
                 market_data["data_health_reason"] = _dh_snap.degradation_reason or ""
                 market_data["data_health_critical_ok"] = _dh_snap.critical_sources_ok
+                # [P47 2026-04-25] Wire snapshot into trade_gate (Gate 0). Without
+                # this, defense/trade_gate.py:590-618 always sees None and Gate 0's
+                # NO_TRADE / EXIT_ONLY / REDUCED checks are dead code — even when
+                # data sources are critical, the gate allows full new entries.
+                if self.trade_gate is not None:
+                    try:
+                        self.trade_gate.set_data_health_snapshot(_dh_snap)
+                    except Exception as _dh_st_err:
+                        logger.debug(f"[V10S] trade_gate.set_data_health_snapshot failed: {_dh_st_err}")
                 # [GAP-P1a] Per-source confidence for downstream signal weighting
                 for _ds_type in (DataSourceType.LOB, DataSourceType.SENTIMENT,
                                  DataSourceType.MACRO, DataSourceType.ONCHAIN):
@@ -10506,6 +10515,13 @@ class HMATSProductionRunner:
                     orderbook_fallback_reason=market_data.get("orderbook_fallback_reason", ""),
                     orderbook_cache_age_seconds=market_data.get("orderbook_cache_age_seconds"),
                     alpha_gate_passed=True,  # [VC-1] Constitution alpha gate already ran in engine.decide()
+                    # [P47 2026-04-25] DVOL gate (Gate 2 in trade_gate.py:627-637) was
+                    # never firing because main.py didn't pass dvol_zscore/dvol_current.
+                    # Default 0.0 in TradeProposal kept dvol_zscore < 5.0 threshold
+                    # forever — gate was structurally dead. Now plumbed from
+                    # market_data. Constitution.py:309 DVOL_ZSCORE_EXTREME=5.0 matches.
+                    dvol_zscore=float(market_data.get("dvol_zscore", 0.0) or 0.0),
+                    dvol_current=float(market_data.get("dvol_current", market_data.get("dvol", 0.0)) or 0.0),
                 )
                 
                 if gate_result.decision.name != "ALLOW":
