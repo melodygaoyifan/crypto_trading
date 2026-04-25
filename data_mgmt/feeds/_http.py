@@ -21,6 +21,22 @@ def create_session(**kwargs) -> aiohttp.ClientSession:
     return aiohttp.ClientSession(connector=connector, **kwargs)
 
 
+def strip_tz(dt):
+    """Strip tzinfo from a datetime — used to keep timestamps comparable
+    with naive `datetime.now()`.
+
+    [P40 2026-04-24] Added so feeds can defensively normalize timestamps
+    that `datetime.fromisoformat()` may have parsed as either aware or
+    naive depending on the persisted ISO string's tz marker. Mirrors the
+    pattern in `defense/strategy_existence_fuse.py` and `drl/promotion_gate.py`.
+    """
+    if dt is None:
+        return None
+    if dt.tzinfo is not None:
+        return dt.replace(tzinfo=None)
+    return dt
+
+
 def parse_retry_after(raw: str | None) -> float | None:
     """Parse a Retry-After header value (seconds OR HTTP-date) → seconds.
 

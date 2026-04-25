@@ -18,7 +18,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from data_mgmt.feeds._http import fetch_with_retry, parse_retry_after
+from data_mgmt.feeds._http import fetch_with_retry, parse_retry_after, strip_tz
 
 
 # =============================================================================
@@ -52,6 +52,37 @@ def _mock_session_with_responses(responses):
 
     session.get = _get
     return session
+
+
+# =============================================================================
+# strip_tz helper — defensive tz normalization for feed staleness calcs
+# =============================================================================
+
+class TestStripTz:
+    def test_none_passthrough(self):
+        assert strip_tz(None) is None
+
+    def test_naive_passthrough(self):
+        from datetime import datetime
+        dt = datetime(2026, 4, 24, 12, 0, 0)
+        assert strip_tz(dt) is dt
+
+    def test_aware_stripped(self):
+        from datetime import datetime, timezone
+        dt = datetime(2026, 4, 24, 12, 0, 0, tzinfo=timezone.utc)
+        result = strip_tz(dt)
+        assert result.tzinfo is None
+        assert result == datetime(2026, 4, 24, 12, 0, 0)
+
+    def test_subtraction_after_strip_works_with_naive_now(self):
+        """Real bug case: aware ts subtracted from naive datetime.now()
+        raises TypeError without strip_tz."""
+        from datetime import datetime, timezone, timedelta
+        aware_past = datetime(2026, 4, 24, 12, 0, 0, tzinfo=timezone.utc)
+        naive_now = datetime(2026, 4, 24, 12, 5, 0)
+        # Without strip → TypeError. With strip → works.
+        delta = naive_now - strip_tz(aware_past)
+        assert delta == timedelta(minutes=5)
 
 
 # =============================================================================

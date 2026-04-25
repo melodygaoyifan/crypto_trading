@@ -245,23 +245,26 @@ class LOBFeed:
         try:
             raw_data = await self._fetch_from_source()
             tick = self._parse_raw_data(raw_data)
-            tick.staleness_sec = (datetime.now() - tick.timestamp).total_seconds()
-            
+            # [P40 2026-04-24] Strip tzinfo (see _http.strip_tz docstring).
+            from data_mgmt.feeds._http import strip_tz
+            tick.staleness_sec = (datetime.now() - strip_tz(tick.timestamp)).total_seconds()
+
             self._last_tick = tick
             self._last_fetch_time = datetime.now()
-            
+
             return tick
-            
+
         except Exception as e:
             logger.error(f"LOBFeed fetch failed: {e}")
             self._fetch_errors += 1
             return None
-    
+
     def get_latest(self) -> Optional[LOBTick]:
         """获取最新缓存的数据"""
         if self._last_tick:
+            from data_mgmt.feeds._http import strip_tz
             self._last_tick.staleness_sec = (
-                datetime.now() - self._last_tick.timestamp
+                datetime.now() - strip_tz(self._last_tick.timestamp)
             ).total_seconds()
         return self._last_tick
     

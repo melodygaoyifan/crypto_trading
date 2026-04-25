@@ -210,8 +210,9 @@ class OnChainFeed:
             # 转换为标准格式
             tick = self._parse_raw_data(raw_data)
             
-            # 计算 staleness
-            tick.staleness_sec = (datetime.now() - tick.timestamp).total_seconds()
+            # 计算 staleness ([P40 2026-04-24] strip tz to keep comparable)
+            from data_mgmt.feeds._http import strip_tz
+            tick.staleness_sec = (datetime.now() - strip_tz(tick.timestamp)).total_seconds()
             
             # 缓存
             self._last_tick = tick
@@ -233,8 +234,9 @@ class OnChainFeed:
         """
         if self._last_tick:
             # 更新 staleness
+            from data_mgmt.feeds._http import strip_tz
             self._last_tick.staleness_sec = (
-                datetime.now() - self._last_tick.timestamp
+                datetime.now() - strip_tz(self._last_tick.timestamp)
             ).total_seconds()
         return self._last_tick
     

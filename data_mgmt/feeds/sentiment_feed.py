@@ -229,8 +229,9 @@ class SentimentFeed:
             # 转换为标准格式
             tick = self._parse_raw_data(raw_data)
             
-            # 计算 staleness
-            tick.staleness_sec = (datetime.now() - tick.timestamp).total_seconds()
+            # 计算 staleness ([P40 2026-04-24] strip tz to keep comparable)
+            from data_mgmt.feeds._http import strip_tz
+            tick.staleness_sec = (datetime.now() - strip_tz(tick.timestamp)).total_seconds()
             
             # 更新历史并计算趋势
             self._update_sentiment_history(tick.overall_sentiment)
@@ -250,8 +251,9 @@ class SentimentFeed:
     def get_latest(self) -> Optional[SentimentTick]:
         """获取最新缓存的数据"""
         if self._last_tick:
+            from data_mgmt.feeds._http import strip_tz
             self._last_tick.staleness_sec = (
-                datetime.now() - self._last_tick.timestamp
+                datetime.now() - strip_tz(self._last_tick.timestamp)
             ).total_seconds()
         return self._last_tick
     
