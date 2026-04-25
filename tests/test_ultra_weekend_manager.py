@@ -239,24 +239,33 @@ class TestHardVetoesPreserved:
     """Hard vetoes remain non-negotiable even with ULTRA weekend config."""
 
     def test_drawdown_hard_veto_on_weekend(self):
-        """Drawdown >= 10% triggers HARD veto even with ULTRA weekend config."""
+        """Drawdown >= 20% (UL-5 unleash) triggers HARD veto even with ULTRA weekend config.
+
+        [P58 2026-04-25] Was 0.12 — but RiskVetoClassifier.HARD_THRESHOLDS["drawdown"]
+        was widened from 0.10 to 0.20 in UL-5 unleash. Updated to 0.22 to test
+        actual current HARD-threshold semantics.
+        """
         from defense.production_reliability import RiskVetoClassifier
         clf = RiskVetoClassifier(weekend_config=_ultra_weekend_config())
         result = clf.classify(
             mode="OPPORTUNITY",
-            drawdown=0.12,
+            drawdown=0.22,  # was 0.12, now > 0.20 HARD threshold
             is_weekend=True,
         )
         assert result.veto_type.value == "HARD"
         assert not result.allows_trade
 
     def test_correlation_crisis_hard_veto_on_weekend(self):
-        """Correlation >= 0.95 triggers HARD veto on weekend."""
+        """Correlation >= 0.98 (UL-4 unleash) triggers HARD veto on weekend.
+
+        [P58 2026-04-25] Was 0.96 — UL-4 widened HARD threshold from 0.95 to 0.98.
+        Updated to 0.99 to test actual HARD-threshold semantics.
+        """
         from defense.production_reliability import RiskVetoClassifier
         clf = RiskVetoClassifier(weekend_config=_ultra_weekend_config())
         result = clf.classify(
             mode="OPPORTUNITY",
-            correlation=0.96,
+            correlation=0.99,  # was 0.96, now > 0.98 HARD threshold
             is_weekend=True,
         )
         assert result.veto_type.value == "HARD"
@@ -376,27 +385,31 @@ class TestSingletonConfig:
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# Test: HardSoftVetoClassifier (patches file) weekend cap
+# Test: RiskVetoClassifier weekend soft cap
+# [P58 2026-04-25] Renamed from TestHardSoftVetoClassifierPatch and
+# repointed at the live RiskVetoClassifier — old HardSoftVetoClassifier
+# was retired to archive/defense/production_reliability_patches.py.
+# Same behavior is tested against the live class.
 # ─────────────────────────────────────────────────────────────────────────
 
-class TestHardSoftVetoClassifierPatch:
-    """HardSoftVetoClassifier in production_reliability_patches.py."""
+class TestRiskVetoClassifierWeekendCap:
+    """Verify weekend soft veto cap defaults + ULTRA override on the live classifier."""
 
-    def test_default_patch_weekend_cap(self):
-        """Default WEEKEND_LIQUIDITY cap = 0.40 in patches classifier."""
-        from defense.production_reliability_patches import (
-            HardSoftVetoClassifier, SoftVetoConditionPatch,
+    def test_default_weekend_cap_040(self):
+        """Default WEEKEND_LIQUIDITY cap = 0.40 (no weekend_config override)."""
+        from defense.production_reliability import (
+            RiskVetoClassifier, SoftVetoCondition,
         )
-        clf = HardSoftVetoClassifier()
-        assert clf.SOFT_CAPS[SoftVetoConditionPatch.WEEKEND_LIQUIDITY] == pytest.approx(0.40)
+        clf = RiskVetoClassifier()  # no weekend_config → default 0.40
+        assert clf.SOFT_EXPOSURE_CAPS[SoftVetoCondition.WEEKEND_LIQUIDITY] == pytest.approx(0.40)
 
-    def test_ultra_patch_weekend_cap(self):
-        """ULTRA config overrides WEEKEND_LIQUIDITY cap in patches classifier."""
-        from defense.production_reliability_patches import (
-            HardSoftVetoClassifier, SoftVetoConditionPatch,
+    def test_ultra_weekend_cap_overrides(self):
+        """ULTRA config (weekend_soft_veto_cap=1.00) overrides default."""
+        from defense.production_reliability import (
+            RiskVetoClassifier, SoftVetoCondition,
         )
-        clf = HardSoftVetoClassifier(weekend_config=_ultra_weekend_config())
-        assert clf.SOFT_CAPS[SoftVetoConditionPatch.WEEKEND_LIQUIDITY] == pytest.approx(1.00)
+        clf = RiskVetoClassifier(weekend_config=_ultra_weekend_config())
+        assert clf.SOFT_EXPOSURE_CAPS[SoftVetoCondition.WEEKEND_LIQUIDITY] == pytest.approx(1.00)
 
 
 # ─────────────────────────────────────────────────────────────────────────

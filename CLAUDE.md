@@ -410,6 +410,17 @@ Authority matrix (`signals/authority_fusion.py`) + writer (`main.py` somewhere i
 - **Fix:** Added DRL substitution in `_compute_effective_alpha_direction`: when quant abstains (|quant_dir|<0.03) AND DRL is ACTIVE AND |drl_dir|>=0.5 AND drl_conf>=0.3, use DRL's direction as the effective alpha input. Alpha gate then evaluates alpha against DRL's direction, and QUIET_ACCUMULATION hard filter sees |direction|~0.9 instead of 0. Both blockers resolved by one change.
 - **Mitigation:** Alpha gate is a pre-fusion short-circuit. Any time an agent is promoted to DECIDE, check what `effective_alpha_direction` feeds into alpha gate — if the agent isn't a contributor there, its DECIDE authority is nullified in quiet/consolidation regimes.
 
+### P58. [FIXED 2026-04-25] 4 pre-existing weekend test failures — stale thresholds + archived module imports
+- **Symptom:** `tests/test_ultra_weekend_manager.py` had 4 long-standing failures predating P54-P57. Two distinct root causes:
+  1. **Stale UL-4/UL-5 unleash thresholds** (2 failures): `test_drawdown_hard_veto_on_weekend` used `drawdown=0.12`, `test_correlation_crisis_hard_veto_on_weekend` used `correlation=0.96`. Both were valid HARD-veto inputs when written, but the live `RiskVetoClassifier.HARD_THRESHOLDS` was widened in UL-4 (`correlation 0.95→0.98`) and UL-5 (`drawdown 0.10→0.20`). After widening, `0.12 < 0.20` and `0.96 < 0.98` — both fall through to SOFT veto.
+  2. **Archived module imports** (2 failures): `TestHardSoftVetoClassifierPatch` imported `defense.production_reliability_patches` which was retired and moved to `archive/defense/production_reliability_patches.py`. Successor is `RiskVetoClassifier` in the live `defense/production_reliability.py`.
+- **Fix:**
+  1. Bumped `drawdown=0.12 → 0.22` and `correlation=0.96 → 0.99` in `TestHardVetoesPreserved` so the inputs actually exceed the (current) HARD thresholds. Test intent (HARD veto regardless of weekend mode) preserved.
+  2. Renamed `TestHardSoftVetoClassifierPatch` → `TestRiskVetoClassifierWeekendCap`, repointed at the live `RiskVetoClassifier`. Same behavior tested — default cap `WEEKEND_LIQUIDITY=0.40` and ULTRA override to `1.00` via `weekend_soft_veto_cap` config key.
+- **Tests:** 41/41 weekend manager tests + 155/155 broader regression all green.
+- **Why this matters for the audit-cycle question:** these tests were the canary for "spec drift" (UL-4/UL-5 widened thresholds without updating tests). Running pytest on every CI cycle would have caught them — but if tests are skipped or flagged as "expected failures", the spec-drift signal is lost. Periodic full-pytest runs should be a forcing function. P57's `authority_consistency_audit.py` provides a complementary static check; pytest is the dynamic check.
+- **Mitigation:** When widening a threshold, grep `HARD_THRESHOLDS\[` (or whatever constant moved) and update every test using values in the old window. Same pattern as P22 schema drift.
+
 ### P57. [FIXED 2026-04-25] Authority/flag/constant consistency scanner + 2 P3-shape attribution gaps + dead code
 - **Tooling:** new `scripts/authority_consistency_audit.py` does codebase-level static checks for the 3 high-frequency latent-bug classes the operator named (DISABLED-when-shouldn't-be / authority-level-mismatch / parameter-drift). Three sections: (A) authority-matrix wiring quartet (writer / fusion-reader / extractor / matrix-label), (B) ENABLE_* flags without runtime readers, (C) numerical-constant drift across files for a curated list of multi-location values.
 - **Real fixes from first run:**
