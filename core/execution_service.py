@@ -669,19 +669,29 @@ async def execute_intent_v2(
 
     # =====================================================================
     # [AC-5] Fill budget hard cap
-    # =====================================================================
+    # Canonical counter lives on anti_churn (incremented by record_fill at
+    # end of this function, persisted via to_dict). The ctx.ac5_fills_today /
+    # ctx.ac5_fills_date scalars were a legacy mirror read from
+    # runner._ac5_fills_today — which was only ever assigned `0` at startup
+    # and never incremented (main.py comment "Proxied through _anti_churn").
+    # Result: this gate fired 0 >= 8 = False forever, AC-5 was a no-op.
+    # Fix: read directly from the anti_churn module, which is the same state
+    # anti_churn.check_fill_budget() uses for persistence/restore.
     _ac5_today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    if ctx.ac5_fills_date != _ac5_today:
-        ctx.ac5_fills_today = 0
-        ctx.ac5_fills_date = _ac5_today
-    if ctx.ac5_fills_today >= ctx.AC5_MAX_FILLS_PER_DAY:
+    if ctx.anti_churn._fills_date != _ac5_today:
+        ctx.anti_churn._fills_today = 0
+        ctx.anti_churn._fills_date = _ac5_today
+    if ctx.anti_churn._fills_today >= ctx.AC5_MAX_FILLS_PER_DAY:
         logger.warning(
             f"[AC-5] {asset}: FILL BUDGET EXHAUSTED -"
-            f"{ctx.ac5_fills_today}/{ctx.AC5_MAX_FILLS_PER_DAY} today"
+            f"{ctx.anti_churn._fills_today}/{ctx.AC5_MAX_FILLS_PER_DAY} today"
         )
         return {
             "status": "AC5_BUDGET_EXHAUSTED",
-            "reason": f"daily fill budget: {ctx.ac5_fills_today}/{ctx.AC5_MAX_FILLS_PER_DAY}",
+            "reason": (
+                f"daily fill budget: "
+                f"{ctx.anti_churn._fills_today}/{ctx.AC5_MAX_FILLS_PER_DAY}"
+            ),
         }
 
     # =====================================================================
@@ -1951,6 +1961,42 @@ async def execute_intent_v2(
                         current_equity=_fuse_equity,
                         trade_count=1,
                     )
+                # [EXIT-DRL] Close the per-trade outcome ledger record so the
+                # promotion gate can count this exit event. Best-effort —
+                # ledger errors must never block the close path.
+                _runner = getattr(ctx, '_runner_ref', None)
+                _edrl_ledger = getattr(_runner, '_exit_drl_outcome_ledger', None) if _runner else None
+                _edrl_close_reason = str(ctx.exit_trigger_tag.get(asset, "FULL_EXIT"))
+                if _edrl_ledger is not None:
+                    try:
+                        _edrl_ledger.record_close(
+                            asset=asset,
+                            exit_price=float(exit_price),
+                            exit_reason=_edrl_close_reason,
+                            realized_pnl_bps=float(_net_pnl_bps),
+                        )
+                    except Exception as _edrl_close_err:
+                        logger.debug(f"[EXIT_DRL_LEDGER] {asset}: full-exit close failed: {_edrl_close_err}")
+                # [EXIT-DRL KILL_SWITCH] Feed the close into the per-asset trip
+                # monitor. Only counts as "DRL-driven" if TRIGGER 4 fired (tag
+                # T6_DRL_ACTION) AND the asset is in EXIT_ONLY mode.
+                _edrl_killswitch = getattr(_runner, '_exit_drl_kill_switch', None) if _runner else None
+                _edrl_agent = getattr(_runner, '_exit_drl_agent', None) if _runner else None
+                if _edrl_killswitch is not None and _edrl_agent is not None:
+                    try:
+                        _ks_drl_driven = (
+                            _edrl_agent.should_act_on(asset)
+                            and "T6_DRL_ACTION" in _edrl_close_reason
+                        )
+                        _ks_terminal = "EXIT_ALL"  # full-exit branch
+                        _edrl_killswitch.record_close(
+                            asset=asset,
+                            realized_pnl_bps=float(_net_pnl_bps),
+                            terminal_action=_ks_terminal,
+                            was_drl_driven=bool(_ks_drl_driven),
+                        )
+                    except Exception as _edrl_ks_err:
+                        logger.debug(f"[EXIT_DRL_KILLSWITCH] {asset}: full-exit record failed: {_edrl_ks_err}")
                 _tilt_key = asset.upper().replace("/USD", "").replace("USD", "")
                 if _tilt_key in ctx.asset_trade_pnls:
                     ctx.asset_trade_pnls[_tilt_key].append(_net_pnl_usd)
@@ -2000,7 +2046,7 @@ async def execute_intent_v2(
                                 "trade_fee_usd": _exit_fee_usd,
                                 "margin_opening_fee_usd": 0.0,
                                 # [FIX 2026-04-22] PnL attribution — who "caused" this trade
-                                "primary_agent": getattr(ctx.intent, "primary_agent", "") or "",
+                                "primary_agent": getattr(intent, "primary_agent", "") or "",
                             },
                         )
                         _note_shadow_fill(bool(_shadow_fill_ok))
@@ -2280,10 +2326,22 @@ async def execute_intent_v2(
                             was_correct_direction=_c12_correct,
                         )
                         _c12_now = datetime.now(timezone.utc)
-                        if ctx.last_aging_check is None or (
-                            _c12_now - ctx.last_aging_check
+                        # [SCALAR-DRIFT-FIX 2026-04-24] Pre-fix: ctx.last_aging_check
+                        # mutations never synced back to runner (sync_scalars_back is
+                        # defined but never called), so the weekly rate-limit read 0.0
+                        # on every tick and the aging-check log fired per-trade instead
+                        # of per-week. Read/write the runner attribute directly so the
+                        # timestamp persists across ticks. Handle legacy float=0.0
+                        # scalar left from the dataclass default.
+                        _c12_runner = getattr(ctx, '_runner_ref', None)
+                        _c12_last = getattr(_c12_runner, '_last_aging_check', None) if _c12_runner else None
+                        if not isinstance(_c12_last, datetime):
+                            _c12_last = None
+                        if _c12_last is None or (
+                            _c12_now - _c12_last
                         ).total_seconds() > 168 * 3600:
-                            ctx.last_aging_check = _c12_now
+                            if _c12_runner is not None:
+                                _c12_runner._last_aging_check = _c12_now
                             _c12_mods = ctx.strategy_aging.get_weight_modifiers()
                             for _c12_sname, _c12_wmod in _c12_mods.items():
                                 if _c12_wmod < 0.7:
@@ -2511,7 +2569,7 @@ async def execute_intent_v2(
                             "trade_fee_usd": _partial_exit_fee_usd,
                             "margin_opening_fee_usd": 0.0,
                             # [FIX 2026-04-22] PnL attribution
-                            "primary_agent": getattr(ctx.intent, "primary_agent", "") or "",
+                            "primary_agent": getattr(intent, "primary_agent", "") or "",
                         },
                     )
                     _note_shadow_fill(bool(_shadow_fill_ok))
@@ -2680,6 +2738,37 @@ async def execute_intent_v2(
                             current_equity=_fuse_equity,
                             trade_count=1,
                         )
+                    # [EXIT-DRL] Close the outgoing trade's ledger record on
+                    # FLIP. The new opposite-direction position will lazy-open
+                    # a fresh ledger record on the next predict() tick.
+                    _runner_flip = getattr(ctx, '_runner_ref', None)
+                    _edrl_ledger_flip = getattr(_runner_flip, '_exit_drl_outcome_ledger', None) if _runner_flip else None
+                    _edrl_flip_reason = str(ctx.exit_trigger_tag.get(asset, "FLIP"))
+                    if _edrl_ledger_flip is not None:
+                        try:
+                            _edrl_ledger_flip.record_close(
+                                asset=asset,
+                                exit_price=float(exit_price),
+                                exit_reason=_edrl_flip_reason,
+                                realized_pnl_bps=float(_flip_net_pnl_bps),
+                            )
+                        except Exception as _edrl_flip_err:
+                            logger.debug(f"[EXIT_DRL_LEDGER] {asset}: flip-close failed: {_edrl_flip_err}")
+                    # [EXIT-DRL KILL_SWITCH] Flip closes are NOT counted as
+                    # DRL-driven — flips are direction reversals, not exit-
+                    # timing decisions. They feed only the action-distribution
+                    # and EXIT_ALL-ratio guards.
+                    _edrl_ks_flip = getattr(_runner_flip, '_exit_drl_kill_switch', None) if _runner_flip else None
+                    if _edrl_ks_flip is not None:
+                        try:
+                            _edrl_ks_flip.record_close(
+                                asset=asset,
+                                realized_pnl_bps=float(_flip_net_pnl_bps),
+                                terminal_action="EXIT_ALL",
+                                was_drl_driven=False,
+                            )
+                        except Exception as _edrl_ks_flip_err:
+                            logger.debug(f"[EXIT_DRL_KILLSWITCH] {asset}: flip-close record failed: {_edrl_ks_flip_err}")
                     _tilt_key = asset.upper().replace("/USD", "").replace("USD", "")
                     if _tilt_key in ctx.asset_trade_pnls:
                         ctx.asset_trade_pnls[_tilt_key].append(_flip_net_pnl_usd)
@@ -2731,7 +2820,7 @@ async def execute_intent_v2(
                                     "trade_fee_usd": _flip_fee,
                                     "margin_opening_fee_usd": 0.0,
                                     # [FIX 2026-04-22] PnL attribution
-                                    "primary_agent": getattr(ctx.intent, "primary_agent", "") or "",
+                                    "primary_agent": getattr(intent, "primary_agent", "") or "",
                                 },
                             )
                             _note_shadow_fill(bool(_shadow_fill_ok))
@@ -2932,7 +3021,7 @@ async def execute_intent_v2(
                             "margin_opening_fee_usd": _entry_margin_opening_fee_usd,
                             "requires_margin": bool(_order_fee_result.get("requires_margin", False)),
                             # [FIX 2026-04-22] PnL attribution — entry-side stamp
-                            "primary_agent": getattr(ctx.intent, "primary_agent", "") or "",
+                            "primary_agent": getattr(intent, "primary_agent", "") or "",
                         },
                     )
                     _note_shadow_fill(bool(_shadow_fill_ok))

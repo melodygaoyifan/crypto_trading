@@ -370,6 +370,38 @@ def evaluate_exit_triggers(
                     from execution.exit_alpha import DRLOutput, DRLAction
                     _drl_exit_output = DRLOutput(action=DRLAction.HOLD)
 
+            # [EXIT-DRL ACCELERATED 2026-04-24] System 3 (Exit-SAC) override.
+            # Per CLAUDE.md P29: when the asset is in EXIT_ONLY mode AND the
+            # Exit-SAC predicted PARTIAL_EXIT this tick AND the kill switch
+            # hasn't tripped, override System 1's DRLOutput with PARTIAL_EXIT.
+            # We deliberately limit System 3's authority to PARTIAL_EXIT only
+            # for v1 — RELEASE_RUNNER and EXIT_ALL stay handled by the existing
+            # rule-based triggers (phase / CRACK / momentum / drawdown / stop).
+            _edrl_agent = getattr(runner, '_exit_drl_agent', None)
+            _edrl_killswitch = getattr(runner, '_exit_drl_kill_switch', None)
+            if _edrl_agent is not None and _edrl_agent.should_act_on(asset):
+                # Kill-switch check first
+                _ks_demote = _edrl_killswitch.should_demote(asset) if _edrl_killswitch else None
+                if _ks_demote:
+                    from agents.exit_drl_agent import ExitDRLMode as _EM
+                    _edrl_agent.set_mode_for_asset(asset, _EM.SHADOW)
+                    if _edrl_killswitch:
+                        _edrl_killswitch.record_demotion(asset, _ks_demote)
+                else:
+                    # The latest_exit_drl_action was stamped onto the position
+                    # by the per-tick predict block earlier this tick.
+                    _edrl_action_name = str(_pos.get('latest_exit_drl_action', '') or '')
+                    _edrl_step_action = _edrl_action_name or "HOLD"
+                    if _edrl_killswitch:
+                        _edrl_killswitch.record_step_action(asset, _edrl_step_action)
+                    if _edrl_action_name == "PARTIAL_EXIT":
+                        from execution.exit_alpha import DRLOutput, DRLAction
+                        _drl_exit_output = DRLOutput(action=DRLAction.PARTIAL_EXIT)
+                        logger.info(
+                            f"[EXIT_DRL_BRIDGE] {asset}: System-3 PARTIAL_EXIT "
+                            f"override (overrides any System-1 DRLOutput this tick)"
+                        )
+
             _exit_alpha_signal = exit_alpha.evaluate_scale_out(
                 asset=asset,
                 current_price=_ea_curr_p,

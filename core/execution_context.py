@@ -118,10 +118,20 @@ class ExecutionContext:
     recent_fill_state: Dict[str, Dict] = field(default_factory=dict)
     confidence_signal_times: Dict[str, float] = field(default_factory=dict)
 
+    # ── Runner back-ref ──
+    # Only write-back channel for scalars that can't be routed through a
+    # dedicated component (see `_last_aging_check` in execute_intent_v2).
+    # Populated by build_from_runner; stays None if ctx is built elsewhere.
+    _runner_ref: Any = None
+
     # ── Scalar State ──
     tick_count: int = 0
-    last_aging_check: float = 0.0
+    # last_aging_check retired 2026-04-24 — the canonical scalar lives on the
+    # runner (`_last_aging_check`) and is read/written via `ctx._runner_ref`
+    # inside the strategy-aging branch of execute_intent_v2. sync_scalars_back
+    # was never called so the old ctx scalar drifted every tick.
     drawdown_tracker: Any = None
+    current_drawdown_pct: float = 0.0
     dynamic_limits_result: Any = None
     warmup_tracker: Any = None
     anti_churn: Any = None
@@ -134,8 +144,10 @@ class ExecutionContext:
     AC2_WINDOW_TICKS: int = 6
     AC5_MAX_FILLS_PER_DAY: int = 8
     ac2_fill_ticks: Any = None
-    ac5_fills_today: int = 0
-    ac5_fills_date: str = ""
+    # ac5_fills_today / ac5_fills_date removed 2026-04-24: they shadowed
+    # runner._ac5_fills_today which was never incremented (canonical counter
+    # lives on anti_churn._fills_today). See core/execution_service.py AC-5
+    # gate and core/anti_churn.py check_fill_budget() for the live path.
 
     # ── Bound Method References ──
     # These are methods from HMATSProductionRunner that the execution service
@@ -172,6 +184,12 @@ class ExecutionContext:
         so mutations in the execution service propagate back to the runner.
         """
         ctx = cls()
+
+        # Live runner ref — only for writing back scalar mutations that can't
+        # be piped through a dedicated component (e.g. `_last_aging_check`).
+        # Prefer `fn_*` callbacks or direct component mutation where possible;
+        # this is a small escape hatch for true god-object scalars.
+        ctx._runner_ref = runner
 
         # Config
         ctx.config = runner.config
@@ -254,7 +272,7 @@ class ExecutionContext:
 
         # Scalar state
         ctx.tick_count = runner._tick_count
-        ctx.last_aging_check = getattr(runner, '_last_aging_check', 0.0)
+        # last_aging_check retired — read/write directly against ctx._runner_ref.
         ctx.drawdown_tracker = getattr(runner, '_drawdown_tracker', None)
         ctx.current_drawdown_pct = getattr(runner, '_current_drawdown_pct', 0.0)
         ctx.dynamic_limits_result = getattr(runner, '_dynamic_limits_result', None)
@@ -269,8 +287,7 @@ class ExecutionContext:
         ctx.AC2_WINDOW_TICKS = runner._AC2_WINDOW_TICKS
         ctx.AC5_MAX_FILLS_PER_DAY = runner._AC5_MAX_FILLS_PER_DAY
         ctx.ac2_fill_ticks = runner._ac2_fill_ticks
-        ctx.ac5_fills_today = getattr(runner, '_ac5_fills_today', 0)
-        ctx.ac5_fills_date = getattr(runner, '_ac5_fills_date', "")
+        # ac5_* ctx scalars retired — read ctx.anti_churn._fills_today directly.
 
         # Bound method references
         ctx.fn_is_active_paper_position = runner._is_active_paper_position
@@ -298,13 +315,9 @@ class ExecutionContext:
 
         return ctx
 
-    def sync_scalars_back(self, runner: Any) -> None:
-        """
-        Write back scalar values that may have been mutated during execution.
-
-        Mutable containers (dicts, sets) don't need this — they're live references.
-        Only scalar assignments need explicit write-back.
-        """
-        runner._drl_authority_level = self.drl_authority_level
-        runner._last_aging_check = self.last_aging_check
-        runner._tick_count = self.tick_count
+    # sync_scalars_back() removed 2026-04-24: it was never called, and
+    # attempting to add callers retroactively would silently back-write
+    # whatever default value sat on the dataclass for fields that the
+    # execution path never mutated, corrupting runner state. Scalar
+    # writes now happen through explicit callbacks (fn_sync_drl_authority)
+    # or via ctx._runner_ref (_last_aging_check).

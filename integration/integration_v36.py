@@ -2175,17 +2175,21 @@ class HMATSv36Engine:
         _drl_conf = agent_signals.get("drl_confidence", 0.0)
         _drl_level = self.drl_gate.get_authority().value if hasattr(self.drl_gate, "get_authority") else "DISABLED"
 
-        # [FIX-DRIFT] Apply drift & OOD multipliers to DRL confidence.
-        # _drl_drift_weight: 1.0 (no drift) → 0.0 (critical drift). Computed by DriftDetector.
-        # _ood_confidence_mult: 1.0 (in-distribution) → 0.1 (out-of-distribution). Computed by OOD detector.
+        # [FIX-DRIFT] Apply drift multiplier to DRL confidence.
+        # _drl_drift_weight: 1.0 (no drift) → 0.0 (critical drift). Written by
+        # DriftDetector at main.py (~L9047).
+        # Note: the OOD multiplier was removed 2026-04-24. The 2026-04-11
+        # decision was to detect+log OOD but not penalize DRL confidence
+        # (insufficient live data to tell "model wrong" from "regime shift").
+        # The old `_ood_confidence_mult` reader stayed on the books with a
+        # default of 1.0 — harmless but dead — and was cleaned up here.
         _drift_w = agent_signals.get("_drl_drift_weight", 1.0)
-        _ood_m = agent_signals.get("_ood_confidence_mult", 1.0)
-        if _drift_w < 1.0 or _ood_m < 1.0:
+        if _drift_w < 1.0:
             _drl_conf_raw = _drl_conf
-            _drl_conf *= _drift_w * _ood_m
+            _drl_conf *= _drift_w
             logger.info(
                 f"[FIX-DRIFT] DRL conf {_drl_conf_raw:.3f} → {_drl_conf:.3f} "
-                f"(drift_w={_drift_w:.2f}, ood_m={_ood_m:.2f})"
+                f"(drift_w={_drift_w:.2f})"
             )
         if _drl_level in ("EXIT_ONLY", "ACTIVE") and abs(_drl_dir) > 0.01 and _drl_conf > 0.05:
             _drl_tranche_advice = None

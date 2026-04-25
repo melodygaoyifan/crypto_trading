@@ -1,0 +1,63 @@
+{
+  "asset": "BTC",
+  "val_window": {
+    "start_bar": 5220,
+    "end_bar": 6477,
+    "n_entry_points": 210
+  },
+  "drl": {
+    "n_trades": 420,
+    "mean_pnl_bps": -7.21,
+    "std_pnl_bps": 350.73,
+    "sharpe": -0.021,
+    "win_rate": 0.219,
+    "avg_bars_held": 10.24,
+    "median_pnl_bps": -35.08,
+    "p10_pnl_bps": -190.69,
+    "p90_pnl_bps": 199.04,
+    "final_action_dist": {
+      "HOLD": 0,
+      "PARTIAL_EXIT": 0,
+      "RELEASE_RUNNER": 6,
+      "EXIT_ALL": 414
+    },
+    "step_action_pct": {
+      "HOLD": 62.65,
+      "PARTIAL_EXIT": 26.64,
+      "RELEASE_RUNNER": 0.15,
+      "EXIT_ALL": 10.56
+    },
+    "total_steps": 3922
+  },
+  "baseline": {
+    "n_trades": 420,
+    "mean_pnl_bps": -8.82,
+    "std_pnl_bps": 207.55,
+    "sharpe": -0.042,
+    "win_rate": 0.324,
+    "avg_bars_held": 5.04,
+    "median_pnl_bps": -21.34,
+    "p10_pnl_bps": -152.12,
+    "p90_pnl_bps": 101.71,
+    "final_action_dist": {
+      "HOLD": 0,
+      "PARTIAL_EXIT": 0,
+      "RELEASE_RUNNER": 131,
+      "EXIT_ALL": 289
+    },
+    "step_action_pct": {
+      "HOLD": 73.56,
+      "PARTIAL_EXIT": 1.71,
+      "RELEASE_RUNNER": 7.71,
+      "EXIT_ALL": 17.02
+    },
+    "total_steps": 1698
+  },
+  "lift_pct": {
+    "mean_pnl_bps": 18.25,
+    "sharpe": 50.0,
+    "win_rate": -32.41,
+    "avg_bars_held": 103.17
+  },
+  "training_val_alignment": 0.7296137339055794
+}

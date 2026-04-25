@@ -1,0 +1,44 @@
+{
+  "asset": "BTC",
+  "state_dim": 40,
+  "action_dim": 4,
+  "action_names": [
+    "HOLD",
+    "PARTIAL_EXIT",
+    "RELEASE_RUNNER",
+    "EXIT_ALL"
+  ],
+  "market_cols": [
+    "ret_4h",
+    "ret_12h",
+    "ret_24h",
+    "ret_48h",
+    "ret_168h",
+    "vol_24h",
+    "vol_ratio_s",
+    "atr_14_denoised",
+    "rsi_14",
+    "macd_12_26",
+    "bb_pos_20",
+    "bb_width_20",
+    "vol_zscore",
+    "vol_spike"
+  ],
+  "flow_cols": [
+    "funding_rate_zscore",
+    "oi_change_5d",
+    "liq_imbalance",
+    "taker_ratio_zscore",
+    "tradecount_zscore",
+    "taker_vol_momentum",
+    "panic",
+    "capitulation"
+  ],
+  "oracle_thresholds": {
+    "partial_profit_min_bps": 20,
+    "peak_tolerance_bps": 20,
+    "post_peak_drawdown_pct": 0.3,
+    "stop_atr_mult": 1.5
+  },
+  "horizon_bars": 48
+}

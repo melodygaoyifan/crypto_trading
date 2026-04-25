@@ -4,7 +4,6 @@ from main import HMATSProductionRunner
 def _make_runner():
     runner = HMATSProductionRunner.__new__(HMATSProductionRunner)
     runner._ac0_post_restart_tick = True
-    runner._ac0_requires_entry_block = True
     runner._ac0_restored_assets = {"SOL"}
     runner._ac4_extended_cooldown = 0
     return runner

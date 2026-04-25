@@ -1,0 +1,63 @@
+{
+  "asset": "ETH",
+  "val_window": {
+    "start_bar": 5220,
+    "end_bar": 6477,
+    "n_entry_points": 210
+  },
+  "drl": {
+    "n_trades": 420,
+    "mean_pnl_bps": -8.29,
+    "std_pnl_bps": 482.33,
+    "sharpe": -0.017,
+    "win_rate": 0.252,
+    "avg_bars_held": 8.91,
+    "median_pnl_bps": -48.77,
+    "p10_pnl_bps": -273.7,
+    "p90_pnl_bps": 245.12,
+    "final_action_dist": {
+      "HOLD": 0,
+      "PARTIAL_EXIT": 0,
+      "RELEASE_RUNNER": 7,
+      "EXIT_ALL": 413
+    },
+    "step_action_pct": {
+      "HOLD": 60.87,
+      "PARTIAL_EXIT": 26.6,
+      "RELEASE_RUNNER": 0.21,
+      "EXIT_ALL": 12.33
+    },
+    "total_steps": 3350
+  },
+  "baseline": {
+    "n_trades": 420,
+    "mean_pnl_bps": -26.08,
+    "std_pnl_bps": 259.68,
+    "sharpe": -0.1,
+    "win_rate": 0.34,
+    "avg_bars_held": 4.65,
+    "median_pnl_bps": -30.69,
+    "p10_pnl_bps": -229.26,
+    "p90_pnl_bps": 115.27,
+    "final_action_dist": {
+      "HOLD": 0,
+      "PARTIAL_EXIT": 0,
+      "RELEASE_RUNNER": 139,
+      "EXIT_ALL": 281
+    },
+    "step_action_pct": {
+      "HOLD": 72.02,
+      "PARTIAL_EXIT": 0.59,
+      "RELEASE_RUNNER": 9.07,
+      "EXIT_ALL": 18.33
+    },
+    "total_steps": 1533
+  },
+  "lift_pct": {
+    "mean_pnl_bps": 68.21,
+    "sharpe": 83.0,
+    "win_rate": -25.88,
+    "avg_bars_held": 91.61
+  },
+  "training_val_alignment": 0.7096691459348551
+}

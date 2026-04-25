@@ -1,0 +1,63 @@
+{
+  "asset": "SOL",
+  "val_window": {
+    "start_bar": 5220,
+    "end_bar": 6477,
+    "n_entry_points": 210
+  },
+  "drl": {
+    "n_trades": 420,
+    "mean_pnl_bps": -14.11,
+    "std_pnl_bps": 702.7,
+    "sharpe": -0.02,
+    "win_rate": 0.219,
+    "avg_bars_held": 9.9,
+    "median_pnl_bps": -70.22,
+    "p10_pnl_bps": -338.7,
+    "p90_pnl_bps": 386.44,
+    "final_action_dist": {
+      "HOLD": 0,
+      "PARTIAL_EXIT": 0,
+      "RELEASE_RUNNER": 6,
+      "EXIT_ALL": 414
+    },
+    "step_action_pct": {
+      "HOLD": 57.48,
+      "PARTIAL_EXIT": 31.4,
+      "RELEASE_RUNNER": 0.16,
+      "EXIT_ALL": 10.96
+    },
+    "total_steps": 3777
+  },
+  "baseline": {
+    "n_trades": 420,
+    "mean_pnl_bps": -45.93,
+    "std_pnl_bps": 200.3,
+    "sharpe": -0.229,
+    "win_rate": 0.371,
+    "avg_bars_held": 4.23,
+    "median_pnl_bps": -42.39,
+    "p10_pnl_bps": -277.04,
+    "p90_pnl_bps": 159.34,
+    "final_action_dist": {
+      "HOLD": 0,
+      "PARTIAL_EXIT": 0,
+      "RELEASE_RUNNER": 156,
+      "EXIT_ALL": 264
+    },
+    "step_action_pct": {
+      "HOLD": 68.83,
+      "PARTIAL_EXIT": 0.22,
+      "RELEASE_RUNNER": 11.5,
+      "EXIT_ALL": 19.45
+    },
+    "total_steps": 1357
+  },
+  "lift_pct": {
+    "mean_pnl_bps": 69.28,
+    "sharpe": 91.27,
+    "win_rate": -40.97,
+    "avg_bars_held": 134.04
+  },
+  "training_val_alignment": 0.746039603960396
+}

@@ -151,7 +151,6 @@ def _make_partial_exit_runner():
     runner._AC2_MAX_FILLS_PER_ASSET_PER_DAY = 99
     runner._AC2_MAX_FILLS_GLOBAL_PER_DAY = 999
     runner._ac0_post_restart_tick = False
-    runner._ac0_requires_entry_block = False
     runner._ac4_extended_cooldown = 0
     runner._current_drawdown_pct = 0.0
     runner._fee_blending_enabled = False
