@@ -515,6 +515,14 @@ class DiscordNotifier:
         self._running = False
         self._lock = threading.Lock()
 
+        # [P24 2026-04-24] Circuit breaker: previously, a permanently-dead
+        # webhook (revoked URL → 401/403) would generate an error log per
+        # queued message forever. Now we suppress sends after consecutive
+        # failures and re-probe after a cooldown.
+        self._consecutive_failures = 0
+        self._circuit_open_until = 0.0  # epoch seconds
+        self._circuit_permanently_disabled = False
+
         self.min_severity = AlertSeverity.INFO
 
         if self.webhook_url:
@@ -563,6 +571,13 @@ class DiscordNotifier:
     def _post_webhook(self, payload: dict):
         if not self.webhook_url:
             return
+        # [P24 2026-04-24] Circuit breaker check.
+        if self._circuit_permanently_disabled:
+            return
+        now = time.time()
+        if now < self._circuit_open_until:
+            return  # circuit open, drop silently (cooldown in effect)
+
         try:
             data = json.dumps(payload).encode("utf-8")
             req = urllib.request.Request(
@@ -576,11 +591,61 @@ class DiscordNotifier:
                     logger.warning(f"Discord webhook returned {resp.status}")
             with self._lock:
                 self._message_timestamps.append(time.time())
+            # Success → reset circuit.
+            if self._consecutive_failures > 0:
+                logger.info(
+                    f"[DISCORD] webhook recovered after {self._consecutive_failures} failures"
+                )
+            self._consecutive_failures = 0
+            self._circuit_open_until = 0.0
         except urllib.error.HTTPError as e:
             body = e.read().decode("utf-8", errors="replace")[:200]
             logger.error(f"Discord webhook HTTP {e.code}: {body}")
+            self._consecutive_failures += 1
+            if e.code in (401, 403, 404):
+                # Auth error / revoked webhook — permanent disable.
+                self._circuit_permanently_disabled = True
+                logger.error(
+                    f"[DISCORD] HTTP {e.code} — webhook permanently disabled "
+                    f"(URL likely revoked or wrong)"
+                )
+            elif e.code == 429:
+                # Rate limit — honor Retry-After if present, else 60s.
+                retry_after = 60.0
+                try:
+                    raw = e.headers.get("Retry-After", "") if e.headers else ""
+                    if raw:
+                        retry_after = min(300.0, max(1.0, float(raw)))
+                except (ValueError, TypeError):
+                    pass
+                self._circuit_open_until = time.time() + retry_after
+                logger.warning(
+                    f"[DISCORD] 429 rate limit, circuit open {retry_after:.0f}s"
+                )
+            else:
+                self._maybe_open_circuit()
         except Exception as e:
             logger.error(f"Discord webhook error: {e}")
+            self._consecutive_failures += 1
+            self._maybe_open_circuit()
+
+    def _maybe_open_circuit(self):
+        """Exponential backoff: 5 consecutive failures → 60s cooldown,
+        10 → 300s, 15+ → 1800s. Reset on first success."""
+        n = self._consecutive_failures
+        if n >= 15:
+            cooldown = 1800.0
+        elif n >= 10:
+            cooldown = 300.0
+        elif n >= 5:
+            cooldown = 60.0
+        else:
+            return
+        self._circuit_open_until = time.time() + cooldown
+        logger.warning(
+            f"[DISCORD] circuit open {cooldown:.0f}s "
+            f"after {n} consecutive failures"
+        )
 
     def _enqueue_or_send(self, payload: dict):
         if self.enable_async and self._running:
@@ -708,7 +773,13 @@ class DiscordLogHandler(logging.Handler):
     def emit(self, record: logging.LogRecord):
         try:
             msg = self.format(record)
-            _key = f"{record.name}:{record.getMessage()[:100]}"
+            # Dedup by call site (pathname:lineno:levelno), not by message text.
+            # Tick-loop except blocks like "SOTA integration error: {e}" produce
+            # messages whose tails vary per tick (embedded object reprs,
+            # timestamps, per-asset identifiers). Keying on message would let
+            # the same recurring crash spam Discord every tick. The log file
+            # still has the full message detail.
+            _key = f"{record.pathname}:{record.lineno}:{record.levelno}"
             _now = time.time()
             if _key in self._dedup and _now - self._dedup[_key] < self._DEDUP_WINDOW:
                 return

@@ -601,7 +601,15 @@ class LLMSentimentAgent:
 
     @staticmethod
     def _classify_haiku_error(err: Exception) -> tuple:
-        """Return (status_code, is_non_retryable, reason)."""
+        """Return (status_code, is_non_retryable, reason).
+
+        [P24 2026-04-24] 429 used to fall through to "transient_error",
+        which meant the next per-asset tick fired another request
+        and burned more quota. Now 429 is treated as non-retryable
+        for a short cooldown window via _open_hard_disable; reason
+        encodes Retry-After if present so the caller can size the
+        cooldown.
+        """
         status_code = getattr(err, "status_code", None)
         if status_code is None:
             _resp = getattr(err, "response", None)
@@ -609,6 +617,19 @@ class LLMSentimentAgent:
         msg = str(err).lower()
         if status_code in (401, 403, 404, 422):
             return status_code, True, f"http_{status_code}"
+        if status_code == 429 or "429" in msg or "rate limit" in msg or "rate_limit" in msg:
+            # Try to read Retry-After from the underlying response.
+            retry_after = None
+            try:
+                _resp = getattr(err, "response", None)
+                _hdrs = getattr(_resp, "headers", None) if _resp is not None else None
+                if _hdrs is not None:
+                    raw = _hdrs.get("retry-after") or _hdrs.get("Retry-After")
+                    if raw:
+                        retry_after = min(300.0, max(1.0, float(raw)))
+            except (ValueError, TypeError, AttributeError):
+                retry_after = None
+            return 429, True, f"rate_limit_429_retry_after={retry_after or 'none'}"
         if "404" in msg and "not found" in msg:
             return status_code, True, "http_404_not_found"
         if "401" in msg or "unauthorized" in msg:
@@ -1090,7 +1111,26 @@ class LLMSentimentAgent:
                 return None
             except Exception as e:
                 status_code, non_retryable, reason = self._classify_haiku_error(e)
-                if non_retryable:
+                if status_code == 429:
+                    # [P24 2026-04-24] 429: short cooldown driven by
+                    # Retry-After (parsed in _classify_haiku_error). Fall back
+                    # to 30s if header missing. Don't lock for the full
+                    # haiku_hard_disable_cooldown_sec — that's for auth/model
+                    # errors, not transient rate limits.
+                    retry_after = 30.0
+                    if "retry_after=" in reason:
+                        _val = reason.split("retry_after=", 1)[1]
+                        if _val and _val != "none":
+                            try:
+                                retry_after = float(_val)
+                            except (ValueError, TypeError):
+                                retry_after = 30.0
+                    self._open_hard_disable(reason=reason, cooldown_sec=retry_after)
+                    logger.warning(
+                        f"[LLM_SENTIMENT] Haiku 429 rate limit for {asset}: "
+                        f"cooldown={retry_after:.0f}s"
+                    )
+                elif non_retryable:
                     self._open_hard_disable(reason=reason)
                     logger.warning(
                         f"[LLM_SENTIMENT] Haiku API non-retryable error for {asset}: "
