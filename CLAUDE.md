@@ -410,6 +410,19 @@ Authority matrix (`signals/authority_fusion.py`) + writer (`main.py` somewhere i
 - **Fix:** Added DRL substitution in `_compute_effective_alpha_direction`: when quant abstains (|quant_dir|<0.03) AND DRL is ACTIVE AND |drl_dir|>=0.5 AND drl_conf>=0.3, use DRL's direction as the effective alpha input. Alpha gate then evaluates alpha against DRL's direction, and QUIET_ACCUMULATION hard filter sees |direction|~0.9 instead of 0. Both blockers resolved by one change.
 - **Mitigation:** Alpha gate is a pre-fusion short-circuit. Any time an agent is promoted to DECIDE, check what `effective_alpha_direction` feeds into alpha gate — if the agent isn't a contributor there, its DECIDE authority is nullified in quiet/consolidation regimes.
 
+### P51. [FIXED 2026-04-25] TIER 2 cleanup — 3 real datetime/observability fixes; rest were audit noise
+- **Symptom:** Started TIER 2 batch (audit's "silent-veto-without-logging" + datetime/threading category, ~25 sites). After triage, **most "silent veto" findings were false positives** — query-style returns `(bool, reason_string)` whose callers log, NOT actual veto sites. Adding `logger.warning()` to every False return would spam logs.
+- **Real fixes (3 sites):**
+  1. **`risk/gambler_entry_exit.py:65, 73, 81`** — Three `except ImportError: pass`/`return False/None` paths gave operator no visibility into whether gambler mode was OFF by config or DEAD by missing import. Added `logger.warning()` per site.
+  2. **`risk/cascade_exhaustion_governor.py:558, 563`** — `datetime.fromisoformat()` deserializes to aware if persisted ISO carries `+00:00`; runtime uses naive `datetime.now()`. Same shape as P39/P40. Local `_strip_tz()` helper now normalizes loaded timestamps on the way in.
+  3. **`infra/event_bus.py:126`** — `timestamp: datetime = field(default_factory=datetime.utcnow)` was naive. Changed to `lambda: datetime.now(timezone.utc)` to match the codebase post-P39/P40/P50.
+- **Audit false positives (saved triage time):**
+  - `risk/stop_loss_authority.py:410, 414`, `risk/correlation_position_sizer.py:362, 372`, `risk/short_position_controller.py:298, 379, 505`, `risk/auto_recovery_gate.py:163-197` — all query-style `(bool, reason)` returns; not vetoes.
+  - `risk/regime_transition_buffer.py` — no `fromisoformat()` in file; all `datetime.now()` calls pair internally; no naive/aware mismatch.
+  - `analytics/failure_memory.py:206` — theoretical race; all callers single-threaded async; defer lock until evidence of thread exposure.
+- **What this means for the audit-cycle question:** the trend is clear. Each round of comprehensive audit produces fewer real bugs. Audit-finding-to-real-bug ratio: P22 = 1:4, P47 = 1:6, P50 = 1:8, **P51 = 1:8 again**. We're approaching the point where additional audits cost more than the bugs they catch. **Recommend the runtime forensics tools (P41-P45 + the static detector P48) become the primary discovery loop going forward** — focused audits triggered by surprise rejection patterns, not calendar.
+- **Tests:** 245/245 safety-critical regression tests pass.
+
 ### P50. [FIXED 2026-04-25] Comprehensive codebase audit follow-up — 8 real bugs from TIER 1
 - **Symptom:** After dispatching 6 parallel audit agents to comprehensively cover ~250 files (the directories not yet deeply audited: risk/, signals/, core/, execution/, agents/, analytics/+market/+orchestration/+remaining), then a follow-up pass with main.py deep audit + market_data_pipeline + Multi-DECIDE fusion review + cross-file invariants + configs sweep, ~95 findings surfaced. Many were audit false positives (matrix count miscount, profit_calibration's `or {}` already correctly nested, sentiment_gate's quant_dir=0 guard already present). After triage, **8 real TIER-1 silent-failure bugs** in the same shape as P15/P47/P48.
 - **Bugs fixed:**

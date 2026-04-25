@@ -123,7 +123,11 @@ class Event:
     - causation_id: Direct parent event that caused this one
     """
     event_type: EventType
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    # [P51 2026-04-25] datetime.utcnow() returns naive; if any consumer
+    # compares event.timestamp with timezone.utc-aware values (replay,
+    # ordering checks across saga boundaries), TypeError silently. Use
+    # aware default to match the rest of the codebase post-P39/P40/P50.
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     source: str = ""               # Component that generated event
     target: Optional[str] = None   # Target component (None = broadcast)
     priority: EventPriority = EventPriority.NORMAL

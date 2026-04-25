@@ -58,27 +58,32 @@ class GamblerEntryChecker:
     
     def _is_gambler_mode(self) -> bool:
         """Check if gambler mode is active."""
+        # [P51 2026-04-25] ImportError was returning False silently — operator
+        # had no way to tell whether gambler mode was OFF by config or DEAD by
+        # missing import.
         try:
             from configs.high_risk_mode import is_gambler_mode_active
             return is_gambler_mode_active()
-        except ImportError:
+        except ImportError as e:
+            logger.warning(f"[GAMBLER] is_gambler_mode_active import failed: {e}")
             return False
-    
+
     def _get_config(self):
         """Get gambler config."""
         try:
             from configs.high_risk_mode import get_high_risk_config
             return get_high_risk_config()
-        except ImportError:
+        except ImportError as e:
+            logger.warning(f"[GAMBLER] get_high_risk_config import failed: {e}")
             return None
-    
+
     def _log_gambler_action(self, details: Dict):
         """Log gambler entry for audit."""
         try:
             from configs.high_risk_mode import log_gambler_action, GamblerModeReason
             log_gambler_action(GamblerModeReason.EARLY_ENTRY_T1, details)
-        except ImportError:
-            pass
+        except ImportError as e:
+            logger.warning(f"[GAMBLER] log_gambler_action import failed: {e}")
     
     def check_entry_allowed(
         self,

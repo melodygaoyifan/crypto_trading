@@ -553,14 +553,23 @@ class CascadeExhaustionGovernor:
         except (ValueError, KeyError):
             self._phase = CascadePhase.NONE
 
+        # [P51 2026-04-25] Same naive/aware mismatch as P39 promotion_gate:
+        # runtime uses naive datetime.now(), but fromisoformat() returns aware
+        # if persisted ISO carries +00:00. After restart, line 507's
+        # `datetime.now() - self._cascade_start` would TypeError silently
+        # inside try/except. Strip tzinfo on load to match runtime convention.
+        def _strip_tz(dt):
+            if dt is None or dt.tzinfo is None:
+                return dt
+            return dt.replace(tzinfo=None)
         if data.get("phase_start"):
             try:
-                self._phase_start = datetime.fromisoformat(data["phase_start"])
+                self._phase_start = _strip_tz(datetime.fromisoformat(data["phase_start"]))
             except (ValueError, TypeError):
                 pass
         if data.get("cascade_start"):
             try:
-                self._cascade_start = datetime.fromisoformat(data["cascade_start"])
+                self._cascade_start = _strip_tz(datetime.fromisoformat(data["cascade_start"]))
             except (ValueError, TypeError):
                 pass
 
