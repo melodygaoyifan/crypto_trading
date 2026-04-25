@@ -1651,8 +1651,15 @@ class KalmanCointegrationStrategy(BaseStrategy):
             return None
         
         # Get log prices
-        y = np.log(self.price_buffer[self.asset_a][-1])
-        x = np.log(self.price_buffer[self.asset_b][-1])
+        # [P39 2026-04-24] Guard against feed glitches sending price=0 or
+        # negative — np.log(0)=-inf, np.log(-1)=NaN, both poison the Kalman
+        # spread estimator and propagate NaN through downstream signals.
+        _pa = self.price_buffer[self.asset_a][-1]
+        _pb = self.price_buffer[self.asset_b][-1]
+        if _pa <= 0 or _pb <= 0:
+            return None
+        y = np.log(_pa)
+        x = np.log(_pb)
         
         # Kalman update
         theta, spread, S = self.kalman_update(y, x)

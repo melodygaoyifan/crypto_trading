@@ -262,9 +262,16 @@ class RegimePhaseDetector:
         volumes_arr = np.array(volumes) if volumes else np.ones_like(prices_arr)
         
         # Momentum
+        # [P39 2026-04-24] Guard against zero/NaN historical prices —
+        # division would produce inf/NaN that then propagates through phase
+        # detection into every downstream fusion signal until restart.
         if len(prices_arr) >= 5:
-            indicators.momentum_1bar = (prices_arr[-1] / prices_arr[-2] - 1) * 100
-            indicators.momentum_4bar = (prices_arr[-1] / prices_arr[-5] - 1) * 100
+            _p1 = prices_arr[-2]
+            _p4 = prices_arr[-5]
+            if _p1 > 0 and not np.isnan(_p1):
+                indicators.momentum_1bar = (prices_arr[-1] / _p1 - 1) * 100
+            if _p4 > 0 and not np.isnan(_p4):
+                indicators.momentum_4bar = (prices_arr[-1] / _p4 - 1) * 100
         
         # RSI
         if len(prices_arr) >= 14:

@@ -77,6 +77,34 @@ class TestInitialization:
         g = DRLPromotionGate(state_file=str(state_file))
         assert g.get_authority_level() == "DISABLED"
 
+    def test_aware_demoted_at_loaded_as_naive_no_typeerror(self, tmp_path):
+        """[P39] State file with tz-aware ISO timestamp (e.g. saved by a
+        future-tz-aware version) must load and not crash naive comparisons.
+
+        Repro: write `_demoted_at` with `+00:00` suffix → fromisoformat
+        returns aware → naive `datetime.now() >= aware` raises TypeError.
+        Fix: tz-strip on load.
+        """
+        state_file = tmp_path / "tz_aware.json"
+        # Past-deadline aware timestamp
+        state_file.write_text(json.dumps({
+            "authority_level": "EXIT_ONLY",
+            "demoted_at": "2026-04-20T12:00:00+00:00",  # aware
+            "peak_equity": 0.0,
+            "current_equity": 0.0,
+            "demotion_history": [
+                {"timestamp": "2026-04-19T08:00:00+00:00",
+                 "from": "ACTIVE", "to": "EXIT_ONLY", "reason": "test"},
+            ],
+        }))
+        g = DRLPromotionGate(state_file=str(state_file))
+        # Must not raise TypeError
+        level = g.get_authority_level()
+        assert level in ("ACTIVE", "EXIT_ONLY", "DISABLED")
+        # get_status walks demotion_history with fromisoformat — also must not raise
+        status = g.get_status()
+        assert isinstance(status["recent_demotions"], int)
+
 
 # =============================================================================
 # Manual promotion

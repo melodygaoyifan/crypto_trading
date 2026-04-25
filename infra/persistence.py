@@ -557,26 +557,34 @@ class DiscordNotifier:
                 logger.error(f"Discord worker error: {e}")
 
     def _wait_for_rate_limit(self):
+        # [P39 2026-04-24] Was holding self._lock across time.sleep(wait).
+        # During the wait window, every other thread that touched the lock
+        # blocked indefinitely — a single rate-limit hit could deadlock all
+        # Discord operations for 60+ seconds. Now: compute the wait under
+        # the lock, release it, then sleep outside.
         now = time.time()
         cutoff = now - 60
+        wait = 0.0
         with self._lock:
             while self._message_timestamps and self._message_timestamps[0] < cutoff:
                 self._message_timestamps.popleft()
             if len(self._message_timestamps) >= self.RATE_LIMIT_MSGS_PER_MIN:
                 wait = self._message_timestamps[0] + 60 - now
-                if wait > 0:
-                    logger.debug(f"Discord rate limited, waiting {wait:.1f}s")
-                    time.sleep(wait)
+        if wait > 0:
+            logger.debug(f"Discord rate limited, waiting {wait:.1f}s")
+            time.sleep(wait)
 
     def _post_webhook(self, payload: dict):
         if not self.webhook_url:
             return
-        # [P24 2026-04-24] Circuit breaker check.
-        if self._circuit_permanently_disabled:
-            return
-        now = time.time()
-        if now < self._circuit_open_until:
-            return  # circuit open, drop silently (cooldown in effect)
+        # [P39 2026-04-24] Circuit-breaker reads/writes now hold self._lock.
+        # P29 introduced these fields without locking; the worker thread and
+        # any direct caller raced on _consecutive_failures and _circuit_open_until.
+        with self._lock:
+            if self._circuit_permanently_disabled:
+                return
+            if time.time() < self._circuit_open_until:
+                return  # circuit open, drop silently
 
         try:
             data = json.dumps(payload).encode("utf-8")
@@ -589,49 +597,61 @@ class DiscordNotifier:
             with urllib.request.urlopen(req, timeout=10) as resp:
                 if resp.status not in (200, 204):
                     logger.warning(f"Discord webhook returned {resp.status}")
+            # Success → reset circuit. All circuit-breaker mutations under lock.
             with self._lock:
                 self._message_timestamps.append(time.time())
-            # Success → reset circuit.
-            if self._consecutive_failures > 0:
+                _prev_failures = self._consecutive_failures
+                self._consecutive_failures = 0
+                self._circuit_open_until = 0.0
+            if _prev_failures > 0:
                 logger.info(
-                    f"[DISCORD] webhook recovered after {self._consecutive_failures} failures"
+                    f"[DISCORD] webhook recovered after {_prev_failures} failures"
                 )
-            self._consecutive_failures = 0
-            self._circuit_open_until = 0.0
         except urllib.error.HTTPError as e:
             body = e.read().decode("utf-8", errors="replace")[:200]
             logger.error(f"Discord webhook HTTP {e.code}: {body}")
-            self._consecutive_failures += 1
+            with self._lock:
+                self._consecutive_failures += 1
+                if e.code in (401, 403, 404):
+                    self._circuit_permanently_disabled = True
+                    _disable_log = e.code
+                elif e.code == 429:
+                    retry_after = 60.0
+                    try:
+                        raw = e.headers.get("Retry-After", "") if e.headers else ""
+                        if raw:
+                            retry_after = min(300.0, max(1.0, float(raw)))
+                    except (ValueError, TypeError):
+                        pass
+                    self._circuit_open_until = time.time() + retry_after
+                    _retry_after_log = retry_after
+                    _disable_log = None
+                else:
+                    self._maybe_open_circuit_locked()
+                    _disable_log = None
+                    _retry_after_log = None
+            # Logging outside the lock (logger I/O can be slow).
             if e.code in (401, 403, 404):
-                # Auth error / revoked webhook — permanent disable.
-                self._circuit_permanently_disabled = True
                 logger.error(
                     f"[DISCORD] HTTP {e.code} — webhook permanently disabled "
                     f"(URL likely revoked or wrong)"
                 )
             elif e.code == 429:
-                # Rate limit — honor Retry-After if present, else 60s.
-                retry_after = 60.0
-                try:
-                    raw = e.headers.get("Retry-After", "") if e.headers else ""
-                    if raw:
-                        retry_after = min(300.0, max(1.0, float(raw)))
-                except (ValueError, TypeError):
-                    pass
-                self._circuit_open_until = time.time() + retry_after
                 logger.warning(
-                    f"[DISCORD] 429 rate limit, circuit open {retry_after:.0f}s"
+                    f"[DISCORD] 429 rate limit, circuit open {_retry_after_log:.0f}s"
                 )
-            else:
-                self._maybe_open_circuit()
         except Exception as e:
             logger.error(f"Discord webhook error: {e}")
-            self._consecutive_failures += 1
-            self._maybe_open_circuit()
+            with self._lock:
+                self._consecutive_failures += 1
+                self._maybe_open_circuit_locked()
 
-    def _maybe_open_circuit(self):
+    def _maybe_open_circuit_locked(self):
         """Exponential backoff: 5 consecutive failures → 60s cooldown,
-        10 → 300s, 15+ → 1800s. Reset on first success."""
+        10 → 300s, 15+ → 1800s. Reset on first success.
+
+        [P39 2026-04-24] CONTRACT: caller MUST already hold self._lock.
+        """
         n = self._consecutive_failures
         if n >= 15:
             cooldown = 1800.0

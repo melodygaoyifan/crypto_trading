@@ -208,7 +208,11 @@ class SqueezeDetectorAgent:
         if len(history) < 3 or short_liq <= 0:
             return 0.0
         avg = float(np.mean(list(history)))
-        if avg <= 0:
+        # [P39 2026-04-24] Tightened from `<= 0` to a real epsilon.
+        # A near-zero avg (e.g., 1e-15 from float averaging of tiny micro-
+        # liquidations on illiquid alts) made `short_liq / avg` explode to
+        # huge numbers, then propagated through the squeeze score.
+        if avg < 1e-6:
             return 0.0
         ratio = short_liq / avg
         if ratio > self._short_liq_spike_ratio:

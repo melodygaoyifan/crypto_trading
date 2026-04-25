@@ -16,6 +16,21 @@ from dataclasses import dataclass, field
 logger = logging.getLogger("HMATS.DRLGate")
 
 
+def _strip_tz(dt: Optional[datetime]) -> Optional[datetime]:
+    """Strip tzinfo to match the gate's naive datetime.now() convention.
+
+    [P39 2026-04-24] datetime.fromisoformat() returns aware OR naive
+    depending on the persisted ISO string. The gate uses naive
+    datetime.now() everywhere, so loaded timestamps must be normalized
+    on read to avoid TypeError on naive-vs-aware comparison.
+    """
+    if dt is None:
+        return None
+    if dt.tzinfo is not None:
+        return dt.replace(tzinfo=None)
+    return dt
+
+
 @dataclass
 class DemotionConfig:
     """Auto-demotion configuration."""
@@ -153,11 +168,13 @@ class DRLPromotionGate:
             "drl_peak_equity": self._peak_equity_contribution,
             "drl_drawdown": dd,
             "total_trades": len(self._trade_history),
+            # [P39 2026-04-24] Strip tzinfo from loaded timestamps to keep
+            # them comparable to naive datetime.now().
             "recent_demotions": len(
                 [
                     d
                     for d in self._demotion_history
-                    if datetime.fromisoformat(d["timestamp"])
+                    if _strip_tz(datetime.fromisoformat(d["timestamp"]))
                     > datetime.now() - timedelta(days=14)
                 ]
             ),
@@ -208,11 +225,13 @@ class DRLPromotionGate:
         old = self._authority_level
 
         # Check for repeated demotions -> DISABLED
+        # [P39 2026-04-24] Strip tzinfo from loaded ISO timestamps to keep
+        # comparable with naive `cutoff` from datetime.now().
         cutoff = datetime.now() - timedelta(days=self.demotion_config.demotion_window_days)
         recent_demotions = [
             d
             for d in self._demotion_history
-            if datetime.fromisoformat(d["timestamp"]) > cutoff
+            if _strip_tz(datetime.fromisoformat(d["timestamp"])) > cutoff
         ]
 
         if len(recent_demotions) >= self.demotion_config.max_demotions_before_disable:
@@ -278,7 +297,16 @@ class DRLPromotionGate:
             logger.error(f"[DRL_GATE] Failed to save state to {self.state_file}")
 
     def _load_state(self):
-        """Load state from JSON."""
+        """Load state from JSON.
+
+        [P39 2026-04-24] datetime.fromisoformat() returns aware OR naive
+        depending on whether the persisted ISO string carried a tz marker
+        (`+00:00`). The runtime code uses naive `datetime.now()` everywhere,
+        so we strip tzinfo on load to keep all comparisons type-consistent.
+        Without this, an aware-loaded `_demoted_at` compared to naive
+        `datetime.now()` (line 78, recovery deadline check) raises
+        TypeError on every tick after restart, blocking auto-recovery.
+        """
         try:
             if self.state_file.exists():
                 with open(self.state_file, "r") as f:
@@ -287,11 +315,18 @@ class DRLPromotionGate:
                 if self._authority_level not in self.VALID_LEVELS:
                     self._authority_level = "DISABLED"
                 demoted_str = state.get("demoted_at")
-                self._demoted_at = (
-                    datetime.fromisoformat(demoted_str) if demoted_str else None
-                )
+                if demoted_str:
+                    _dt = datetime.fromisoformat(demoted_str)
+                    if _dt.tzinfo is not None:
+                        _dt = _dt.replace(tzinfo=None)
+                    self._demoted_at = _dt
+                else:
+                    self._demoted_at = None
                 self._peak_equity_contribution = state.get("peak_equity", 0.0)
                 self._current_equity_contribution = state.get("current_equity", 0.0)
+                # demotion_history timestamps are also stored as ISO strings;
+                # they're parsed back via fromisoformat() in _demote/get_status.
+                # Strip tz on those during read sites in those methods.
                 self._demotion_history = state.get("demotion_history", [])
                 logger.info(
                     f"[DRL_GATE] Loaded state: level={self._authority_level}, "

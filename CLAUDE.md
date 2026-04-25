@@ -342,6 +342,25 @@ Authority matrix (`signals/authority_fusion.py`) + writer (`main.py` somewhere i
 - **Fix:** Added DRL substitution in `_compute_effective_alpha_direction`: when quant abstains (|quant_dir|<0.03) AND DRL is ACTIVE AND |drl_dir|>=0.5 AND drl_conf>=0.3, use DRL's direction as the effective alpha input. Alpha gate then evaluates alpha against DRL's direction, and QUIET_ACCUMULATION hard filter sees |direction|~0.9 instead of 0. Both blockers resolved by one change.
 - **Mitigation:** Alpha gate is a pre-fusion short-circuit. Any time an agent is promoted to DECIDE, check what `effective_alpha_direction` feeds into alpha gate — if the agent isn't a contributor there, its DECIDE authority is nullified in quiet/consolidation regimes.
 
+### P39. [FIXED 2026-04-24] Threading races + datetime naive/aware + numerical stability
+- **Symptom:** A 3-lens audit hunt (numerical stability, threading concurrency, datetime naive/aware) surfaced 35+ findings including 5 HIGH bugs in code I introduced earlier this session:
+  1. **Discord circuit breaker fields not lock-protected** (P29 regression). `_consecutive_failures`, `_circuit_open_until`, `_circuit_permanently_disabled` were read by callers and written by the worker thread without `self._lock`. Lost-update races could leave the breaker stuck or trip falsely.
+  2. **`_wait_for_rate_limit` held `self._lock` across `time.sleep(wait)`**. A single rate-limit hit could block ALL Discord operations for 60+ seconds — hard deadlock during the wait window.
+  3. **promotion_gate datetime mixing** (P33-related). `datetime.fromisoformat()` returns aware OR naive depending on the persisted ISO string's tz marker; the gate's runtime code uses naive `datetime.now()` everywhere; an aware-loaded `_demoted_at` compared to naive `datetime.now()` raises `TypeError` on EVERY tick after restart, blocking `get_authority_level()`.
+  4. **`agents/squeeze_detector_agent.py:213`** — `short_liq / avg` after only `if avg <= 0: return` guard. Tiny positive `avg` (1e-15 from float averaging on illiquid alts) made the ratio explode and poison the squeeze score.
+  5. **`agents/kraken_quant_agent.py:1654`** — `np.log(price)` with no `> 0` guard. Feed glitch sending price=0 → `np.log(0)=-inf` poisons the Kalman spread estimator until restart.
+  6. **`market/phase_detector.py:266`** — `(prices_arr[-1] / prices_arr[-2] - 1) * 100` with no guard. NaN/0 historical price → momentum = NaN → propagates to phase detection → all downstream fusion signals inherit NaN.
+- **Fix:**
+  - **`infra/persistence.py`**: `_post_webhook` now acquires `self._lock` for ALL circuit-breaker reads/writes; logging happens outside the lock. `_wait_for_rate_limit` computes wait under the lock, releases, then sleeps. `_maybe_open_circuit` renamed to `_maybe_open_circuit_locked` to make the caller-holds-lock contract explicit.
+  - **`drl/promotion_gate.py`**: added module-level `_strip_tz()` helper. `_load_state` strips tzinfo from `_demoted_at` on load; the two `fromisoformat()` reads in `_demote` and `get_status` route through the helper. New regression test `test_aware_demoted_at_loaded_as_naive_no_typeerror` writes a state file with `+00:00` ISO marker and asserts the load + a tick-style operation (get_status) don't raise.
+  - **Numerical guards**: squeeze_detector tightened `if avg <= 0` → `if avg < 1e-6`; kraken_quant Kalman returns None when either price ≤ 0; phase_detector momentum guards both `_p1 > 0` and `not np.isnan(_p1)` per leg.
+- **Other findings from this round (deferred or skipped)**:
+  - 4 more datetime sites in feeds (`macro_feed`, `lob_feed`, `sentiment_feed`, `onchain_feed`) — same pattern, different files. Defer to next pass.
+  - `loop_controller.py` tick_counter race (MED) — Python ints + GIL, dormant in practice.
+  - `runtime_state.py` nested RLock fragility (MED) — RLock means it doesn't deadlock today, but caller-holds-lock contract should be made explicit. Defer.
+  - 12 more numerical findings (MED/LOW) in `whale_detector`, `microstructure_agent`, `intraday_correlation_monitor`, `learned_execution_policy`, etc. Defer batch.
+- **Mitigation:** When introducing a new field that's read by multiple threads (Discord-style background worker, websocket reader, etc.), lock-protect ALL reads + writes from day 1. When mixing `datetime.now()` with `fromisoformat()`-parsed timestamps, normalize tz-handling on the load side immediately — don't rely on naive code being naive forever. When dividing by a float quantity from a feed, guard with an explicit epsilon (`x < 1e-6`) not just `x <= 0` — float averaging produces near-zero values that survive the latter check.
+
 ### P38. [FIXED 2026-04-24] External feed 429 visibility + Solana RPC per-call timeouts
 - **Symptom:** Diagnostic pass on the audit's deferred items. Two real issues, three "skip — already mitigated":
   1. **Solana RPC + Jito had no per-call timeouts** — `solana_onchain.py:128, 159` used `session.post`/`session.get` without `timeout=`, falling back to the session-level 15s. For RPC + Jito specifically (low-quota, fast-path), 10s per call is the right budget — keeps the live tick from stalling on a slow RPC node.
