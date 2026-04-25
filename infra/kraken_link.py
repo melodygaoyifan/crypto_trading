@@ -1013,12 +1013,22 @@ class KrakenDefensiveLink:
         # v6.3.1: Trigger disconnect event BEFORE attempting reconnect
         # This ensures orders are cancelled immediately on heartbeat timeout
         self._trigger_disconnect_event(f"watchdog_silence:{source}")
-        
+
         # Schedule reconnect in the event loop
+        # [P37 2026-04-24] Was discarded create_task() — reconnect coroutine
+        # could be GC'd before completing, leaving the link dead silently.
+        # Now tracked as instance attr; if a previous reconnect is still
+        # running, skip (don't spawn a duplicate).
         try:
             loop = asyncio.get_event_loop()
             if loop.is_running():
-                asyncio.create_task(self._reconnect())
+                _prev = getattr(self, "_reconnect_task", None)
+                if _prev is not None and not _prev.done():
+                    logger.debug("[KRAKEN_LINK] reconnect already in progress, skipping duplicate")
+                else:
+                    self._reconnect_task = asyncio.create_task(
+                        self._reconnect(), name="kraken_link_reconnect"
+                    )
         except RuntimeError:
             logger.error("No event loop available for reconnect")
     

@@ -261,7 +261,7 @@ class DRLPromotionGate:
         )
 
     def _save_state(self):
-        """Persist state to JSON."""
+        """Persist state to JSON (atomic write — see core/state_persistence.py)."""
         state = {
             "authority_level": self._authority_level,
             "demoted_at": self._demoted_at.isoformat() if self._demoted_at else None,
@@ -271,12 +271,11 @@ class DRLPromotionGate:
             "trade_count": len(self._trade_history),
             "updated_at": datetime.now().isoformat(),
         }
-        try:
-            self.state_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.state_file, "w") as f:
-                json.dump(state, f, indent=2)
-        except Exception as e:
-            logger.error(f"[DRL_GATE] Failed to save state: {e}")
+        # [P37 2026-04-24] Was open(w)+json.dump → corrupt on crash mid-write.
+        # save_state() uses tempfile + os.replace for atomicity.
+        from core.state_persistence import save_state
+        if not save_state(self.state_file, state):
+            logger.error(f"[DRL_GATE] Failed to save state to {self.state_file}")
 
     def _load_state(self):
         """Load state from JSON."""

@@ -454,15 +454,14 @@ class RuntimeStateProvider:
             }
     
     def export_to_file(self, path: str = "data/runtime_state.json"):
-        """Export current state to file."""
+        """Export current state to file (atomic write)."""
         state = self.get_full_state()
-        output_path = Path(path)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        with open(output_path, 'w') as f:
-            json.dump(state, f, indent=2, default=str)
-        
-        logger.debug(f"[RuntimeState] Exported to {path}")
+        # [P37 2026-04-24] Was open(w)+json.dump → corrupt on crash.
+        from core.state_persistence import save_state
+        if save_state(path, state):
+            logger.debug(f"[RuntimeState] Exported to {path}")
+        else:
+            logger.warning(f"[RuntimeState] Failed to export to {path}")
 
 
 # =============================================================================

@@ -214,11 +214,13 @@ class ImpactCalibrationTable:
                 }
             }
             
-            with open(self.config.calibration_file, "w") as f:
-                json.dump(data, f, indent=2)
-            
-            logger.info(f"Saved {len(self._entries)} calibration entries")
-            
+            # [P37 2026-04-24] Was open(w)+json.dump → corrupt on crash.
+            from core.state_persistence import save_state
+            if save_state(self.config.calibration_file, data):
+                logger.info(f"Saved {len(self._entries)} calibration entries")
+            else:
+                logger.error(f"Failed to save calibration file")
+
         except Exception as e:
             logger.error(f"Failed to save calibration file: {e}")
     

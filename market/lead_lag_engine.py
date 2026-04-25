@@ -524,28 +524,47 @@ class LeadLagAlphaEngine:
         """Start all monitors."""
         self.logger.info("Starting Lead-Lag Alpha Engine...")
         self._running = True
-        
+
         # Connect to exchanges
         await asyncio.gather(
             self.binance_monitor.connect(),
             self.deribit_monitor.connect()
         )
-        
-        # Start processing in background
-        asyncio.create_task(self.binance_monitor.process_messages())
-        asyncio.create_task(self.deribit_monitor.process_messages())
-        
+
+        # [P37 2026-04-24] Was discarded asyncio.create_task() result → tasks
+        # could be GC'd mid-WebSocket loop, AND stop() had no way to cancel
+        # them. Now stored as instance attrs so stop() can cancel cleanly.
+        self._binance_task = asyncio.create_task(
+            self.binance_monitor.process_messages(),
+            name="lead_lag_binance_messages",
+        )
+        self._deribit_task = asyncio.create_task(
+            self.deribit_monitor.process_messages(),
+            name="lead_lag_deribit_messages",
+        )
+
         self.logger.info("Lead-Lag Alpha Engine started")
-    
+
     async def stop(self):
         """Stop all monitors."""
         self._running = False
-        
+
+        # [P37 2026-04-24] Cancel processing tasks before closing connections
+        # so the message loops exit cleanly instead of dangling.
+        for _attr in ("_binance_task", "_deribit_task"):
+            _t = getattr(self, _attr, None)
+            if _t and not _t.done():
+                _t.cancel()
+                try:
+                    await _t
+                except (asyncio.CancelledError, Exception):
+                    pass
+
         await asyncio.gather(
             self.binance_monitor.close(),
             self.deribit_monitor.close()
         )
-        
+
         self.logger.info("Lead-Lag Alpha Engine stopped")
     
     def update_kraken_price(self, asset: str, price: float, timestamp_ms: float):

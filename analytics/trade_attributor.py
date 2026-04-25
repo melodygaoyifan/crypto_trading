@@ -620,6 +620,7 @@ class TradeAttributor:
         try:
             with open(self._persist_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(trade.to_dict(), default=str) + "\n")
+                f.flush()  # [P37 2026-04-24] crash-safety
         except Exception as e:
             logger.error(f"[TradeAttributor] Persist failed: {e}")
 

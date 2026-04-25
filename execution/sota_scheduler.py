@@ -673,7 +673,13 @@ def reset_execution_scheduler():
             loop = None
 
         if loop and loop.is_running():
-            loop.create_task(_scheduler.stop())
+            # [P37 2026-04-24] Discarded create_task — stop() could be GC'd
+            # before cleanup finishes. Add a done-callback so failures log.
+            _stop_task = loop.create_task(_scheduler.stop())
+            _stop_task.add_done_callback(
+                lambda t: logger.error(f"[scheduler.stop] failed: {t.exception()}")
+                if t.exception() else None
+            )
         else:
             asyncio.run(_scheduler.stop())
     _scheduler = None

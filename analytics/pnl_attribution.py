@@ -600,25 +600,25 @@ class PnLAttributionManager:
             
             with open(self._persist_path, "a") as f:
                 f.write(json.dumps(attr.to_dict()) + "\n")
+                f.flush()  # [P37 2026-04-24] crash-safety — without flush, the
+                # last few records can be lost when the engine is killed.
         except Exception as e:
             logger.error(f"Attribution: Failed to persist trade: {e}")
     
     def persist_to_file(self, path: Path):
-        """Persist all completed trades to file."""
-        
+        """Persist all completed trades to file (atomic write)."""
         try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            
             data = {
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "trades": [t.to_dict() for t in self._completed_trades],
                 "summary": self.get_summary().to_dict(),
             }
-            
-            with open(path, "w") as f:
-                json.dump(data, f, indent=2)
-            
-            logger.info(f"Attribution: Persisted {len(self._completed_trades)} trades to {path}")
+            # [P37 2026-04-24] Was open(w)+json.dump → corrupt on crash.
+            from core.state_persistence import save_state
+            if save_state(path, data):
+                logger.info(f"Attribution: Persisted {len(self._completed_trades)} trades to {path}")
+            else:
+                logger.error(f"Attribution: Failed to persist to {path}")
         except Exception as e:
             logger.error(f"Attribution: Failed to persist: {e}")
     

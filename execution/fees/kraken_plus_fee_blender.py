@@ -298,9 +298,10 @@ class KrakenSpotVolumeTracker:
             return
         
         try:
-            self._file_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(self._file_path, 'w') as f:
-                json.dump(self._current_record.to_dict(), f, indent=2)
+            # [P37 2026-04-24] Was open(w)+json.dump → corrupt on crash.
+            from core.state_persistence import save_state
+            if not save_state(self._file_path, self._current_record.to_dict()):
+                logger.error(f"Failed to save volume data to {self._file_path}")
         except Exception as e:
             logger.error(f"Failed to save volume data: {e}")
     
