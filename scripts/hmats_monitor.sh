@@ -202,7 +202,23 @@ snapshot() {
   if [[ "$fills" -gt 0 ]]; then
     echo "  $PASS  trades executed in last 24h"
   elif [[ "$alpha_pass" -gt 0 ]]; then
-    echo "  $WARN  alpha gate passed but no fills — sizing/notional or AC-2 likely blocking"
+    # Probe POST_DECIDE_VETO reasons to surface the actual blocker.
+    local weekend_vetos ac2_vetos notional_vetos other_post_vetos
+    weekend_vetos=$(ssh_count 'POST_DECIDE_VETO.*WEEKEND' '24h')
+    ac2_vetos=$(ssh_count 'AC2_RATE_LIMITED|AC2_GLOBAL_RATE_LIMITED' '24h')
+    notional_vetos=$(ssh_count 'NOTIONAL_TOO_SMALL|VC-5.*NOTIONAL' '24h')
+    other_post_vetos=$(ssh_count 'POST_DECIDE_VETO' '24h')
+    if [[ "$weekend_vetos" -gt 0 ]]; then
+      echo "  $WARN  $weekend_vetos weekend-confidence vetoes — Saturday/Sunday with conf < 50% (intended)"
+    elif [[ "$ac2_vetos" -gt 0 ]]; then
+      echo "  $WARN  $ac2_vetos AC-2 rate-limit blocks — already at 2-fills/asset/24h ceiling"
+    elif [[ "$notional_vetos" -gt 0 ]]; then
+      echo "  $WARN  $notional_vetos notional-too-small blocks — VC-5 floor or sizing issue"
+    elif [[ "$other_post_vetos" -gt 0 ]]; then
+      echo "  $WARN  $other_post_vetos POST_DECIDE_VETO blocks (other) — investigate downstream"
+    else
+      echo "  $WARN  alpha gate passed but no fills — check tranche/size_cap downstream"
+    fi
   elif [[ "$alpha_fail" -gt 0 ]]; then
     echo "  ${DIM}info: $alpha_fail gate rejects — system holding (correct in QUIET regimes)${RESET}"
   fi
@@ -224,6 +240,35 @@ snapshot() {
       echo "  $PASS  $name  cpu=$cpu  mem=$mem ($mempct)"
     fi
   done <<< "$stats_out"
+
+  # 9. Causal chain — module → flag → agent → authority -------------
+  echo ""
+  echo "${CYAN}[9] CAUSAL CHAIN HEALTH${RESET}"
+  # Quick proxy: did engine startup show STUB / NOT_AVAILABLE / DISABLED warnings
+  # at module-init time? If yes, agents are degraded silently.
+  local stub_count not_avail_count disabled_count
+  stub_count=$(ssh_count 'STUB \(' 'startup')
+  not_avail_count=$(ssh_count 'unavailable \(|not.*available' '30m')
+  disabled_count=$(ssh_count 'mode=DISABLED|DISABLED for this asset' '30m')
+  # Note: --since startup is invalid for docker logs; use 24h as proxy for "this lifetime"
+  if [[ "$stub_count" -eq 0 ]]; then stub_count=$(ssh_count 'STUB \(' '24h'); fi
+  echo "  module STUB warnings (24h):       $stub_count"
+  echo "  unavailable / not-available (30m): $not_avail_count"
+  echo "  per-asset DISABLED (30m):          $disabled_count"
+  # Fee-tier cliff warning
+  local fee_cliff
+  fee_cliff=$(ssh_count 'FEE_TIER_CLIFF' '30m')
+  if [[ "$fee_cliff" -gt 0 ]]; then
+    echo "  $WARN  $fee_cliff [FEE_TIER_CLIFF] warnings — monthly volume near \$10K boundary; alpha threshold will 6× when crossed"
+  fi
+  if [[ "$stub_count" -gt 0 ]]; then
+    echo "  $WARN  $stub_count modules in STUB mode — likely degraded agent"
+    fail_count=$((fail_count + 1))
+  elif [[ "$not_avail_count" -gt 5 ]]; then
+    echo "  $WARN  $not_avail_count 'unavailable' messages — possible silent degradation; run scripts/hmats_causal_audit"
+  else
+    echo "  $PASS  no module degradation signals"
+  fi
 
   # Summary -----------------------------------------------------------
   echo ""
