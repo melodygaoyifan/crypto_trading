@@ -79,6 +79,11 @@ class FusionContext:
     lead_lag_edge: float = 0.0
     regime: str = "UNKNOWN"  # [FIX-32] GMM regime label for ADVISE influence layer (was regime_name)
     htf_trend_direction: int = 0  # [S11] 1D trend: -1/0/+1 (0 = no data)
+    # [IC 2026-04-25] Asset + price for analytics-only IC logging. Optional;
+    # IC logger falls back to "UNKNOWN" / 0.0 when missing. Never used for
+    # decision logic.
+    asset: str = "UNKNOWN"
+    current_price: float = 0.0
 
 
 @dataclass
@@ -1046,7 +1051,54 @@ class AuthorityFusionEngine:
             if memory_boost > 0:
                 result.target_exposure = min(result.target_exposure * (1 + memory_boost), 1.0)
                 result.urgency = min(result.urgency + memory_boost * 0.3, 1.0)
-        
+
+        # ───────── IC LOGGING (shadow / observability only) ─────────
+        # IRON LAW: read-only — never modifies `result` or any decision.
+        # Captures every agent's pre-fusion signal + the fused output for
+        # offline Information Coefficient analysis. See analytics/ic/.
+        try:
+            from analytics.ic.ic_logger import log_bar_safe
+            from datetime import datetime as _dt, timezone as _tz
+            _ic_agent_signals: Dict[str, Any] = {}
+            for _name, _sig in signals.items():
+                try:
+                    _ic_agent_signals[_name] = {
+                        "direction": float(getattr(_sig, "direction", 0.0) or 0.0),
+                        "confidence": float(getattr(_sig, "confidence", 0.0) or 0.0),
+                        "veto_active": bool(getattr(_sig, "veto_active", False)),
+                    }
+                except Exception:
+                    pass
+            _ic_regime = {
+                "phase": str(getattr(context.phase_result, "phase", "")) if context.phase_result else "",
+                "regime": str(getattr(context, "regime", "") or ""),
+                "phase_confidence": float(
+                    getattr(context.phase_result, "phase_confidence", 0.0) or 0.0
+                ) if context.phase_result else 0.0,
+            }
+            _ic_fusion = {
+                "final_direction": float(getattr(result, "direction", 0.0) or 0.0),
+                "final_confidence": float(getattr(decider_signal, "confidence", 0.0) or 0.0),
+                "target_exposure": float(getattr(result, "target_exposure", 0.0) or 0.0),
+                "decider_agent": str(getattr(result, "decider_agent", "") or ""),
+                "primary_agent": str(getattr(result, "primary_agent", "") or ""),
+                "matrix": matrix_name,
+            }
+            _asset = str(getattr(context, "asset", "") or "UNKNOWN")
+            _price = float(getattr(context, "current_price", 0.0) or 0.0)
+            log_bar_safe(
+                asset=_asset,
+                timestamp=_dt.now(_tz.utc),
+                current_price=_price,
+                agent_signals=_ic_agent_signals,
+                regime=_ic_regime,
+                fusion_output=_ic_fusion,
+            )
+        except Exception:
+            # Hot path NEVER throws on IC logging failure.
+            pass
+        # ──────────────────────────────────────────────────────────────
+
         return result
     
     @staticmethod

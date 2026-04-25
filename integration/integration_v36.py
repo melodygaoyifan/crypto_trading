@@ -1341,6 +1341,9 @@ class HMATSv36Engine:
             lead_lag_edge=agent_signals.get("lead_lag_edge", 0.0),
             regime=agent_signals.get("regime_state", "UNKNOWN"),  # [FIX-32] GMM regime for ADVISE influence
             htf_trend_direction=int(agent_signals.get("htf_trend_direction", 0)),  # [S11] daily trend
+            # [IC 2026-04-25] tag for IC logger only — not used in decision path
+            asset=str(asset or "UNKNOWN"),
+            current_price=float(market_data.get("current_price", 0.0) or 0.0),
         )
         
         fusion_result = self.fusion_engine.fuse(fusion_signals, fusion_context)
