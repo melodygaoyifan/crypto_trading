@@ -134,6 +134,35 @@ Adding a new agent requires **3 files**: agent_signals write site + `_attr_colle
 
 ---
 
+## CRITICAL: Trade Frequency Reality Check
+
+Before suggesting any new patch, audit, or "optimization", Claude MUST first ask:
+
+1. Has the system executed any trade in the last 24h? Last 7d?
+2. If 0 trades, what is the documented bottleneck (with log evidence)?
+3. Is the proposed patch directly addressing that bottleneck?
+
+If the system has had 0 trades for >7 days while "running normally":
+- Stop suggesting new patches
+- Stop suggesting new audits
+- The bottleneck is NOT in the patches — it's in the system's
+  fundamental ability to convert signals to trades
+- Recommend ONE thing: revert to a known-trading version,
+  or relax thresholds aggressively until trades happen,
+  THEN add safety back
+
+Anti-pattern Claude must avoid:
+- "Let me suggest 8 more audit dimensions" (over-engineering on
+  a system that doesn't trade)
+- "Let me write a 1126-line patch prompt" (compounding complexity
+  on a non-trading system)
+- "Let me validate one more thing" (analysis paralysis)
+
+The user's time is finite. A non-trading system is ZERO ROI
+regardless of how clean the architecture is.
+
+---
+
 ## Known Pitfalls (source of repeat bugs — read this before deploying)
 
 ### P1. Docker volume name mismatch → silent empty models
@@ -409,6 +438,50 @@ Authority matrix (`signals/authority_fusion.py`) + writer (`main.py` somewhere i
 - **Cause:** `integration_v36.py:1237-1274` runs alpha gate check BEFORE `fusion_engine.fuse()`. Alpha gate uses `_alpha_input_direction = agent_signals.get("effective_alpha_direction", agent_signals.get("quant_direction", 0.0))`. `effective_alpha_direction` is computed by `main.py:4952 _compute_effective_alpha_direction()` which early-exits at line 4973 with direction=`_quant_dir` (=0 when quant=hold) without considering DRL. DRL's DECIDE-authority signal was structurally invisible to alpha gate.
 - **Fix:** Added DRL substitution in `_compute_effective_alpha_direction`: when quant abstains (|quant_dir|<0.03) AND DRL is ACTIVE AND |drl_dir|>=0.5 AND drl_conf>=0.3, use DRL's direction as the effective alpha input. Alpha gate then evaluates alpha against DRL's direction, and QUIET_ACCUMULATION hard filter sees |direction|~0.9 instead of 0. Both blockers resolved by one change.
 - **Mitigation:** Alpha gate is a pre-fusion short-circuit. Any time an agent is promoted to DECIDE, check what `effective_alpha_direction` feeds into alpha gate — if the agent isn't a contributor there, its DECIDE authority is nullified in quiet/consolidation regimes.
+
+### P62. [DIAG+FIX 2026-04-25] Live runtime verification of 13 audit items + monitor fill grep fix
+- **Why:** Operator asked to actually RUN/VERIFY (not just static-audit) restart recovery / state persistence / data freshness / cancel-on-disconnect / order ack / maker-taker fallback / existence_fuse / live DRL log / health monitor / trade attribution / cashandcarry / best-of-N / unwired modules / dead configs.
+
+#### Direct verdict: live engine is healthy + traded today
+
+- `bash scripts/hmats_monitor.sh` → 9/9 axes OK after fix below.
+- Engine running `--mode live --confirm-live --config configs/live_high_risk.json` against real Kraken API. Real orders.
+- **3 actual fills today** post-P61 deploy (08:25 UTC):
+  - 08:26:37 SOL LONG qty=7.5 @ $86.53 notional $649 — **slippage=0.0bps** (clean LIMIT fill)
+  - 08:27:21 BTC SHORT qty=0.0102 @ $77,581 notional $791 — slippage=-7.8bps
+  - 08:28:09 ETH SHORT qty=0.393 @ $2,319 notional $911 — **slippage=-145.1bps (BAD)**
+- DRL was decisively bearish on BTC/ETH (-0.95 / -0.96 conf 0.45 / 0.35) — 16-agent attribution captured this correctly in `signals_20260425.jsonl`. P19/P20/P46 substitution chain working end-to-end.
+
+#### Real bug fixed (1 1-liner):
+
+- **`scripts/hmats_monitor.sh:198` — FILL grep pattern was wrong.** Old pattern `[FILL]|FILLED|SCALE-OUT` matched **zero** real fills because engine never logs literal `[FILL]` or `FILLED` strings — it logs `[FILL-QUALITY]` and `[P0_EXECUTE]`. Verified: monitor showed `fills=0` while engine had 3 actual fills today. Fixed pattern to `[FILL-QUALITY]|[SCALE-OUT]`. Now reports `fills=3` correctly.
+
+#### Verified clean / working:
+
+- **Restart recovery (state persistence):** `confidence_scorer_state.json`, `cascade_governor_state.json`, `failure_memory_state.json`, `thesis_budget_state.json` all loaded on restart. Verified `[CONFIDENCE] State restored: 12 strategies` in startup logs.
+- **Data freshness:** Last tick 2026-04-25T08:31:00, age 0.5s. `[LIVE_DATA]` for ETH showed bars=721, age=0.50s.
+- **Existence_fuse params:** Match CLAUDE.md (28d / -15% / -18% / -15% / -18% / 10).
+- **Live unrounded DRL log:** `[PROOF][SIGNALS] adopted=['drl_direction', ...]` confirms DRL signals reaching fusion. `signals_*.jsonl` capturing all 16 agents per tick.
+- **Best-of-N selection:** `kq_firing_stats.json` updated 08:28; 12 institutional strategies + 4 TA Best-of-N all loaded. quant_direction=0 (HOLD) on all 3 fills today — DRL was the actual decider via P19/P20.
+- **Cash-and-carry signal wiring:** Wired into agent_signals; execution path is signal-only pending DerivativesExecutor wire.
+- **agent_audit_16 DIM 4:** `signals_*.jsonl` and `outcomes_*.jsonl` populated per tick; whale + options now in attribution per P57. Latest outcome record marks DRL/sentiment/llm_sentiment all `correct=true`.
+- **Live health monitor:** All 8 axes pass post-fix.
+- **Cancel-on-disconnect / order ack timeout / maker-taker fallback:** Static audit (P61 Agent 2) verified the code paths. Cannot live-test cancel-on-disconnect without simulating disconnect — operator approval needed.
+- **Dead config files:** P53 + P57 + P61 catalog held.
+- **Unwired modules:** P57-A scanner Section A/B/E all clean.
+
+#### Real concerns surfaced (filed, NOT fixed — need operator decision):
+
+- **C1 — Zero FILL records in shadow_ledger today.** Engine had 3 fills, but `shadow_ledger/ledger_20260425.jsonl` shows 0 entries with `entry_type=FILL` (only INTENT=29 / POSITION=28 / GATE_REJECT=24). `record_fill()` IS called from `core/execution_service.py:2038/2561/2823/3014` (P25 fix), but failures caught at `logger.debug`. **`primary_agent` attribution exists in code but never reaches the ledger.** Fix: promote that try/except DEBUG → INFO so we see WHY it's failing.
+- **C2 — POSITION records still missing `primary_agent`.** All 28 POSITION records today have only `[old_size, new_size, old_direction, new_direction, realized_pnl, reason]`. P25 fixed FILL records, but `shadow_ledger.record_position_change()` doesn't accept primary_agent and the caller doesn't pass it via the `extra` dict. Either feed via extra or extend the API.
+- **C3 — 22 engine restarts today** (one per P52→P61 deploy). Each `session_id` change = new tick_id space. Tranche state effectively starts fresh each session. Consolidate deploys going forward.
+- **C4 — `tranche_state.json: {}` (empty)** after 3 fills. Either persist isn't firing on entry, OR new T4 entries don't trigger save because no escalation. Worth a 1-line check.
+- **C5 — `drl_promotion_state.json` dated 2026-04-14** (11 days stale). If a demotion event fires, will state save?
+- **C6 — ETH 08:28 fill had -145.1bps slippage** vs SOL 0.0 / BTC -7.8. Worth investigating `fill_quality.jsonl` for pattern.
+- **C7 — `mode=PAPER` hardcoded** in `record_intent()` default at `defense/p0_safety_integrator.py:417`. Engine is `--mode live`. Should read actual run mode.
+
+- **Tests:** 155/155 regression green. Pure observability fix, no runtime logic change.
+- **Mitigation:** Live runtime audit catches what static can't — log pattern drift, missing FILL records, slippage anomalies. Run `bash scripts/hmats_monitor.sh` after every deploy.
 
 ### P61. [DIAG+FIX 2026-04-25] Comprehensive 5-axis batch audit + 4 small fixes + 8 deferred findings
 - **Why:** Operator named 13 audit areas to cover (runtime data flow / execution reachability / config loading e2e / post-trade state sync / restart recovery / data freshness / cancel-on-disconnect / order ack timeout / maker-taker fallback / existence_fuse params / live_health_monitor / trade outcome attribution / sentiment-CRACK-leadlag sign-flip / cashandcarry wiring / best-of-N selection / dead config files). Dispatched 5 parallel Explore agents.

@@ -195,7 +195,11 @@ snapshot() {
   echo ""
   echo "${CYAN}[7] TRADE ACTIVITY (last 24h)${RESET}"
   local fills alpha_pass alpha_fail
-  fills=$(ssh_count '\[FILL\]|FILLED|SCALE-OUT' '24h')
+  # [P62 2026-04-25] Engine logs `[FILL-QUALITY]` once per fill (and `[P0_EXECUTE]`
+  # paired but at the same timestamp). Old pattern `[FILL]|FILLED|SCALE-OUT`
+  # matched ZERO real fills (verified 2026-04-25: 3 actual fills at 08:26-28
+  # but old grep returned 0). Use FILL-QUALITY only — one per fill.
+  fills=$(ssh_count '\[FILL-QUALITY\]|\[SCALE-OUT\]' '24h')
   alpha_pass=$(ssh_count 'ALPHA_GATE: PASS' '24h')
   alpha_fail=$(ssh_count 'GATE_REJECT' '24h')
   echo "  fills=$fills  alpha_gate_pass=$alpha_pass  gate_reject=$alpha_fail"
