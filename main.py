@@ -9976,10 +9976,31 @@ class HMATSProductionRunner:
             # [FIX-CONFLICT-1] SHORT_CONTROL override must NOT clear system-level
             # vetoes (AUTO_RECOVERY_LATCH, NO_TRADE, P0 safety). It should only
             # override short-specific vetoes (SHORT_FILTER, SHORT_BLOCK).
+            #
+            # [P54 2026-04-25] Aligned substring keys with the ACTUAL veto_reason
+            # format that each upstream gate writes:
+            #   - existence fuse → "[STRATEGY_SUSPENDED] ..."   (main.py:10601)
+            #   - thesis budget  → "[THESIS_BUDGET] ..."        (defense/thesis_budget_governor.py)
+            #   - trade gate     → "[TRADE_GATE] ..."           (defense/trade_gate.py + main.py:10885)
+            #   - weekend gate   → "[WEEKEND] ..."              (main.py:10663)
+            # The previous list said "EXISTENCE_FUSE" / "CIRCUIT_BREAKER" / "DEAD_MAN" —
+            # none of which ever appeared as substrings in any real intent.veto_reason.
+            # Defense-in-depth was theatre. Today this list IS redundant (source-level
+            # scope at defense/short_control.py:168-171 only ever sets override_veto=True
+            # when veto_reason contains "SHORT BLOCK" or "SHORT FILTER"), but if
+            # short_control widens its scope, this list becomes the safety net — so it
+            # must match real strings.
             _SC_PROTECTED_VETOES = {
-                "AUTO_RECOVERY_LATCH", "NO_TRADE", "P0_SAFETY",
-                "EXISTENCE_FUSE", "EXPOSURE_DELTA", "EXPOSURE_BELOW",
-                "CIRCUIT_BREAKER", "DEAD_MAN",
+                "AUTO_RECOVERY_LATCH",          # main.py:9139, risk/auto_recovery_gate.py:111
+                "NO_TRADE",                     # integration_v36.py:1143-1145
+                "P0_SAFETY",                    # main.py:10811, 10824
+                "STRATEGY_SUSPENDED",           # main.py:10601 (was: "EXISTENCE_FUSE")
+                "EXPOSURE_DELTA",               # main.py:12589
+                "EXPOSURE_BELOW",               # core/execution_service.py:525
+                "THESIS_BUDGET",                # any veto_reason containing this
+                "TRADE_GATE",                   # main.py:10885 + freshness/DVOL paths
+                "WEEKEND",                      # main.py:10663 (intentional gate, never override)
+                "REGIME_POWER_NO_TRADE",        # main.py:11015
             }
             _sc_veto_reason = getattr(intent, 'veto_reason', '') or ''
             _sc_is_protected = any(pv in _sc_veto_reason for pv in _SC_PROTECTED_VETOES)

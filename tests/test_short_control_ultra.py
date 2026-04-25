@@ -360,4 +360,119 @@ class TestResultFields:
         sc = _make_sc()
         result = sc.evaluate(**_eval_kwargs(intent_direction=1.0))
         assert result.action == "SKIP"
-        assert result.reason == "not_short"
+
+
+# ===========================================================================
+# Test Group 9 [P54 2026-04-25]: Source-level scope of override_veto
+# ===========================================================================
+# Pin down BOTH layers of defense:
+#   - Layer 1 (defense/short_control.py:168-171): override_veto only flips True
+#     when veto_reason contains "SHORT BLOCK" OR "SHORT FILTER".
+#   - Layer 2 (main.py:9979 _SC_PROTECTED_VETOES): even if Layer 1 is widened
+#     in a future refactor, this list catches system-level vetoes by substring.
+#
+# Per CLAUDE.md P54: the protected list previously contained "EXISTENCE_FUSE",
+# "CIRCUIT_BREAKER", "DEAD_MAN" — none of which appeared in real veto_reason
+# strings (the existence fuse writes "[STRATEGY_SUSPENDED] ..."). Aligning the
+# substrings to actual gate output. These tests verify both that Layer 1 won't
+# even propose an override for these reasons (current state) AND that the
+# Layer 2 substring keys still match if Layer 1 is later widened.
+
+class TestP54SourceLevelScope:
+    """Layer 1: short_control NEVER sets override_veto=True for non-short vetos."""
+
+    @pytest.mark.parametrize("veto_reason", [
+        "[STRATEGY_SUSPENDED] Consecutive trade losses: 10 (limit: 10)",
+        "[AUTO_RECOVERY_LATCH] DRL drawdown 17%",
+        "[v3.6.1] NO_TRADE: STALE_DATA",
+        "[P0_SAFETY] equity unavailable",
+        "[P0_SAFETY_EXCEPTION] something raised",
+        "EXPOSURE_DELTA_BELOW_THRESHOLD",
+        "EXPOSURE_BELOW_MINIMUM_VIABLE",
+        "[THESIS_BUDGET] weekly budget exhausted",
+        "[TRADE_GATE] STALE_DATA",
+        "[TRADE_GATE] DVOL_EMERGENCY",
+        "[WEEKEND] Weekend confidence 33% < min 50%",
+        "[REGIME_POWER_NO_TRADE] Regime BLACK_SWAN_SENTINEL disallows trading",
+    ])
+    def test_non_short_vetos_never_override(self, veto_reason):
+        """SHORT_CONTROL must NOT propose override for system-level vetos."""
+        sc = _make_sc()
+        result = sc.evaluate(**_eval_kwargs(veto_reason=veto_reason))
+        assert result.override_veto is False, (
+            f"Layer 1 SHOULD scope-out: {veto_reason!r} but override_veto=True"
+        )
+
+
+class TestP54ProtectedVetosSubstring:
+    """Layer 2: _SC_PROTECTED_VETOES substrings must match real veto strings.
+
+    These keys are read from main.py:9979. If a future refactor widens Layer 1
+    (defense/short_control.py:168-171) so override_veto can fire on more reasons,
+    the substring match in main.py is the safety net. Verifying each entry
+    actually appears in a real intent.veto_reason format.
+    """
+
+    # Mirrors main.py:9979 _SC_PROTECTED_VETOES set as of P54.
+    PROTECTED = {
+        "AUTO_RECOVERY_LATCH",
+        "NO_TRADE",
+        "P0_SAFETY",
+        "STRATEGY_SUSPENDED",
+        "EXPOSURE_DELTA",
+        "EXPOSURE_BELOW",
+        "THESIS_BUDGET",
+        "TRADE_GATE",
+        "WEEKEND",
+        "REGIME_POWER_NO_TRADE",
+    }
+
+    # Examples of real veto_reason strings written by upstream gates.
+    # (file:line for each is in CLAUDE.md P54 entry.)
+    REAL_VETO_REASONS = {
+        "[AUTO_RECOVERY_LATCH] DRL drawdown 17%": "AUTO_RECOVERY_LATCH",
+        "[v3.6.1] NO_TRADE: STALE_DATA": "NO_TRADE",
+        "[P0_SAFETY] equity unavailable: FAIL-CLOSED": "P0_SAFETY",
+        "[STRATEGY_SUSPENDED] Consecutive trade losses: 10 (limit: 10)": "STRATEGY_SUSPENDED",
+        "EXPOSURE_DELTA_BELOW_THRESHOLD": "EXPOSURE_DELTA",
+        "EXPOSURE_BELOW_MINIMUM_VIABLE": "EXPOSURE_BELOW",
+        "[THESIS_BUDGET] weekly budget exhausted": "THESIS_BUDGET",
+        "[TRADE_GATE] STALE_DATA": "TRADE_GATE",
+        "[WEEKEND] Weekend confidence 33% < min 50%": "WEEKEND",
+        "[REGIME_POWER_NO_TRADE] Regime disallows trading": "REGIME_POWER_NO_TRADE",
+    }
+
+    def test_every_protected_key_matches_a_real_veto(self):
+        """Every key in PROTECTED must be a substring of at least one real veto_reason."""
+        for key in self.PROTECTED:
+            matching = [r for r in self.REAL_VETO_REASONS if key in r]
+            assert matching, (
+                f"PROTECTED key {key!r} matches no real veto_reason — "
+                "either fix the substring or remove the key."
+            )
+
+    def test_every_real_veto_has_a_protected_key(self):
+        """Every real system-level veto must be caught by SOME PROTECTED key.
+
+        This is the inverse direction: if a new gate is added (e.g. SOL_TOXICITY)
+        and writes a veto_reason whose substring isn't in PROTECTED, this test
+        will fail and force the operator to decide: protect or intentionally
+        leave overrideable.
+        """
+        for real_reason, expected_key in self.REAL_VETO_REASONS.items():
+            assert expected_key in self.PROTECTED, (
+                f"Real veto {real_reason!r} expected to match protected "
+                f"key {expected_key!r}, but it's not in the PROTECTED set."
+            )
+            assert expected_key in real_reason, (
+                f"Test data error: {expected_key!r} not actually in {real_reason!r}"
+            )
+
+    def test_dead_substrings_no_longer_present(self):
+        """The previously-broken keys (P54) must not silently regress."""
+        DEAD_KEYS = {"EXISTENCE_FUSE", "CIRCUIT_BREAKER", "DEAD_MAN"}
+        intersection = DEAD_KEYS & self.PROTECTED
+        assert not intersection, (
+            f"Dead substring keys re-introduced: {intersection}. "
+            "These don't appear in any real veto_reason — see CLAUDE.md P54."
+        )

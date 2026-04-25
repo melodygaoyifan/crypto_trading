@@ -410,6 +410,22 @@ Authority matrix (`signals/authority_fusion.py`) + writer (`main.py` somewhere i
 - **Fix:** Added DRL substitution in `_compute_effective_alpha_direction`: when quant abstains (|quant_dir|<0.03) AND DRL is ACTIVE AND |drl_dir|>=0.5 AND drl_conf>=0.3, use DRL's direction as the effective alpha input. Alpha gate then evaluates alpha against DRL's direction, and QUIET_ACCUMULATION hard filter sees |direction|~0.9 instead of 0. Both blockers resolved by one change.
 - **Mitigation:** Alpha gate is a pre-fusion short-circuit. Any time an agent is promoted to DECIDE, check what `effective_alpha_direction` feeds into alpha gate — if the agent isn't a contributor there, its DECIDE authority is nullified in quiet/consolidation regimes.
 
+### P54. [FIXED 2026-04-25] SHORT_CONTROL `_SC_PROTECTED_VETOES` substring keys mismatched real veto_reason format
+- **Symptom:** Decision-path trace surfaced `main.py:9979 _SC_PROTECTED_VETOES` — a defense-in-depth set that prevents `defense/short_control.py:override_veto=True` from clearing system-level vetoes. Audit found 3 of 8 keys would NEVER match a real `intent.veto_reason`:
+  - `EXISTENCE_FUSE` — real string is `"[STRATEGY_SUSPENDED] ..."` (main.py:10601)
+  - `CIRCUIT_BREAKER` — never written to veto_reason (only `risk_governor.py:264` sets a `VetoReason` enum, distinct path)
+  - `DEAD_MAN` — dead-man switch calls `_emergency_flatten()` directly, doesn't go through veto_reason
+- **Why this isn't an active runtime bug today:** `defense/short_control.py:168-171` source-level scope only flips `override_veto=True` when `"SHORT BLOCK" in veto_reason` OR `"SHORT FILTER" in veto_reason`. So the 3 broken substring keys don't actually let anything bypass — the override never proposes itself for those reasons in the first place.
+- **Why it's still a bug:** the protected list is a code-review hazard. A reader sees "EXISTENCE_FUSE is protected" and trusts the defense-in-depth. If a future refactor widens `_is_short_veto` (e.g. to accept any veto containing `"SHORT"`), Layer 1 would propose overrides for `"[STRATEGY_SUSPENDED] ..."` cases too — and Layer 2 substring match would silently FAIL because `"EXISTENCE_FUSE"` doesn't match `"[STRATEGY_SUSPENDED]"`. Same shape as P15 half-wired feedback loop.
+- **Fix:**
+  1. **`main.py:9979`** — aligned 8 keys to real veto_reason format. Replaced `"EXISTENCE_FUSE"` → `"STRATEGY_SUSPENDED"`. Removed dead `"CIRCUIT_BREAKER"` + `"DEAD_MAN"`. Added `"THESIS_BUDGET"` + `"TRADE_GATE"` + `"WEEKEND"` + `"REGIME_POWER_NO_TRADE"` (all real strings observed in 30-day shadow ledger). Added cross-reference comments pointing to where each is set.
+  2. **`tests/test_short_control_ultra.py`** — added 3 new test classes (14 tests):
+     - `TestP54SourceLevelScope` (12 parametrized) — Layer 1 must NOT propose override for any system-level veto string. Pins down `defense/short_control.py:168-171` scope.
+     - `TestP54ProtectedVetosSubstring` — bidirectional: every PROTECTED key matches at least one real veto, AND every real veto has a matching PROTECTED key.
+     - `test_dead_substrings_no_longer_present` — explicit guard that the 3 broken keys don't regress.
+- **Tests:** 114/114 (48 short_control + 66 prior regression). Layer-1 + Layer-2 now both have explicit coverage; future refactors will fail loud.
+- **Mitigation pattern:** When adding a defense-in-depth substring match against another module's output, write a roundtrip test in the same commit that proves the substring actually appears in real output. Don't trust string literals — the real veto_reason format drifts when modules get renamed or the format changes (P15 family).
+
 ### P53. [CLEANUP 2026-04-25] Stale tests + ETH fold regression + dead flags + path portability
 - **Symptom:** Cleanup pass on shallow-audited areas (`tests/`, `scripts/`, `training/model_alpha/`, `configs/sota_flags.py`, `.env.example`). Six findings, three with real-bug shape.
 - **Real bugs:**
