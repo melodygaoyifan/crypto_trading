@@ -54,14 +54,8 @@ class SOTAFlags:
         - ENABLE_STRATEGY_WEIGHTING: Adaptive strategy weights
         - ENABLE_REGIME_SHORT_FILTER: Block shorts in bull regimes
     
-    P2 (Verification - Default True for verify mode):
-        - ENABLE_WALKFORWARD_VERIFY: Walk-forward validation
-        - ENABLE_STATISTICAL_GATE: Statistical significance gate
-        - ENABLE_EXTREME_VERIFY_SUITE: Extreme scenario testing
-    
-    P3 (Integration Layer - Default True):
-        - ENABLE_SOTA_INTEGRATION_LAYER: Full SOTA v5.2.1 integration
-        - ENABLE_DASHBOARD_LIVE_STATE: Dashboard shows real runtime state
+    P2/P3 categories removed 2026-04-15 (dead flags, 0 refs across codebase).
+    See [DEAD-FLAG-CLEANUP] markers below for the removal history.
     """
     
     # =========================================================================

@@ -3,9 +3,12 @@
 import json, glob, os
 from datetime import datetime
 from collections import defaultdict
+from pathlib import Path
 
-LEDGER_DIR = os.path.join("c:", os.sep, "Users", "melod", "Downloads", "hmats", "data", "shadow_ledger")
-TRANCHE_FILE = os.path.join("c:", os.sep, "Users", "melod", "Downloads", "hmats", "data", "tranche_state.json")
+# [P53 2026-04-25] repo-relative paths.
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+LEDGER_DIR = str(_REPO_ROOT / "data" / "shadow_ledger")
+TRANCHE_FILE = str(_REPO_ROOT / "data" / "tranche_state.json")
 JSONL_PATTERN = os.path.join(LEDGER_DIR, "ledger_*.jsonl")
 
 def fmt_price(v):

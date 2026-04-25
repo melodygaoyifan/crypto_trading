@@ -7,9 +7,12 @@ import glob
 import os
 from datetime import datetime, timedelta
 from collections import defaultdict
+from pathlib import Path
 
 # --- Config ---
-LEDGER_DIR = r"c:\Users\melod\Downloads\hmats\data\shadow_ledger"
+# [P53 2026-04-25] Use repo-relative path so the script works on any host.
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+LEDGER_DIR = str(_REPO_ROOT / "data" / "shadow_ledger")
 FRICTION_BPS = {"BTC": 19, "ETH": 21, "SOL": 26}
 JUSTIFIED_RATIO = 2.0
 

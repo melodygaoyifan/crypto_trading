@@ -32,7 +32,11 @@ from training.model_alpha.sequence_alpha_model import SequenceAlphaConfig, Seque
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 logger = logging.getLogger("SequenceAlphaTrain")
 
-BEST_FOLDS = {"BTC": "fold_3", "ETH": "fold_1", "SOL": "fold_3"}
+# [P53 2026-04-25] ETH fold_1 is stale (train_rows=0); aligned with the 4 other
+# BEST_FOLDS sites per CLAUDE.md P4. Keeping fold_1 here meant retraining the
+# sequence alpha against scalers from a different fold than runtime ObsBuilder
+# loads — silent train-test mismatch. See drl/ensemble.py + drl/runtime_obs_builder.py.
+BEST_FOLDS = {"BTC": "fold_3", "ETH": "fold_3", "SOL": "fold_3"}
 
 
 class SequenceAlphaDataset(Dataset):

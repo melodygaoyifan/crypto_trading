@@ -410,6 +410,23 @@ Authority matrix (`signals/authority_fusion.py`) + writer (`main.py` somewhere i
 - **Fix:** Added DRL substitution in `_compute_effective_alpha_direction`: when quant abstains (|quant_dir|<0.03) AND DRL is ACTIVE AND |drl_dir|>=0.5 AND drl_conf>=0.3, use DRL's direction as the effective alpha input. Alpha gate then evaluates alpha against DRL's direction, and QUIET_ACCUMULATION hard filter sees |direction|~0.9 instead of 0. Both blockers resolved by one change.
 - **Mitigation:** Alpha gate is a pre-fusion short-circuit. Any time an agent is promoted to DECIDE, check what `effective_alpha_direction` feeds into alpha gate — if the agent isn't a contributor there, its DECIDE authority is nullified in quiet/consolidation regimes.
 
+### P53. [CLEANUP 2026-04-25] Stale tests + ETH fold regression + dead flags + path portability
+- **Symptom:** Cleanup pass on shallow-audited areas (`tests/`, `scripts/`, `training/model_alpha/`, `configs/sota_flags.py`, `.env.example`). Six findings, three with real-bug shape.
+- **Real bugs:**
+  1. **`tests/test_quant_agent.py` + `tests/test_modular_integration.py`** — both imported `agents.quant_agent` which was archived in P9 (commit 540167d). Both files failed at pytest collection (`ModuleNotFoundError: agents.quant_agent`). DELETED — coverage already provided by `tests/test_kraken_quant_agent.py` etc. (the ported strategies live there now).
+  2. **`training/model_alpha/train_sequence_alpha_v1.py:35`** — `BEST_FOLDS = {..., "ETH": "fold_1", ...}` was the same P4 stale-fold regression that fired in `drl/ensemble.py` 2026-04-24 but in a SECOND file. If the sequence-alpha training was rerun, scalers would be loaded from `models/retrained/ETH/fold_1/` (train_rows=0) — silent train-test mismatch since runtime `runtime_obs_builder.py` always loads fold_3 for ETH. Aligned to fold_3.
+  3. **`scripts/_gen_report.py`** — orphan one-shot generator (writes `trade_report.py`). Zero callers anywhere. DELETED.
+- **Cleanup:**
+  - `configs/sota_flags.py:57-64` — removed dead docstring section listing P2/P3 flags that were already deleted 2026-04-15. Breadcrumb comment retained.
+  - `.env.example:120-128` — removed dead `HMATS_ENABLE_DRL` / `HMATS_ENABLE_SENTIMENT` / `HMATS_ENABLE_FALSE_BREAKOUT` / `HMATS_ENABLE_SIGNAL_QUALITY` block. Verified 0 readers across non-archive code.
+  - `scripts/analyze_shadow_ledger.py`, `scripts/trade_report.py`, `scripts/shadow_ledger_report.py` — replaced 4 hardcoded `c:/Users/melod/...` paths with `Path(__file__).resolve().parents[1]` / repo-relative pattern. Operator scripts now portable.
+- **Verified safe to retain (no action):**
+  - `configs/default.json` + `configs/sota_config.json` — both marked `_DEPRECATED` and only referenced by `config_resolver.py:_check_stale_configs()` which is the safety net warning anyone tries to use them. Removing the files would also require removing the safety-net code.
+  - `configs/live_phase1.json:23 max_leverage=2.0` — intentional Phase-1 conservative profile (described in `_description` field), not stale. Loaded by `scripts/launch_live.py` via `phase1` alias.
+- **Audit ratio:** 4 real cleanup wins from ~12 findings (~1:3 — higher than P51's 1:8 because the cleanup-pass surface area was different, mostly orphans rather than safety bugs).
+- **Tests:** 66/66 regression suite green. Stale-tests removal reduces collection errors from 1 → 0 on `pytest tests/`.
+- **Mitigation:** When a module is archived (P9 pattern), grep `git grep "from <archived_module>"` AND `git grep "<archived_module> import"` AND check for test files importing it. The 540167d commit moved quant_agent.py to archive but missed the two tests. Cleanup-audit rounds catch these but only if the audit specifically looks at test collection errors. Now: pytest will fail loud on a stale test rather than skip it.
+
 ### P52. [FIXED 2026-04-25] Weekend confidence default 0.50 → 0.30 + diag forwarding
 - **Symptom:** Post-P46 deploy, runtime forensics showed weekend rejections still firing at "min 50%" even though `live_high_risk.json` had `min_confidence_weekend: 0.30`. Container's JSON verified correct via SSH; post-P45 ledger entries showed `weekend_cfg_present: True` and `weekend_mult_normal: 1.0` (config IS loading); but rejection text reads "min 50%" — which is exactly `cls.WEEKEND_MIN_CONFIDENCE` class default. Two BTC/ETH rejections at 05:24 UTC: drl_conf=0.444/0.355, mode=NORMAL, regime=WEAK_CONSOLIDATION.
 - **Root cause:** ambiguous — could be a config read path that bypasses the JSON value (callsite reads class default directly), OR a stale path that uses the cls.* fallback. Without a runtime field showing exactly what threshold the gate saw at rejection time, we can't tell. **Two-part fix:**

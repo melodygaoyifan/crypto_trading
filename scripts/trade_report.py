@@ -1,10 +1,13 @@
 import json, os, glob
 from datetime import datetime
 from collections import defaultdict
+from pathlib import Path
 
-LEDGER_DIR = os.path.normpath("c:/Users/melod/Downloads/hmats/data/shadow_ledger")
-TRANCHE_FILE = os.path.normpath("c:/Users/melod/Downloads/hmats/data/tranche_state.json")
-POSITIONS_FILE = os.path.normpath("c:/Users/melod/Downloads/hmats/data/paper_positions.json")
+# [P53 2026-04-25] repo-relative paths.
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+LEDGER_DIR = str(_REPO_ROOT / "data" / "shadow_ledger")
+TRANCHE_FILE = str(_REPO_ROOT / "data" / "tranche_state.json")
+POSITIONS_FILE = str(_REPO_ROOT / "data" / "paper_positions.json")
 
 entries = []
 for f in sorted(glob.glob(os.path.join(LEDGER_DIR, "ledger_*.jsonl"))):
