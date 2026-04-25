@@ -410,6 +410,27 @@ Authority matrix (`signals/authority_fusion.py`) + writer (`main.py` somewhere i
 - **Fix:** Added DRL substitution in `_compute_effective_alpha_direction`: when quant abstains (|quant_dir|<0.03) AND DRL is ACTIVE AND |drl_dir|>=0.5 AND drl_conf>=0.3, use DRL's direction as the effective alpha input. Alpha gate then evaluates alpha against DRL's direction, and QUIET_ACCUMULATION hard filter sees |direction|~0.9 instead of 0. Both blockers resolved by one change.
 - **Mitigation:** Alpha gate is a pre-fusion short-circuit. Any time an agent is promoted to DECIDE, check what `effective_alpha_direction` feeds into alpha gate — if the agent isn't a contributor there, its DECIDE authority is nullified in quiet/consolidation regimes.
 
+### P60. [FIXED 2026-04-25] 3 dead P1 flags removed + Section F multi-site scanner + p0_integrator missing DVOL kwargs (rule #6 violation)
+- **Two parts (1 + 2 from operator's request):**
+
+#### Part 1 — Delete 3 dead flags (P53 / P59 follow-through)
+- P59 surfaced `ENABLE_TWO_STAGE_INTELLIGENCE` / `ENABLE_STRATEGY_WEIGHTING` / `ENABLE_REGIME_SHORT_FILTER` as having zero real control-flow gates.
+- All 3 declared in `configs/sota_flags.py:76-78` AND in `main.py:1010-1012` (DefaultFlags fallback) AND read by `is_p1_enabled()` at `configs/sota_flags.py:397-404` — but `is_p1_enabled()` itself was imported at `main.py:995` and **never called anywhere**.
+- **Removed:** declarations in sota_flags.py (incl. P1 docstring section + categories list at line 324-325) + DefaultFlags fallback entries in main.py + `is_p1_enabled()` function + the import. Same P53 cleanup pattern.
+- **Underlying features still wired** — two_stage agent (matrix row 8), strategy_weighting (signals/adaptive_weight_v521.py per P15), V6 SHORT FILTER (main.py:9914-9957) all live through other paths, not gated by these flags.
+- **Result:** scanner Section E went from 3 / 25 → 0 / 22 dead flags.
+
+#### Part 2 — Section F: multi-call-site kwarg consistency
+- New scanner section in `scripts/authority_consistency_audit.py` that enforces CLAUDE.md non-negotiable rule #6 ("all 3 trade_gate.check sites must pass identical kwargs"). Generalized: any function listed in `TRACKED_MULTI_SITE_FUNCS` gets diff-checked across all its call sites.
+- **Algorithm:** find every call via `git grep`; parse the call body (paren-depth tracker, comment-stripped — see parser-bug fix below) to extract kwarg names; diff against the union of all sites; flag any kwarg present in some sites but missing from others (unless listed in `intentional_omits`).
+- **Tracked:** `trade_gate.check` (rule #6) + `execute_intent_v2` (P57-B, with `agent_signals` flagged as intentional omit for the MAX_HOLD_TIMEOUT site).
+- **Parser bug fixed in same commit:** the kwarg extractor was getting poisoned by Python comments — `# [BUGFIX AUDIT-A2] Use caller-provided values, not hardcoded` between `regime=regime,` and `drl_weight=drl_weight,` made the parser see `drl_weight` as part of a longer string starting with `Use caller-provided...` and reject it. Fixed by stripping `#…\n` before parsing.
+- **Real bug surfaced (and fixed):** `defense/p0_safety_integrator.py:498` was missing `dvol_zscore` + `dvol_current` kwargs that P47 added to `main.py:10567`. **This is the SAME-FAMILY bug as P48 BUG-2** — P48 plumbed the data-health snapshot through to p0_integrator's trade_gate but missed the DVOL kwargs. Without them, the trade_gate Gate 2 EMERGENCY_FLAT path (`dvol_zscore >= 5.0` per defense/trade_gate.py:627) saw default 0.0 and never fired at the p0_integrator route. Added params to `check_pre_execution()` signature + passed through to the call site at line 505. Caller at `main.py:10876` updated to pass `market_data.get("dvol_zscore", 0.0)` + `market_data.get("dvol", 0.0)`.
+- **Result:** all 3 trade_gate.check sites (`core/authority_chain.py:366` + `defense/p0_safety_integrator.py:505` + `main.py:10567`) now pass identical kwargs. Rule #6 holds end-to-end.
+- **CLI:** `python scripts/authority_consistency_audit.py --section multisite [--json]`. Now 6 sections total: A authority / B flags / C constants / D drl / E gates / F multisite.
+- **Tests:** 155/155 regression green. Pure-tooling addition + 1 real bugfix.
+- **Mitigation pattern:** When CLAUDE.md says "N call sites must do X", add a Section-F entry. The next refactor that adds a kwarg to one site will fail the scanner instead of going unnoticed for weeks (P47 + P48 + P60 all touched the same trade_gate.check pattern; without F, the next one would have been P61).
+
 ### P59. [FIXED 2026-04-25] Scanner extension — DRL invariants + ENABLE_* real-gate audit + 3 new dead flags surfaced
 - **Why:** Operator asked whether `/ultrareview` could review the entire codebase. It can't — `/ultrareview <branch|PR>` is diff-based by design. So the alternative is making the static scanner cover the codebase-level checks ultrareview can't easily do (cross-file invariants, declared-vs-gated drift). Three new sections added to `scripts/authority_consistency_audit.py`.
 - **Section D — DRL feature/state invariants:**

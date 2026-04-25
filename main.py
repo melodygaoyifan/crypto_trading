@@ -992,7 +992,7 @@ try:
         get_sota_flags,
         SOTAFlags,
         is_p0_enabled,
-        is_p1_enabled,
+        # [P60 2026-04-25] is_p1_enabled removed — never called.
     )
     SOTA_FLAGS_AVAILABLE = True
     logger.info("[OK]SOTA Flags loaded")
@@ -1007,9 +1007,7 @@ except ImportError as e:
             ENABLE_RATE_LIMIT_MANAGER = True
             ENABLE_HUMAN_OVERRIDE = True
             ENABLE_SHADOW_LEDGER = True
-            ENABLE_TWO_STAGE_INTELLIGENCE = True
-            ENABLE_STRATEGY_WEIGHTING = True
-            ENABLE_REGIME_SHORT_FILTER = True
+            # [P60 2026-04-25] removed 3 dead P1 flags from fallback
         return DefaultFlags()
 
 
@@ -10875,8 +10873,14 @@ class HMATSProductionRunner:
                     orderbook_fallback_reason=market_data.get("orderbook_fallback_reason", ""),
                     orderbook_cache_age_seconds=market_data.get("orderbook_cache_age_seconds"),
                     price_direction=_execution_price_direction,
+                    # [P60 2026-04-25] DVOL gate inputs — match the kwargs P47
+                    # added to the main.py:10567 trade_gate.check() call. Without
+                    # these, the p0_integrator's trade_gate Gate 2 EMERGENCY_FLAT
+                    # check sees default 0.0 and never fires (rule #6 violation).
+                    dvol_zscore=market_data.get("dvol_zscore", 0.0),
+                    dvol_current=market_data.get("dvol", 0.0),
                 )
-                
+
                 if not p0_check_result.allow_trade:
                     if not (p0_check_result.allow_exit and not is_entry):
                         # Block the trade

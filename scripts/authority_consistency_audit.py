@@ -528,6 +528,200 @@ def audit_enable_flag_gates() -> dict[str, Any]:
 
 
 # ----------------------------------------------------------------------
+# Section F: Multi-call-site kwarg consistency (P60)
+# ----------------------------------------------------------------------
+# Per CLAUDE.md non-negotiable rule #6:
+#   "Three trade_gate call sites — main veto_chain, authority_chain, AND
+#   p0_safety_integrator ALL call `trade_gate.check()`. Fix ALL three when
+#   changing the gate API."
+#
+# Per P57-B: same shape for `execute_intent_v2` — 3 call sites must all use
+# the same kwargs (one missing `agent_signals` was flagged as intentional).
+#
+# This section finds every call to a tracked multi-site function and diffs
+# the kwarg lists. If any kwarg appears in some sites but not others, flag.
+
+TRACKED_MULTI_SITE_FUNCS = [
+    {
+        "name": "trade_gate.check",
+        # Pattern matches `<expr>.trade_gate.check(...)` AND
+        # `self.p0_integrator.trade_gate.check(...)` — the latter is the
+        # second canonical site per P48.
+        "call_pattern": r"trade_gate\.check\s*\(",
+        "rule": "CLAUDE.md non-negotiable rule #6 — all 3 sites identical kwargs",
+    },
+    {
+        "name": "execute_intent_v2",
+        "call_pattern": r"\bexecute_intent_v2\s*\(",
+        "rule": "P57-B verified 3 sites; site 1 (max-hold) intentionally omits agent_signals",
+        "intentional_omits": {
+            # Sites that legitimately omit a kwarg present in others.
+            # Maps {kwarg: reason}.
+            "agent_signals": "site 1 (MAX_HOLD_TIMEOUT) is rule-based exit, no signal context needed",
+        },
+    },
+]
+
+
+def _extract_call_kwargs(file_path: str, line_no: int, max_lines: int = 30) -> set[str]:
+    """Read a function call starting at file:line_no and return the set of
+    kwarg names passed. Stops at matching close-paren or 30 lines.
+    """
+    try:
+        text = (REPO_ROOT / file_path).read_text(encoding="utf-8-sig", errors="ignore")
+    except Exception:
+        return set()
+    lines = text.splitlines()
+    start = max(0, line_no - 1)
+    chunk = "\n".join(lines[start:start + max_lines])
+    # Find first '(' and matching ')'
+    depth = 0
+    start_idx = chunk.find("(")
+    if start_idx == -1:
+        return set()
+    end_idx = -1
+    for i in range(start_idx, len(chunk)):
+        if chunk[i] == "(":
+            depth += 1
+        elif chunk[i] == ")":
+            depth -= 1
+            if depth == 0:
+                end_idx = i
+                break
+    if end_idx == -1:
+        return set()
+    body = chunk[start_idx + 1:end_idx]
+    # [P60 fix] Strip Python comments (# to end-of-line) BEFORE parsing —
+    # otherwise `# [BUGFIX] Use caller-provided values, not hardcoded` will
+    # contaminate the next kwarg's word buffer (the `[` increases depth, the
+    # `]` decreases, but text-after-`]` keeps appending to `word`).
+    # NOTE: this is approximate — it doesn't handle # inside strings — but
+    # for this scanner's purpose (finding kwarg names) the failure mode is
+    # under-counting, never over-counting.
+    body = re.sub(r"#[^\n]*", "", body)
+
+    # Extract `kwname=` patterns. Strip out nested call args by tracking
+    # paren-depth — a kwarg is at depth 0 only.
+    kwargs = set()
+    depth = 0
+    word = ""
+    seen_eq = False
+    i = 0
+    while i < len(body):
+        c = body[i]
+        if c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+        elif depth == 0 and c == "," and not seen_eq:
+            word = ""
+        elif depth == 0 and c == "=" and not seen_eq:
+            # Single = (not ==) at depth 0 → previous word is a kwarg name.
+            if i + 1 < len(body) and body[i + 1] == "=":
+                pass  # ==, not assignment
+            else:
+                kw = word.strip()
+                if kw and re.match(r"^[a-zA-Z_]\w*$", kw):
+                    kwargs.add(kw)
+                word = ""
+                seen_eq = True
+        elif depth == 0 and c == ",":
+            word = ""
+            seen_eq = False
+        else:
+            word += c
+        i += 1
+    return kwargs
+
+
+def audit_multi_site_consistency() -> dict[str, Any]:
+    findings: dict[str, Any] = {}
+    for fdef in TRACKED_MULTI_SITE_FUNCS:
+        name = fdef["name"]
+        sites = []
+        for hit in _git_grep(fdef["call_pattern"]):
+            parts = hit.split(":", 2)
+            if len(parts) < 3:
+                continue
+            file_path, line_no, line_text = parts
+            # Skip non-.py files (doc references in .md/.json/etc.)
+            if not file_path.endswith(".py"):
+                continue
+            # Skip definitions, imports, comments — they aren't call sites.
+            stripped = line_text.lstrip()
+            if (
+                stripped.startswith("def ")
+                or stripped.startswith("async def ")
+                or stripped.startswith("from ")
+                or stripped.startswith("import ")
+                or stripped.startswith("#")
+                or stripped.startswith('"')
+                or stripped.startswith("'")
+            ):
+                continue
+            # Skip docstring prose: line like "3. Pre-execute: trade_gate.check()"
+            # — has a digit-period-space prefix typical of doc list items.
+            if re.match(r"^\s*\d+\.\s+\w", line_text):
+                continue
+            # Skip lines that look like a comma-separated method list inside
+            # a docstring (e.g. "    trade_gate.check(), execution_guards.clip()")
+            # — heuristic: more than one `()` pattern on the same line and no `=` /
+            # `await` / `return` / `if`.
+            if (
+                line_text.count("()") + line_text.count("(self)") >= 2
+                and not re.search(r"=|await|return|\bif\b|\bwhile\b", line_text)
+            ):
+                continue
+            kwargs = _extract_call_kwargs(file_path, int(line_no))
+            sites.append({
+                "location": f"{file_path}:{line_no}",
+                "kwargs": sorted(kwargs),
+            })
+        if not sites:
+            findings[name] = {
+                "n_sites": 0,
+                "sites": [],
+                "issues": [f"no call sites found for pattern {fdef['call_pattern']!r}"],
+            }
+            continue
+
+        # Compute kwarg union and per-site diff.
+        all_kwargs: set[str] = set()
+        for s in sites:
+            all_kwargs |= set(s["kwargs"])
+        # For each site, list the kwargs it's MISSING vs the union.
+        for s in sites:
+            s["missing"] = sorted(all_kwargs - set(s["kwargs"]))
+
+        # Issues: any site missing a kwarg that's not in intentional_omits.
+        intentional = set((fdef.get("intentional_omits") or {}).keys())
+        issues = []
+        for s in sites:
+            unexpected_missing = [m for m in s["missing"] if m not in intentional]
+            if unexpected_missing:
+                issues.append(
+                    f"{s['location']} missing kwargs not in intentional_omits: "
+                    f"{unexpected_missing}"
+                )
+        findings[name] = {
+            "rule": fdef["rule"],
+            "n_sites": len(sites),
+            "sites": sites,
+            "kwarg_union": sorted(all_kwargs),
+            "intentional_omits": fdef.get("intentional_omits", {}),
+            "issues": issues,
+        }
+    return {
+        "by_function": findings,
+        "summary": {
+            "with_issues": sorted(
+                k for k, v in findings.items() if v.get("issues")
+            ),
+        },
+    }
+
+
+# ----------------------------------------------------------------------
 # Main
 # ----------------------------------------------------------------------
 
@@ -536,7 +730,10 @@ def main() -> int:
     parser.add_argument("--json", action="store_true")
     parser.add_argument(
         "--section",
-        choices=["authority", "flags", "constants", "drl", "gates", "all"],
+        choices=[
+            "authority", "flags", "constants",
+            "drl", "gates", "multisite", "all",
+        ],
         default="all",
     )
     args = parser.parse_args()
@@ -552,6 +749,8 @@ def main() -> int:
         out["drl_invariants"] = audit_drl_invariants()
     if args.section in ("gates", "all"):
         out["flag_gates"] = audit_enable_flag_gates()
+    if args.section in ("multisite", "all"):
+        out["multi_site"] = audit_multi_site_consistency()
 
     if args.json:
         print(json.dumps(out, indent=2, default=str))
@@ -632,6 +831,30 @@ def main() -> int:
                 print(f"      e.g. {sample[:140]}")
         if not no_gate:
             print("  ✓ all readable flags have at least one control-flow gate")
+
+    if "multi_site" in out:
+        m = out["multi_site"]
+        print("\n--- F) MULTI-CALL-SITE KWARG CONSISTENCY (P60) ---")
+        with_issues = m.get("summary", {}).get("with_issues", [])
+        for fname, rec in m.get("by_function", {}).items():
+            n = rec.get("n_sites", 0)
+            issues = rec.get("issues", [])
+            marker = "✗" if issues else "✓"
+            print(f"\n  {marker} {fname} ({n} call sites)")
+            print(f"      rule: {rec.get('rule', '')}")
+            for s in rec.get("sites", []):
+                miss_str = (
+                    f"  MISSING={s['missing']}" if s["missing"] else "  (full)"
+                )
+                print(f"      {s['location']:50}{miss_str}")
+            if rec.get("intentional_omits"):
+                print("      intentional omits:")
+                for k, why in rec["intentional_omits"].items():
+                    print(f"        - {k}: {why}")
+            for issue in issues:
+                print(f"      ✗ {issue}")
+        if not with_issues:
+            print("\n  ✓ all multi-site call kwargs consistent (or in intentional_omits)")
 
     print("\n" + "=" * 76)
     return 0

@@ -386,6 +386,13 @@ class P0SafetyIntegrator:
         orderbook_fallback_reason: str = "",
         orderbook_cache_age_seconds: Optional[float] = None,
         price_direction: str = "flat",
+        # [P60 2026-04-25] DVOL gate kwargs — P47 added these to main.py:10567
+        # for the trade_gate Gate 2 EMERGENCY_FLAT path (defense/trade_gate.py:627),
+        # but the p0_safety_integrator call site at line 498 was missed.
+        # Without these, that gate's `dvol_zscore >= 5.0` check sees default 0.0
+        # forever — gate never fires. Added here to fix the rule #6 violation.
+        dvol_zscore: float = 0.0,
+        dvol_current: float = 0.0,
     ) -> P0SafetyResult:
         """
         Check all P0 safety conditions before execution.
@@ -513,6 +520,9 @@ class P0SafetyIntegrator:
                     orderbook_fallback_reason=orderbook_fallback_reason,
                     orderbook_cache_age_seconds=orderbook_cache_age_seconds,
                     alpha_gate_passed=True,  # [VC-1] Constitution alpha gate already ran
+                    # [P60 2026-04-25] DVOL gate inputs — see check_pre_execution signature.
+                    dvol_zscore=dvol_zscore,
+                    dvol_current=dvol_current,
                 )
                 # [P48 2026-04-25 BUG-6] Was `.value` (returns int from auto()),
                 # making gate_mode field in shadow ledger an unreadable integer.

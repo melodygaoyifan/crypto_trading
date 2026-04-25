@@ -49,13 +49,8 @@ class SOTAFlags:
         - ENABLE_HUMAN_OVERRIDE: Manual override mechanism
         - ENABLE_SHADOW_LEDGER: Audit trail for all intents/orders/fills
     
-    P1 (Strategy Enhancement - Default True, Can Disable):
-        - ENABLE_TWO_STAGE_INTELLIGENCE: Heavy/Light model for direction
-        - ENABLE_STRATEGY_WEIGHTING: Adaptive strategy weights
-        - ENABLE_REGIME_SHORT_FILTER: Block shorts in bull regimes
-    
-    P2/P3 categories removed 2026-04-15 (dead flags, 0 refs across codebase).
-    See [DEAD-FLAG-CLEANUP] markers below for the removal history.
+    P1 / P2 / P3 categories removed (dead flags). See [DEAD-FLAG-CLEANUP]
+    and [P60] markers below for the removal history.
     """
     
     # =========================================================================
@@ -70,13 +65,16 @@ class SOTAFlags:
     ENABLE_SHADOW_LEDGER: bool = True
     
     # =========================================================================
-    # P1: STRATEGY ENHANCEMENT (Default True, Can Disable)
+    # [P60 2026-04-25] Removed P1 STRATEGY ENHANCEMENT category — flags
+    # ENABLE_TWO_STAGE_INTELLIGENCE / ENABLE_STRATEGY_WEIGHTING /
+    # ENABLE_REGIME_SHORT_FILTER were declared and read by is_p1_enabled()
+    # below — but is_p1_enabled() itself was imported at main.py:995 and
+    # never called. The underlying features (two_stage agent, strategy
+    # weighting in fusion, V6 SHORT FILTER) are wired through other paths
+    # not gated by these. Same pattern as P53 / P16 dead-flag cleanup.
     # =========================================================================
-    
-    ENABLE_TWO_STAGE_INTELLIGENCE: bool = True
-    ENABLE_STRATEGY_WEIGHTING: bool = True
-    ENABLE_REGIME_SHORT_FILTER: bool = True
-    
+
+
     # =========================================================================
     # P1.5: LONG-TERM SURVIVAL GOVERNORS (v6.1.3)
     # =========================================================================
@@ -323,9 +321,8 @@ class SOTAFlags:
             "P0 (Safety)": ["ENABLE_SOTA_RISK_CONTROLLER", "ENABLE_TRADE_GATE", 
                           "ENABLE_EXECUTION_GUARDS", "ENABLE_RATE_LIMIT_MANAGER",
                           "ENABLE_HUMAN_OVERRIDE", "ENABLE_SHADOW_LEDGER"],
-            "P1 (Strategy)": ["ENABLE_TWO_STAGE_INTELLIGENCE", "ENABLE_STRATEGY_WEIGHTING",
-                             "ENABLE_REGIME_SHORT_FILTER"],
-            "P1.5 (Governors)": ["ENABLE_OPPORTUNITY_BUDGET_GOVERNOR", 
+            # [P60 2026-04-25] removed "P1 (Strategy)" category
+            "P1.5 (Governors)": ["ENABLE_OPPORTUNITY_BUDGET_GOVERNOR",
                                 "ENABLE_REGIME_TRANSITION_BUFFER",
                                 "ENABLE_CASCADE_EXHAUSTION_GOVERNOR"],
             "P1.6 (Shadow)": ["ENABLE_LEAD_LAG_SHADOW"],
@@ -394,14 +391,9 @@ def is_p0_enabled() -> bool:
     ])
 
 
-def is_p1_enabled() -> bool:
-    """Check if all P1 strategy flags are enabled."""
-    flags = get_sota_flags()
-    return all([
-        flags.ENABLE_TWO_STAGE_INTELLIGENCE,
-        flags.ENABLE_STRATEGY_WEIGHTING,
-        flags.ENABLE_REGIME_SHORT_FILTER,
-    ])
+# [P60 2026-04-25] Removed is_p1_enabled() — the only function that
+# referenced ENABLE_TWO_STAGE_INTELLIGENCE / ENABLE_STRATEGY_WEIGHTING /
+# ENABLE_REGIME_SHORT_FILTER. Imported at main.py:995 but never called.
 
 
 def disable_all_trading():
