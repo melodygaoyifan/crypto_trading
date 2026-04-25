@@ -236,6 +236,52 @@ def analyze(days: int = 30, asset_filter: Optional[str] = None) -> Dict[str, Any
         if fm:
             stale_freshness_mode[fm] += 1
 
+    # 5c. STRUCTURE-block breakdown (P44 — needs structure_* gate_details fields)
+    struct_side_pareto = Counter()
+    struct_gap_buckets = Counter()
+    struct_strategy_pareto = Counter()
+    struct_edge_vs_min = Counter()
+    n_struct_with_diag = 0
+    for r in rejects:
+        raw = (r.get("data") or {}).get("rejection_reason", "") or ""
+        if "structure" not in raw.lower():
+            continue
+        details = (r.get("data") or {}).get("gate_details") or {}
+        side = details.get("structure_side")
+        if side:
+            n_struct_with_diag += 1
+            struct_side_pareto[side] += 1
+        gap = details.get("structure_gap_bps")
+        gap_limit = details.get("structure_gap_limit_bps")
+        if gap is not None and gap_limit:
+            try:
+                gap_f = float(gap)
+                limit_f = float(gap_limit)
+                ratio = gap_f / max(1e-9, limit_f)
+                if ratio < 1.5:
+                    struct_gap_buckets["near (gap < 1.5×limit)"] += 1
+                elif ratio < 3.0:
+                    struct_gap_buckets["mid (1.5-3×limit)"] += 1
+                elif ratio < 10.0:
+                    struct_gap_buckets["far (3-10×limit)"] += 1
+                else:
+                    struct_gap_buckets["very far (>10×limit)"] += 1
+            except (ValueError, TypeError):
+                pass
+        sid = details.get("structure_strategy_id")
+        if sid:
+            struct_strategy_pareto[sid] += 1
+        edge = details.get("structure_edge_bps")
+        min_edge = details.get("structure_min_edge_bps")
+        if edge is not None and min_edge is not None:
+            try:
+                if float(edge) >= float(min_edge):
+                    struct_edge_vs_min["edge >= min_edge (gap is the issue)"] += 1
+                else:
+                    struct_edge_vs_min["edge < min_edge (insufficient alpha)"] += 1
+            except (ValueError, TypeError):
+                pass
+
     # 5. Fill anatomy (compare each fill against its 5 nearest rejections by time)
     fill_anatomy = []
     for f in fills[:10]:  # limit to 10 fills
@@ -305,6 +351,15 @@ def analyze(days: int = 30, asset_filter: Optional[str] = None) -> Dict[str, Any
             "by_age_bucket": stale_age_buckets.most_common(),
             "by_orderbook_status": stale_orderbook_status.most_common(),
             "by_freshness_mode": stale_freshness_mode.most_common(),
+        },
+        "structure_breakdown": {
+            "n_struct_rejections": sum(1 for r in rejects
+                                        if "structure" in ((r.get("data") or {}).get("rejection_reason", "") or "").lower()),
+            "n_with_diag_fields_p44": n_struct_with_diag,
+            "by_side": struct_side_pareto.most_common(),
+            "by_gap_bucket": struct_gap_buckets.most_common(),
+            "by_strategy": struct_strategy_pareto.most_common(),
+            "by_edge_vs_min": struct_edge_vs_min.most_common(),
         },
     }
 
@@ -399,6 +454,30 @@ def render(report: Dict[str, Any]) -> str:
             lines.append(f"    {status:50} {count}")
     if sd.get('by_freshness_mode'):
         lines.append(f"  Freshness modes: {dict(sd['by_freshness_mode'])}")
+    lines.append("")
+
+    lines.append("-" * 78)
+    lines.append("STRUCTURE-BLOCK BREAKDOWN (P44 — needs ledger entries with diag fields)")
+    lines.append("-" * 78)
+    sb = report.get('structure_breakdown', {})
+    lines.append(f"  Total structure rejects: {sb.get('n_struct_rejections', 0)}")
+    lines.append(f"  With P44 diag fields: {sb.get('n_with_diag_fields_p44', 0)}")
+    if sb.get('by_side'):
+        lines.append("  By side:")
+        for side, count in sb['by_side']:
+            lines.append(f"    {side:10} {count}")
+    if sb.get('by_gap_bucket'):
+        lines.append("  By gap distance (vs configured limit):")
+        for bucket, count in sb['by_gap_bucket']:
+            lines.append(f"    {bucket:30} {count}")
+    if sb.get('by_strategy'):
+        lines.append("  By strategy:")
+        for s, count in sb['by_strategy']:
+            lines.append(f"    {s:25} {count}")
+    if sb.get('by_edge_vs_min'):
+        lines.append("  Net edge vs min_edge requirement:")
+        for status, count in sb['by_edge_vs_min']:
+            lines.append(f"    {status:50} {count}")
     lines.append("")
 
     lines.append("-" * 78)

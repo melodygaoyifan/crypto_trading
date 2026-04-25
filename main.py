@@ -10146,7 +10146,31 @@ class HMATSProductionRunner:
                             )
                         else:
                             intent.veto_active = True
-                            intent.veto_reason = "[STRUCTURE] LONG blocked -no fractal high break"
+                            # [P44 2026-04-25] Stash structure diagnostics for the
+                            # shadow ledger so gate_rejection_analysis.py can show
+                            # WHY the fractal-break gate fired — not just THAT it did.
+                            intent._structure_block_details = {
+                                "side": "LONG",
+                                "gap_bps": _struct_gap_bps,
+                                "gap_limit_bps": _struct_gap_limit_long,
+                                "edge_bps": _struct_edge_bps,
+                                "min_edge_bps": _struct_min_edge_long,
+                                "min_dir": _struct_min_dir_long,
+                                "intent_dir": float(intent.direction or 0.0),
+                                "nearest_resistance": _near.get("nearest_resistance"),
+                                "nearest_support": _near.get("nearest_support"),
+                                "regime": _struct_regime,
+                                "system_mode": _struct_system_mode,
+                                "strategy_id": _struct_strategy_id,
+                                "existing_exposure": _existing_exp,
+                                "soft_override_enabled": _struct_override_enabled,
+                                "allow_no_fractal": _struct_allow_no_fractal,
+                            }
+                            intent.veto_reason = (
+                                f"[STRUCTURE] LONG blocked gap={_struct_gap_bps if _struct_gap_bps is not None else 'N/A'}bps "
+                                f"limit={_struct_gap_limit_long}bps edge={_struct_edge_bps:.1f}bps min_edge={_struct_min_edge_long}bps "
+                                f"regime={_struct_regime} strategy={_struct_strategy_id or '?'}"
+                            )
                             logger.info(
                                 f"[STRUCTURE] {asset}: LONG blocked "
                                 f"(resistance={_near.get('nearest_resistance', 'N/A')}, "
@@ -10268,7 +10292,31 @@ class HMATSProductionRunner:
                                 )
                             else:
                                 intent.veto_active = True
-                                intent.veto_reason = "[STRUCTURE] SHORT blocked -no fractal low break"
+                                # [P44 2026-04-25] Same diag stash as LONG side.
+                                intent._structure_block_details = {
+                                    "side": "SHORT",
+                                    "gap_bps": _struct_gap_bps,
+                                    "gap_limit_bps": _struct_gap_limit_short,
+                                    "edge_bps": _struct_edge_bps,
+                                    "min_edge_bps": _struct_min_edge_short,
+                                    "min_dir": _struct_min_dir_short,
+                                    "intent_dir": float(intent.direction or 0.0),
+                                    "nearest_resistance": _near.get("nearest_resistance"),
+                                    "nearest_support": _near.get("nearest_support"),
+                                    "gap_to_support_bps": _struct_gap_to_support_bps,
+                                    "gap_to_resistance_bps": _struct_gap_to_resistance_bps,
+                                    "regime": _struct_regime,
+                                    "system_mode": _struct_system_mode,
+                                    "strategy_id": _struct_strategy_id,
+                                    "existing_exposure": _existing_exp_s,
+                                    "soft_override_enabled": _struct_override_enabled,
+                                    "allow_no_fractal": _struct_allow_no_fractal,
+                                }
+                                intent.veto_reason = (
+                                    f"[STRUCTURE] SHORT blocked gap_to_support={_struct_gap_to_support_bps if _struct_gap_to_support_bps is not None else 'N/A'}bps "
+                                    f"limit={_struct_gap_limit_short}bps edge={_struct_edge_bps:.1f}bps min_edge={_struct_min_edge_short}bps "
+                                    f"regime={_struct_regime} strategy={_struct_strategy_id or '?'}"
+                                )
                             if intent.veto_active:
                                 logger.info(
                                     f"[STRUCTURE] {asset}: SHORT blocked "
@@ -12866,6 +12914,9 @@ class HMATSProductionRunner:
                 # (see main.py:10418) so the next gate_rejection_analysis run shows
                 # WHICH feed went stale, not just the bucket.
                 _stale_diag = getattr(intent, "_stale_freshness_details", None) or {}
+                # [P44 2026-04-25] Pull structure-block diag — same purpose for
+                # the 21.5% of rejects from the fractal-break gate.
+                _struct_diag = getattr(intent, "_structure_block_details", None) or {}
                 self.p0_integrator.shadow_ledger.record_gate_rejection(
                     asset=asset,
                     direction=_sl_direction_i,
@@ -12889,6 +12940,15 @@ class HMATSProductionRunner:
                         "stale_sources": _stale_diag.get("stale_sources", []),
                         "freshness_mode": _stale_diag.get("freshness_mode", ""),
                         "decision_lag_seconds": _stale_diag.get("decision_lag_seconds"),
+                        # [P44] Structure-block observability fields
+                        "structure_side": _struct_diag.get("side"),
+                        "structure_gap_bps": _struct_diag.get("gap_bps"),
+                        "structure_gap_limit_bps": _struct_diag.get("gap_limit_bps"),
+                        "structure_edge_bps": _struct_diag.get("edge_bps"),
+                        "structure_min_edge_bps": _struct_diag.get("min_edge_bps"),
+                        "structure_strategy_id": _struct_diag.get("strategy_id"),
+                        "structure_soft_override_enabled": _struct_diag.get("soft_override_enabled"),
+                        "structure_existing_exposure": _struct_diag.get("existing_exposure"),
                     },
                 )
             except Exception as e:
