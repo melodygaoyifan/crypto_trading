@@ -536,7 +536,20 @@ class DerivativesExecutor:
         if self.initial_size_cap_usd and size_usd > self.initial_size_cap_usd:
             return f"initial_usd_cap_exceeded:{size_usd}>{self.initial_size_cap_usd}"
 
-        nav = self._nav_callback() or 0.0
+        # [P50 2026-04-25] Was: nav = self._nav_callback() or 0.0 — if the
+        # callback raises (network glitch, dependency unwired, etc.), the
+        # exception propagated. If it returned None or 0, all percent-based
+        # caps below would skip (size/nav division skipped via "nav_unknown"
+        # return). Wrap in try/except so unexpected callback failure is
+        # visible as a fail-closed reject, not silently bypassed cap math.
+        try:
+            nav = float(self._nav_callback() or 0.0)
+        except Exception as _nav_err:
+            logger.error(
+                f"[DERIVATIVES_RISK] NAV callback raised: {type(_nav_err).__name__}: {_nav_err}; "
+                f"fail-closed reject"
+            )
+            return f"nav_callback_error:{type(_nav_err).__name__}"
         if nav <= 0:
             return "nav_unknown"
 

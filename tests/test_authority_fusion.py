@@ -76,7 +76,9 @@ def _normal_context(**overrides):
 
 class TestAuthorityMatrixLookup:
     def test_normal_matrix_has_25_agents(self):
-        """CLAUDE.md authority matrix invariant: 25 agents in NORMAL."""
+        """CLAUDE.md authority matrix invariant: 25 agents in NORMAL.
+        [P49 verified 2026-04-25] Earlier audit miscounted; live matrix
+        has 25 entries including soldex (2026-04-15 addition)."""
         assert len(AUTHORITY_MATRIX_NORMAL) == 25
 
     def test_no_trade_returns_no_trade_matrix(self):

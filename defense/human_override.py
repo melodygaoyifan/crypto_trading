@@ -81,7 +81,10 @@ class HumanOverride:
     value: any
     
     # Timing
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    # [P50 2026-04-25] datetime.utcnow() returns naive; downstream comparisons
+    # use timezone-aware datetimes. After restart with persisted override state,
+    # comparisons raised TypeError silently. Use aware default to match.
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     expires_at: Optional[datetime] = None
     duration_hours: float = 4.0  # Default 4 hours
     

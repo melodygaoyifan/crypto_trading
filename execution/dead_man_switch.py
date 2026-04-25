@@ -68,6 +68,12 @@ class DeadManSwitch:
         self._rest_client = rest_client
         self._timeout_sec = timeout_sec
         self._dry_run = dry_run
+        # [P50 2026-04-25] _active is read by DeadManSwitchMonitor in a
+        # background thread + written by start()/stop() on main thread.
+        # Without a lock, stop() may flip False mid-refresh, leading to
+        # half-cancelled positions / hung shutdown.
+        import threading as _threading
+        self._lock = _threading.RLock()
         self._active = False
         self._last_refresh: float = 0.0
         self._refresh_count: int = 0
@@ -160,10 +166,12 @@ class DeadManSwitch:
         Returns:
             True if successfully disabled, False on error.
         """
-        if not self._active:
-            return True
-
-        self._active = False
+        # [P50 2026-04-25] Guard read+write under lock so DeadManSwitchMonitor
+        # background thread can't race the flip mid-refresh.
+        with self._lock:
+            if not self._active:
+                return True
+            self._active = False
 
         if self._dry_run:
             logger.info("[DEAD_MAN] Stopped (DRY RUN)")
@@ -188,7 +196,9 @@ class DeadManSwitch:
 
     @property
     def is_active(self) -> bool:
-        return self._active
+        # [P50 2026-04-25] Read under lock to match start()/stop() writes.
+        with self._lock:
+            return self._active
 
     @property
     def seconds_since_refresh(self) -> float:

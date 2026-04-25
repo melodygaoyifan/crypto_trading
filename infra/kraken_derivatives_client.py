@@ -99,7 +99,11 @@ class DerivativesConfig:
             mode=mode,
             api_key=os.environ.get("KRAKEN_DERIVS_API_KEY", ""),
             api_secret=os.environ.get("KRAKEN_DERIVS_API_SECRET", ""),
-            max_leverage=float(os.environ.get("KRAKEN_DERIVS_MAX_LEVERAGE", "5.0")),
+            # [P50 2026-04-25] Default lowered 5.0 → 3.0 to align with spot
+            # MAX_LEVERAGE (configs/canonical_config.py:95). Operator can still
+            # override via env var, but the silent class-default no longer
+            # exceeds the spot-side cap on accidental activation.
+            max_leverage=float(os.environ.get("KRAKEN_DERIVS_MAX_LEVERAGE", "3.0")),
         )
 
 

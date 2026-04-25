@@ -379,6 +379,16 @@ class AuthorityChain:
                     orderbook_stale=ctx.get("orderbook_stale", False),
                     orderbook_fallback_reason=ctx.get("orderbook_fallback_reason", ""),
                     orderbook_cache_age_seconds=ctx.get("orderbook_cache_age_seconds"),
+                    # [P50 2026-04-25] P47/P48 plumbing extended to the third
+                    # trade_gate.check call site (CLAUDE.md non-negotiable rule
+                    # #6). Without these, DVOL gate (Gate 2) and price-direction
+                    # logic are dead code on the authority_chain path. AuthorityChain
+                    # is currently orphan-instantiated (main.py:2698 never calls
+                    # .evaluate()), so this is defensive, but if the path is
+                    # activated, gate inputs match the other two sites.
+                    dvol_zscore=float(ctx.get("dvol_zscore", 0.0) or 0.0),
+                    dvol_current=float(ctx.get("dvol_current", 0.0) or 0.0),
+                    price_direction=ctx.get("price_direction", "flat"),
                 )
                 
                 # Check decision

@@ -415,16 +415,22 @@ class CorrelationRealtimeController:
                 if asset1 >= asset2:
                     continue
                 
-                curr_corr = current.get(asset1, asset2)
-                prev_corr = previous.get(asset1, asset2)
+                # [P50 2026-04-25] Was current.get(asset1, asset2) — P47-Bug-2
+                # shape. dict.get(k, default) was treating asset2 as the default,
+                # so a missing pair silently returned the string "ETH" instead of
+                # a correlation float. Downstream subtraction would TypeError but
+                # the surrounding try/except: pass swallowed it. Now uses tuple key.
+                curr_corr = current.get((asset1, asset2), 0.0)
+                prev_corr = previous.get((asset1, asset2), 0.0)
                 change = curr_corr - prev_corr
                 
                 # 计算历史变化的标准差
                 changes = []
                 for i in range(1, min(len(self._corr_history["short"]), self.config.jump_lookback)):
                     if i < len(self._corr_history["short"]):
-                        c1 = self._corr_history["short"][-i].get(asset1, asset2)
-                        c2 = self._corr_history["short"][-i-1].get(asset1, asset2)
+                        # [P50 2026-04-25] Same P47-Bug-2 shape fix.
+                        c1 = self._corr_history["short"][-i].get((asset1, asset2), 0.0)
+                        c2 = self._corr_history["short"][-i-1].get((asset1, asset2), 0.0)
                         changes.append(c1 - c2)
                 
                 if len(changes) < 5:

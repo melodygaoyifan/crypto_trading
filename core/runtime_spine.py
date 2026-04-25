@@ -349,7 +349,22 @@ class RuntimeSpine:
     """
     
     def __init__(self, config: Optional[SpineConfig] = None):
-        """Initialize runtime spine."""
+        """Initialize runtime spine.
+
+        [P50 2026-04-25] This class is DEPRECATED. The actual tick loop is in
+        main.py._process_4h_tick_inner. RuntimeSpine had a hardcoded 10% DD
+        halt that conflicts with ULTRA profile (35%). If accidentally
+        instantiated by a test or new code, this would shadow main.py's spine
+        with stale invariants. Loud-fail at instantiation; remove this guard
+        if/when RuntimeSpine is genuinely revived.
+        """
+        import os as _os
+        if _os.environ.get("HMATS_ALLOW_RUNTIME_SPINE") != "1":
+            raise RuntimeError(
+                "[RUNTIME_SPINE_DEPRECATED] RuntimeSpine is deprecated; live "
+                "tick processing is in main.py._process_4h_tick_inner. Set "
+                "HMATS_ALLOW_RUNTIME_SPINE=1 to override (e.g., for testing)."
+            )
         self.config = config or SpineConfig.default()
         
         # State

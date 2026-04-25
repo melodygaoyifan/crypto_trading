@@ -458,12 +458,36 @@ class FeedbackLoop:
         self._subscribers[event_type].append(callback)
     
     def _notify_subscribers(self, event: FeedbackEvent):
-        """Notify all subscribers of event."""
+        """Notify all subscribers of event.
+
+        [P50 2026-04-25] Was logger.warning() then continued — same shape as
+        P15 (silent record_trade_completed AttributeError swallowed). Track
+        consecutive failures per callback, escalate to ERROR after 5 in a row,
+        and log the callback's qualname so operator can identify which subscriber
+        is broken — not just "Subscriber error: ...".
+        """
         for callback in self._subscribers[event.event_type]:
             try:
                 callback(event)
+                # Reset failure counter on success.
+                _qn = getattr(callback, "__qualname__", str(callback))
+                if hasattr(self, "_subscriber_failures") and _qn in self._subscriber_failures:
+                    self._subscriber_failures.pop(_qn, None)
             except Exception as e:
-                logger.warning(f"Subscriber error: {e}")
+                _qn = getattr(callback, "__qualname__", str(callback))
+                if not hasattr(self, "_subscriber_failures"):
+                    self._subscriber_failures = {}
+                self._subscriber_failures[_qn] = self._subscriber_failures.get(_qn, 0) + 1
+                _n = self._subscriber_failures[_qn]
+                if _n >= 5:
+                    logger.error(
+                        f"[FEEDBACK] Subscriber {_qn} has failed {_n}× in a row "
+                        f"(latest: {type(e).__name__}: {e}). Likely AttributeError "
+                        f"from method-name mismatch (P15-shape). Check the callback's "
+                        f"target type for the expected method."
+                    )
+                else:
+                    logger.warning(f"[FEEDBACK] Subscriber {_qn} error ({_n}× consecutive): {e}")
     
     # =========================================================================
     # TICK RESULT RECORDING
