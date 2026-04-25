@@ -1817,6 +1817,19 @@ class HMATSProductionRunner:
     
     def __init__(self, config: ProductionConfig):
         self.config = config
+        # [P64 2026-04-25] Snapshot weekend_config + record self.config object id
+        # at init time. Closes the P45-flagged "config flips to non-dict at runtime"
+        # heisenbug: the runtime tick site at ~line 10706 used to do
+        # `getattr(self.config, "weekend_config", None)` and silently fall back to
+        # `{}` — analyzer showed 90% of rejections hit wk_cfg_present=False even
+        # though startup banner + P0 instantiation read the dict cleanly. Possible
+        # causes (config-object swap, attribute clobber, stale ledger data) all
+        # produce the same symptom. Snapshotting here makes the runtime read
+        # immune to any post-init mutation of self.config or self.config.weekend_config.
+        _wc_init = getattr(config, "weekend_config", None)
+        self._weekend_config_snapshot: Dict = _wc_init if isinstance(_wc_init, dict) else {}
+        self._config_id_at_init = id(config)
+        self._wk_cfg_drift_log_tick = -1  # tick counter for rate-limited drift logs
         self._running = False
         # _paper_restore_failed removed 2026-04-24 — had zero readers;
         # restore failures are logged at the failure site and the method
@@ -10698,23 +10711,38 @@ class HMATSProductionRunner:
             try:
                 _wk_state = self.weekend_manager.update()
                 if _wk_state.is_weekend:
-                    # [P56 2026-04-25] Make the silent dict-fallback visible. Previously
-                    # `_wk_cfg = {}` triggered if `self.config.weekend_config` was None /
-                    # wrong type — every threshold then fell to class default without a
-                    # log line. Class defaults are safe post-P52 (0.30/1.0/20bps match
-                    # live config), but operator should know if config never loaded.
-                    _wk_raw = getattr(self.config, "weekend_config", None)
-                    if isinstance(_wk_raw, dict):
-                        _wk_cfg = _wk_raw
-                    else:
-                        _wk_cfg = {}
-                        if not getattr(self, "_wk_cfg_fallback_logged", False):
+                    # [P64 2026-04-25] Use the init-time snapshot, not a fresh
+                    # `getattr(self.config, ...)` lookup. P45 flagged that the runtime
+                    # site sometimes saw weekend_config=None even though the same
+                    # config object loaded a dict cleanly at startup; analyzer showed
+                    # 90% of rejections hit wk_cfg_present=False. Snapshotting at
+                    # __init__ makes the read immune to any post-init mutation of
+                    # self.config or .weekend_config (object swap, attribute clobber,
+                    # config-reload code path). The snapshot is also a dict by
+                    # construction (init normalized None / wrong-type → {}).
+                    _wk_cfg = self._weekend_config_snapshot
+                    # Drift trace: if the live attribute has drifted away from the
+                    # snapshot, log once per ~50 ticks (not once per process). This
+                    # is the diagnostic the per-process rate-limit was hiding.
+                    _wk_live_raw = getattr(self.config, "weekend_config", None)
+                    _live_is_dict = isinstance(_wk_live_raw, dict)
+                    _config_swapped = id(self.config) != self._config_id_at_init
+                    if (not _live_is_dict) or _config_swapped or (
+                        _live_is_dict and _wk_live_raw is not self._weekend_config_snapshot
+                    ):
+                        _tick_n = getattr(self, "_tick_count", 0)
+                        if _tick_n - getattr(self, "_wk_cfg_drift_log_tick", -1) >= 50:
                             logger.warning(
-                                f"[WEEKEND] weekend_config is "
-                                f"{type(_wk_raw).__name__} (not dict) — falling back to "
-                                f"class defaults. Check config loader."
+                                f"[WEEKEND] config drift detected: "
+                                f"live_type={type(_wk_live_raw).__name__} "
+                                f"live_is_dict={_live_is_dict} "
+                                f"live_id={id(_wk_live_raw) if _wk_live_raw is not None else 'None'} "
+                                f"snapshot_id={id(self._weekend_config_snapshot)} "
+                                f"snapshot_keys={len(self._weekend_config_snapshot)} "
+                                f"config_swapped={_config_swapped} "
+                                f"(using snapshot, ignoring live attribute)"
                             )
-                            self._wk_cfg_fallback_logged = True
+                            self._wk_cfg_drift_log_tick = _tick_n
                     # [FIX-V10S-EXIT] Exit-alpha DRL exits are risk management actions,
                     # not new entries. Skip the entry alpha minimum check — DRL signal
                     # is the authority here, not quant alpha. V10S gross cap still applies.
@@ -12146,37 +12174,43 @@ class HMATSProductionRunner:
         # [AP-1] Adds an INFO log every actionable tick (cum_mult+notional)
         # so operators see the full distribution, not only outliers.
         # =================================================================
-        if _vc0_original_exposure > 0 and intent.is_actionable and not intent.veto_active:
+        if _vc0_original_exposure > 0:
             _vc0_final = abs(intent.target_exposure)
             _vc0_ratio = _vc0_final / _vc0_original_exposure
             _ap1_notional = _vc0_final * float(getattr(self.config, "initial_capital", 10000.0))
+            _ap1_actionable = bool(getattr(intent, "is_actionable", False))
+            _ap1_vetoed = bool(getattr(intent, "veto_active", False))
+            _ap1_veto_reason = getattr(intent, "veto_reason", "") if _ap1_vetoed else ""
             logger.info(
                 f"[AP-1] VC-AUDIT {asset}: engine={_vc0_original_exposure:.4f} "
                 f"-> post={_vc0_final:.4f} cum_mult={_vc0_ratio:.4f} "
-                f"notional=${_ap1_notional:.0f}"
+                f"notional=${_ap1_notional:.0f} "
+                f"actionable={_ap1_actionable} vetoed={_ap1_vetoed} "
+                f"veto_reason='{_ap1_veto_reason}'"
             )
-            if 0 < _ap1_notional < 30.0:
-                logger.warning(
-                    f"[AP-1] INVISIBLE_KILL_NOTIONAL {asset}: "
-                    f"notional=${_ap1_notional:.0f} below $30 minimum "
-                    f"(cum_mult={_vc0_ratio:.4f})"
-                )
-            if _vc0_ratio < 0.15:
-                logger.warning(
-                    f"[VC-0] INVISIBLE_KILL {asset}: engine={_vc0_original_exposure:.4f} -> "
-                    f"post-decide={_vc0_final:.4f} (ratio={_vc0_ratio:.1%}) -- "
-                    f"cumulative multiplier below 15%"
-                )
-            elif _vc0_ratio < 0.50:
+            if _ap1_actionable and not _ap1_vetoed:
+                if 0 < _ap1_notional < 30.0:
+                    logger.warning(
+                        f"[AP-1] INVISIBLE_KILL_NOTIONAL {asset}: "
+                        f"notional=${_ap1_notional:.0f} below $30 minimum "
+                        f"(cum_mult={_vc0_ratio:.4f})"
+                    )
+                if _vc0_ratio < 0.15:
+                    logger.warning(
+                        f"[VC-0] INVISIBLE_KILL {asset}: engine={_vc0_original_exposure:.4f} -> "
+                        f"post-decide={_vc0_final:.4f} (ratio={_vc0_ratio:.1%}) -- "
+                        f"cumulative multiplier below 15%"
+                    )
+                elif _vc0_ratio < 0.50:
+                    logger.info(
+                        f"[VC-0] HEAVY_REDUCTION {asset}: engine={_vc0_original_exposure:.4f} -> "
+                        f"post-decide={_vc0_final:.4f} (ratio={_vc0_ratio:.1%})"
+                    )
+            elif _ap1_vetoed:
                 logger.info(
-                    f"[VC-0] HEAVY_REDUCTION {asset}: engine={_vc0_original_exposure:.4f} -> "
-                    f"post-decide={_vc0_final:.4f} (ratio={_vc0_ratio:.1%})"
+                    f"[VC-0] POST_DECIDE_VETO {asset}: engine={_vc0_original_exposure:.4f} -> VETOED "
+                    f"(reason={_ap1_veto_reason})"
                 )
-        elif _vc0_original_exposure > 0 and intent.veto_active:
-            logger.info(
-                f"[VC-0] POST_DECIDE_VETO {asset}: engine={_vc0_original_exposure:.4f} -> VETOED "
-                f"(reason={getattr(intent, 'veto_reason', 'unknown')})"
-            )
 
         # =================================================================
         # [VC-5] CUMULATIVE MULTIPLIER FLOOR + NOTIONAL MINIMUM
@@ -13306,9 +13340,12 @@ class HMATSProductionRunner:
                     f"|vol={'Y' if _dlr.volatility_applied else 'N'}}}"
                 )
         # P1-04: Weekend status in proof log
+        # [P64 2026-04-25] Use snapshot to match the gate site at line 10706+;
+        # avoids the same getattr-flip class of bug.
         _is_wknd = market_data.get("is_weekend", False)
-        if _is_wknd or self.config.weekend_config:
-            _wk_cap = self.config.weekend_config.get("weekend_soft_veto_cap", 0.40) if self.config.weekend_config else 0.40
+        _wk_snap = getattr(self, "_weekend_config_snapshot", {}) or {}
+        if _is_wknd or _wk_snap:
+            _wk_cap = _wk_snap.get("weekend_soft_veto_cap", 0.40)
             proof_line += f" | weekend={'YES' if _is_wknd else 'NO'}(cap={_wk_cap:.0%})"
         self._proof_logs.append(proof_line)
         logger.info(proof_line)
@@ -16924,6 +16961,33 @@ class HMATSProductionRunner:
             logger.info(
                 f"[LIVE] ExecutionManager verified: exchange={type(self.execution_manager.exchange).__name__}, "
                 f"dry_run={self.execution_manager.dry_run}"
+            )
+
+            # [P64-B 2026-04-25] LIVE-MODE FEEDBACK-LOOP NOTICE
+            # The BRANCH A/B/C/D tree in core/execution_service.py:1828 is gated
+            # `RunMode.PAPER or dry_run` — meaning in LIVE mode, the following
+            # state-recording calls do NOT fire on actual fills:
+            #   • shadow_ledger.record_fill (FILL records → empty)
+            #   • anti_churn.record_fill (AC-2/AC-5 rate limits unenforced)
+            #   • thesis_budget.record_fill (weekly cap not tracked)
+            #   • existence_fuse.record_pnl + on_trade_close (28d kill switch BLIND)
+            #   • trade_attributor.record_entry/exit (DIM 4 attribution dead)
+            #   • confidence_scorer.record_outcome (calibration frozen)
+            #   • strategic_coordinator.record_trade_completed (v521 weight frozen)
+            #   • exit_drl_outcome_ledger.record_close (DRL training data missing)
+            # Verified empirically 2026-04-25: 6+ live fills produced 0 FILL records,
+            # state files dated pre-restart (08:04). Fix is a structural refactor
+            # of execution_service.py — narrow the gate so paper_positions writes
+            # stay paper-only but state recording fires in both modes. Filed as
+            # P64-B for operator review. WARNING here so it's seen on every LIVE
+            # startup until fixed.
+            logger.critical(
+                "[P64-B] LIVE-MODE FEEDBACK-LOOP NOTICE: 8 state-recording loops "
+                "are gated PAPER-only at execution_service.py:1828. existence_fuse, "
+                "thesis_budget, anti_churn, trade_attributor, confidence_scorer, "
+                "strategic_coordinator, exit_drl_outcome_ledger, shadow_ledger.FILL "
+                "are ALL dead in live mode. Restart-to-restart learning + risk "
+                "tracking are SILENT until the gate is narrowed. See CLAUDE.md P64."
             )
 
             # [HEALTH] Layer 1: Startup Health Validation

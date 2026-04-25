@@ -1579,7 +1579,17 @@ class ExecutionManager:
         Returns:
             Summary of cancellation results
         """
-        self.logger.critical(f"[CANCEL-ALL] Initiating emergency order cancellation: {reason}")
+        # [P64-A 2026-04-25] Differentiate severity by reason. graceful_shutdown
+        # is normal lifecycle (called on every container stop) — CRITICAL was
+        # alarmist and operator-fatigue inducing. Real emergencies (stop_order_failure,
+        # disconnect, kill switch) keep CRITICAL.
+        _is_normal_shutdown = (reason == "graceful_shutdown")
+        if _is_normal_shutdown:
+            self.logger.info(f"[CANCEL-ALL] Cancelling open orders on graceful shutdown")
+        else:
+            self.logger.critical(
+                f"[CANCEL-ALL] Initiating emergency order cancellation: {reason}"
+            )
         
         results = {
             "total_orders": 0,
