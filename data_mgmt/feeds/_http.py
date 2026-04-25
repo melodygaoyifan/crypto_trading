@@ -21,6 +21,42 @@ def create_session(**kwargs) -> aiohttp.ClientSession:
     return aiohttp.ClientSession(connector=connector, **kwargs)
 
 
+def parse_retry_after(raw: str | None) -> float | None:
+    """Parse a Retry-After header value (seconds OR HTTP-date) → seconds.
+
+    Returns None if `raw` is empty or unparseable. Negative wait times are
+    clamped to 0. Caller should additionally cap at a sensible ceiling
+    (e.g. 30s) so a malicious server can't request "wait 99999s".
+
+    Extracted from `fetch_with_retry`'s 429 path so direct-call clients
+    (Coinglass, CryptoCompare, etc.) can honor Retry-After without
+    routing through the generic retry helper.
+    """
+    if not raw:
+        return None
+    raw = raw.strip()
+    if not raw:
+        return None
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        pass
+    try:
+        from email.utils import parsedate_to_datetime
+        from datetime import datetime, timezone
+        _dt = parsedate_to_datetime(raw)
+        if _dt is not None:
+            if _dt.tzinfo is None:
+                _dt = _dt.replace(tzinfo=timezone.utc)
+            return max(
+                0.0,
+                (_dt - datetime.now(timezone.utc)).total_seconds(),
+            )
+    except Exception:
+        return None
+    return None
+
+
 async def fetch_with_retry(
     session: aiohttp.ClientSession,
     url: str,

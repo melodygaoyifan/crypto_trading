@@ -18,7 +18,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from data_mgmt.feeds._http import fetch_with_retry
+from data_mgmt.feeds._http import fetch_with_retry, parse_retry_after
 
 
 # =============================================================================
@@ -52,6 +52,40 @@ def _mock_session_with_responses(responses):
 
     session.get = _get
     return session
+
+
+# =============================================================================
+# parse_retry_after helper (used by direct-call clients without retry loop)
+# =============================================================================
+
+class TestParseRetryAfter:
+    def test_none_input_returns_none(self):
+        assert parse_retry_after(None) is None
+
+    def test_empty_string_returns_none(self):
+        assert parse_retry_after("") is None
+        assert parse_retry_after("   ") is None
+
+    def test_seconds_form(self):
+        assert parse_retry_after("5") == 5.0
+        assert parse_retry_after("60") == 60.0
+
+    def test_negative_seconds_clamped_to_zero(self):
+        # max(0.0, ...) clamp
+        assert parse_retry_after("-10") == 0.0
+
+    def test_unparseable_returns_none(self):
+        assert parse_retry_after("not-a-number") is None
+        assert parse_retry_after("Sat, 32 Banana 2026 25:00:00 GMT") is None
+
+    def test_http_date_form(self):
+        from email.utils import format_datetime
+        from datetime import datetime, timezone, timedelta
+        future = datetime.now(timezone.utc) + timedelta(seconds=20)
+        result = parse_retry_after(format_datetime(future))
+        assert result is not None
+        # Should be ~20s, allowing for slight clock drift
+        assert 18.0 <= result <= 22.0
 
 
 @pytest.mark.asyncio

@@ -358,6 +358,14 @@ class CoinglassFeed:
         async with session.get(url, headers=headers, params={"symbol": symbol},
                                timeout=aiohttp.ClientTimeout(total=15)) as resp:
             if resp.status != 200:
+                # [P38 2026-04-24] Make 429 visible — was silently dropped.
+                if resp.status == 429:
+                    from data_mgmt.feeds._http import parse_retry_after
+                    _retry = parse_retry_after(resp.headers.get("Retry-After"))
+                    logger.warning(
+                        f"[COINGLASS] {symbol} OI rate-limited (429), "
+                        f"Retry-After={_retry}s — data missing this poll cycle"
+                    )
                 return None, None
 
             result = await resp.json()
@@ -439,6 +447,13 @@ class CoinglassFeed:
 
         async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as resp:
             if resp.status != 200:
+                if resp.status == 429:
+                    from data_mgmt.feeds._http import parse_retry_after
+                    _retry = parse_retry_after(resp.headers.get("Retry-After"))
+                    logger.warning(
+                        f"[COINGLASS] funding rate-limited (429), "
+                        f"Retry-After={_retry}s — data missing this poll cycle"
+                    )
                 return fr_map
 
             result = await resp.json()
@@ -510,6 +525,13 @@ class CoinglassFeed:
                     timeout=aiohttp.ClientTimeout(total=15),
                 ) as resp:
                     if resp.status != 200:
+                        if resp.status == 429:
+                            from data_mgmt.feeds._http import parse_retry_after
+                            _retry = parse_retry_after(resp.headers.get("Retry-After"))
+                            logger.warning(
+                                f"[COINGLASS] {symbol} liquidation rate-limited (429), "
+                                f"Retry-After={_retry}s — data missing this cycle"
+                            )
                         continue
 
                     result = await resp.json()

@@ -125,7 +125,10 @@ class SolanaOnChainFeed:
                 "method": "getRecentPerformanceSamples",
                 "params": [5],
             }
-            async with session.post(self._rpc_url, json=payload) as resp:
+            async with session.post(
+                self._rpc_url, json=payload,
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
                 if resp.status != 200:
                     logger.warning(f"[SOL_ONCHAIN] RPC returned {resp.status}")
                     return
@@ -156,7 +159,10 @@ class SolanaOnChainFeed:
     async def _fetch_jito(self, session: aiohttp.ClientSession, data: SolanaOnChainData):
         """Fetch Jito MEV tip floor."""
         try:
-            async with session.get(JITO_TIP_URL) as resp:
+            async with session.get(
+                JITO_TIP_URL,
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
                 if resp.status != 200:
                     logger.warning(f"[SOL_ONCHAIN] Jito returned {resp.status}")
                     return

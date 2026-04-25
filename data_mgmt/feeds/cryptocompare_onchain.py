@@ -125,9 +125,20 @@ class CryptoCompareOnChainFeed:
                         url = f"{BASE_URL}/blockchain/latest"
                         params = {"fsym": symbol, "api_key": self._api_key}
 
-                        async with session.get(url, params=params) as resp:
+                        async with session.get(
+                            url, params=params,
+                            timeout=aiohttp.ClientTimeout(total=10),
+                        ) as resp:
                             if resp.status != 200:
-                                logger.warning(f"[CC_ONCHAIN] {symbol}: HTTP {resp.status}")
+                                if resp.status == 429:
+                                    from data_mgmt.feeds._http import parse_retry_after
+                                    _retry = parse_retry_after(resp.headers.get("Retry-After"))
+                                    logger.warning(
+                                        f"[CC_ONCHAIN] {symbol} rate-limited (429), "
+                                        f"Retry-After={_retry}s"
+                                    )
+                                else:
+                                    logger.warning(f"[CC_ONCHAIN] {symbol}: HTTP {resp.status}")
                                 continue
 
                             raw = await resp.json()

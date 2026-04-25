@@ -86,8 +86,17 @@ class CCNewsFeed:
             async with create_session() as session:
                 async with session.get(BASE_URL, params=params, timeout=10) as resp:
                     if resp.status != 200:
-                        self._last_error = f"HTTP {resp.status}"
-                        logger.warning(f"[CC_NEWS] {asset}: {self._last_error}")
+                        if resp.status == 429:
+                            from data_mgmt.feeds._http import parse_retry_after
+                            _retry = parse_retry_after(resp.headers.get("Retry-After"))
+                            self._last_error = f"HTTP 429 (Retry-After={_retry}s)"
+                            logger.warning(
+                                f"[CC_NEWS] {asset} rate-limited (429), "
+                                f"Retry-After={_retry}s — falling back to heuristic"
+                            )
+                        else:
+                            self._last_error = f"HTTP {resp.status}"
+                            logger.warning(f"[CC_NEWS] {asset}: {self._last_error}")
                         return []
                     data = await resp.json()
 
