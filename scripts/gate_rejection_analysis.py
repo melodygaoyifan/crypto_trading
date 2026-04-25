@@ -192,6 +192,50 @@ def analyze(days: int = 30, asset_filter: Optional[str] = None) -> Dict[str, Any
         if r.get("entry_type") in ("FILL", "ORDER_FILLED", "EXECUTION"):
             strategy_fill[s] += 1
 
+    # 5b. STALE_DATA breakdown (P43 — needs data_age + stale_sources fields)
+    stale_sources_pareto = Counter()
+    stale_age_buckets = Counter()
+    stale_orderbook_status = Counter()
+    stale_freshness_mode = Counter()
+    n_stale_with_diag_fields = 0
+    for r in rejects:
+        raw = (r.get("data") or {}).get("rejection_reason", "") or ""
+        if "stale" not in raw.lower():
+            continue
+        details = (r.get("data") or {}).get("gate_details") or {}
+        # Only count entries that have the P43 enrichment fields populated
+        if details.get("data_age_seconds") is not None or details.get("stale_sources"):
+            n_stale_with_diag_fields += 1
+        srcs = details.get("stale_sources") or []
+        if isinstance(srcs, list) and srcs:
+            for s in srcs:
+                stale_sources_pareto[s] += 1
+        else:
+            stale_sources_pareto["<unknown — no diag fields, pre-P43 ledger>"] += 1
+        age = details.get("data_age_seconds")
+        if age is not None:
+            try:
+                age_f = float(age)
+                if age_f < 60:
+                    stale_age_buckets["0-60s"] += 1
+                elif age_f < 300:
+                    stale_age_buckets["60-300s (1-5min)"] += 1
+                elif age_f < 1800:
+                    stale_age_buckets["300-1800s (5-30min)"] += 1
+                elif age_f < 7200:
+                    stale_age_buckets["1800-7200s (30min-2h)"] += 1
+                else:
+                    stale_age_buckets[">7200s (>2h)"] += 1
+            except (ValueError, TypeError):
+                pass
+        ob_stale = details.get("orderbook_stale")
+        ob_fb = details.get("orderbook_fallback_reason", "")
+        if ob_stale is not None:
+            stale_orderbook_status[f"ob_stale={ob_stale}, fb={ob_fb!r}"] += 1
+        fm = details.get("freshness_mode", "")
+        if fm:
+            stale_freshness_mode[fm] += 1
+
     # 5. Fill anatomy (compare each fill against its 5 nearest rejections by time)
     fill_anatomy = []
     for f in fills[:10]:  # limit to 10 fills
@@ -253,6 +297,15 @@ def analyze(days: int = 30, asset_filter: Optional[str] = None) -> Dict[str, Any
             for s in strategy_seen
         },
         "fill_anatomy": fill_anatomy,
+        "stale_data_breakdown": {
+            "n_stale_rejections": sum(1 for r in rejects
+                                       if "stale" in ((r.get("data") or {}).get("rejection_reason", "") or "").lower()),
+            "n_with_diag_fields_p43": n_stale_with_diag_fields,
+            "by_source": stale_sources_pareto.most_common(),
+            "by_age_bucket": stale_age_buckets.most_common(),
+            "by_orderbook_status": stale_orderbook_status.most_common(),
+            "by_freshness_mode": stale_freshness_mode.most_common(),
+        },
     }
 
 
@@ -324,6 +377,28 @@ def render(report: Dict[str, Any]) -> str:
     for s, stats in sorted(report['strategy_fire_rate'].items(),
                            key=lambda kv: -kv[1]['seen']):
         lines.append(f"  {s:20} seen={stats['seen']:5}  filled={stats['filled']:3}  rate={stats['fill_pct']:5.2f}%")
+    lines.append("")
+
+    lines.append("-" * 78)
+    lines.append("STALE_DATA BREAKDOWN (P43 — needs ledger entries with diag fields)")
+    lines.append("-" * 78)
+    sd = report.get('stale_data_breakdown', {})
+    lines.append(f"  Total stale rejects: {sd.get('n_stale_rejections', 0)}")
+    lines.append(f"  With P43 diag fields: {sd.get('n_with_diag_fields_p43', 0)}")
+    if sd.get('by_source'):
+        lines.append("  By stale source:")
+        for src, count in sd['by_source']:
+            lines.append(f"    {src:35} {count}")
+    if sd.get('by_age_bucket'):
+        lines.append("  By data_age_seconds bucket:")
+        for bucket, count in sd['by_age_bucket']:
+            lines.append(f"    {bucket:30} {count}")
+    if sd.get('by_orderbook_status'):
+        lines.append("  By orderbook status:")
+        for status, count in sd['by_orderbook_status']:
+            lines.append(f"    {status:50} {count}")
+    if sd.get('by_freshness_mode'):
+        lines.append(f"  Freshness modes: {dict(sd['by_freshness_mode'])}")
     lines.append("")
 
     lines.append("-" * 78)

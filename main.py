@@ -10415,7 +10415,27 @@ class HMATSProductionRunner:
                 
                 if gate_result.decision.name != "ALLOW":
                     intent.veto_active = True
-                    intent.veto_reason = f"[TRADE_GATE] {gate_result.reason.name}"
+                    # [P43 2026-04-25] Enrich STALE_DATA reasons with which feed
+                    # actually went stale + the actual age. The gate_result.details
+                    # dict has the freshness sub-dict per trade_gate.py:622.
+                    # Without this enrichment, every stale rejection looks identical
+                    # in the shadow ledger, and we can't tell which feed froze.
+                    _gate_details = getattr(gate_result, "details", None) or {}
+                    _freshness = _gate_details.get("freshness") or {}
+                    if gate_result.reason.name == "STALE_DATA":
+                        _stale_sources = _freshness.get("stale_sources") or []
+                        _ob_stale = _freshness.get("orderbook_stale")
+                        _ob_fb = _freshness.get("orderbook_fallback_reason", "")
+                        _ob_age = _freshness.get("orderbook_cache_age_seconds")
+                        intent.veto_reason = (
+                            f"[TRADE_GATE] STALE_DATA "
+                            f"sources={sorted(_stale_sources) if _stale_sources else 'unknown'} "
+                            f"ob_stale={_ob_stale} ob_fb={_ob_fb} ob_age={_ob_age}"
+                        )
+                        # Stash for shadow-ledger gate_details enrichment downstream.
+                        intent._stale_freshness_details = _freshness
+                    else:
+                        intent.veto_reason = f"[TRADE_GATE] {gate_result.reason.name}"
                     logger.warning(f"[TRADE_GATE] {gate_result.decision.name}: {gate_result.reason.name}")
             except Exception as e:
                 # [AUDIT C1] Fail-closed: gate error ->veto (was silent debug skip)
@@ -12842,6 +12862,10 @@ class HMATSProductionRunner:
             try:
                 _sl_direction = agent_signals.get("quant_direction", getattr(intent, "direction", 0.0))
                 _sl_direction_i = -1 if _sl_direction < 0 else (1 if _sl_direction > 0 else 0)
+                # [P43 2026-04-25] Pull freshness diag stashed by trade_gate veto
+                # (see main.py:10418) so the next gate_rejection_analysis run shows
+                # WHICH feed went stale, not just the bucket.
+                _stale_diag = getattr(intent, "_stale_freshness_details", None) or {}
                 self.p0_integrator.shadow_ledger.record_gate_rejection(
                     asset=asset,
                     direction=_sl_direction_i,
@@ -12857,6 +12881,14 @@ class HMATSProductionRunner:
                         "llm_sentiment_source": agent_signals.get("llm_sentiment_source", ""),
                         "drl_action": agent_signals.get("ensemble_action"),
                         "drl_confidence": agent_signals.get("ensemble_confidence"),
+                        # [P43] Data-pipeline observability fields
+                        "data_age_seconds": market_data.get("data_age_seconds"),
+                        "orderbook_stale": market_data.get("orderbook_stale"),
+                        "orderbook_fallback_reason": market_data.get("orderbook_fallback_reason"),
+                        "orderbook_cache_age_seconds": market_data.get("orderbook_cache_age_seconds"),
+                        "stale_sources": _stale_diag.get("stale_sources", []),
+                        "freshness_mode": _stale_diag.get("freshness_mode", ""),
+                        "decision_lag_seconds": _stale_diag.get("decision_lag_seconds"),
                     },
                 )
             except Exception as e:
