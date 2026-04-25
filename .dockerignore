@@ -33,10 +33,10 @@ training/sentiment/
 training/run_training.py
 training/train_*.py
 # Exit DRL needs DiscreteActor + DiscreteQCritic + build_state at runtime —
-# allow these specific files back in even though `train_*.py` matches.
-!training/exit_drl/train_exit_sac.py
-!training/exit_drl/generate_expert_trajectories.py
-!training/exit_drl/__init__.py
+# allow the full package back in even though `train_*.py` and `train_*.py`
+# glob matches train_exit_sac.py.
+!training/exit_drl
+!training/exit_drl/**
 training/**/*.pt
 training/**/*.pkl
 training/**/*.zip
