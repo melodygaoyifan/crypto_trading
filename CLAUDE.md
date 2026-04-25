@@ -410,6 +410,25 @@ Authority matrix (`signals/authority_fusion.py`) + writer (`main.py` somewhere i
 - **Fix:** Added DRL substitution in `_compute_effective_alpha_direction`: when quant abstains (|quant_dir|<0.03) AND DRL is ACTIVE AND |drl_dir|>=0.5 AND drl_conf>=0.3, use DRL's direction as the effective alpha input. Alpha gate then evaluates alpha against DRL's direction, and QUIET_ACCUMULATION hard filter sees |direction|~0.9 instead of 0. Both blockers resolved by one change.
 - **Mitigation:** Alpha gate is a pre-fusion short-circuit. Any time an agent is promoted to DECIDE, check what `effective_alpha_direction` feeds into alpha gate — if the agent isn't a contributor there, its DECIDE authority is nullified in quiet/consolidation regimes.
 
+### P57. [FIXED 2026-04-25] Authority/flag/constant consistency scanner + 2 P3-shape attribution gaps + dead code
+- **Tooling:** new `scripts/authority_consistency_audit.py` does codebase-level static checks for the 3 high-frequency latent-bug classes the operator named (DISABLED-when-shouldn't-be / authority-level-mismatch / parameter-drift). Three sections: (A) authority-matrix wiring quartet (writer / fusion-reader / extractor / matrix-label), (B) ENABLE_* flags without runtime readers, (C) numerical-constant drift across files for a curated list of multi-location values.
+- **Real fixes from first run:**
+  1. **`whale` agent (matrix row 24, ADVISE)** — wrote `whale_flow_direction` at main.py:7733-7739, consumed by integration_v36.py:2340-2346 fusion, but **NOT in `_attr_collected` dict** at main.py:8670+. Attribution silently zeroed every tick. Same P3 shape that affected micro_direction for 14 days. Added entry.
+  2. **`options` agent (matrix row 22, ADVISE)** — wrote `options_short_confirmation` at main.py:6877, consumed at 8800/12392, but missing from `_attr_collected`. Same P3 silent-zero. Added entry.
+  3. **`_extract_whale` + `_extract_options`** added to `agents/signal_envelope.py:_EXTRACTORS` so the wrap_agent_signal factory doesn't fall through to the `unknown_agent` zero-direction stub at line 244.
+  4. **`_margin_tracker`** at main.py:4763 — instantiated as `MarginCostTracker()` with **zero method calls anywhere**. P57-B init-wiring audit (Explore agent) confirmed dead. Removed instantiation; left a breadcrumb comment.
+- **False positives the scanner over-flagged (refinement deferred):**
+  - 6 ADVISE agents flagged "no _EXTRACTORS entry" are non-direction-producers (cvd / squeeze / risk_appetite / structure / macro / lead_lag) — intentionally not in attribution. Scanner needs a directional-only filter.
+  - 7 agents flagged "no direct writer" are written via `agent_signals.update(...)` or by integration_v36 internal — scanner regex is too narrow.
+  - vol_alpha "fusion does NOT consume" — confirmed intentional (matrix row 23 docstring: "fusion branch REMOVED — affects execution only").
+- **Stale profile configs (documented, not fixed):** `configs/high_risk.json`, `configs/ultra_aggressive_5y.json`, `configs/paper_baseline_5y.json`, `configs/paper_profit_5y.json` — all have stale `WEEKEND_MIN_CONFIDENCE` (0.45-0.50 vs live 0.30) and stale `WEEKEND_MIN_ALPHA_MULTIPLIER` (some 0.9 vs live 1.0). None loaded by `scripts/launch_live.py` (only `live_high_risk.json` is). Only consumer is `core/health_validator.py:199` which uses `high_risk.json` for sanity-check only. Filed for future cleanup batch — these don't affect production.
+- **3 execute_intent_v2 call sites verified** (main.py:5361, 12730, 12759, per non-negotiable rule #6 pattern):
+  - Site 1 (MAX_HOLD_TIMEOUT) calls without `agent_signals=` kwarg; Sites 2 + 3 include it. Likely safe (max-hold is rule-based, not signal-driven) but documented.
+  - All 3 use identical `ExecutionContext.build_from_runner(self)` pattern.
+  - No double-execution risk: Site 1 returns early; Site 3 only fires if Site 2's `_exec_effective=False`.
+- **Tests:** 114/114 regression green.
+- **Mitigation pattern:** When adding a new agent, run `python scripts/authority_consistency_audit.py` — it'll flag the missing entry in `_attr_collected` / `_EXTRACTORS` before deploy. Goal: turn the 4-place wiring discipline (P2 / P3 / P8) into mechanical validation rather than human discipline.
+
 ### P56. [DIAG 2026-04-25] Weekend gate enforcement trace + silent-fallback observability
 - **Trace result:** Weekend gate has exactly ONE production enforcement site: `main.py:10674` `WeekendOverrideRules.should_override_entry()`. `integration_v36.py:1691, 1715` reads `is_weekend` but only as INPUT to `risk_agent.assess()` and `risk_veto_classifier.classify()` — neither enforces a weekend-specific veto.
 - **Decision path inside `should_override_entry`** (`liquidity/weekend_manager.py:430-494`):

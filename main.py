@@ -1476,7 +1476,7 @@ class ProductionConfig:
         "BEAR_TREND": 1.0,
         "UNCERTAIN": 0.8,       # [UNLEASH] UL-8a: was 0.6 ->0.8
         "MEAN_REVERT": 0.75,   # [UTIL-3] was 0.5 — mean_revert is primary strategy in this regime
-        "TRANSITION": 0.3,
+        "TRANSITION": 0.5,     # [AP-3] was 0.3 — floor at 0.5 prevents regime-based trade ban under aggressive philosophy
         "SIDEWAYS": 0.70,      # [UTIL-3] was 0.5
         "UNKNOWN": 0.90,   # [FIX-M3] Was 0.75. Unknown ≠ bad regime. Neutral-leaning to avoid cold-start penalty.
         # --- GMM 6-regime names -profit-maximizing (backtest-driven) ---
@@ -4759,8 +4759,10 @@ class HMATSProductionRunner:
         # Each entry: {'entered_bar': int, 'confidence': float, 'trigger': str, 'blending': bool}
         self._mode_ttl: Dict[str, Dict] = {}
 
-        # [REGIME-LEV] Margin cost tracker for leveraged trades
-        self._margin_tracker = MarginCostTracker()
+        # [P57 2026-04-25] Removed `self._margin_tracker = MarginCostTracker()`
+        # — class instantiated but never had any method called on it. If
+        # margin-cost tracking is needed, wire MarginCostTracker.update()
+        # /record_*() into the execute_intent_v2 path explicitly.
 
         # =====================================================================
         # V3.2-C1: ReflectionAgent (ADVISORY -weekly aggregation)
@@ -8038,6 +8040,25 @@ class HMATSProductionRunner:
                     self._fee_cliff_warned = True
                 elif monthly_vol < 8000.0:
                     self._fee_cliff_warned = False  # reset when back below warning band
+                # [AP-4] Continuous fee state observability — log every tick so
+                # operators see effective threshold drift across the cliff.
+                # Threshold = 1.5 * (fee_bps + slippage + latency); friction
+                # already updated above so just log the resulting taker-side number.
+                _ap4_friction = float(taker_fee_bps) + float(getattr(
+                    self.engine.guarantees.alpha_calculator.FRICTION, "slippage_bps", 5.0
+                )) + float(getattr(
+                    self.engine.guarantees.alpha_calculator.FRICTION, "latency_bps", 1.0
+                ))
+                _ap4_threshold = _ap4_friction * 1.5
+                _ap4_zone = (
+                    "FULL_FEE" if monthly_vol >= 12000.0
+                    else "BLEND_ZONE" if monthly_vol >= 10000.0
+                    else "FREE_TIER"
+                )
+                logger.info(
+                    f"[AP-4] FEE_STATE vol=${monthly_vol:,.0f} zone={_ap4_zone} "
+                    f"taker={taker_fee_bps:.1f}bps -> alpha_threshold={_ap4_threshold:.1f}bps"
+                )
             except Exception:
                 pass  # Non-fatal: defaults to free tier (0 fees)
 
@@ -8709,6 +8730,21 @@ class HMATSProductionRunner:
                     "direction": float(agent_signals.get("flow_direction", 0.0) or 0.0),
                     # flow has no native confidence — proxy from whale_flow magnitude
                     "confidence": min(1.0, abs(float(agent_signals.get("whale_flow", 0.0) or 0.0)) / 1e7),
+                },
+                # [P57 2026-04-25] whale + options were direction-producing per the
+                # authority matrix (rows 24 + 22) and consumed by fusion, but were
+                # NEVER in _attr_collected — attribution silently zeroed them every
+                # tick (P3 shape). Adding now so attribution_tracker.record_signals
+                # captures their real contribution. Found by
+                # scripts/authority_consistency_audit.py.
+                "whale": {
+                    "direction": float(agent_signals.get("whale_flow_direction", 0.0) or 0.0),
+                    "confidence": float(agent_signals.get("whale_confidence", 0.0) or 0.0),
+                },
+                "options": {
+                    # options writes options_short_confirmation (-1..1) at main.py:6877.
+                    "direction": float(agent_signals.get("options_short_confirmation", 0.0) or 0.0),
+                    "confidence": float(agent_signals.get("options_confidence", 0.0) or 0.0),
                 },
             }
             if _attr_asset == "SOL":
@@ -12095,14 +12131,27 @@ class HMATSProductionRunner:
                 pass
 
         # =================================================================
-        # [VC-0] CUMULATIVE MULTIPLIER MONITOR
+        # [VC-0] / [AP-1] CUMULATIVE MULTIPLIER MONITOR
         # Observability: compute how much the post-decide chain reduced
         # the original engine exposure. Detects "invisible kills".
-        # No behavior change -logging only.
+        # [AP-1] Adds an INFO log every actionable tick (cum_mult+notional)
+        # so operators see the full distribution, not only outliers.
         # =================================================================
         if _vc0_original_exposure > 0 and intent.is_actionable and not intent.veto_active:
             _vc0_final = abs(intent.target_exposure)
             _vc0_ratio = _vc0_final / _vc0_original_exposure
+            _ap1_notional = _vc0_final * float(getattr(self.config, "initial_capital", 10000.0))
+            logger.info(
+                f"[AP-1] VC-AUDIT {asset}: engine={_vc0_original_exposure:.4f} "
+                f"-> post={_vc0_final:.4f} cum_mult={_vc0_ratio:.4f} "
+                f"notional=${_ap1_notional:.0f}"
+            )
+            if 0 < _ap1_notional < 30.0:
+                logger.warning(
+                    f"[AP-1] INVISIBLE_KILL_NOTIONAL {asset}: "
+                    f"notional=${_ap1_notional:.0f} below $30 minimum "
+                    f"(cum_mult={_vc0_ratio:.4f})"
+                )
             if _vc0_ratio < 0.15:
                 logger.warning(
                     f"[VC-0] INVISIBLE_KILL {asset}: engine={_vc0_original_exposure:.4f} -> "
@@ -12127,7 +12176,7 @@ class HMATSProductionRunner:
         # Also checks $50 notional minimum -below that, trade is noise.
         # Does NOT override VETO or NO_TRADE -only applies to allowed trades.
         # =================================================================
-        _VC5_CUMULATIVE_MULT_FLOOR = 0.30  # [PARAM-FIX] UNLEASH v2 UL-7: was 0.15 ->0.30
+        _VC5_CUMULATIVE_MULT_FLOOR = 0.50  # [AP-8] was 0.30 -> 0.50. 23 multipliers worst-case 4.6%; 0.50 hard floor caps cumulative dampening at 50%.
         _VC5_MIN_NOTIONAL_USD = 30.0  # [FIX-M4] Was 50. On $10K account, $50=0.5% blocks VC-5 floor recovery trades in the $30-50 range.
         if (intent.is_actionable and not intent.veto_active
                 and _vc0_original_exposure > 0 and abs(intent.target_exposure) > 0):

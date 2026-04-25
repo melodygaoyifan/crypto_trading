@@ -189,6 +189,25 @@ def _extract_onchain_graph(raw: Dict) -> Dict[str, Any]:
     }
 
 
+# [P57 2026-04-25] whale + options were direction-producing per the authority
+# matrix (rows 24 + 22) but missing from _EXTRACTORS — silent zeroing through
+# the fallback at line 244.
+def _extract_whale(raw: Dict) -> Dict[str, Any]:
+    return {
+        "direction": float(raw.get("direction", 0.0)),
+        "confidence": float(raw.get("confidence", 0.0)),
+        "reasoning": "whale_flow",
+    }
+
+
+def _extract_options(raw: Dict) -> Dict[str, Any]:
+    return {
+        "direction": float(raw.get("direction", 0.0)),
+        "confidence": float(raw.get("confidence", 0.0)),
+        "reasoning": "options_short_confirmation",
+    }
+
+
 _EXTRACTORS = {
     "quant": _extract_quant,
     "short_bias": _extract_short_bias,
@@ -207,6 +226,9 @@ _EXTRACTORS = {
     "onchain": _extract_onchain,
     "soldex": _extract_soldex,
     "onchain_graph": _extract_onchain_graph,
+    # [P57 2026-04-25]
+    "whale": _extract_whale,
+    "options": _extract_options,
 }
 
 
