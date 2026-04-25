@@ -59,8 +59,12 @@ class DeBERTaSentimentEngine:
             __main__.SentimentConfigV22 = SentimentConfigV22
             __main__.SentimentModelV22 = SentimentModelV22
 
-            # Load checkpoint
-            ckpt = torch.load(str(_path), map_location="cpu", weights_only=False)
+            # Load checkpoint (path-validated; see infra/safe_torch_load.py)
+            from infra.safe_torch_load import safe_torch_load
+            ckpt = safe_torch_load(
+                str(_path), map_location="cpu", weights_only=False,
+                torch_module=torch,
+            )
             self.config = ckpt["config"]
 
             # Build model

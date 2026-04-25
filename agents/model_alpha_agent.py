@@ -1014,8 +1014,11 @@ class RealDecisionTransformer:
             if not hasattr(_runtime_main, "DTConfigV32"):
                 setattr(_runtime_main, "DTConfigV32", DTConfigV32)
 
-            checkpoint = torch.load(self.model_path, map_location=self.device,
-                                    weights_only=False)
+            from infra.safe_torch_load import safe_torch_load
+            checkpoint = safe_torch_load(
+                self.model_path, map_location=self.device,
+                weights_only=False, torch_module=torch,
+            )
 
             # Reconstruct config from checkpoint
             saved_config = checkpoint.get('config')
@@ -1173,7 +1176,11 @@ class RealSequenceAlphaModel:
 
         from training.model_alpha.sequence_alpha_model import SequenceAlphaConfig, SequenceAlphaNet
 
-        checkpoint = torch.load(self.model_path, map_location=self.device, weights_only=False)
+        from infra.safe_torch_load import safe_torch_load
+        checkpoint = safe_torch_load(
+            self.model_path, map_location=self.device,
+            weights_only=False, torch_module=torch,
+        )
         saved_config = checkpoint.get("config", {})
         if isinstance(saved_config, SequenceAlphaConfig):
             config = saved_config
