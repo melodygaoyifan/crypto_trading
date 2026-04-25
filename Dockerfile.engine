@@ -65,6 +65,11 @@ COPY --chown=hmats:hmats dashboard/ ./dashboard/
 COPY --chown=hmats:hmats training/__init__.py ./training/
 COPY --chown=hmats:hmats training/models/__init__.py training/models/film_extractor.py training/models/feature_extractors.py ./training/models/
 COPY --chown=hmats:hmats training/drl/__init__.py training/drl/features.py training/drl/model.py training/drl/train_decision_transformer_v32.py training/drl/oracle_tqc_teacher.py ./training/drl/
+# Exit-DRL training package — runtime needs DiscreteActor + DiscreteQCritic for
+# checkpoint deserialization and the build_state helper for state construction.
+COPY --chown=hmats:hmats training/exit_drl ./training/exit_drl
+# Validator outputs — read by risk/exit_drl_promotion_gate.py for Sharpe lift evidence.
+COPY --chown=hmats:hmats data/exit_drl_validation ./data/exit_drl_validation
 
 VOLUME ["/opt/hmats/models", "/opt/hmats/data", "/opt/hmats/logs"]
 
