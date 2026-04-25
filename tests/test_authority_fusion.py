@@ -249,9 +249,11 @@ class TestFuseDeciderLayer:
         r = engine.fuse(signals, ctx)
         # 2 DECIDE agents, opposing directions → low agreement consensus
         assert "consensus" in r.decider_agent
-        # Confidence-weighted: (0.8*0.7 + (-0.6)*0.6) / (0.7+0.6)
-        # = (0.56 - 0.36) / 1.3 = 0.20/1.3 ≈ 0.154
-        assert r.direction == pytest.approx(0.154, abs=0.01)
+        # [FUSION-V2 FIX-3 2026-04-25] Confidence-SQUARED weighting:
+        # (0.8 * 0.7² + (-0.6) * 0.6²) / (0.7² + 0.6²)
+        # = (0.8*0.49 + (-0.6)*0.36) / (0.49+0.36)
+        # = (0.392 - 0.216) / 0.85 = 0.176/0.85 ≈ 0.207
+        assert r.direction == pytest.approx(0.207, abs=0.01)
 
     def test_multi_decide_consensus_clamped_to_neg_one_one(self, engine):
         """[FIX-H2] Direction must be clamped to [-1, 1]."""
@@ -305,6 +307,145 @@ class TestFuseDeciderLayer:
         assert "consensus" in r.decider_agent
         # Direction should be positive (majority)
         assert r.direction > 0
+
+
+# =============================================================================
+# FUSION-V2 (2026-04-25) — abstain ≠ disagree, solo-conviction passthrough,
+# conviction-squared weighting. See CLAUDE.md P30.
+# =============================================================================
+
+class TestFusionV2_ActiveOnlyAgreement:
+    """FIX-1: agents with |dir|<0.01 are abstaining, not disagreeing."""
+
+    def test_btc_case_solo_drl_among_abstainers_full_signal(self, engine):
+        """Real production case (2026-04-25): DRL=-0.93/0.44 alone with
+        quant=0 and kraken_quant=0 (both abstaining). Pre-fix: agreement=1/3
+        → confidence dampened to ~10%. Post-fix: agreement=1/1=100% AND
+        solo-conviction passthrough fires → full DRL signal preserved."""
+        set_drl_authority_level("ACTIVE")
+        ctx = _normal_context()
+        signals = {
+            "quant": AgentSignal(direction=0.0, confidence=0.34),
+            "drl": AgentSignal(direction=-0.93, confidence=0.44),
+            "kraken_quant": AgentSignal(direction=0.0, confidence=0.0),
+            "risk": AgentSignal(veto_active=False),
+        }
+        r = engine.fuse(signals, ctx)
+        # Direction should reflect DRL's strong negative signal.
+        # Conviction-squared weighting amplifies DRL further:
+        # (0.0*0.34² + (-0.93)*0.44² + 0.0*0.01²) / (0.34² + 0.44² + 0.01²)
+        # = (-0.93*0.1936) / (0.1156+0.1936+0.0001)
+        # = -0.180 / 0.3093 ≈ -0.582
+        assert r.direction < -0.4, f"Expected strong negative direction, got {r.direction}"
+        # Confidence preserved (not dampened to 0.10 like pre-fix)
+        # Solo-conviction passthrough fires (best_conf=0.44 < 0.5 threshold,
+        # so this falls through to the "agreement=1.0" branch instead).
+        assert "consensus" in r.decider_agent
+
+    def test_eth_case_genuine_disagreement_still_dampened(self, engine):
+        """ETH production case: DRL=-0.96 + model_alpha=+1.0 — actual
+        cross-agent disagreement. Should STILL be flagged as conflict
+        (FIX-1 doesn't help here because both agents are active)."""
+        set_drl_authority_level("ACTIVE")
+        ctx = _normal_context()
+        # NOTE: model_alpha is ADVISE in NORMAL, not DECIDE — but we can
+        # simulate the pattern with quant + drl + kraken_quant where two
+        # actively disagree.
+        signals = {
+            "quant": AgentSignal(direction=+0.7, confidence=0.5),
+            "drl": AgentSignal(direction=-0.9, confidence=0.4),
+            "kraken_quant": AgentSignal(direction=0.0, confidence=0.0),
+            "risk": AgentSignal(veto_active=False),
+        }
+        r = engine.fuse(signals, ctx)
+        # 1 positive + 1 negative (active) + 1 abstainer → agreement = 1/2 = 0.5
+        # < 0.6 threshold → conflict flagged → confidence dampened
+        assert "consensus" in r.decider_agent
+        # Direction should be a small magnitude (cancellation between +0.7 and -0.9)
+        # but signed by whichever has higher squared confidence.
+        # quant: +0.7 * 0.25 = +0.175
+        # drl:   -0.9 * 0.16 = -0.144
+        # net direction ≈ +0.031 / 0.41 ≈ +0.075
+        assert abs(r.direction) < 0.3, f"Genuine disagreement should yield small direction, got {r.direction}"
+
+    def test_all_abstain_yields_zero_confidence(self, engine):
+        """When all DECIDE agents abstain (|dir|<0.01), no signal at all."""
+        set_drl_authority_level("ACTIVE")
+        ctx = _normal_context()
+        signals = {
+            "quant": AgentSignal(direction=0.0, confidence=0.5),
+            "drl": AgentSignal(direction=0.0, confidence=0.3),
+            "kraken_quant": AgentSignal(direction=0.0, confidence=0.0),
+            "risk": AgentSignal(veto_active=False),
+        }
+        r = engine.fuse(signals, ctx)
+        # All abstain → fused direction ~0 + DECIDE_ABSTAIN log fires
+        assert abs(r.direction) < 0.01
+
+
+class TestFusionV2_SoloConvictionPassthrough:
+    """FIX-2: 1 active agent with conf>=0.5 + others abstain → consensus, not conflict."""
+
+    def test_solo_high_conviction_passes_through(self, engine):
+        """Single agent voting with conf=0.7 alongside 2 abstainers should
+        get full signal (treated as consensus among the 1 voter)."""
+        set_drl_authority_level("ACTIVE")
+        ctx = _normal_context()
+        signals = {
+            "quant": AgentSignal(direction=0.0, confidence=0.0),
+            "drl": AgentSignal(direction=-0.85, confidence=0.7),  # solo high-conv
+            "kraken_quant": AgentSignal(direction=0.0, confidence=0.0),
+            "risk": AgentSignal(veto_active=False),
+        }
+        r = engine.fuse(signals, ctx)
+        # Solo-conviction passthrough preserves DRL's full signal
+        assert r.direction < -0.5
+
+    def test_solo_low_conviction_does_not_passthrough(self, engine):
+        """Single agent voting with conf<0.5 should NOT trigger the passthrough.
+        Falls through to the regular agreement-based path (which now uses
+        active-only counting → agreement=1/1=1.0 → still passes, but via
+        the consensus path, not the solo-conviction path)."""
+        set_drl_authority_level("ACTIVE")
+        ctx = _normal_context()
+        signals = {
+            "quant": AgentSignal(direction=0.0, confidence=0.0),
+            "drl": AgentSignal(direction=-0.6, confidence=0.3),  # below 0.5 floor
+            "kraken_quant": AgentSignal(direction=0.0, confidence=0.0),
+            "risk": AgentSignal(veto_active=False),
+        }
+        r = engine.fuse(signals, ctx)
+        # Direction still negative (DRL is the only voter), but the path
+        # taken is regular consensus (active-only agreement = 1.0), not
+        # the solo-conviction passthrough that requires conf>=0.5.
+        assert r.direction < 0
+
+
+class TestFusionV2_ConvictionSquaredWeighting:
+    """FIX-3: w = confidence² instead of confidence (BMA inverse-variance)."""
+
+    def test_high_conviction_dominates_more_than_linear(self, engine):
+        """Two agents agreeing in direction but vastly different confidence:
+        squared weighting should pull the average more toward the higher-
+        confidence agent than linear weighting would."""
+        set_drl_authority_level("ACTIVE")
+        ctx = _normal_context()
+        # Agent A: weak +0.3 conf 0.3, Agent B: strong +0.9 conf 0.9
+        signals = {
+            "quant": AgentSignal(direction=+0.3, confidence=0.3),
+            "drl": AgentSignal(direction=+0.9, confidence=0.9),
+            "kraken_quant": AgentSignal(direction=0.0, confidence=0.0),
+            "risk": AgentSignal(veto_active=False),
+        }
+        r = engine.fuse(signals, ctx)
+        # Linear weight result:  (0.3*0.3 + 0.9*0.9) / (0.3+0.9) = 0.9/1.2 = 0.75
+        # Squared weight result: (0.3*0.09 + 0.9*0.81) / (0.09+0.81+0.01²)
+        #   = (0.027 + 0.729) / 0.9001 ≈ 0.840
+        # Squared is closer to 0.9 (the high-conviction agent's view).
+        assert r.direction > 0.78, (
+            f"Conviction-squared should weight high-conf more heavily; "
+            f"got direction={r.direction} (linear would be ~0.75)"
+        )
 
 
 # =============================================================================

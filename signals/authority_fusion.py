@@ -523,14 +523,34 @@ class AuthorityFusionEngine:
             decider_agent = decide_agents[0][0]
             decider_signal = decide_agents[0][1]
         else:
-            # [L3-04] Multiple DECIDE agents - confidence-weighted resolution
+            # [L3-04 + FUSION-V2 2026-04-25] Multiple DECIDE agents.
+            # Resolution combines three changes from CLAUDE.md P30 (Bayesian
+            # Model Averaging alignment):
+            #
+            #   FIX-1: ACTIVE-ONLY AGREEMENT — agents with |dir|<0.01 are
+            #     treated as ABSTAINING, not as DISAGREEING. They drop from
+            #     the agreement denominator entirely. Aligns with Black-
+            #     Litterman: "no view = no contribution".
+            #   FIX-2: SOLO-CONVICTION PASSTHROUGH — when exactly 1 agent
+            #     votes among the active pool AND its confidence >= 0.5,
+            #     treat as consensus rather than minority conflict. Protects
+            #     the case where only DRL has regime-relevant info during
+            #     transitions where TA hasn't caught up yet.
+            #   FIX-3: CONVICTION-SQUARED WEIGHTING — w = confidence² instead
+            #     of confidence. Inverse-variance weighting per BMA / Kalman
+            #     optimum: under Gaussian noise, weight ∝ 1/var ∝ confidence².
+            #     High-conviction agents dominate more decisively (a 0.9-conf
+            #     agent contributes ~9× a 0.3-conf one, vs. 3× under linear).
+            _SOLO_CONVICTION_THRESHOLD = 0.5
             total_weight = 0.0
             weighted_direction = 0.0
             best_agent = decide_agents[0][0]
             best_conf = -1.0
 
             for agent_name, sig in decide_agents:
-                w = max(sig.confidence, 0.01)  # floor to avoid div-by-zero
+                # FIX-3: confidence-squared weighting (inverse-variance optimum)
+                _conf_floor = max(sig.confidence, 0.01)  # floor to avoid div-by-zero
+                w = _conf_floor * _conf_floor
                 weighted_direction += sig.direction * w
                 total_weight += w
                 if sig.confidence > best_conf:
@@ -545,26 +565,59 @@ class AuthorityFusionEngine:
             # [FIX-H2] Clamp direction to [-1, 1]
             final_direction = max(-1.0, min(1.0, final_direction))
 
-            # [FIX-H2] Measure agreement: pairwise sign consistency, not abs(avg).
-            # abs(final_direction) is wrong: agents [+0.9, -0.8, +0.7] → avg=+0.27
-            # which looks "aligned" but agents heavily disagree.
-            # Use: fraction of agents agreeing with the majority sign.
+            # [FIX-H2 + FIX-1 2026-04-25] Measure agreement among ACTIVE
+            # agents only (those with non-trivial direction). Abstainers
+            # don't dilute the agreement ratio — they have no view, so
+            # they don't count for or against. Avoids the failure mode
+            # where DRL=-0.93 + 2 abstainers gets dampened to ~10%
+            # confidence as if it were a 1-of-3 minority opinion.
             _directions = [sig.direction for _, sig in decide_agents]
             _n_pos = sum(1 for d in _directions if d > 0.01)
             _n_neg = sum(1 for d in _directions if d < -0.01)
-            _n_total = len(_directions)
-            direction_agreement = max(_n_pos, _n_neg) / _n_total if _n_total > 0 else 0.0
-            if direction_agreement < 0.6:  # less than 60% agree on direction
-                # Agents heavily disagree - reduce confidence proportionally
-                avg_conf = total_weight / len(decide_agents)
+            _n_active = _n_pos + _n_neg
+            if _n_active > 0:
+                direction_agreement = max(_n_pos, _n_neg) / _n_active
+            else:
+                direction_agreement = 0.0  # nobody voted; no consensus to measure
+            avg_conf = total_weight / len(decide_agents)
+            # avg_conf is built from squared weights so equals avg(confidence²).
+            # Take its sqrt to get a comparable "average confidence" for the
+            # downstream alpha gate (which expects [0, 1] confidence units).
+            try:
+                avg_conf = avg_conf ** 0.5
+            except Exception:
+                avg_conf = 0.0
+
+            # FIX-2: solo-conviction passthrough
+            _solo_conviction = (
+                _n_active == 1
+                and best_conf >= _SOLO_CONVICTION_THRESHOLD
+            )
+            if _solo_conviction:
+                merged_confidence = best_conf
+                logger.info(
+                    f"[DECIDE_SOLO] {best_agent}: solo high-conviction signal "
+                    f"(dir={final_direction:+.3f} conf={best_conf:.3f}) — "
+                    f"treated as consensus among {len(decide_agents)} agents "
+                    f"({_n_active} active, {len(decide_agents) - _n_active} abstaining)"
+                )
+            elif _n_active == 0:
+                # All agents abstain — no signal at all.
+                merged_confidence = 0.0
+                logger.info(
+                    f"[DECIDE_ABSTAIN] all {len(decide_agents)} DECIDE agents "
+                    f"abstain (|dir|<0.01) — fused confidence=0"
+                )
+            elif direction_agreement < 0.6:
+                # Genuine disagreement among active agents — dampen confidence.
                 merged_confidence = avg_conf * direction_agreement
                 logger.info(
-                    f"[DECIDE_CONFLICT] {len(decide_agents)} agents, low agreement "
+                    f"[DECIDE_CONFLICT] {len(decide_agents)} agents "
+                    f"({_n_active} active), low agreement "
                     f"({direction_agreement:.2f}), confidence={merged_confidence:.3f} - "
                     f"agents: {[a for a, _ in decide_agents]}"
                 )
             else:
-                avg_conf = total_weight / len(decide_agents)
                 merged_confidence = avg_conf
 
             # Build merged signal
@@ -575,7 +628,8 @@ class AuthorityFusionEngine:
             )
             logger.info(
                 f"[DECIDE_CONSENSUS] {decider_agent}: dir={final_direction:+.3f} "
-                f"conf={merged_confidence:.3f} (primary={best_agent})"
+                f"conf={merged_confidence:.3f} (primary={best_agent}, "
+                f"active={_n_active}/{len(decide_agents)}, agreement={direction_agreement:.2f})"
             )
 
         result.decider_agent = decider_agent
