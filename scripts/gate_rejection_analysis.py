@@ -241,6 +241,10 @@ def analyze(days: int = 30, asset_filter: Optional[str] = None) -> Dict[str, Any
     wk_mult_normal_pareto = Counter()
     wk_mult_opp_pareto = Counter()
     wk_base_pareto = Counter()
+    # [P52 2026-04-25] Confidence threshold + key list — disambiguates whether the
+    # JSON `min_confidence_weekend` (0.30) or the class default (0.50) is in effect.
+    wk_min_conf_pareto = Counter()
+    wk_cfg_keys_pareto = Counter()
     n_wk_with_diag = 0
     for r in rejects:
         raw = (r.get("data") or {}).get("rejection_reason", "") or ""
@@ -263,6 +267,15 @@ def analyze(days: int = 30, asset_filter: Optional[str] = None) -> Dict[str, Any
         b = details.get("weekend_base_bps")
         wk_base_pareto[
             f"base_bps={b if b is not None else 'NOT_SET'}"
+        ] += 1
+        mc = details.get("weekend_min_confidence")
+        wk_min_conf_pareto[
+            f"min_conf={mc if mc is not None else 'NOT_SET (CLASS_DEFAULT)'}"
+        ] += 1
+        ck = details.get("weekend_cfg_keys") or []
+        wk_cfg_keys_pareto[
+            "has_min_confidence_weekend" if "min_confidence_weekend" in ck
+            else ("missing_min_confidence_weekend" if ck else "no_keys")
         ] += 1
 
     # 5c. STRUCTURE-block breakdown (P44 — needs structure_* gate_details fields)
@@ -398,6 +411,8 @@ def analyze(days: int = 30, asset_filter: Optional[str] = None) -> Dict[str, Any
             "by_mult_normal": wk_mult_normal_pareto.most_common(),
             "by_mult_opp": wk_mult_opp_pareto.most_common(),
             "by_base_bps": wk_base_pareto.most_common(),
+            "by_min_conf": wk_min_conf_pareto.most_common(),
+            "by_cfg_keys": wk_cfg_keys_pareto.most_common(),
         },
     }
 
@@ -540,6 +555,15 @@ def render(report: Dict[str, Any]) -> str:
         lines.append("  By weekend_min_alpha_bps seen at rejection:")
         for b, count in wb['by_base_bps']:
             lines.append(f"    {b:35} {count}")
+    # [P52] confidence threshold + key-list visibility
+    if wb.get('by_min_conf'):
+        lines.append("  By min_confidence_weekend seen at rejection:")
+        for c, count in wb['by_min_conf']:
+            lines.append(f"    {c:45} {count}")
+    if wb.get('by_cfg_keys'):
+        lines.append("  Whether min_confidence_weekend is in the loaded config dict:")
+        for k, count in wb['by_cfg_keys']:
+            lines.append(f"    {k:45} {count}")
     lines.append("")
 
     lines.append("-" * 78)

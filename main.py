@@ -13054,6 +13054,12 @@ class HMATSProductionRunner:
                         "weekend_mult_normal": _wk_diag.get("min_alpha_multiplier_weekend"),
                         "weekend_mult_opp": _wk_diag.get("opportunity_alpha_multiplier_weekend"),
                         "weekend_base_bps": _wk_diag.get("weekend_min_alpha_bps"),
+                        # [P52 2026-04-25] Forward confidence threshold + raw key list so
+                        # forensic analysis can tell whether JSON value or class default
+                        # was in effect (the "min 50%" mystery on 2026-04-25).
+                        "weekend_min_confidence": _wk_diag.get("min_confidence_weekend"),
+                        "weekend_cfg_keys": _wk_diag.get("wk_cfg_keys", []),
+                        "weekend_system_mode": _wk_diag.get("system_mode"),
                     },
                 )
             except Exception as e:

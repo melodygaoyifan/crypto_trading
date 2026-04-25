@@ -403,7 +403,13 @@ class WeekendOverrideRules:
     # editing this constant.
     WEEKEND_MIN_ALPHA_BPS = 20.0        # was hardcoded 33 inside the formula
     WEEKEND_MIN_ALPHA_MULTIPLIER = 1.0  # was 2.0 — calibrated for 24/7 crypto
-    WEEKEND_MIN_CONFIDENCE = 0.50       # was 0.75 — matches live config
+    # [P52 2026-04-25] Lowered 0.50 → 0.30 to match P46 live config
+    # (`live_high_risk.json:min_confidence_weekend = 0.30`). Runtime data on
+    # 2026-04-25 showed weekend rejections firing at "min 50%" even though JSON
+    # had 0.30 set — symptom of class default being read instead of the JSON.
+    # Lowering the default closes the gap regardless of root cause and matches
+    # the same defensive pattern P42 applied to MAX_LEVERAGE.
+    WEEKEND_MIN_CONFIDENCE = 0.30       # was 0.50 — matches live_high_risk.json
     
     # Exit rules
     WEEKEND_REDUCE_AT_HOURS = 12  # Reduce after 12h into weekend
