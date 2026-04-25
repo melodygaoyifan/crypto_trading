@@ -319,6 +319,29 @@ TRACKED_CONSTANTS = [
         "expected": "30",
         "p_history": "P19/P20/P46 all use 0.30",
     },
+    {
+        # [P59 2026-04-25] hard_drawdown_halt — CLAUDE.md says canonical=20%
+        # but live_high_risk.json uses 25%. config_resolver warns; both are
+        # readers, so drift is observable but not always intentional.
+        # Match only assignments / JSON literals — NOT format strings.
+        "name": "hard_drawdown_halt",
+        "patterns": [
+            r'"hard_drawdown_halt"\s*:\s*([0-9.]+)',     # JSON
+            r'\bhard_drawdown_halt\s*=\s*([0-9.]+)\b',   # Python assignment
+        ],
+        "expected": "0.25",  # match live_high_risk.json (the loaded config)
+        "p_history": "canonical=0.20 vs live=0.25 — config_resolver warns",
+    },
+    {
+        # initial_capital — multiple references, production .env=10000 but
+        # scripts/tools default to 100000. Match only call-keyword form.
+        "name": "initial_capital",
+        "patterns": [
+            r"\binitial_capital\s*=\s*([0-9]+(?:_[0-9]+)*)\b",
+        ],
+        "expected": "10000",  # production .env value
+        "p_history": "scripts/ + tools/ default to 100000; production .env=10000",
+    },
 ]
 
 
@@ -360,6 +383,151 @@ def audit_constant_drift() -> dict[str, Any]:
 
 
 # ----------------------------------------------------------------------
+# Section D: DRL feature/state invariants (P59)
+# ----------------------------------------------------------------------
+
+def audit_drl_invariants() -> dict[str, Any]:
+    """Verify DRL feature manifest + state-space invariants per CLAUDE.md.
+
+    Critical invariants (any drift here breaks training-serving parity):
+      - feature_manifest.total_feature_count must equal len(all_features)
+      - total_feature_count must equal 122 (CLAUDE.md documented value)
+      - no_scale_features must contain regime_proba_0..7 + has_external_data
+      - DRL state space = total_feature_count + 4 env state = 126
+    """
+    findings: dict[str, Any] = {"issues": []}
+
+    manifest_path = REPO_ROOT / "configs" / "feature_manifest.json"
+    if not manifest_path.exists():
+        findings["issues"].append("configs/feature_manifest.json missing")
+        return findings
+
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        findings["issues"].append(f"manifest parse error: {e}")
+        return findings
+
+    n_total = manifest.get("total_feature_count")
+    all_feats = manifest.get("all_features", [])
+    n_actual = len(all_feats)
+
+    findings["total_feature_count"] = n_total
+    findings["len_all_features"] = n_actual
+    findings["expected_count"] = 122
+
+    if n_total != n_actual:
+        findings["issues"].append(
+            f"total_feature_count={n_total} but len(all_features)={n_actual} "
+            f"— manifest is internally inconsistent"
+        )
+    if n_total != 122:
+        findings["issues"].append(
+            f"total_feature_count={n_total} differs from CLAUDE.md "
+            f"documented invariant 122 — DRL state space drifted"
+        )
+
+    # No-scale features must include 8 regime_proba + has_external_data.
+    no_scale = set(manifest.get("no_scale_features", []))
+    expected_no_scale = {f"regime_proba_{i}" for i in range(8)} | {
+        "has_external_data"
+    }
+    missing_no_scale = expected_no_scale - no_scale
+    extra_no_scale = no_scale - expected_no_scale
+    if missing_no_scale:
+        findings["issues"].append(
+            f"no_scale_features missing: {sorted(missing_no_scale)}"
+        )
+    if extra_no_scale:
+        findings["issues"].append(
+            f"no_scale_features unexpected extras: {sorted(extra_no_scale)} "
+            "— RobustScaler will skip them (may break inference)"
+        )
+
+    # DRL obs space = features + 4 env state.
+    findings["expected_obs_dim"] = (n_total or 0) + 4
+    findings["expected_obs_dim_documented"] = 126
+
+    return findings
+
+
+# ----------------------------------------------------------------------
+# Section E: ENABLE_* readers depth (P59 — extends Section B)
+# ----------------------------------------------------------------------
+
+def audit_enable_flag_gates() -> dict[str, Any]:
+    """For each ENABLE_* in configs/sota_flags.py, verify the reader is
+    a REAL gate (`if FLAG:` / `getattr(flags, FLAG, ...)`) rather than
+    just an import or string mention. P16 was about flags declared with
+    no reader; this section is about flags read but not actually GATING.
+    """
+    flags_path = REPO_ROOT / "configs" / "sota_flags.py"
+    if not flags_path.exists():
+        return {"error": "sota_flags.py not found"}
+
+    src = _read(flags_path)
+    flag_decls = re.findall(r"^\s*(ENABLE_[A-Z0-9_]+)\s*:\s*bool\s*=", src, re.M)
+
+    findings: dict[str, Any] = {}
+    # Compile once per flag — Python regex (richer than ERE).
+    for flag in flag_decls:
+        # All mentions of the flag name outside the declaration / tests.
+        all_hits = _git_grep(rf"\b{flag}\b")
+        all_hits = [
+            h for h in all_hits
+            if not h.startswith("configs/sota_flags.py")
+            and "test_" not in h
+        ]
+        # Now classify each hit line as a "real gate" or just a mention.
+        # Patterns that count as a real control-flow gate:
+        py_gate_re = re.compile(
+            r'(?:'
+            # 1. getattr(<expr>, "FLAG", ...) — canonical lazy-import gate
+            rf'getattr\(.*["\'](?:{flag})["\']'
+            # 2. <expr>.FLAG — direct attr access
+            rf'|\.(?:{flag})\b'
+            # 3. `if FLAG`/`elif FLAG`/`while FLAG` after `from x import FLAG`
+            rf'|\b(?:if|elif|while)\s+(?:not\s+)?(?:{flag})\b'
+            # 4. assignment from getattr (e.g. `_sa_enabled = getattr(..., "FLAG", ...)`)
+            rf'|=\s*getattr\(.*["\'](?:{flag})["\']'
+            r')'
+        )
+        gate_hits = []
+        for h in all_hits:
+            # Format: "path:line:matched_line"
+            parts = h.split(":", 2)
+            if len(parts) < 3:
+                continue
+            line_text = parts[2]
+            if py_gate_re.search(line_text):
+                gate_hits.append(h)
+        rec: dict[str, Any] = {
+            "n_real_gates": len(gate_hits),
+            "n_total_mentions": len(all_hits),
+            "gates_sample": gate_hits[:3],
+            "issues": [],
+        }
+        if not gate_hits and all_hits:
+            rec["issues"].append(
+                f"{len(all_hits)} mentions but ZERO real gates — "
+                "flag is read but never actually controls behavior (P16-shape)"
+            )
+        elif not all_hits:
+            rec["issues"].append("DEAD: zero readers anywhere")
+        findings[flag] = rec
+
+    return {
+        "n_flags": len(flag_decls),
+        "by_flag": findings,
+        "summary": {
+            "no_real_gate": sorted(
+                f for f, r in findings.items() if r["issues"]
+            ),
+        },
+    }
+
+
+# ----------------------------------------------------------------------
 # Main
 # ----------------------------------------------------------------------
 
@@ -368,7 +536,7 @@ def main() -> int:
     parser.add_argument("--json", action="store_true")
     parser.add_argument(
         "--section",
-        choices=["authority", "flags", "constants", "all"],
+        choices=["authority", "flags", "constants", "drl", "gates", "all"],
         default="all",
     )
     args = parser.parse_args()
@@ -380,6 +548,10 @@ def main() -> int:
         out["flags"] = audit_enable_flags()
     if args.section in ("constants", "all"):
         out["constants"] = audit_constant_drift()
+    if args.section in ("drl", "all"):
+        out["drl_invariants"] = audit_drl_invariants()
+    if args.section in ("gates", "all"):
+        out["flag_gates"] = audit_enable_flag_gates()
 
     if args.json:
         print(json.dumps(out, indent=2, default=str))
@@ -387,7 +559,7 @@ def main() -> int:
 
     # Human-readable summary.
     print("=" * 76)
-    print("HMATS AUTHORITY / FLAG / CONSTANT CONSISTENCY AUDIT (P57-A)")
+    print("HMATS AUTHORITY / FLAG / CONSTANT CONSISTENCY AUDIT (P57-A + P59)")
     print("=" * 76)
 
     if "authority" in out:
@@ -404,11 +576,13 @@ def main() -> int:
 
     if "flags" in out:
         f = out["flags"]
-        print(f"\n--- B) ENABLE_* FLAGS (n={f.get('n_flags', 0)}) ---")
+        print(f"\n--- B) ENABLE_* FLAGS (declared, n={f.get('n_flags', 0)}) ---")
         dead = f.get("summary", {}).get("dead_flags", [])
         print(f"  dead flags: {len(dead)}")
         for flag in dead:
             print(f"  ✗ {flag} — declared but no runtime readers (P16-shape)")
+        if not dead:
+            print("  ✓ all declared flags have at least one reader")
 
     if "constants" in out:
         c = out["constants"]
@@ -424,6 +598,40 @@ def main() -> int:
                     print(f"        {loc}")
         if not drifted:
             print("  ✓ no drift detected across tracked constants")
+
+    if "drl_invariants" in out:
+        d = out["drl_invariants"]
+        print("\n--- D) DRL FEATURE/STATE INVARIANTS (P59) ---")
+        print(
+            f"  total_feature_count={d.get('total_feature_count')} "
+            f"(expected {d.get('expected_count')})"
+        )
+        print(
+            f"  len(all_features)={d.get('len_all_features')}; "
+            f"obs_dim={d.get('expected_obs_dim')} "
+            f"(documented {d.get('expected_obs_dim_documented')})"
+        )
+        if d.get("issues"):
+            for issue in d["issues"]:
+                print(f"  ✗ {issue}")
+        else:
+            print("  ✓ DRL feature/state invariants consistent")
+
+    if "flag_gates" in out:
+        g = out["flag_gates"]
+        print(f"\n--- E) ENABLE_* REAL GATE READERS (P59, n={g.get('n_flags', 0)}) ---")
+        no_gate = g.get("summary", {}).get("no_real_gate", [])
+        print(f"  flags without real gates: {len(no_gate)}")
+        for flag in no_gate:
+            rec = g["by_flag"][flag]
+            print(
+                f"  ✗ {flag} — {rec['n_total_mentions']} mentions, "
+                f"{rec['n_real_gates']} real gates"
+            )
+            for sample in rec.get("gates_sample", []):
+                print(f"      e.g. {sample[:140]}")
+        if not no_gate:
+            print("  ✓ all readable flags have at least one control-flow gate")
 
     print("\n" + "=" * 76)
     return 0

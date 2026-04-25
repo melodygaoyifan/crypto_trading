@@ -410,6 +410,25 @@ Authority matrix (`signals/authority_fusion.py`) + writer (`main.py` somewhere i
 - **Fix:** Added DRL substitution in `_compute_effective_alpha_direction`: when quant abstains (|quant_dir|<0.03) AND DRL is ACTIVE AND |drl_dir|>=0.5 AND drl_conf>=0.3, use DRL's direction as the effective alpha input. Alpha gate then evaluates alpha against DRL's direction, and QUIET_ACCUMULATION hard filter sees |direction|~0.9 instead of 0. Both blockers resolved by one change.
 - **Mitigation:** Alpha gate is a pre-fusion short-circuit. Any time an agent is promoted to DECIDE, check what `effective_alpha_direction` feeds into alpha gate — if the agent isn't a contributor there, its DECIDE authority is nullified in quiet/consolidation regimes.
 
+### P59. [FIXED 2026-04-25] Scanner extension — DRL invariants + ENABLE_* real-gate audit + 3 new dead flags surfaced
+- **Why:** Operator asked whether `/ultrareview` could review the entire codebase. It can't — `/ultrareview <branch|PR>` is diff-based by design. So the alternative is making the static scanner cover the codebase-level checks ultrareview can't easily do (cross-file invariants, declared-vs-gated drift). Three new sections added to `scripts/authority_consistency_audit.py`.
+- **Section D — DRL feature/state invariants:**
+  - Reads `configs/feature_manifest.json`, verifies `total_feature_count == len(all_features) == 122` (CLAUDE.md documented invariant).
+  - Verifies `no_scale_features = {regime_proba_0..7, has_external_data}` exactly (RobustScaler skips these — drift breaks inference).
+  - Reports computed obs_dim = features + 4 env state = 126 vs documented invariant.
+  - **Result this run:** clean. `total_feature_count=122 == len(all_features)=122 == documented`. No drift.
+- **Section E — ENABLE_* real-gate audit (extends Section B):**
+  - Section B (P57) only checked "any reader exists". Section E checks "is the reader actually a CONTROL-FLOW gate" — i.e. `getattr(flags, FLAG, ...)`, `flags.FLAG`, `if FLAG`. Catches the case where a flag is `import`ed, listed in a fallback `DefaultFlags` class, but never used in any `if` statement.
+  - Started with too-strict ERE regex (25/25 false positive). Rewrote as Python-side classification: do `git grep \bFLAG\b`, then run a `re.search` per hit line to detect the actual gate pattern.
+  - **Result this run:** 3 real dead flags surfaced — `ENABLE_TWO_STAGE_INTELLIGENCE`, `ENABLE_STRATEGY_WEIGHTING`, `ENABLE_REGIME_SHORT_FILTER`. All 3 are declared in `configs/sota_flags.py:76-78` AND in `main.py:1010-1012` (DefaultFlags fallback) AND read by `is_p1_enabled()` at `configs/sota_flags.py:400-403` — but `is_p1_enabled()` itself is imported at `main.py:995` and **never called anywhere**. Same shape as P16 / P53 dead flags. Filed for separate cleanup batch.
+- **Section C extended:**
+  - Added `hard_drawdown_halt` (canonical 0.20 vs live 0.25 — `core/risk_governor.py` reads from profile, both values are valid) and `initial_capital` (production .env=10000 vs scripts/tools default=100000) to TRACKED_CONSTANTS.
+  - Refined regex patterns to skip false-positive matches against format strings (`{x:.1%}` no longer matches as "value=.1") and underscore-prefixed names.
+  - **Result this run:** drift on hard_drawdown_halt at `integration_v36.py:100, 660` is intentional fallback (line 660 comment: "overridden by profile e.g. 0.25"). Scanner correctly surfaces for human triage.
+- **CLI:** `python scripts/authority_consistency_audit.py [--section authority|flags|constants|drl|gates|all] [--json]`. Section flags now include `drl` (Section D) and `gates` (Section E).
+- **Tests:** 155/155 regression green. Pure-tooling change, no runtime impact.
+- **Mitigation pattern:** Static scanner now covers (A) authority drift, (B) flag-declared-no-reader, (C) constant drift, (D) DRL feature invariants, (E) flag-read-but-no-gate. The 5 cover ~80% of codebase-level inconsistency classes that ultrareview's diff-based mode can't easily detect. Run periodically; CI-eligible.
+
 ### P58. [FIXED 2026-04-25] 4 pre-existing weekend test failures — stale thresholds + archived module imports
 - **Symptom:** `tests/test_ultra_weekend_manager.py` had 4 long-standing failures predating P54-P57. Two distinct root causes:
   1. **Stale UL-4/UL-5 unleash thresholds** (2 failures): `test_drawdown_hard_veto_on_weekend` used `drawdown=0.12`, `test_correlation_crisis_hard_veto_on_weekend` used `correlation=0.96`. Both were valid HARD-veto inputs when written, but the live `RiskVetoClassifier.HARD_THRESHOLDS` was widened in UL-4 (`correlation 0.95→0.98`) and UL-5 (`drawdown 0.10→0.20`). After widening, `0.12 < 0.20` and `0.96 < 0.98` — both fall through to SOFT veto.
