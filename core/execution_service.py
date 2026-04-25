@@ -1656,8 +1656,27 @@ async def execute_intent_v2(
     exec_result["shadow_fill_count_delta"] = 0
     exec_result["paper_fee_cost_pnl_delta"] = 0.0
 
-    def _note_shadow_fill(recorded: bool) -> None:
+    def _note_shadow_fill(recorded: bool, _site: str = "unknown") -> None:
+        # [P63 2026-04-25] Was a no-op on False. P62/C1 found 0 FILL records
+        # today despite 3 actual fills — the silent-False path masks both
+        # `self.shadow_ledger is None` (init failure) AND
+        # `shadow_ledger.record_fill` returning False without exception.
+        # WARN once when this happens so operator can diagnose.
         if not recorded:
+            try:
+                _sl_state = (
+                    "missing" if not getattr(ctx, "p0_integrator", None)
+                    else (
+                        "None" if getattr(ctx.p0_integrator, "shadow_ledger", None) is None
+                        else "ok-but-returned-False"
+                    )
+                )
+                logger.warning(
+                    f"[SHADOW_LEDGER] FILL not recorded ({_site}): "
+                    f"shadow_ledger_state={_sl_state}, asset={asset}"
+                )
+            except Exception:
+                pass
             return
         exec_result["shadow_fill_recorded"] = True
         exec_result["shadow_fill_count_delta"] = int(
@@ -2049,9 +2068,17 @@ async def execute_intent_v2(
                                 "primary_agent": getattr(intent, "primary_agent", "") or "",
                             },
                         )
-                        _note_shadow_fill(bool(_shadow_fill_ok))
+                        _note_shadow_fill(bool(_shadow_fill_ok), "full_close")
                     except Exception as e:
-                        logger.debug(f"[SHADOW_LEDGER] record_fill (close) failed: {e}")
+                        # [P63 2026-04-25] Was DEBUG. P62/C1 found 0 FILL records
+                        # in shadow_ledger today despite 3 actual fills — failures
+                        # were silently swallowed. WARNING + exception type so
+                        # operator can diagnose why primary_agent attribution
+                        # never reaches the ledger.
+                        logger.warning(
+                            f"[SHADOW_LEDGER] record_fill (close) FAILED: "
+                            f"{type(e).__name__}: {e}"
+                        )
 
                 # [W10] Trade Attributor -record full exit
                 if ctx.trade_attributor:
@@ -2572,9 +2599,13 @@ async def execute_intent_v2(
                             "primary_agent": getattr(intent, "primary_agent", "") or "",
                         },
                     )
-                    _note_shadow_fill(bool(_shadow_fill_ok))
+                    _note_shadow_fill(bool(_shadow_fill_ok), "partial_close")
                 except Exception as e:
-                    logger.debug(f"[SHADOW_LEDGER] record_fill (partial close) failed: {e}")
+                    # [P63 2026-04-25] Was DEBUG. See P62/C1.
+                    logger.warning(
+                        f"[SHADOW_LEDGER] record_fill (partial close) FAILED: "
+                        f"{type(e).__name__}: {e}"
+                    )
 
             # [W10] Trade Attributor -record partial exit
             if ctx.trade_attributor:
@@ -2823,9 +2854,13 @@ async def execute_intent_v2(
                                     "primary_agent": getattr(intent, "primary_agent", "") or "",
                                 },
                             )
-                            _note_shadow_fill(bool(_shadow_fill_ok))
+                            _note_shadow_fill(bool(_shadow_fill_ok), "flip_close")
                         except Exception as _f9_err:
-                            logger.debug(f"[FIX-9] Shadow ledger flip close record failed: {_f9_err}")
+                            # [P63 2026-04-25] Was DEBUG. See P62/C1.
+                            logger.warning(
+                                f"[SHADOW_LEDGER] record_fill (flip close) FAILED: "
+                                f"{type(_f9_err).__name__}: {_f9_err}"
+                            )
                     # [W10] Trade Attributor -record flip exit
                     if ctx.trade_attributor:
                         try:
@@ -3024,9 +3059,17 @@ async def execute_intent_v2(
                             "primary_agent": getattr(intent, "primary_agent", "") or "",
                         },
                     )
-                    _note_shadow_fill(bool(_shadow_fill_ok))
+                    _note_shadow_fill(bool(_shadow_fill_ok), "entry")
                 except Exception as e:
-                    logger.debug(f"[SHADOW_LEDGER] record_fill (entry) failed: {e}")
+                    # [P63 2026-04-25] Was DEBUG. P62/C1: 0 FILL records today
+                    # despite 3 fills — primary_agent attribution lost. WARNING
+                    # + exception type + key kwargs so next deploy reveals why.
+                    logger.warning(
+                        f"[SHADOW_LEDGER] record_fill (entry) FAILED: "
+                        f"{type(e).__name__}: {e} "
+                        f"(asset={asset}, side={side}, size={base_quantity}, "
+                        f"price={fill_price})"
+                    )
 
             # [W10] Trade Attributor -record entry
             if ctx.trade_attributor:

@@ -439,6 +439,24 @@ Authority matrix (`signals/authority_fusion.py`) + writer (`main.py` somewhere i
 - **Fix:** Added DRL substitution in `_compute_effective_alpha_direction`: when quant abstains (|quant_dir|<0.03) AND DRL is ACTIVE AND |drl_dir|>=0.5 AND drl_conf>=0.3, use DRL's direction as the effective alpha input. Alpha gate then evaluates alpha against DRL's direction, and QUIET_ACCUMULATION hard filter sees |direction|~0.9 instead of 0. Both blockers resolved by one change.
 - **Mitigation:** Alpha gate is a pre-fusion short-circuit. Any time an agent is promoted to DECIDE, check what `effective_alpha_direction` feeds into alpha gate — if the agent isn't a contributor there, its DECIDE authority is nullified in quiet/consolidation regimes.
 
+### P63. [FIX 2026-04-25] C1 follow-through — record_fill silent-failure observability
+- **Why:** P62/C1 found ZERO FILL records in `shadow_ledger/ledger_20260425.jsonl` today despite 3 actual fills (08:26 SOL / 08:27 BTC / 08:28 ETH). The `record_fill` call path has TWO silent-failure modes:
+  1. **Exception caught at `logger.debug`** (4 sites at `core/execution_service.py:2054 / 2585 / 2840 / 3045`) — operator never sees the failure.
+  2. **Silent-False return** — `defense/p0_safety_integrator.py:record_fill` returns False without raising when `self.shadow_ledger is None`. The caller's `_note_shadow_fill(False)` was a no-op.
+- **Root cause status:** STILL UNKNOWN until next deploy + next fill. Engine logs show `ShadowLedger: ACTIVE` at startup, so initialization succeeded. The bug must be in the per-call code path. P63 is the diagnostic — P64 will be the actual root-cause fix once we see the WARNING logs.
+- **Fix (observability only):**
+  1. **4 try/except blocks** at execution_service.py:2054/2585/2840/3045 — promoted from `logger.debug` to `logger.warning` with `type(e).__name__: {e}` + key kwargs (asset, side, size, price for the entry path). Operator now sees both the exception type AND the bind values.
+  2. **`_note_shadow_fill(False)` no-op** rewritten — now logs `[SHADOW_LEDGER] FILL not recorded ({site}): shadow_ledger_state={None|missing|ok-but-returned-False}, asset={X}` so we can distinguish "shadow_ledger never initialized" from "init OK but returned False".
+  3. **All 4 call sites** now pass a site tag (`full_close` / `partial_close` / `flip_close` / `entry`) so the WARN line localizes which branch failed.
+- **What to watch after deploy:**
+  - First fill after deploy will trigger ONE of:
+    - `[SHADOW_LEDGER] record_fill ({site}) FAILED: AttributeError: 'NoneType' has no attribute 'X'` — exception in p0_integrator.record_fill
+    - `[SHADOW_LEDGER] FILL not recorded (entry): shadow_ledger_state=None` — shadow_ledger attr lost mid-tick (init race, garbage-collected, etc.)
+    - `[SHADOW_LEDGER] FILL not recorded (entry): shadow_ledger_state=ok-but-returned-False` — record_fill internal bug
+    - **No log line at all** — call site never reached, even though `[FILL-QUALITY]` log fired (this would mean the FILL log fires from a different code path that doesn't go through execute_intent_v2's record_fill block)
+- **Tests:** 155/155 regression green. Pure observability change, zero runtime logic impact.
+- **Mitigation pattern:** When `try/except: pass` or `logger.debug` swallows an exception and the surrounding feature appears to "just not work", promote to WARNING + include `type(e).__name__` in the message. This is the P15 / P25 / P47 family at the *logging* layer — silent debug-level swallows are functionally equivalent to silent attribute drift.
+
 ### P62. [DIAG+FIX 2026-04-25] Live runtime verification of 13 audit items + monitor fill grep fix
 - **Why:** Operator asked to actually RUN/VERIFY (not just static-audit) restart recovery / state persistence / data freshness / cancel-on-disconnect / order ack / maker-taker fallback / existence_fuse / live DRL log / health monitor / trade attribution / cashandcarry / best-of-N / unwired modules / dead configs.
 
