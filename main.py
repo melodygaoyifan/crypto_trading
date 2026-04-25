@@ -7144,6 +7144,9 @@ class HMATSProductionRunner:
                     agent_signals['ensemble_authority'] = self._drl_authority_level  # was hardcoded 'SHADOW'
                     agent_signals['drl_direction'] = max(-1.0, min(1.0, float(_tqc_result.action)))
                     agent_signals['drl_confidence'] = float(_tqc_result.confidence)
+                    # [FIX 2026-04-24 P19] Expose authority level so downstream
+                    # BEST_OF_N_HOLD override in integration_v36 can honor DRL promotion.
+                    agent_signals['drl_authority_level'] = self._drl_authority_level
                     logger.info(
                         f"[DRL_SHADOW] {asset}: action={_tqc_result.action:+.4f} "
                         f"conf={_tqc_result.confidence:.3f} unc={_tqc_result.tqc_uncertainty_ratio:.3f} "
@@ -8426,12 +8429,18 @@ class HMATSProductionRunner:
             # [ATTR-EXPAND] Extended tracker: 16/25 matrix agents with direction+confidence.
             # Skipped (non-direction by architecture): regime, macro, lead_lag, risk,
             # structure, squeeze, cvd, risk_appetite, options, whale.
+            # [FIX 2026-04-24 P19] drl authority label must reflect runtime promotion
+            # state (ADVISE when SHADOW/DISABLED, DECIDE when ACTIVE) to match the
+            # authority_fusion upgrade. Previously hardcoded to ADVISE, so attribution
+            # JSONL always labeled drl=ADVISE even when fusion treated it as DECIDE.
+            # kraken_quant is permanent DECIDE since the 2026-04-22 promotion.
+            _drl_attr_auth = "DECIDE" if str(getattr(self, "_drl_authority_level", "DISABLED") or "").upper() == "ACTIVE" else "ADVISE"
             _ATTR_AUTHORITY = {
                 "quant": "DECIDE", "short_bias": "ADVISE", "sentiment": "ADVISE",
                 "onchain_sol": "ADVISE", "vol_alpha": "ADVISE", "micro": "TRIGGER",
-                "model_alpha": "ADVISE", "kraken_quant": "ADVISE",
+                "model_alpha": "ADVISE", "kraken_quant": "DECIDE",
                 # [ATTR-EXPAND] newly tracked
-                "drl": "ADVISE", "two_stage": "CONFIRM", "funding": "ADVISE",
+                "drl": _drl_attr_auth, "two_stage": "CONFIRM", "funding": "ADVISE",
                 "onchain": "ADVISE", "llm_sentiment": "ADVISE", "flow": "ADVISE",
                 "soldex": "ADVISE", "onchain_graph": "ADVISE",
             }

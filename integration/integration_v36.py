@@ -768,6 +768,27 @@ class HMATSv36Engine:
         # 14.3% SOL win rate and -$60 SHORT losses in paper run.
         _strategy = str(agent_signals.get("primary_strategy", "") or "").lower()
         if _strategy == "hold":
+            # [FIX 2026-04-24 P19] DRL ACTIVE authority override: when DRL is promoted
+            # to DECIDE (promoted 2026-04-22) and emits a strong high-confidence signal,
+            # it should exercise DECIDE authority even if TA Best-of-N picked hold.
+            # Without this override, BEST_OF_N_HOLD short-circuits back to ADVISE
+            # behavior for DRL regardless of promotion state (mismatches CLAUDE.md P10).
+            # Threshold: |dir|>=0.5 AND conf>=0.3 — conservative enough that only
+            # confident DRL signals punch through; routine noise still respects hold.
+            _drl_auth = str(agent_signals.get("drl_authority_level",
+                            getattr(intent, "drl_authority_level", "DISABLED")) or "DISABLED").upper()
+            _drl_dir = float(agent_signals.get("drl_direction", 0.0) or 0.0)
+            _drl_conf = float(agent_signals.get("drl_confidence", 0.0) or 0.0)
+            if (_drl_auth == "ACTIVE"
+                    and abs(_drl_dir) >= 0.5
+                    and _drl_conf >= 0.3):
+                logger.info(
+                    f"[BEST_OF_N_HOLD_OVERRIDE] {asset}: DRL ACTIVE punch-through "
+                    f"(drl_dir={_drl_dir:+.2f} conf={_drl_conf:.2f}) — "
+                    f"skipping hold short-circuit, deferring to fusion"
+                )
+                return False  # Let fusion + alpha gate handle it with DRL's direction
+
             _current_exp = abs(
                 float(
                     position_state.get(
