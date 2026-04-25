@@ -158,11 +158,13 @@ class TestWeekendOverrideRules:
         assert reason == ""
 
     def test_opportunity_alpha_multiplier_falls_back_to_global_when_asset_missing(self):
+        """[P42] base bps lowered 33 → 20, so the calculated min for ETH
+        falls back to (20 * 0.45) = 9 bps. Alpha=5 is below → reject."""
         from liquidity.weekend_manager import WeekendOverrideRules
 
         blocked, reason = WeekendOverrideRules.should_override_entry(
             _weekend_state(),
-            estimated_alpha_bps=9.0,
+            estimated_alpha_bps=5.0,
             confidence=0.60,
             asset="ETH",
             system_mode="OPPORTUNITY",
@@ -174,7 +176,59 @@ class TestWeekendOverrideRules:
         )
 
         assert blocked is True
-        assert "Weekend alpha 9bps < min 15bps" in reason
+        assert "Weekend alpha 5bps < min 9bps" in reason
+
+    def test_weekend_min_alpha_bps_config_overrides_base(self):
+        """[P42] Operator can override the base bps via config —
+        tightens or loosens the floor without editing constants."""
+        from liquidity.weekend_manager import WeekendOverrideRules
+
+        # Operator config sets base=10, mult=1.0 → min = 10 bps
+        blocked, reason = WeekendOverrideRules.should_override_entry(
+            _weekend_state(),
+            estimated_alpha_bps=8.0,
+            confidence=0.60,
+            asset="BTC",
+            system_mode="NORMAL",
+            weekend_config={
+                "weekend_min_alpha_bps": 10.0,
+                "min_alpha_multiplier_weekend": 1.0,
+                "min_confidence_weekend": 0.50,
+            },
+        )
+        assert blocked is True
+        assert "min 10bps" in reason
+
+        # Same alpha, looser base (5 bps) → not blocked
+        blocked, reason = WeekendOverrideRules.should_override_entry(
+            _weekend_state(),
+            estimated_alpha_bps=8.0,
+            confidence=0.60,
+            asset="BTC",
+            system_mode="NORMAL",
+            weekend_config={
+                "weekend_min_alpha_bps": 5.0,
+                "min_alpha_multiplier_weekend": 1.0,
+                "min_confidence_weekend": 0.50,
+            },
+        )
+        assert blocked is False
+
+    def test_weekend_default_floor_is_20_bps(self):
+        """[P42] Default base is 20 bps (was hardcoded 33). With default
+        mult=1.0, the floor is 20 bps for NORMAL mode."""
+        from liquidity.weekend_manager import WeekendOverrideRules
+
+        blocked, reason = WeekendOverrideRules.should_override_entry(
+            _weekend_state(),
+            estimated_alpha_bps=15.0,  # below 20 bps default floor
+            confidence=0.60,
+            asset="BTC",
+            system_mode="NORMAL",
+            weekend_config={"min_confidence_weekend": 0.50},  # only conf override
+        )
+        assert blocked is True
+        assert "min 20bps" in reason
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -238,13 +292,18 @@ class TestIntegratedLiquidityManagerConfig:
     """IntegratedWeekendLiquidityManager accepts weekend_config overrides."""
 
     def test_default_caps(self):
-        """Without config, defaults are conservative."""
+        """Without config, defaults are conservative.
+
+        [P42 2026-04-25] mult lowered 2.0 → 1.0 to match operator's live
+        config (no surprise default for 24/7 crypto). Base bps now also
+        configurable; default 20 (was hardcoded 33)."""
         from liquidity.integrated_manager import IntegratedWeekendLiquidityManager
         mgr = IntegratedWeekendLiquidityManager()
         assert mgr.config.cap_weekend == pytest.approx(0.50)
         assert mgr.config.reduce_at_hours == 12
         assert mgr.config.flatten_at_hours == 36
-        assert mgr.config.min_alpha_multiplier_weekend == pytest.approx(2.0)
+        assert mgr.config.min_alpha_multiplier_weekend == pytest.approx(1.0)
+        assert mgr.config.weekend_min_alpha_bps == pytest.approx(20.0)
 
     def test_ultra_caps(self):
         """With ULTRA config, caps are relaxed."""

@@ -114,8 +114,11 @@ class IntegratedLiquidityConfig:
     expected_slippage_multiplier: float = 1.80  # 80% more slippage expected
     
     # === Entry Requirements ===
-    min_alpha_multiplier_weekend: float = 2.0  # 2x alpha required
-    min_confidence_weekend: float = 0.75       # 75% min confidence
+    # [P42 2026-04-25] See weekend_manager.py P42 — defaults aligned with
+    # 24/7 crypto markets. min_alpha = weekend_min_alpha_bps * mult.
+    weekend_min_alpha_bps: float = 20.0         # was hardcoded 33 in formula
+    min_alpha_multiplier_weekend: float = 1.0   # was 2.0
+    min_confidence_weekend: float = 0.50        # was 0.75
     
     # === Time-based Reduction ===
     reduce_at_hours: int = 12    # Reduce after 12h into weekend
@@ -233,6 +236,9 @@ class IntegratedWeekendLiquidityManager:
                 self.config.flatten_at_hours = int(wc["flatten_at_hours"])
             if "min_alpha_multiplier_weekend" in wc:
                 self.config.min_alpha_multiplier_weekend = float(wc["min_alpha_multiplier_weekend"])
+            if "weekend_min_alpha_bps" in wc:
+                # [P42 2026-04-25] Allow operator to tune the base bps floor.
+                self.config.weekend_min_alpha_bps = float(wc["weekend_min_alpha_bps"])
             if "min_confidence_weekend" in wc:
                 self.config.min_confidence_weekend = float(wc["min_confidence_weekend"])
             logger.info(
@@ -552,8 +558,9 @@ class IntegratedWeekendLiquidityManager:
             )
         
         # Check alpha requirement during reduced periods
+        # [P42 2026-04-25] Was 33 * mult — base now configurable.
         if self.state.quality in [LiquidityQuality.REDUCED, LiquidityQuality.POOR]:
-            min_alpha = 33 * self.config.min_alpha_multiplier_weekend
+            min_alpha = self.config.weekend_min_alpha_bps * self.config.min_alpha_multiplier_weekend
             if estimated_alpha_bps < min_alpha:
                 return (
                     False,

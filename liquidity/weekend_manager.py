@@ -393,8 +393,17 @@ class WeekendOverrideRules:
     WEEKEND_SOL_MAX = 0.25             # 25% max SOL
     
     # Entry rules
-    WEEKEND_MIN_ALPHA_MULTIPLIER = 2.0  # 2x alpha required
-    WEEKEND_MIN_CONFIDENCE = 0.75       # 75% min confidence
+    # [P42 2026-04-25] Lowered defaults after runtime forensics (P41) showed
+    # weekend gate blocks ~25% of all signals on 24/7 crypto markets. The
+    # previous defaults (mult=2.0, base=33) were calibrated for equities-style
+    # weekend illiquidity that doesn't apply to Kraken. New defaults match the
+    # operator's existing live config (`live_high_risk.json:151` already had
+    # `min_alpha_multiplier_weekend: 1.0`) and add a configurable base, so
+    # `min_alpha = WEEKEND_MIN_ALPHA_BPS * _alpha_mult` can be tuned without
+    # editing this constant.
+    WEEKEND_MIN_ALPHA_BPS = 20.0        # was hardcoded 33 inside the formula
+    WEEKEND_MIN_ALPHA_MULTIPLIER = 1.0  # was 2.0 — calibrated for 24/7 crypto
+    WEEKEND_MIN_CONFIDENCE = 0.50       # was 0.75 — matches live config
     
     # Exit rules
     WEEKEND_REDUCE_AT_HOURS = 12  # Reduce after 12h into weekend
@@ -462,7 +471,13 @@ class WeekendOverrideRules:
                     pass
 
         # Alpha check
-        min_alpha = 33 * _alpha_mult
+        # [P42 2026-04-25] Base value (was hardcoded 33) now configurable
+        # via `weekend_min_alpha_bps` in weekend_config, default 20 bps.
+        # Operators tune via JSON without editing constants.
+        _min_alpha_bps_base = float(
+            _wk_cfg.get("weekend_min_alpha_bps", cls.WEEKEND_MIN_ALPHA_BPS)
+        )
+        min_alpha = _min_alpha_bps_base * _alpha_mult
         if estimated_alpha_bps < min_alpha:
             return (True, f"Weekend alpha {estimated_alpha_bps:.0f}bps < min {min_alpha:.0f}bps")
         
