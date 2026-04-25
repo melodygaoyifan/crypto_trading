@@ -81,6 +81,11 @@ COPY --chown=hmats:hmats dashboard/ ./dashboard/
 COPY --chown=hmats:hmats training/__init__.py ./training/
 COPY --chown=hmats:hmats training/models/__init__.py training/models/film_extractor.py training/models/feature_extractors.py ./training/models/
 COPY --chown=hmats:hmats training/drl/__init__.py training/drl/features.py training/drl/model.py ./training/drl/
+# Exit-DRL training package — runtime needs DiscreteActor + DiscreteQCritic for
+# checkpoint deserialization and the build_state helper for state construction.
+COPY --chown=hmats:hmats training/exit_drl/__init__.py training/exit_drl/generate_expert_trajectories.py training/exit_drl/train_exit_sac.py ./training/exit_drl/
+# Validator outputs — read by risk/exit_drl_promotion_gate.py for Sharpe lift evidence.
+COPY --chown=hmats:hmats data/exit_drl_validation/ ./data/exit_drl_validation/
 COPY --chown=hmats:hmats shadow/ ./shadow/
 COPY --chown=hmats:hmats tools/ ./tools/
 
