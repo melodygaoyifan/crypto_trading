@@ -490,6 +490,19 @@ class AuthorityFusionEngine:
             if authority == Authority.DECIDE
         ]
 
+        # [DIAG P21] Periodic visibility into DECIDE pool membership. Every 10th call
+        # logs which agents are currently in DECIDE, so we can tell from a live log
+        # whether DRL is being upgraded correctly.
+        if not hasattr(self, "_decide_pool_diag_counter"):
+            self._decide_pool_diag_counter = 0
+        self._decide_pool_diag_counter += 1
+        if self._decide_pool_diag_counter % 10 == 1:
+            _drl_in = any(a == "drl" for a, _ in decide_agents)
+            logger.info(
+                f"[DECIDE_POOL] matrix={matrix_name} drl_authority={_drl_authority_level} "
+                f"agents={[a for a, _ in decide_agents]} (drl_in_pool={_drl_in})"
+            )
+
         if len(decide_agents) == 0:
             # [FIX-H1] Fallback to quant — but validate it exists
             decider_agent = "quant"

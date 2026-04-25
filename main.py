@@ -4965,6 +4965,34 @@ class HMATSProductionRunner:
         """
         _quant_dir = float(agent_signals.get("quant_direction", 0.0) or 0.0)
         _regime = str(agent_signals.get("regime_state", market_data.get("regime_state", "UNKNOWN")) or "UNKNOWN").upper()
+
+        # [FIX 2026-04-24 P20] When TA Best-of-N picks hold (quant_dir ≈ 0) AND
+        # DRL is ACTIVE with a strong signal, use DRL's direction for the alpha
+        # gate input. Without this, alpha gate sees quant_dir=0 -> alpha=0 ->
+        # rejected, even though P19 lets the intent past BEST_OF_N_HOLD. DRL was
+        # promoted to DECIDE 2026-04-22; alpha gate must honor that by letting
+        # DRL drive direction when quant abstains.
+        # Threshold matches P19 (|dir|>=0.5, conf>=0.3) so routine DRL noise
+        # in quiet regimes doesn't manufacture signal from nothing.
+        _drl_auth = str(agent_signals.get("drl_authority_level", "DISABLED") or "DISABLED").upper()
+        _drl_dir = float(agent_signals.get("drl_direction", 0.0) or 0.0)
+        _drl_conf = float(agent_signals.get("drl_confidence", 0.0) or 0.0)
+        if (abs(_quant_dir) < 0.03
+                and _drl_auth == "ACTIVE"
+                and abs(_drl_dir) >= 0.5
+                and _drl_conf >= 0.3):
+            logger.info(
+                f"[ALPHA_DIR_DRL_SUB] {asset}: quant abstained (dir={_quant_dir:+.3f}), "
+                f"substituting DRL dir={_drl_dir:+.3f} conf={_drl_conf:.2f} "
+                f"regime={_regime}"
+            )
+            return {
+                "direction": _drl_dir,
+                "context_boost": abs(_drl_dir) - abs(_quant_dir),
+                "sources": [f"drl:{_drl_dir:+.3f}"],
+                "regime": _regime,
+            }
+
         _sign = 1.0 if _quant_dir > 0 else (-1.0 if _quant_dir < 0 else 0.0)
         _effective_dir = _quant_dir
         _sources: List[str] = []
