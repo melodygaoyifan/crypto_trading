@@ -2194,7 +2194,29 @@ class HMATSv36Engine:
                 f"[FIX-DRIFT] DRL conf {_drl_conf_raw:.3f} → {_drl_conf:.3f} "
                 f"(drift_w={_drift_w:.2f})"
             )
-        if _drl_level in ("EXIT_ONLY", "ACTIVE") and abs(_drl_dir) > 0.01 and _drl_conf > 0.05:
+        # [P55 2026-04-25] Make DRL abstain visible. Previously when DRL was below
+        # the fusion-entry bar (level/dir/conf gates below) it was silently
+        # dropped from `signals` — P8 "Missing key = dead authority". Emitting a
+        # one-line diagnostic so the AGENT-TRACE / startup log shows WHY DRL
+        # didn't contribute this tick, without changing fusion behavior.
+        _drl_admitted = (
+            _drl_level in ("EXIT_ONLY", "ACTIVE")
+            and abs(_drl_dir) > 0.01
+            and _drl_conf > 0.05
+        )
+        if not _drl_admitted:
+            _abstain_reason = (
+                f"level={_drl_level}" if _drl_level not in ("EXIT_ONLY", "ACTIVE")
+                else f"|dir|={abs(_drl_dir):.3f}<0.01" if abs(_drl_dir) <= 0.01
+                else f"conf={_drl_conf:.3f}<0.05"
+            )
+            # Only log when level itself is ACTIVE or EXIT_ONLY (i.e. DRL was
+            # *expected* to vote). DISABLED is the steady state and not noteworthy.
+            if _drl_level in ("EXIT_ONLY", "ACTIVE"):
+                logger.debug(
+                    f"[FUSION_DRL_ABSTAIN] DRL excluded from fusion: {_abstain_reason}"
+                )
+        if _drl_admitted:
             _drl_tranche_advice = None
             _quant_dir = agent_signals.get("quant_direction", 0.0)
             _drl_alignment = _drl_dir * _quant_dir

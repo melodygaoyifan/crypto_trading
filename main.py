@@ -10659,7 +10659,23 @@ class HMATSProductionRunner:
             try:
                 _wk_state = self.weekend_manager.update()
                 if _wk_state.is_weekend:
-                    _wk_cfg = self.config.weekend_config if isinstance(self.config.weekend_config, dict) else {}
+                    # [P56 2026-04-25] Make the silent dict-fallback visible. Previously
+                    # `_wk_cfg = {}` triggered if `self.config.weekend_config` was None /
+                    # wrong type — every threshold then fell to class default without a
+                    # log line. Class defaults are safe post-P52 (0.30/1.0/20bps match
+                    # live config), but operator should know if config never loaded.
+                    _wk_raw = getattr(self.config, "weekend_config", None)
+                    if isinstance(_wk_raw, dict):
+                        _wk_cfg = _wk_raw
+                    else:
+                        _wk_cfg = {}
+                        if not getattr(self, "_wk_cfg_fallback_logged", False):
+                            logger.warning(
+                                f"[WEEKEND] weekend_config is "
+                                f"{type(_wk_raw).__name__} (not dict) — falling back to "
+                                f"class defaults. Check config loader."
+                            )
+                            self._wk_cfg_fallback_logged = True
                     # [FIX-V10S-EXIT] Exit-alpha DRL exits are risk management actions,
                     # not new entries. Skip the entry alpha minimum check — DRL signal
                     # is the authority here, not quant alpha. V10S gross cap still applies.

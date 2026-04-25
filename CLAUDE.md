@@ -410,6 +410,31 @@ Authority matrix (`signals/authority_fusion.py`) + writer (`main.py` somewhere i
 - **Fix:** Added DRL substitution in `_compute_effective_alpha_direction`: when quant abstains (|quant_dir|<0.03) AND DRL is ACTIVE AND |drl_dir|>=0.5 AND drl_conf>=0.3, use DRL's direction as the effective alpha input. Alpha gate then evaluates alpha against DRL's direction, and QUIET_ACCUMULATION hard filter sees |direction|~0.9 instead of 0. Both blockers resolved by one change.
 - **Mitigation:** Alpha gate is a pre-fusion short-circuit. Any time an agent is promoted to DECIDE, check what `effective_alpha_direction` feeds into alpha gate — if the agent isn't a contributor there, its DECIDE authority is nullified in quiet/consolidation regimes.
 
+### P56. [DIAG 2026-04-25] Weekend gate enforcement trace + silent-fallback observability
+- **Trace result:** Weekend gate has exactly ONE production enforcement site: `main.py:10674` `WeekendOverrideRules.should_override_entry()`. `integration_v36.py:1691, 1715` reads `is_weekend` but only as INPUT to `risk_agent.assess()` and `risk_veto_classifier.classify()` — neither enforces a weekend-specific veto.
+- **Decision path inside `should_override_entry`** (`liquidity/weekend_manager.py:430-494`):
+  1. Resolve `_alpha_mult` (per-asset > global > class default 1.0) — line 442-456
+  2. Resolve `_min_conf` (per-asset > global > class default 0.30 post-P52) — line 457-477
+  3. Resolve `_min_alpha_bps_base` (config > class default 20.0) — line 483-485
+  4. Check 1 (alpha): `estimated_alpha_bps < (_min_alpha_bps_base × _alpha_mult)` — line 487
+  5. Check 2 (confidence): `confidence < _min_conf` — line 491 (uses `_compute_effective_weekend_confidence` per P46)
+- **Observability gap fixed:** `main.py:10662` previously did `_wk_cfg = self.config.weekend_config if isinstance(...) else {}` — silent fallback to `{}` if config never loaded. Class defaults are safe post-P52, but operator had no log of the fallback. Added one-shot WARNING log + `self._wk_cfg_fallback_logged` rate-limit so it doesn't spam. Pattern: same shape as P56's WEEKEND_CONFIG startup banner enrichment but at the rejection site.
+- **No new bugs found.** The decision path is fully instrumented after P52/P55. All 5 weekend-related fixes (P42 alpha base, P45 diag forwarding, P46 confidence DRL substitution, P52 conf default lower, P56 fallback log) form a complete observable chain.
+- **Pre-existing test failures (DEFERRED):** `tests/test_ultra_weekend_manager.py:TestHardVetoesPreserved` + `TestHardSoftVetoClassifierPatch` — 4 failures predating P54/P55/P56 where RiskVetoClassifier returns SOFT for drawdown/correlation when tests expect HARD. Either stale tests or a real classifier regression — separate investigation.
+
+### P55. [DIAG 2026-04-25] integration_v36 fusion internals trace — DRL silent abstain logging
+- **Trace coverage:** Mapped the full `decide()` execution path inside `integration/integration_v36.py` (~960 lines from line 914 to line 1875). 13 numbered steps from entry through fusion to TradeIntentV36 construction.
+- **Key findings (no fixes needed):**
+  1. Pre-fusion short-circuits at `_maybe_apply_pre_alpha_hold()` line 755-912 (BEST_OF_N_HOLD / BLACK_SWAN_SENTINEL / PRE_ALPHA_HOLD). All correctly bypassed by P19 punch-through when DRL ACTIVE + |dir|>=0.5 + conf>=0.3.
+  2. Alpha gate at line 1248 (`self.guarantees.check_alpha_gate(...)`) reads `agent_signals.get("effective_alpha_direction", agent_signals.get("quant_direction", 0.0))` at line 1237 — P20 substitution wired correctly.
+  3. Fusion call at line 1349 invokes `signals/authority_fusion.py:fuse()` after `_build_fusion_signals()` (line 2024-2392) builds the per-agent dict. DRL gets 1.3× confidence boost when ACTIVE (line 2216) — caps at 0.95.
+  4. `kraken_quant` is **always** added to fusion when `|kq_dir|>0.01 AND kq_conf>0.1` (line 2334-2340), NOT just as fallback. Authority matrix v6.8 row 18 (DECIDE) is honored.
+  5. 7 separate early-return-with-direction=0 paths exist; each writes a distinct `intent.veto_reason` — first one wins. By design (fail-closed) but operator can't see if multiple conditions tripped same tick.
+  6. DRL confidence threshold asymmetry: fusion entry requires `conf>0.05`; punch-through layers (P19/P20/P46) require `conf>=0.30`. Intentional asymmetry — fusion is permissive (one vote among many), substitution is strict (about overriding safety gates).
+- **One observability fix (P55):** `_build_fusion_signals` at line 2197 silently dropped DRL from `signals` dict if level/dir/conf gates failed. P8 explicitly warns "Missing key = dead authority". Added `[FUSION_DRL_ABSTAIN]` debug log when DRL was *expected* to vote (level in EXIT_ONLY/ACTIVE) but didn't, with the specific abstain reason. DEBUG-level only so it doesn't spam — appears when grep'd post-incident.
+- **Tests:** 114/114 green. No behavior change — pure observability.
+- **Mitigation pattern:** When tracing a fusion engine, look for "agent silently excluded from output dict" branches. The opposite of P8's "missing writer" — here it's a missing logger that masks an intentional exclusion.
+
 ### P54. [FIXED 2026-04-25] SHORT_CONTROL `_SC_PROTECTED_VETOES` substring keys mismatched real veto_reason format
 - **Symptom:** Decision-path trace surfaced `main.py:9979 _SC_PROTECTED_VETOES` — a defense-in-depth set that prevents `defense/short_control.py:override_veto=True` from clearing system-level vetoes. Audit found 3 of 8 keys would NEVER match a real `intent.veto_reason`:
   - `EXISTENCE_FUSE` — real string is `"[STRATEGY_SUSPENDED] ..."` (main.py:10601)
