@@ -12325,15 +12325,19 @@ class HMATSProductionRunner:
 
                 # [WIRE-DERIV 2026-04-24] Pre-flight router check: if intent
                 # should route to derivatives (cash-carry, leveraged long, or
-                # short+positive funding), dispatch there first. Only falls
-                # through to spot/margin when router returns SPOT_MARGIN.
+                # short+positive funding), try derivatives first.
+                # Fallback rules:
+                #   - DIRECTIONAL (long/short): if derivatives fails -> retry on spot/margin
+                #   - CASH_CARRY: no spot equivalent, failure is terminal
                 exec_result = None
+                _deriv_attempted = False
+                _deriv_strategy = str(getattr(intent, 'quant_strategy_id', '') or '').upper()
                 if self._derivatives_executor is not None:
                     try:
                         if self._execution_router is None:
                             from execution.execution_router import ExecutionRouter
                             self._execution_router = ExecutionRouter(
-                                spot_margin_executor=None,  # not used for DERIVATIVES branch
+                                spot_margin_executor=None,  # we handle fallback here
                                 derivatives_executor=self._derivatives_executor,
                                 derivatives_gate=self._derivatives_gate,
                             )
@@ -12343,25 +12347,41 @@ class HMATSProductionRunner:
                         }
                         _route = self._execution_router.decide_route(intent, _deriv_ctx)
                         if _route.route.value == "DERIVATIVES":
-                            exec_result = await self._execution_router.route_and_execute(
+                            _deriv_attempted = True
+                            _deriv_result = await self._execution_router.route_and_execute(
                                 intent, context=_deriv_ctx,
                             )
-                            if exec_result:
-                                logger.info(
-                                    f"[WIRE-DERIV] Routed {asset}: {_route.reason} "
-                                    f"success={exec_result.get('success')} "
-                                    f"status={exec_result.get('status')}"
+                            logger.info(
+                                f"[WIRE-DERIV] Routed {asset}: {_route.reason} "
+                                f"success={_deriv_result.get('success') if _deriv_result else 'None'} "
+                                f"status={_deriv_result.get('status') if _deriv_result else 'None'}"
+                            )
+                            if _deriv_result and _deriv_result.get("success"):
+                                exec_result = _deriv_result
+                            elif _deriv_strategy == "CASH_CARRY":
+                                # Carry has no spot equivalent — terminal failure
+                                exec_result = _deriv_result
+                                logger.warning(f"[WIRE-DERIV] CARRY terminal failure on {asset} — no spot fallback")
+                            else:
+                                # Directional failure — fall through to spot/margin
+                                logger.warning(
+                                    f"[WIRE-DERIV] Directional derivatives failed, falling back to spot: "
+                                    f"{_deriv_result.get('reason') if _deriv_result else 'no_result'}"
                                 )
+                                exec_result = None
                     except Exception as _route_err:
                         logger.warning(f"[WIRE-DERIV] Router error, falling back to spot: {_route_err}")
                         exec_result = None
 
-                # Default spot/margin path (also used when router returned SPOT_MARGIN)
+                # Default spot/margin path (also used when router returned SPOT_MARGIN,
+                # or when derivatives failed on a directional intent)
                 if exec_result is None:
                     exec_result = await execute_intent_v2(
                         _exec_ctx, asset, intent, market_data,
                         agent_signals=agent_signals,
                     )
+                    if _deriv_attempted:
+                        exec_result["derivatives_fallback"] = True
 
                 _exec_status = str(exec_result.get("status", "") or "").upper()
                 _exec_success = bool(exec_result.get("success", False))
