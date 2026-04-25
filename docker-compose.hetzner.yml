@@ -38,17 +38,14 @@ services:
       options:
         max-size: "50m"
         max-file: "5"
+    # [FIX 2026-04-25] Healthcheck flipped from YAML `>` folded scalar to
+    # exec-form list. The folded form preserved leading whitespace from each
+    # line, and `python -c` reads the whole string as a single program — the
+    # leading spaces looked like an indented block, throwing IndentationError
+    # on every probe. Container stayed `health: starting` indefinitely.
+    # Exec form passes the script as a single shell token (no folding).
     healthcheck:
-      test: >
-        python -c "
-        import json, time;
-        from pathlib import Path;
-        s = Path('/opt/hmats/data/dashboard_state.json');
-        assert s.exists(), 'no state';
-        d = json.loads(s.read_text());
-        assert 'updated_at' in d, 'no ts';
-        print('OK')
-        "
+      test: ["CMD", "python", "-c", "import json; from pathlib import Path; s = Path('/opt/hmats/data/dashboard_state.json'); assert s.exists() and 'updated_at' in json.loads(s.read_text()); print('OK')"]
       interval: 120s
       timeout: 10s
       start_period: 180s
