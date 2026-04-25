@@ -58,7 +58,12 @@ class StaleDataKillSwitch:
     STALE_THRESHOLD_MS = 60000   # [T4] was 2000; unified 60s
     DEAD_THRESHOLD_MS = 300000   # [T4] was 5000; 5min = actually dead
     
-    CRITICAL_SOURCES = ['orderbook', 'trades', 'position']
+    # [P48 2026-04-25 BUG-5] Was just ['orderbook', 'trades', 'position'] but the
+    # only production caller (defense/p0_safety_integrator.py:357) updates
+    # 'kraken_ws' and 'kraken_rest' — names didn't match. Net: critical_stale
+    # check never fired, the kill switch was effectively dead. Added the
+    # actually-used names; kept old names in case future code populates them.
+    CRITICAL_SOURCES = ['kraken_ws', 'kraken_rest', 'orderbook', 'trades', 'position']
     
     def __init__(self):
         self.data_timestamps: Dict[str, DataTimestamp] = {}

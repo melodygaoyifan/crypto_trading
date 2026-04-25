@@ -514,35 +514,57 @@ class P0SafetyIntegrator:
                     orderbook_cache_age_seconds=orderbook_cache_age_seconds,
                     alpha_gate_passed=True,  # [VC-1] Constitution alpha gate already ran
                 )
-                result.gate_mode = gate_result.decision.value
-                
+                # [P48 2026-04-25 BUG-6] Was `.value` (returns int from auto()),
+                # making gate_mode field in shadow ledger an unreadable integer.
+                # `.name` returns symbolic name (e.g., "REJECT") for forensics.
+                result.gate_mode = gate_result.decision.name
+
+                # [P48 2026-04-25 BUG-4] Plumb gate_result.details into result.details
+                # so the shadow ledger forensic tools (P41-P45) can see WHY this gate
+                # rejected, not just THAT it did. Without this, p0_integrator-routed
+                # rejections lost all gate-internal state (DVOL z-score, freshness
+                # sources, edge bps, etc.) downstream.
+                _gate_details = getattr(gate_result, "details", None) or {}
+
                 if gate_result.decision == GateDecision.REJECT:
                     result.result = P0CheckResult.BLOCK_NO_TRADE
                     result.allow_trade = False
                     result.allow_exit = False
                     result.reason = f"Trade gate reject: {gate_result.reason.value}"
+                    result.details.update(_gate_details)
                     logger.warning(f"[P0] TRADE GATE REJECT: {result.reason}")
                     return result
-                
+
                 elif gate_result.decision == GateDecision.EXIT_ONLY:
                     result.result = P0CheckResult.BLOCK_EXIT_ONLY
                     result.allow_trade = False
                     result.allow_exit = True
                     result.reason = f"Trade gate EXIT_ONLY: {gate_result.reason.value}"
-                    
+                    result.details.update(_gate_details)
+
                     if is_entry:
                         logger.warning(f"[P0] TRADE GATE EXIT_ONLY: blocking entry")
                         return result
-                
+
                 elif gate_result.decision == GateDecision.CLIP:
                     # Clip size
                     if hasattr(gate_result, 'clipped_size'):
                         result.clipped_size = gate_result.clipped_size
                         result.result = P0CheckResult.CLIPPED
+                        result.details.update(_gate_details)
                         logger.info(f"[P0] Size clipped: {size:.4f} -> {result.clipped_size:.4f}")
-            
+
             except Exception as e:
-                logger.error(f"[P0] Trade gate error: {e}")
+                # [P48 2026-04-25 BUG-1] Was: log error, fall through with default
+                # allow_trade=True. A gate crash was being silently treated as a PASS,
+                # which violates the fail-closed contract for safety gates.
+                # Now: fail-closed — if gate crashes, block the trade.
+                logger.error(f"[P0] Trade gate error (FAIL-CLOSED): {e}")
+                result.result = P0CheckResult.BLOCK_NO_TRADE
+                result.allow_trade = False
+                result.allow_exit = True  # exits still allowed (risk reduction)
+                result.reason = f"Trade gate exception: {type(e).__name__}: {e}"
+                return result
         
         # =====================================================================
         # CHECK 4: Stale Data Guard

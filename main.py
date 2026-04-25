@@ -5932,6 +5932,17 @@ class HMATSProductionRunner:
                         self.trade_gate.set_data_health_snapshot(_dh_snap)
                     except Exception as _dh_st_err:
                         logger.debug(f"[V10S] trade_gate.set_data_health_snapshot failed: {_dh_st_err}")
+                # [P48 2026-04-25] P47 only wired self.trade_gate. p0_integrator has
+                # its OWN trade_gate at self.p0_integrator.trade_gate (one of the 3
+                # check sites per CLAUDE.md non-negotiable rule #6). Snapshot must
+                # be plumbed there too, otherwise that gate's data-health checks
+                # are dead code (P47 fix incomplete).
+                _p0_gate = getattr(self.p0_integrator, "trade_gate", None) if self.p0_integrator else None
+                if _p0_gate is not None and _p0_gate is not self.trade_gate:
+                    try:
+                        _p0_gate.set_data_health_snapshot(_dh_snap)
+                    except Exception as _dh_p0_err:
+                        logger.debug(f"[V10S] p0_integrator.trade_gate.set_data_health_snapshot failed: {_dh_p0_err}")
                 # [GAP-P1a] Per-source confidence for downstream signal weighting
                 for _ds_type in (DataSourceType.LOB, DataSourceType.SENTIMENT,
                                  DataSourceType.MACRO, DataSourceType.ONCHAIN):
