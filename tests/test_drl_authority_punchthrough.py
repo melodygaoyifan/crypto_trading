@@ -14,11 +14,19 @@ P20 [FIXED 2026-04-24]: _compute_effective_alpha_direction early-returned
   invisible to alpha gate. Substitution added: if quant abstains and DRL is
   ACTIVE+strong, use DRL direction as effective alpha input.
 
+P46 [FIXED 2026-04-25]: weekend gate read intent.quant_confidence which is
+  clamped to [0.40, 0.70] for HOLD-strategy and dampened to 0.33-0.42 by
+  downstream multipliers. DRL's actual confidence (0.40+) was invisible.
+  Substitution added: if DRL ACTIVE + |dir|>=0.5 + drl_conf>=0.3, use
+  max(quant_conf, drl_conf) as effective weekend confidence input.
+
 These tests guard against silent regressions of the punch-through logic
 (e.g., threshold drift, removal of the override branch in a refactor).
 """
 import sys, os
 from types import SimpleNamespace
+
+import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -256,6 +264,110 @@ class TestP20EffectiveAlphaDrlSubstitution:
             {"regime_state": "QUIET_ACCUMULATION"},
         )
         assert result["direction"] == 0.0
+
+
+# =============================================================================
+# P46 — Weekend gate DRL confidence substitution
+# =============================================================================
+
+class TestP46WeekendDrlConfSubstitution:
+    """When DRL is ACTIVE+strong, weekend gate must receive max(quant_conf,
+    drl_conf) instead of just quant_conf — same shape as P20's alpha-direction
+    substitution."""
+
+    def _make_intent(self, quant_conf=0.4):
+        return SimpleNamespace(quant_confidence=quant_conf)
+
+    def test_drl_disabled_returns_quant_conf(self):
+        runner = _make_runner()
+        intent = self._make_intent(quant_conf=0.42)
+        result = runner._compute_effective_weekend_confidence(
+            intent,
+            {
+                "drl_authority_level": "DISABLED",
+                "drl_direction": 0.0,
+                "drl_confidence": 0.0,
+            },
+            "BTC",
+        )
+        assert result == pytest.approx(0.42)
+
+    def test_drl_active_strong_substitutes_higher_drl_conf(self):
+        """The bug case from April 25: quant_conf=0.33, drl_conf=0.44.
+        Substitution should swap to 0.44."""
+        runner = _make_runner()
+        intent = self._make_intent(quant_conf=0.33)
+        result = runner._compute_effective_weekend_confidence(
+            intent,
+            {
+                "drl_authority_level": "ACTIVE",
+                "drl_direction": -0.93,
+                "drl_confidence": 0.44,
+            },
+            "BTC",
+        )
+        assert result == pytest.approx(0.44)
+
+    def test_drl_active_weak_direction_does_not_substitute(self):
+        """DRL ACTIVE but |dir|=0.4 < 0.5 → no substitution."""
+        runner = _make_runner()
+        intent = self._make_intent(quant_conf=0.33)
+        result = runner._compute_effective_weekend_confidence(
+            intent,
+            {
+                "drl_authority_level": "ACTIVE",
+                "drl_direction": 0.4,
+                "drl_confidence": 0.6,
+            },
+            "BTC",
+        )
+        assert result == pytest.approx(0.33)
+
+    def test_drl_active_low_conf_does_not_substitute(self):
+        """DRL ACTIVE but drl_conf=0.2 < 0.3 threshold → no substitution."""
+        runner = _make_runner()
+        intent = self._make_intent(quant_conf=0.33)
+        result = runner._compute_effective_weekend_confidence(
+            intent,
+            {
+                "drl_authority_level": "ACTIVE",
+                "drl_direction": 0.9,
+                "drl_confidence": 0.2,
+            },
+            "BTC",
+        )
+        assert result == pytest.approx(0.33)
+
+    def test_drl_conf_lower_than_quant_does_not_substitute(self):
+        """If quant_conf already >= drl_conf, no swap (substitution should
+        only ever IMPROVE confidence, not lower it)."""
+        runner = _make_runner()
+        intent = self._make_intent(quant_conf=0.7)
+        result = runner._compute_effective_weekend_confidence(
+            intent,
+            {
+                "drl_authority_level": "ACTIVE",
+                "drl_direction": 0.9,
+                "drl_confidence": 0.5,
+            },
+            "BTC",
+        )
+        assert result == pytest.approx(0.7)
+
+    def test_drl_advise_authority_does_not_substitute(self):
+        """DRL must be ACTIVE specifically — ADVISE doesn't trigger swap."""
+        runner = _make_runner()
+        intent = self._make_intent(quant_conf=0.33)
+        result = runner._compute_effective_weekend_confidence(
+            intent,
+            {
+                "drl_authority_level": "ADVISE",
+                "drl_direction": 0.9,
+                "drl_confidence": 0.7,
+            },
+            "BTC",
+        )
+        assert result == pytest.approx(0.33)
 
 
 # =============================================================================

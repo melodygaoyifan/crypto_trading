@@ -5033,6 +5033,46 @@ class HMATSProductionRunner:
 
         return weight
 
+    def _compute_effective_weekend_confidence(
+        self,
+        intent: Any,
+        agent_signals: Dict[str, Any],
+        asset: str,
+    ) -> float:
+        """
+        [P46 2026-04-25] DRL confidence substitution at weekend gate.
+
+        Same shape as P20 alpha-direction substitution: when DRL is ACTIVE and
+        quant chose HOLD (or quant is otherwise damped), `intent.quant_confidence`
+        underrepresents the actual signal strength.
+
+        market_data_pipeline.py:1235-1236 clamps HOLD-strategy quant_conf to
+        [0.40, 0.70], and downstream dampeners (main.py:6203/6407/8798/9429)
+        push it lower (observed 0.33-0.42 in P41 forensics on April 25).
+        Weekend gate sees this clamped value and rejects entries that DRL
+        would otherwise authorize via its own confidence channel.
+
+        Substitute DRL confidence when ALL hold:
+        - drl_authority_level == "ACTIVE"
+        - |drl_direction| >= 0.5  (matches P19/P20 thresholds)
+        - drl_confidence >= 0.3   (matches P19/P20 thresholds)
+        - drl_confidence > quant_confidence (only swap if it actually helps)
+        """
+        _quant_conf = float(getattr(intent, 'quant_confidence', 0.5) or 0.5)
+        _drl_auth = str(agent_signals.get("drl_authority_level", "DISABLED") or "DISABLED").upper()
+        _drl_dir = float(agent_signals.get("drl_direction", 0.0) or 0.0)
+        _drl_conf = float(agent_signals.get("drl_confidence", 0.0) or 0.0)
+        if (_drl_auth == "ACTIVE"
+                and abs(_drl_dir) >= 0.5
+                and _drl_conf >= 0.3
+                and _drl_conf > _quant_conf):
+            logger.info(
+                f"[WEEKEND_CONF_DRL_SUB] {asset}: quant_conf={_quant_conf:.2f} "
+                f"-> drl_conf={_drl_conf:.2f} (drl ACTIVE, dir={_drl_dir:+.2f})"
+            )
+            return _drl_conf
+        return _quant_conf
+
     def _compute_effective_alpha_direction(
         self,
         asset: str,
@@ -10580,10 +10620,13 @@ class HMATSProductionRunner:
                         _wk_blocked = False
                         _wk_reason = ""
                     else:
+                        _wk_eff_conf = self._compute_effective_weekend_confidence(
+                            intent, agent_signals, asset
+                        )
                         _wk_blocked, _wk_reason = WeekendOverrideRules.should_override_entry(
                             _wk_state,
                             estimated_alpha_bps=getattr(intent, 'alpha_estimated_bps', 0.0),
-                            confidence=getattr(intent, 'quant_confidence', 0.5),
+                            confidence=_wk_eff_conf,
                             asset=asset,
                             system_mode=getattr(intent, 'system_mode', ''),
                             weekend_config=_wk_cfg,

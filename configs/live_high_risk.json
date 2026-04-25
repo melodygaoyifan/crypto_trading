@@ -149,7 +149,7 @@
     "reduce_at_hours": 999,
     "flatten_at_hours": 999,
     "min_alpha_multiplier_weekend": 1.0,
-    "min_confidence_weekend": 0.50,
+    "min_confidence_weekend": 0.30,
     "opportunity_alpha_multiplier_weekend": 0.45,
     "opportunity_alpha_multiplier_weekend_by_asset": {
       "BTC": 0.25,
