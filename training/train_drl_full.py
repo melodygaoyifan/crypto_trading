@@ -1179,13 +1179,24 @@ class FullDRLTrainer:
                     logger.warning(f"  OOD detector fit failed (non-fatal): {e}")
 
                 # Create environments
+                # [P22 2026-04-24] SubprocVecEnv path was reachable despite header
+                # invariant ("DummyVecEnv ONLY"). Now refuses unless an explicit
+                # opt-out env var is set, since SubprocVecEnv deadlocks on Windows
+                # and gives no speedup on WSL2 — accidentally setting
+                # vec_env_type="subproc" used to silently produce a hung run.
                 if self.vec_env_type == "subproc" and self.n_envs > 1:
+                    if os.environ.get("HMATS_ALLOW_SUBPROC_VEC_ENV") != "1":
+                        raise RuntimeError(
+                            "SubprocVecEnv requested but blocked by invariant "
+                            "(deadlocks on Windows, no speedup on WSL2). To override, "
+                            "set HMATS_ALLOW_SUBPROC_VEC_ENV=1. See file header."
+                        )
                     from stable_baselines3.common.vec_env import SubprocVecEnv
                     train_env = SubprocVecEnv([
                         lambda df=train_df: self._create_env(df, augment_enabled=self.augment)
                         for _ in range(self.n_envs)
                     ])
-                    logger.info(f"  SubprocVecEnv: {self.n_envs} workers")
+                    logger.info(f"  SubprocVecEnv: {self.n_envs} workers (override active)")
                 else:
                     train_env = DummyVecEnv([lambda df=train_df: self._create_env(df, augment_enabled=self.augment)])
                 # Eval always DummyVecEnv (single env, deterministic)

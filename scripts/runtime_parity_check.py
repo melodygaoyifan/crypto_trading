@@ -44,7 +44,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(message)s")
 logger = logging.getLogger("ParityCheck")
 
 ASSETS = ["BTC", "ETH", "SOL"]
-BEST_FOLDS = {"BTC": "fold_3", "ETH": "fold_1", "SOL": "fold_3"}
+BEST_FOLDS = {"BTC": "fold_3", "ETH": "fold_3", "SOL": "fold_3"}  # [P22 2026-04-24] ETH was fold_1 (stale); aligned with drl/ensemble.py + drl/runtime_obs_builder.py + training/drl/oracle_tqc_teacher.py
 N_STACK = 8
 OBS_DIM = 126
 N_FEATURES = 122
