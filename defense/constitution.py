@@ -44,7 +44,7 @@ CANONICAL_SCHEMA = {
     "required": {
         "current_price": {"type": float, "min": 0.0001, "max": 1_000_000_000},
         "volume_24h": {"type": float, "min": 0},
-        "data_age_seconds": {"type": float, "min": 0, "max": 10.0},
+        "data_age_seconds": {"type": float, "min": 0, "max": 60.0},  # [P22 2026-04-24] aligned with MAX_DATA_AGE_SECONDS class constant; 4H tick cycle
     },
     # === CRITICAL KEYS (missing -> NO_TRADE in NORMAL, warning in OPPORTUNITY) ===
     "critical": {

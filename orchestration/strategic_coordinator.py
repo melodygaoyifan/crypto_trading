@@ -795,7 +795,12 @@ class StrategicCoordinator:
 
         # --- [v9-PATCH-4] Leverage gating ---
         _PATCH_4_ACTIVE = False  # Advisory-first: set True after paper validation
-        MAX_LEVERAGE = 2.0
+        # [P22 2026-04-24] Was hardcoded 2.0; consolidated to canonical_config.MAX_LEVERAGE (3.0)
+        # to prevent silent under-sizing if _PATCH_4_ACTIVE is ever flipped on.
+        try:
+            from configs.canonical_config import MAX_LEVERAGE
+        except Exception:
+            MAX_LEVERAGE = 3.0
         try:
             total_exposure = sum(
                 abs(pos.get('notional_usd', 0) if isinstance(pos, dict) else getattr(pos, 'notional_usd', 0))

@@ -1,6 +1,6 @@
 # HMATS — Project Status & Development Guidelines
 
-**Last updated:** 2026-04-22
+**Last updated:** 2026-04-24
 **Version:** HMATS v6.8.0
 **Live mode:** Kraken, Hetzner CPX21, `configs/live_high_risk.json`
 
@@ -24,7 +24,7 @@
 | **Binance WS (micro)** | ACTIVE | taker flow + mark price for cross-exchange microstructure |
 | **Discord alerts** | ACTIVE | webhook in `.env` → `DiscordLogHandler` forwards ERROR/CRITICAL + 4H heartbeat |
 | **Attribution tracker** | ACTIVE | 16-agent coverage (see §Authority Matrix) |
-| **Execution shadow** | ACTIVE | Re-enabled 2026-04-24 after self→ctx bugs fixed + AC-2 snapshot. Watch `data/shadow_exec_comparison.jsonl` for CRITICAL MISMATCH rate before cutover |
+| **Execution shadow** | RETIRED | Cutover to `execute_intent_v2` completed 2026-04-18 (commit ef4060b); the shadow call site was deleted in that same commit. Snapshot-capture dead code + `_enable_execution_shadow` flag removed 2026-04-24. Re-enabling requires a `shadow_mode` kwarg on `execute_intent_v2` that short-circuits the ~10 live `record_*()` mutations — dict deep-copy alone would double-record anti_churn/thesis_budget/existence_fuse/trade_attributor/etc. |
 
 **Verification commands** (run these when in doubt):
 ```bash
@@ -185,6 +185,38 @@ Adding a new agent requires **3 files**: agent_signals write site + `_attr_colle
 ### P8. Three places to update when adding/removing a fusion agent
 Authority matrix (`signals/authority_fusion.py`) + writer (`main.py` somewhere in tick loop) + `_build_fusion_signals` consumer (`integration/integration_v36.py`). Missing any one → agent is a ghost.
 
+### P25. [FIXED 2026-04-24] `ctx.intent` was undeclared → PnL attribution wrote empty `primary_agent` to every fill
+- **Symptom:** `shadow_ledger` FILL records all carried `primary_agent=""` despite the 2026-04-22 fix that was supposed to populate it for `agent_audit_16.py DIM 4`. Agent attribution quality metric was permanently 0 across the fleet.
+- **Cause:** `execute_intent_v2` writes `"primary_agent": getattr(ctx.intent, "primary_agent", "") or ""` at 4 sites (entry record + 3 exit/flip record paths). But `ctx.intent` was never assigned anywhere — `ExecutionContext` doesn't declare it as a dataclass field, `build_from_runner` doesn't set it, and the function receives `intent` as a parameter, not through ctx. So `getattr(None, "primary_agent", "")` returned `""` every call.
+- **Fix:** Replaced all 4 sites with `getattr(intent, "primary_agent", "") or ""` — reads the function parameter instead of the ghost ctx attribute.
+- **Mitigation:** When migrating from `self.X` to `ctx.X` during a god-object extraction, diff the parameter list — anything that arrives as a function argument must NOT be accessed via ctx. Grep `ctx\.(asset|intent|market_data|agent_signals)` after a migration.
+
+### P26. [FIXED 2026-04-24] Scalar drift: `ctx.last_aging_check` never synced back → weekly log rate-limiter broke
+- **Symptom:** The "weekly strategy-aging" critical log (warning when a strategy's weight modifier < 0.7) was supposed to fire at most once per 168 hours per ctx lifetime, but was firing every trade close where a strategy had record_outcome called.
+- **Cause:** `ExecutionContext.sync_scalars_back()` was defined but never called. `execute_intent_v2` mutates `ctx.last_aging_check = _c12_now` (a datetime), but the mutation lives only on the ctx, which is rebuilt each call via `build_from_runner`. Next call reads `runner._last_aging_check`, which stayed `None` forever (only set to None once at init), so the "is None" guard always re-triggered the log.
+- **Fix:** (a) Added `ExecutionContext._runner_ref` field, populated by `build_from_runner` with a live runner handle. (b) Rewrote the aging-check branch in execution_service.py to read/write `ctx._runner_ref._last_aging_check` directly. (c) Retired the `last_aging_check: float = 0.0` dataclass field (type was wrong — always held a datetime when set) and the never-called `sync_scalars_back()` method.
+- **Mitigation:** When adding a scalar to `ExecutionContext`, ask "how does this write get back to the runner?" Three acceptable answers: (1) it doesn't need to (tick-local, read-only, or piped through a shared component reference like `anti_churn._fills_today`); (2) a dedicated `fn_sync_*` callback writes it; (3) it writes through `ctx._runner_ref`. A raw `ctx.X = value` with no plan is scalar drift.
+
+### P23. [FIXED 2026-04-24] AC-5 daily fill budget cap was a silent no-op
+- **Symptom:** The "max 8 fills/day" hard cap (AC-5) never blocked anything. No `AC5_BUDGET_EXHAUSTED` log line ever appeared in production, even on days where fill count exceeded the budget.
+- **Cause:** Two duplicate counters. `AntiChurnManager._fills_today` (core/anti_churn.py) is the canonical one — incremented by `record_fill()` at the end of every execution, persisted via `to_dict()`/`from_dict()`. BUT the execution path's AC-5 gate at `execution_service.py:670-685` was reading `ctx.ac5_fills_today`, which was sourced from `runner._ac5_fills_today`. That runner attribute was only ever assigned `0` once at startup ([main.py:2068](main.py#L2068) with the comment "Proxied through _anti_churn") and never incremented. The gate check was always `0 >= 8 = False`. The canonical `anti_churn.check_fill_budget()` method exists and is correct — just has zero callers.
+- **Fix:** Rewrote the execution_service AC-5 gate to read `ctx.anti_churn._fills_today` / `_fills_date` directly. Removed the dead `ac5_fills_today`/`ac5_fills_date` mirror fields from `ExecutionContext`.
+- **Expected behavioral change:** On high-volume days (more than 8 fills), trades past the 8th will now return `AC5_BUDGET_EXHAUSTED`. This is the intended governor; the system's been running without it since the Phase 4B refactor.
+- **Mitigation:** When there are two places holding the same state (a dedicated manager + scalar mirror on the god-object), grep `record_*`/`increment_*` to see which one is actually being updated. Prefer reading from the authoritative manager; delete the mirror.
+
+### P24. [FIXED 2026-04-24] Discord log-handler dedup key was message-based → spam risk
+- **Symptom:** Not yet observed in production (DiscordLogHandler only went live 2026-04-24). Would have manifested as Discord alert spam under persistent tick-loop errors like `SOTA integration error: {e}` where the exception `repr` includes a counter/timestamp.
+- **Cause:** Dedup key was `f"{record.name}:{record.getMessage()[:100]}"`. Tick-loop catch-all `except` blocks produce messages whose tails vary per tick (embedded timestamps, per-asset identifiers). Same code path → different dedup keys → one alert per tick → Discord rate limit or user fatigue.
+- **Fix:** Keyed on call site `f"{record.pathname}:{record.lineno}:{record.levelno}"` instead. The log file still has the full variant detail; Discord just gets one alert every 5 min per recurring code location.
+- **Mitigation:** When building a dedup key for an alerting handler, key on the *origin* of the alert (file+line), not the *content* of the current instance. Content-based dedup assumes messages are stable, which isn't true for error handlers interpolating exceptions.
+
+### P22. [RETIRED 2026-04-24] Execution shadow mode + 3,160-line `_execute_intent` removed
+- **Symptom 1 (shadow):** CLAUDE.md claimed "Execution shadow: ACTIVE". `_enable_execution_shadow = True` was set and a `_shadow_state_snapshot` dict was built every tick at what-was-then [main.py:12341-12356](main.py#L12341). But nothing consumed it — the cutover commit ef4060b (2026-04-18) had deleted the `run_shadow_execution()` invocation. `data/shadow_exec_comparison.jsonl` has had no writes since 2026-04-15. The "CRITICAL MISMATCH: AC2_RATE_LIMITED" log lines being attributed to a current AC-2 snapshot bug were actually pre-cutover log lines.
+- **Symptom 2 (_execute_intent):** The cutover commit's message said the old 3,160-line `_execute_intent` was "dead code (can be removed in a follow-up cleanup)". Two live callers remained: `MAX_HOLD_TIMEOUT` inline exit at [main.py:5237](main.py#L5237) and `FLIP_BLOCKED` recovery at [main.py:12429](main.py#L12429). Parallel-maintained divergent implementations for the same asset-close transition.
+- **Hidden risk if shadow had been re-enabled:** dict-level deep-copy (paper_positions, ac2_fill_ticks, etc.) is not enough. `execute_intent_v2` mutates ~10 live singletons per fill — `anti_churn.record_fill`, `thesis_budget_governor.record_fill`, `existence_fuse.record_pnl` + `on_trade_close`, `trade_attributor.record_entry/exit`, `confidence_scorer.record_outcome/signal`, `pnl_attribution.record_trade`, `strategy_aging.record_outcome`, `failure_memory.record_opportunity`, `account_sync.update_dry_run_pnl`, `strategic_coordinator.record_trade_completed`. Running the new path a second time against live components would double-record every one of those, corrupting rate limiters, budget windows, the 28-day existence fuse PnL, agent attribution, confidence calibration, and v521 adaptive weights.
+- **Fix:** (a) Removed shadow snapshot-capture block + `_enable_execution_shadow` flag from main.py; CLAUDE.md runtime-state table updated to RETIRED. (b) Migrated both remaining `_execute_intent` callers to `execute_intent_v2(ctx, asset, intent, market_data, ...)` with a fresh `ExecutionContext.build_from_runner(self)`. (c) Deleted the 3,160-line `_execute_intent` body; left a 5-line breadcrumb comment pointing at execution_service.
+- **Mitigation:** If dual-path validation is ever needed again, do NOT simulate it by deep-copying dicts and re-running the same function. Add a `shadow_mode: bool = False` kwarg to `execute_intent_v2` that short-circuits every `.record_*()`, `account_sync.update_*()`, `risk_manager.update_balance()`, `fn_save_paper_positions()`, `fn_persist_tranche_state()`, and `anti_churn.record_fill()` call before re-wiring the invocation.
+
 ### P9. [ARCHIVED 2026-04-22] agents/quant_agent.py moved to archive/legacy_agents/
 - **Historical symptom:** Prior readers finding `agents/quant_agent.py` assumed it was the DECIDE signal source and tried to edit it — zero runtime effect.
 - **Resolution:** File moved to `archive/legacy_agents/quant_agent.py`. Its two unique signals (CVD z-score cascade confirmation + predicted-funding bearish divergence) were ported into `agents/kraken_quant_agent.py` (LiquidationCascadeHunter and FundingDivergenceStrategy respectively). See commit 540167d.
@@ -243,6 +275,14 @@ Authority matrix (`signals/authority_fusion.py`) + writer (`main.py` somewhere i
 - **Fix:** Added DRL substitution in `_compute_effective_alpha_direction`: when quant abstains (|quant_dir|<0.03) AND DRL is ACTIVE AND |drl_dir|>=0.5 AND drl_conf>=0.3, use DRL's direction as the effective alpha input. Alpha gate then evaluates alpha against DRL's direction, and QUIET_ACCUMULATION hard filter sees |direction|~0.9 instead of 0. Both blockers resolved by one change.
 - **Mitigation:** Alpha gate is a pre-fusion short-circuit. Any time an agent is promoted to DECIDE, check what `effective_alpha_direction` feeds into alpha gate — if the agent isn't a contributor there, its DECIDE authority is nullified in quiet/consolidation regimes.
 
+### P22. [FIXED 2026-04-24] Full-repo audit cleanup — schema/security/config drift
+- **Symptom:** Multi-lens repo audit surfaced 3 unrelated drifts that each looked harmless in isolation:
+  1. `defense/constitution.py:105` `MAX_DATA_AGE_SECONDS = 60.0` but schema at line 47 capped `data_age_seconds` at `10.0`. A 30s data-age sample would pass the runtime constant but fail schema validation → spurious NO_TRADE rejections.
+  2. `infra/alert_manager.py:435,442` used `os.system(f"...{alert.message}...")` for desktop popups. `alert.message` is built from regime descriptions / error text — anything containing `; rm -rf /`, `` ` ``, `$(...)`, etc. would shell-inject. Live code (imported at `main.py:1289`).
+  3. `orchestration/strategic_coordinator.py:798` hardcoded `MAX_LEVERAGE = 2.0` inside an inactive `_PATCH_4_ACTIVE = False` block, while `configs/canonical_config.py:95` and `configs/sota_flags.py:266` and `main.py:1061` all say `3.0`. If the patch flag is ever flipped on, position sizing silently undersizes by 33%.
+- **Fix:** (1) Schema `data_age_seconds.max` aligned to `60.0`. (2) Replaced `os.system` with `subprocess.run([list], shell=False)` + AppleScript quote escaping; added 5s timeout. (3) `strategic_coordinator.py` now imports `MAX_LEVERAGE` from `configs.canonical_config` with fallback to `3.0`.
+- **Mitigation:** When a constant has multiple definitions, grep ALL of them on every change. Schema range vs runtime constant is a common source of drift. `os.system(f"...")` with any interpolated string is a code smell — use `subprocess.run([list], shell=False)` always.
+
 ### P21. [DIAG 2026-04-24] DECIDE pool observability log
 - **Symptom:** 30-day audit found zero `DECIDE_CONSENSUS` or `DECIDE_CONFLICT` log lines. Either fusion was being bypassed by earlier rejections, OR DRL was never in DECIDE pool despite promotion — couldn't tell from logs.
 - **Mitigation:** Added periodic `[DECIDE_POOL]` diagnostic at `authority_fusion.py:~492` that logs every 10th call: matrix name, DRL authority level, and agents in DECIDE pool. Lets us verify promotion actually landed in fusion.
@@ -273,7 +313,7 @@ Authority matrix (`signals/authority_fusion.py`) + writer (`main.py` somewhere i
 - **RegimeSmoother persistence=2** must match training + runtime (prevents regime flip ping-pong)
 - **GMM feature defaults must match training distribution** — e.g., `cross_asset_correlation=0.87`, `spread_percentile` per-asset (BTC=5, ETH=8, SOL=12 bps)
 - **Constitution schema** requires: `dvol_zscore`, `vpin`, `correlation_btc_eth_sol`, `orderbook_depth_1pct_usd`
-- **Data age** uses exchange timestamp, `MAX_DATA_AGE_SECONDS=10.0`
+- **Data age** uses exchange timestamp, `MAX_DATA_AGE_SECONDS=60.0` (was 10.0; widened for 4H tick cycle, see `defense/constitution.py:105`. Schema `data_age_seconds.max` aligned 2026-04-24)
 - **pandas_ta broken** on Python 3.14 → use `ta` library instead
 
 ---

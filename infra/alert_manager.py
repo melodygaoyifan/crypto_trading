@@ -429,19 +429,33 @@ class AlertManager:
         try:
             # Try different notification methods based on platform
             import platform
+            import subprocess
             system = platform.system()
-            
+
+            # [P22 2026-04-24] Switched from os.system(f"...{alert.message}...") to
+            # subprocess.run(list, shell=False) to close shell-injection vector when
+            # alert.message contains metacharacters (regime descriptions, error text).
+            safe_title = str(alert.title).replace('"', "'").replace("\\", "\\\\")
+            safe_message = str(alert.message).replace('"', "'").replace("\\", "\\\\")
+
             if system == "Darwin":  # macOS
-                os.system(f"""
-                    osascript -e 'display notification "{alert.message}" with title "HMATS: {alert.title}"'
-                """)
+                # AppleScript still needs an embedded string; quotes already escaped.
+                applescript = (
+                    f'display notification "{safe_message}" '
+                    f'with title "HMATS: {safe_title}"'
+                )
+                subprocess.run(
+                    ["osascript", "-e", applescript],
+                    shell=False, check=False, timeout=5,
+                )
                 alert.channels_sent.append(AlertChannel.POPUP)
-                
+
             elif system == "Linux":
-                # Try notify-send
-                os.system(f"""
-                    notify-send "HMATS: {alert.title}" "{alert.message}" -u critical
-                """)
+                # notify-send takes args separately — no shell parsing.
+                subprocess.run(
+                    ["notify-send", f"HMATS: {safe_title}", safe_message, "-u", "critical"],
+                    shell=False, check=False, timeout=5,
+                )
                 alert.channels_sent.append(AlertChannel.POPUP)
                 
             elif system == "Windows":
