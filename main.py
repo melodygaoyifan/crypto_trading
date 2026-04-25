@@ -1678,7 +1678,12 @@ class ProductionConfig:
             _initial_capital = float(_ic_env_val)
             logger.info(f"[CONFIG] initial_capital=${_initial_capital:,.0f} (from env {_ic_env_key})")
         else:
-            _initial_capital = risk.get("initial_capital", risk.get("initial_capital_default", INITIAL_CAPITAL))
+            # [P61 2026-04-25] float() cast — JSON may send int or string (e.g. "10000")
+            # which would silently propagate non-float into `intent.target_exposure *
+            # self.config.initial_capital` math. Found by P57-A scanner.
+            _initial_capital = float(
+                risk.get("initial_capital", risk.get("initial_capital_default", INITIAL_CAPITAL))
+            )
             if _initial_capital >= 50000.0:  # [FIX-36] was 100K (stale); 50K is max reasonable for this account
                 logger.warning(
                     f"[CONFIG] initial_capital=${_initial_capital:,.0f} seems high -verify this is correct. "

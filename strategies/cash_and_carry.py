@@ -233,7 +233,8 @@ class CashAndCarryStrategy:
         # Condition 1: Funding rate above threshold
         if funding_rate >= self.config.entry_funding_threshold:
             score += 0.4
-            reasons.append(f"Funding {funding_rate:.4%}/8h ({funding_annualized:.1%} ann)")
+            # [P61 2026-04-25] Was "/8h" — Kraken funding is hourly, not 8h.
+            reasons.append(f"Funding {funding_rate:.4%}/h ({funding_annualized:.1%} ann)")
         else:
             return CarrySignal(
                 asset=asset, action="NONE", funding_rate=funding_rate,

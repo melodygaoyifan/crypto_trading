@@ -410,6 +410,41 @@ Authority matrix (`signals/authority_fusion.py`) + writer (`main.py` somewhere i
 - **Fix:** Added DRL substitution in `_compute_effective_alpha_direction`: when quant abstains (|quant_dir|<0.03) AND DRL is ACTIVE AND |drl_dir|>=0.5 AND drl_conf>=0.3, use DRL's direction as the effective alpha input. Alpha gate then evaluates alpha against DRL's direction, and QUIET_ACCUMULATION hard filter sees |direction|~0.9 instead of 0. Both blockers resolved by one change.
 - **Mitigation:** Alpha gate is a pre-fusion short-circuit. Any time an agent is promoted to DECIDE, check what `effective_alpha_direction` feeds into alpha gate — if the agent isn't a contributor there, its DECIDE authority is nullified in quiet/consolidation regimes.
 
+### P61. [DIAG+FIX 2026-04-25] Comprehensive 5-axis batch audit + 4 small fixes + 8 deferred findings
+- **Why:** Operator named 13 audit areas to cover (runtime data flow / execution reachability / config loading e2e / post-trade state sync / restart recovery / data freshness / cancel-on-disconnect / order ack timeout / maker-taker fallback / existence_fuse params / live_health_monitor / trade outcome attribution / sentiment-CRACK-leadlag sign-flip / cashandcarry wiring / best-of-N selection / dead config files). Dispatched 5 parallel Explore agents.
+
+#### Real fixes applied (4 high-leverage 1-liners):
+1. **`main.py:1681` — `initial_capital` no `float()` cast.** JSON could send int / string `"10000"`, silently propagating wrong type into `intent.target_exposure * self.config.initial_capital` math. Added defensive cast.
+2. **`.env.example` — 4 undocumented HMATS_* env vars added** with default values + descriptions: `HMATS_REGIME_WARN_COOLDOWN_SEC` (main.py:4076), `HMATS_G6_SHADOW` (main.py:14474), `HMATS_ENABLE_AGGRESSIVE_ALLOCATOR`, `HMATS_AGGRESSIVE_ALLOCATOR_MIN_FILLS` (main.py:14480-14481). Operators can now see all available knobs.
+3. **`configs/cloud_production.before_phase1.json`** — deleted. Stale backup (P53 pattern). Zero readers.
+4. **`strategies/cash_and_carry.py:236`** — fixed stale "Funding {x}/8h" → "/h". Kraken Futures uses hourly funding (per file's own comment at line 214); print message was off by 8x.
+
+#### Areas where audit found NO bugs (verified clean):
+- **Authority matrix wiring (Agent 1):** All 25 agents have per-tick writers (some are conditional, but all explicitly handled). No P3-shape silent zero attribution beyond P57's whale/options.
+- **Post-trade state sync (Agent 4):** All 10+ `record_X()` calls in `execute_intent_v2` have closed read loops. All 3 BRANCH paths persist tranche+positions (P15 fix held). All atomic-write protected (P37 held).
+- **Restart recovery (Agent 4):** 8 critical state files all have writer + reader. Drawdown/equity peak survives restart per P-PATCH-4.
+- **Live health monitor (Agent 5):** `scripts/hmats_monitor.sh` executable, 8 checks all map to real log patterns.
+- **existence_fuse params (Agent 5):** Match CLAUDE.md documented values (28d/-15%/-18%/-15%/-18%/10) — UNLEASH v2 thresholds intact.
+- **agent_audit_16 DIM 4 (Agent 5):** `primary_agent` populated since 2026-04-22 (P25 fix).
+- **OOD detector (Agent 5):** Compute+log path live; confidence-multiplier path cleanly retired per P27.
+- **Sentiment / CRACK / Lead-Lag sign conventions (Agent 5):** All consistent writer→fusion. No silent flips.
+- **Cash-and-carry signal pipeline (Agent 5):** Wired into agent_signals; execution path is signal-only pending DerivativesExecutor wire.
+
+#### Deferred findings (filed for future work):
+- **D1 — `regime_direction` falls back to `quant_direction` (Agent 1, integration_v36.py:2092-2094):** CONFIRM-authority signal is tautological — confirms what quant said. Real fix requires deciding what `regime_direction` SHOULD mean (e.g. derive +1/-1 from regime classification: TRENDING_BULL/PARABOLIC=+1, TRENDING_BEAR/REVERSAL=-1, others=0). Currently the fallback is harmless but documented invariant is violated.
+- **D2 — `macro_leverage_cap` 3-site overwrite (Agent 1, main.py:6307/6415/6945):** Last write wins; no precedence comment. Worth a 3-line comment block above each site explaining why each layer overwrites.
+- **D3 — Per-key staleness markers (Agent 1):** Fusion can't distinguish fresh vs stale signals. Current `agent_signals["_signal_timestamp"]` is global. Per-key marker (`agent_signals["_ts"]["drl_direction"] = ts`) would be a design change with downstream consumer impact.
+- **D4 — Market fallback disabled (Agent 2 B1):** If `market_fallback_enabled=False` in config, LIMIT timeouts return CANCELLED with no fallback. Worth a startup WARN if disabled in production profile.
+- **D5 — CASH_CARRY no spot fallback (Agent 2 B4):** Pre-flight check needed before DerivativesExecutor is wired (currently signal-only, so no immediate risk).
+- **D6 — Dead-man monitor thread killed (Agent 2 B5):** If monitor thread dies, server auto-cancels after 60s with no client notification. Add watchdog.
+- **D7 — Partial fill orphan on reconnect (Agent 2 B3):** Original userref's partial not re-recorded after disconnect+retry.
+- **D8 — Slippage measured but not fed back (Agent 2 B7):** Fill quality logged to `logs/fill_quality.jsonl` but not used to adjust friction model. Static config wins.
+- **D9 — Stale `paper_baseline_5y.json` + `paper_profit_5y.json` + `sota_config.json`** — verified in P57 to be diagnostic-safety-net only. Acceptable retain.
+- **D10 — AC-2 tick-epoch drift on restart (Agent 4):** New session tick=1 with restored fills from old session tick=18000 → comparison `1-18000=-17999` excludes old fills. Mitigated in practice by AC-1 reset pattern at main.py:15710 (sets `entry_tick=0` on restore), but AC-2 doesn't apply same logic. Low severity (24h aging window).
+
+- **Tests:** 155/155 regression green. Audit-finding-to-real-bug ratio: ~13 listed concerns → 4 real fixes → ~1:3 (similar to P53 cleanup pass).
+- **Mitigation:** When auditing a system area, list findings as DEFINITE/PROBABLE/FALSE_POSITIVE — most "scary" findings (regime_direction missing, market fallback disabled) turn out to be intentional design or low impact. Triage matters more than discovery.
+
 ### P60. [FIXED 2026-04-25] 3 dead P1 flags removed + Section F multi-site scanner + p0_integrator missing DVOL kwargs (rule #6 violation)
 - **Two parts (1 + 2 from operator's request):**
 
