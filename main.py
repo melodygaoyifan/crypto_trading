@@ -1857,6 +1857,10 @@ class HMATSProductionRunner:
             logger.info(f"[CASCADE_CONFIG] Permissions override active for phases: {_phases}")
 
         # P1-04: Log weekend config at startup
+        # [P45 2026-04-25] Banner now includes the alpha multiplier + base bps
+        # so operator can verify the values are coming from the JSON profile
+        # (not the class default fallback). Was a known blind spot — "min 66"
+        # rejections in the ledger could have surfaced earlier with this log.
         if config.weekend_config:
             _wc = config.weekend_config
             logger.info(
@@ -1864,6 +1868,9 @@ class HMATSProductionRunner:
                 f"soft_veto_cap={_wc.get('weekend_soft_veto_cap', 0.40):.0%} | "
                 f"max_exposure={_wc.get('weekend_max_exposure', 0.50):.0%} | "
                 f"leverage_cap={_wc.get('weekend_leverage_cap', 'default')} | "
+                f"alpha_mult_normal={_wc.get('min_alpha_multiplier_weekend', 'DEFAULT')} | "
+                f"alpha_mult_opp={_wc.get('opportunity_alpha_multiplier_weekend', 'DEFAULT')} | "
+                f"alpha_base_bps={_wc.get('weekend_min_alpha_bps', 'DEFAULT(20)')} | "
                 f"reduce_friday={_wc.get('reduce_friday_evening', True)} | "
                 f"reduce_at={_wc.get('reduce_at_hours', 12)}h "
                 f"flatten_at={_wc.get('flatten_at_hours', 36)}h"
@@ -10584,7 +10591,27 @@ class HMATSProductionRunner:
                     if _wk_blocked:
                         intent.veto_active = True
                         intent.veto_reason = f"[WEEKEND] {_wk_reason}"
-                        logger.info(f"[WEEKEND] Entry blocked: {_wk_reason}")
+                        # [P45 2026-04-25] Stash full weekend-block diag for shadow ledger
+                        # so analyzer can see WHICH config values triggered the rejection
+                        # — including whether the JSON config was reaching this site or
+                        # the class default fallback was kicking in.
+                        intent._weekend_block_details = {
+                            "wk_cfg_keys": sorted(list(_wk_cfg.keys())) if _wk_cfg else [],
+                            "wk_cfg_present": bool(_wk_cfg),
+                            "min_alpha_multiplier_weekend": _wk_cfg.get("min_alpha_multiplier_weekend") if _wk_cfg else None,
+                            "opportunity_alpha_multiplier_weekend": _wk_cfg.get("opportunity_alpha_multiplier_weekend") if _wk_cfg else None,
+                            "weekend_min_alpha_bps": _wk_cfg.get("weekend_min_alpha_bps") if _wk_cfg else None,
+                            "min_confidence_weekend": _wk_cfg.get("min_confidence_weekend") if _wk_cfg else None,
+                            "system_mode": getattr(intent, 'system_mode', ''),
+                            "alpha_estimated_bps": getattr(intent, 'alpha_estimated_bps', None),
+                            "asset": asset,
+                        }
+                        logger.info(
+                            f"[WEEKEND] Entry blocked: {_wk_reason} "
+                            f"(wk_cfg_present={bool(_wk_cfg)} "
+                            f"mult_normal={_wk_cfg.get('min_alpha_multiplier_weekend', 'CLASS_DEFAULT') if _wk_cfg else 'NO_CFG'} "
+                            f"mult_opp={_wk_cfg.get('opportunity_alpha_multiplier_weekend', 'CLASS_DEFAULT') if _wk_cfg else 'NO_CFG'})"
+                        )
                     else:
                         _wk_cap = WeekendOverrideRules.get_weekend_exposure_cap(
                             _wk_state, asset, weekend_config=_wk_cfg
@@ -12917,6 +12944,9 @@ class HMATSProductionRunner:
                 # [P44 2026-04-25] Pull structure-block diag — same purpose for
                 # the 21.5% of rejects from the fractal-break gate.
                 _struct_diag = getattr(intent, "_structure_block_details", None) or {}
+                # [P45 2026-04-25] Pull weekend-block diag — surfaces whether
+                # config was actually loaded at the rejection site.
+                _wk_diag = getattr(intent, "_weekend_block_details", None) or {}
                 self.p0_integrator.shadow_ledger.record_gate_rejection(
                     asset=asset,
                     direction=_sl_direction_i,
@@ -12949,6 +12979,11 @@ class HMATSProductionRunner:
                         "structure_strategy_id": _struct_diag.get("strategy_id"),
                         "structure_soft_override_enabled": _struct_diag.get("soft_override_enabled"),
                         "structure_existing_exposure": _struct_diag.get("existing_exposure"),
+                        # [P45] Weekend-block observability fields
+                        "weekend_cfg_present": _wk_diag.get("wk_cfg_present"),
+                        "weekend_mult_normal": _wk_diag.get("min_alpha_multiplier_weekend"),
+                        "weekend_mult_opp": _wk_diag.get("opportunity_alpha_multiplier_weekend"),
+                        "weekend_base_bps": _wk_diag.get("weekend_min_alpha_bps"),
                     },
                 )
             except Exception as e:

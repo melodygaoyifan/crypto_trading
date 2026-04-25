@@ -236,6 +236,35 @@ def analyze(days: int = 30, asset_filter: Optional[str] = None) -> Dict[str, Any
         if fm:
             stale_freshness_mode[fm] += 1
 
+    # 5d. WEEKEND-block breakdown (P45 — needs weekend_* gate_details fields)
+    wk_cfg_status = Counter()
+    wk_mult_normal_pareto = Counter()
+    wk_mult_opp_pareto = Counter()
+    wk_base_pareto = Counter()
+    n_wk_with_diag = 0
+    for r in rejects:
+        raw = (r.get("data") or {}).get("rejection_reason", "") or ""
+        if "weekend" not in raw.lower():
+            continue
+        details = (r.get("data") or {}).get("gate_details") or {}
+        if details.get("weekend_cfg_present") is not None:
+            n_wk_with_diag += 1
+        wk_cfg_status[
+            "config_loaded" if details.get("weekend_cfg_present") else "NO_CONFIG (CLASS_DEFAULT fallback)"
+        ] += 1
+        m_n = details.get("weekend_mult_normal")
+        wk_mult_normal_pareto[
+            f"mult_normal={m_n if m_n is not None else 'NOT_SET'}"
+        ] += 1
+        m_o = details.get("weekend_mult_opp")
+        wk_mult_opp_pareto[
+            f"mult_opp={m_o if m_o is not None else 'NOT_SET'}"
+        ] += 1
+        b = details.get("weekend_base_bps")
+        wk_base_pareto[
+            f"base_bps={b if b is not None else 'NOT_SET'}"
+        ] += 1
+
     # 5c. STRUCTURE-block breakdown (P44 — needs structure_* gate_details fields)
     struct_side_pareto = Counter()
     struct_gap_buckets = Counter()
@@ -361,6 +390,15 @@ def analyze(days: int = 30, asset_filter: Optional[str] = None) -> Dict[str, Any
             "by_strategy": struct_strategy_pareto.most_common(),
             "by_edge_vs_min": struct_edge_vs_min.most_common(),
         },
+        "weekend_breakdown": {
+            "n_wk_rejections": sum(1 for r in rejects
+                                    if "weekend" in ((r.get("data") or {}).get("rejection_reason", "") or "").lower()),
+            "n_with_diag_fields_p45": n_wk_with_diag,
+            "by_cfg_status": wk_cfg_status.most_common(),
+            "by_mult_normal": wk_mult_normal_pareto.most_common(),
+            "by_mult_opp": wk_mult_opp_pareto.most_common(),
+            "by_base_bps": wk_base_pareto.most_common(),
+        },
     }
 
 
@@ -478,6 +516,30 @@ def render(report: Dict[str, Any]) -> str:
         lines.append("  Net edge vs min_edge requirement:")
         for status, count in sb['by_edge_vs_min']:
             lines.append(f"    {status:50} {count}")
+    lines.append("")
+
+    lines.append("-" * 78)
+    lines.append("WEEKEND-BLOCK BREAKDOWN (P45 — needs ledger entries with diag fields)")
+    lines.append("-" * 78)
+    wb = report.get('weekend_breakdown', {})
+    lines.append(f"  Total weekend rejects: {wb.get('n_wk_rejections', 0)}")
+    lines.append(f"  With P45 diag fields: {wb.get('n_with_diag_fields_p45', 0)}")
+    if wb.get('by_cfg_status'):
+        lines.append("  Config loading status:")
+        for status, count in wb['by_cfg_status']:
+            lines.append(f"    {status:50} {count}")
+    if wb.get('by_mult_normal'):
+        lines.append("  By NORMAL-mode multiplier seen at rejection:")
+        for m, count in wb['by_mult_normal']:
+            lines.append(f"    {m:35} {count}")
+    if wb.get('by_mult_opp'):
+        lines.append("  By OPPORTUNITY-mode multiplier seen at rejection:")
+        for m, count in wb['by_mult_opp']:
+            lines.append(f"    {m:35} {count}")
+    if wb.get('by_base_bps'):
+        lines.append("  By weekend_min_alpha_bps seen at rejection:")
+        for b, count in wb['by_base_bps']:
+            lines.append(f"    {b:35} {count}")
     lines.append("")
 
     lines.append("-" * 78)
