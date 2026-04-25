@@ -252,6 +252,36 @@ Authority matrix (`signals/authority_fusion.py`) + writer (`main.py` somewhere i
   5. Add a kill switch: same flip in reverse on any of `(consecutive_losses ≥ 5)`, `(7-day Sharpe vs baseline drops below +0%)`, or `(action distribution drifts outside HOLD ∈ [50%, 90%])`.
 - **Mitigation:** When `startup_drl_truth.py` is extended for a fourth DRL family, add a System-N row here. Sharing a single gate across two DRLs would create cross-coupling. **Don't promote on offline-only validation alone** — the live shadow phase is what catches "DRL learned a regime that doesn't exist in production" failures (a known offline-RL failure mode per the spec's Stage 4 pitfall #6).
 
+### P31. [NEW 2026-04-25] One-shot health monitor (`scripts/hmats_monitor.sh`)
+- **What it does:** Single command audits 8 axes of the live engine. Cron-friendly (non-zero exit on FAIL), watch-mode for live observation.
+  ```bash
+  bash scripts/hmats_monitor.sh           # snapshot
+  bash scripts/hmats_monitor.sh --watch   # 60s refresh
+  HMATS_HOST=staging bash scripts/hmats_monitor.sh
+  ```
+- **What it checks:**
+  1. Container state (engine + api + dashboard up + healthy)
+  2. Engine healthcheck (status + failing_streak + restarts)
+  3. Recent fatal-level log entries (CRITICAL / FATAL / Traceback)
+  4. Tick liveness (last LIVE_DATA / AGENT-TRACE within 15min)
+  5. Fusion behavior (CONSENSUS / CONFLICT / SOLO / ABSTAIN counts in last 1h — directly observes whether P30 is working)
+  6. Exit-DRL state (per-asset modes + kill-switch demotion count + EXIT_DRL_BRIDGE fire count)
+  7. Trade activity (fills, alpha-gate passes, gate rejects in last 24h)
+  8. Resource usage (cpu / mem / mempct per container, FAIL above 90% mem)
+- **FAIL conditions** (non-zero exit, suitable for paging via cron + Discord):
+  - Container stopped/unhealthy/restarting
+  - Healthcheck unhealthy
+  - ≥5 critical log entries in 30min
+  - ≥1 Exit-DRL kill-switch demotion in last 1h
+  - Exit-DRL `ready=NONE` (checkpoints failed)
+- **WARN conditions** (informational, exit code 0):
+  - 1-4 critical entries (often false positives like `[HEALTH_STARTUP] ... 0 CRITICAL` summary text)
+  - No tick activity in 15min (could be normal between 4H candles)
+  - Fusion 100% conflict (agents persistently disagree)
+  - Alpha gate passing but no fills (downstream blocker like AC-2 / weekend filter / sizing — see WeekendManager investigation 2026-04-25)
+  - Memory > 90%
+- **Mitigation:** Run after every deploy. Add to cron @5min for paging. The script's stage-by-stage output is the standard verification tool going forward.
+
 ### P30. [FIXED 2026-04-25] Multi-DECIDE fusion: abstain treated as disagreement, linear weighting overcorrected → "DECIDE_CONFLICT" on solo strong signals
 - **Symptom:** With DRL promoted to ACTIVE (and now also Exit-SAC EXIT_ONLY for all 3 assets), the most common fusion log line was `[DECIDE_CONFLICT] 3 agents, low agreement (0.33), confidence=0.10`. Observed live on BTC at 2026-04-25 05:09: DRL=-0.93/0.44 with quant=0 and kraken_quant=0 (both abstaining) → fusion treated DRL as a 1-of-3 minority signal, dampened confidence to 10%, alpha gate blocked. System held instead of acting on a strong DRL signal in a regime where TA had no view.
 - **Cause:** `signals/authority_fusion.py:548-568` had three issues vs Bayesian Model Averaging best practice:
