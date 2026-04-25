@@ -1825,7 +1825,23 @@ async def execute_intent_v2(
         except Exception as _w3b_err:
             logger.debug(f"[WIRE] W-3b FillSlope skipped: {_w3b_err}")
 
-    if ctx.config.mode == RunMode.PAPER or (ctx.account_sync and ctx.account_sync.dry_run):
+    # [P64-B 2026-04-25] REMOVED: outer `if RunMode.PAPER or dry_run` gate.
+    # The 1500-line BRANCH A/B/C/D tree below contains ALL post-trade state
+    # recording (shadow_ledger.record_fill, anti_churn.record_fill,
+    # thesis_budget.record_fill, existence_fuse.record_pnl/on_trade_close,
+    # trade_attributor.record_entry/exit, confidence_scorer.record_outcome,
+    # strategic_coordinator.record_trade_completed, exit_drl_outcome_ledger,
+    # pnl_attribution.record_trade, failure_memory.record_opportunity).
+    # Gating this whole block on PAPER mode meant ALL feedback loops were
+    # silently dead in --mode live. Empirically verified 2026-04-25: 6+ live
+    # fills produced 0 FILL records and 0 state-file updates.
+    #
+    # Dry-run-specific calls (e.g. account_sync.update_dry_run_pnl) keep their
+    # own inner guards (search "if ctx.account_sync and ctx.account_sync.dry_run"
+    # below). paper_positions writes are safe in live mode because they use
+    # exec_result.filled_price + filled_size from real exchange data —
+    # _paper_positions becomes a unified internal mirror of Kraken state.
+    if True:  # Was: if ctx.config.mode == RunMode.PAPER or (ctx.account_sync and ctx.account_sync.dry_run):
         direction_sign = 1.0 if intent.direction > 0 else -1.0
         old_pos = ctx.paper_positions.get(asset)
         _order_fee_result = dict(exec_result.get("fee_blending", {}) or {})
@@ -3388,10 +3404,9 @@ async def execute_intent_v2(
         except Exception as e:
             logger.debug(f"[IMPACT_CAL] Sample recording failed: {e}")
 
-    if (
-        (ctx.config.mode == RunMode.PAPER or (ctx.account_sync and ctx.account_sync.dry_run))
-        and not bool(exec_result.get("shadow_fill_recorded", False))
-    ):
+    # [P64-B 2026-04-25] Gate removed — was paper-only, but now BRANCH tree
+    # fires in both modes so the warning should too.
+    if not bool(exec_result.get("shadow_fill_recorded", False)):
         exec_result["shadow_fill_missing"] = True
         logger.warning(
             f"[P0-2] {asset}: execution completed without shadow-ledger fill ack "

@@ -487,6 +487,31 @@ Authority matrix (`signals/authority_fusion.py`) + writer (`main.py` somewhere i
 - **Fix:** Added DRL substitution in `_compute_effective_alpha_direction`: when quant abstains (|quant_dir|<0.03) AND DRL is ACTIVE AND |drl_dir|>=0.5 AND drl_conf>=0.3, use DRL's direction as the effective alpha input. Alpha gate then evaluates alpha against DRL's direction, and QUIET_ACCUMULATION hard filter sees |direction|~0.9 instead of 0. Both blockers resolved by one change.
 - **Mitigation:** Alpha gate is a pre-fusion short-circuit. Any time an agent is promoted to DECIDE, check what `effective_alpha_direction` feeds into alpha gate — if the agent isn't a contributor there, its DECIDE authority is nullified in quiet/consolidation regimes.
 
+### P65. [FIX 2026-04-25] P64-B follow-through — REMOVED the PAPER-only gate at execution_service.py:1828
+- **Why:** P64 documented but did not fix the issue. After investigating, the gate is unnecessarily wide — every dry_run-specific call inside the BRANCH tree (e.g. `account_sync.update_dry_run_pnl` at lines 1969/2481/2758/3313) already has its own inner `if ctx.account_sync.dry_run` guard. The outer `if RunMode.PAPER or dry_run` was a blanket cover hiding functionality that already had finer-grained protection.
+- **Architectural verification:**
+  - `_paper_positions` at main.py:18242 is read by tranche scheduler in BOTH modes (active_positions filter doesn't check mode).
+  - `_paper_positions` writes use `exec_result.filled_price`/`filled_size` from real exchange data — values are accurate in live mode.
+  - `_save_paper_positions` was being skipped in live mode → no on-disk position state. After P65 it fires universally → live restart recovery actually works.
+- **Fix:** changed line 1828 from gate to `if True:` with a long comment block explaining why. Functionally equivalent to deleting the gate. The structurally-paper-only `account_sync.update_dry_run_pnl` calls (4 sites) already self-gate.
+- **Also fixed:** the diagnostic `[P0-2] execution completed without shadow-ledger fill ack` at line 3407 was ALSO PAPER-gated — operator wouldn't see the warning if a live fill failed to record. Removed mode check; warning fires whenever `shadow_fill_recorded=False`.
+- **Also removed:** the P64-B CRITICAL startup notice (no longer relevant — gate is gone). Replaced with INFO confirmation that the loops are wired in both modes.
+- **What changes after deploy:**
+  - `shadow_ledger/ledger_*.jsonl` will get FILL entries for live fills (was: 0)
+  - `thesis_budget_state.json`, `confidence_scorer_state.json`, `failure_memory_state.json`, `cascade_governor_state.json` — file timestamps will update on every fill (was: stuck at 08:04)
+  - `existence_fuse` will start tracking real PnL → 28d kill switch becomes live-armed
+  - `anti_churn` will enforce AC-2 (2-fills/asset/24h) + AC-5 (8 fills/day) ceilings
+  - `trade_attributor` outcomes_*.jsonl will get FILL-derived close records
+  - `strategic_coordinator.record_trade_completed` → v521 AdaptiveWeightManager will start receiving outcomes
+  - `exit_drl_outcome_ledger.record_close` → Exit-SAC training data starts accumulating
+  - `paper_positions.json` will exist on disk (was: missing) → restart recovery actually works
+- **Risks (real, but acceptable):**
+  - **AC-2/AC-5 rate limits will start enforcing.** If today's fill pattern (3 fills in 5 minutes after restart) exceeds AC-2's 2/asset/24h ceiling, NEW entries get blocked. This is GOOD (rate limits should enforce in live), but operator should see the new `AC2_RATE_LIMITED` veto messages and accept them.
+  - **existence_fuse counts live PnL** for the first time. If recent live trades had losses near -15%, the fuse could engage immediately on next deploy. Verify `existence_fuse_state` (currently empty/stale) before going live.
+  - `_save_paper_positions` writes to disk on every fill — adds I/O but it's atomic-write + only fires post-fill (~0/tick when no fill). Negligible.
+- **Tests:** 155/155 regression green. The runtime change is significant — recommend close monitoring of the next 4H tick boundary.
+- **Mitigation pattern:** When fixing an over-wide gate, FIRST check whether each path inside has its own self-guard. If they do, the outer gate is redundant — just delete it. P65 took ~1 hour to find vs the half-day refactor I feared yesterday.
+
 ### P64. [DIAG+FIX 2026-04-25] LIVE-mode silent-feedback-loop discovery + CANCEL-ALL log severity
 - **Why:** Operator asked "is post-trade learning/budget/attribution silent NORMAL?" + "fix `[CANCEL-ALL] graceful_shutdown`". Two unrelated findings folded into one P-fix.
 

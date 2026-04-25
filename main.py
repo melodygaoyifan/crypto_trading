@@ -16963,31 +16963,15 @@ class HMATSProductionRunner:
                 f"dry_run={self.execution_manager.dry_run}"
             )
 
-            # [P64-B 2026-04-25] LIVE-MODE FEEDBACK-LOOP NOTICE
-            # The BRANCH A/B/C/D tree in core/execution_service.py:1828 is gated
-            # `RunMode.PAPER or dry_run` — meaning in LIVE mode, the following
-            # state-recording calls do NOT fire on actual fills:
-            #   • shadow_ledger.record_fill (FILL records → empty)
-            #   • anti_churn.record_fill (AC-2/AC-5 rate limits unenforced)
-            #   • thesis_budget.record_fill (weekly cap not tracked)
-            #   • existence_fuse.record_pnl + on_trade_close (28d kill switch BLIND)
-            #   • trade_attributor.record_entry/exit (DIM 4 attribution dead)
-            #   • confidence_scorer.record_outcome (calibration frozen)
-            #   • strategic_coordinator.record_trade_completed (v521 weight frozen)
-            #   • exit_drl_outcome_ledger.record_close (DRL training data missing)
-            # Verified empirically 2026-04-25: 6+ live fills produced 0 FILL records,
-            # state files dated pre-restart (08:04). Fix is a structural refactor
-            # of execution_service.py — narrow the gate so paper_positions writes
-            # stay paper-only but state recording fires in both modes. Filed as
-            # P64-B for operator review. WARNING here so it's seen on every LIVE
-            # startup until fixed.
-            logger.critical(
-                "[P64-B] LIVE-MODE FEEDBACK-LOOP NOTICE: 8 state-recording loops "
-                "are gated PAPER-only at execution_service.py:1828. existence_fuse, "
-                "thesis_budget, anti_churn, trade_attributor, confidence_scorer, "
-                "strategic_coordinator, exit_drl_outcome_ledger, shadow_ledger.FILL "
-                "are ALL dead in live mode. Restart-to-restart learning + risk "
-                "tracking are SILENT until the gate is narrowed. See CLAUDE.md P64."
+            # [P64-B 2026-04-25] Gate removed at execution_service.py:1828 in
+            # this same commit — BRANCH tree (incl. all 8+ state-recording
+            # loops) now fires in both modes. Removed the CRITICAL startup
+            # notice that warned about the gate.
+            logger.info(
+                "[P64-B] LIVE-mode feedback loops UNGATED: shadow_ledger.record_fill, "
+                "anti_churn, thesis_budget, existence_fuse, trade_attributor, "
+                "confidence_scorer, strategic_coordinator, exit_drl_outcome_ledger "
+                "now fire on every fill regardless of mode."
             )
 
             # [HEALTH] Layer 1: Startup Health Validation
