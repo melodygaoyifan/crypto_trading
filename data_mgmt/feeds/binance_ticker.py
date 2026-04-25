@@ -77,8 +77,15 @@ async def fetch_binance_snapshot(asset: str, timeout: float = 3.0) -> Optional[D
                     total_vol = float(bar[5] or 0)
                     taker_buy = float(bar[9] or 0)
                     taker_sell = max(0.0, total_vol - taker_buy)
-            except Exception:
-                pass
+            except Exception as _kline_err:
+                # [P22 2026-04-24] was bare except: pass which silently returned
+                # taker_buy=taker_sell=0 as if it were valid data, feeding the
+                # microstructure agent zeroed flow on every Binance kline failure.
+                # Log + leave at 0 so the failure is visible in heartbeat/logs.
+                logger.debug(
+                    f"[BINANCE_TICKER] {asset} kline fetch failed: {_kline_err!r}; "
+                    f"taker flow unavailable this tick"
+                )
 
             return {
                 "binance_bid": bid,

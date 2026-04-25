@@ -507,6 +507,17 @@ class LearnedExecutionPolicy:
             weights_path = Path(weights_rel)
             if not weights_path.is_absolute():
                 weights_path = (manifest_file.parent / weights_path).resolve()
+                # [P22 2026-04-24] Defense-in-depth: a manifest claiming
+                # weights_path="../../../etc/passwd" would resolve outside
+                # manifest dir. Reject any weights path that escapes the
+                # manifest's directory.
+                manifest_root = manifest_file.parent.resolve()
+                try:
+                    weights_path.relative_to(manifest_root)
+                except ValueError:
+                    raise ValueError(
+                        f"weights_path escapes manifest dir: {weights_path}"
+                    )
             if not weights_path.exists():
                 raise FileNotFoundError(f"weights missing: {weights_path}")
 

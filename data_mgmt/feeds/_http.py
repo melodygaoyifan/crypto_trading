@@ -37,21 +37,51 @@ async def fetch_with_retry(
     """
     last_error = None
     for attempt in range(max_retries):
+        retry_after: float | None = None
         try:
             async with session.get(url) as resp:
                 if resp.status == 200:
                     return await resp.json()
-                if 400 <= resp.status < 500:
+                # [P22 2026-04-24] 429 was previously bucketed with all 4xx and dropped
+                # without retry. CryptoPanic / Coinglass / Anthropic burn quota silently
+                # under load. Now: parse Retry-After (seconds or HTTP-date), fall back to
+                # exponential backoff, and continue the retry loop.
+                if resp.status == 429:
+                    raw = resp.headers.get("Retry-After", "").strip()
+                    if raw:
+                        try:
+                            retry_after = float(raw)
+                        except ValueError:
+                            try:
+                                from email.utils import parsedate_to_datetime
+                                from datetime import datetime, timezone
+                                _dt = parsedate_to_datetime(raw)
+                                if _dt is not None:
+                                    if _dt.tzinfo is None:
+                                        _dt = _dt.replace(tzinfo=timezone.utc)
+                                    retry_after = max(
+                                        0.0,
+                                        (_dt - datetime.now(timezone.utc)).total_seconds(),
+                                    )
+                            except Exception:
+                                retry_after = None
+                    last_error = f"HTTP 429 (retry_after={retry_after})"
+                elif 400 <= resp.status < 500:
                     logger.warning(f"[HTTP] {operation} got {resp.status}, not retrying")
                     return None
-                # 5xx - retry
-                last_error = f"HTTP {resp.status}"
+                else:
+                    # 5xx - retry
+                    last_error = f"HTTP {resp.status}"
 
         except (aiohttp.ClientError, asyncio.TimeoutError) as e:
             last_error = str(e)
 
         if attempt < max_retries - 1:
-            sleep = backoff_base * (2 ** attempt)
+            if retry_after is not None:
+                # Server told us how long to wait; cap at 30s to avoid death-stalls.
+                sleep = min(float(retry_after), 30.0)
+            else:
+                sleep = backoff_base * (2 ** attempt)
             logger.debug(f"[HTTP] {operation} attempt {attempt+1} failed, retry in {sleep:.1f}s")
             await asyncio.sleep(sleep)
 
