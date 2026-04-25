@@ -135,3 +135,53 @@ def safe_torch_load(
         weights_only=weights_only,
         **kwargs,
     )
+
+
+def safe_joblib_load(
+    path,
+    *,
+    extra_allowed_roots: Optional[Iterable[str]] = None,
+    joblib_module=None,
+    **kwargs,
+):
+    """Wrapper around `joblib.load` with the same path-prefix validation
+    as `safe_torch_load`. joblib.load uses pickle internally, so the same
+    RCE concern applies — refuse paths outside allowed model roots.
+
+    Args:
+        path: file path to the .pkl/.joblib file
+        extra_allowed_roots: per-call allowlist extension
+        joblib_module: pass an already-imported joblib (avoids re-importing).
+            Defaults to lazy `import joblib`.
+        **kwargs: forwarded to joblib.load
+    """
+    target = validate_model_path(path, extra_allowed_roots=extra_allowed_roots)
+    if joblib_module is None:
+        import joblib as joblib_module  # lazy
+    return joblib_module.load(str(target), **kwargs)
+
+
+def safe_pickle_load(
+    path,
+    *,
+    extra_allowed_roots: Optional[Iterable[str]] = None,
+    pickle_module=None,
+    **kwargs,
+):
+    """Wrapper around `pickle.load` with path-prefix validation.
+
+    Reads the file in binary mode and unpickles. Path must resolve under
+    an allowed model root.
+
+    Args:
+        path: file path to the pickle file
+        extra_allowed_roots: per-call allowlist extension
+        pickle_module: pass an already-imported pickle (avoids re-importing).
+            Defaults to lazy `import pickle`.
+        **kwargs: forwarded to pickle.load
+    """
+    target = validate_model_path(path, extra_allowed_roots=extra_allowed_roots)
+    if pickle_module is None:
+        import pickle as pickle_module  # lazy
+    with open(str(target), "rb") as fh:
+        return pickle_module.load(fh, **kwargs)

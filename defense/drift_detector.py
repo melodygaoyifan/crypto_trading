@@ -526,8 +526,18 @@ class HotRestartManager:
             
             for filepath in checkpoints:
                 try:
-                    with open(filepath, 'rb') as f:
-                        checkpoint = pickle.load(f)
+                    # [P30 2026-04-24] Path-prefix validation: checkpoint_dir
+                    # is configurable (default /tmp/hmats_checkpoints, world-
+                    # writable). Restrict the loaded path to be under
+                    # self.checkpoint_dir specifically — even if filepath
+                    # somehow resolves outside (symlink, malicious glob),
+                    # the wrapper rejects it before unpickling.
+                    from infra.safe_torch_load import safe_pickle_load
+                    checkpoint = safe_pickle_load(
+                        filepath,
+                        extra_allowed_roots=[str(self.checkpoint_dir)],
+                        pickle_module=pickle,
+                    )
                     
                     # Verify checksum
                     if self._verify_checksum(checkpoint):

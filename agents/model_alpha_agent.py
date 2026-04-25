@@ -1072,7 +1072,8 @@ class RealDecisionTransformer:
 
         try:
             import joblib
-            scaler_obj = joblib.load(scaler_path)
+            from infra.safe_torch_load import safe_joblib_load
+            scaler_obj = safe_joblib_load(scaler_path, joblib_module=joblib)
             if isinstance(scaler_obj, dict):
                 self._scaler = scaler_obj.get("scaler")
             else:

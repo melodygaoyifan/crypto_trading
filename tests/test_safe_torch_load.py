@@ -17,6 +17,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from infra.safe_torch_load import (
     safe_torch_load,
+    safe_joblib_load,
+    safe_pickle_load,
     validate_model_path,
     _resolve_allowed_roots,
 )
@@ -123,3 +125,48 @@ class TestSafeTorchLoad:
         )
         call_kwargs = fake_torch.load.call_args.kwargs
         assert call_kwargs["pickle_module"] == "custom"
+
+
+class TestSafeJoblibLoad:
+    def test_calls_joblib_load_for_allowed_path(self, tmp_path, monkeypatch):
+        target = tmp_path / "ok.pkl"
+        target.touch()
+        monkeypatch.setenv("HMATS_TORCH_LOAD_ALLOWED_ROOTS", str(tmp_path))
+        fake_joblib = MagicMock()
+        fake_joblib.load.return_value = {"scaler": "loaded"}
+        result = safe_joblib_load(target, joblib_module=fake_joblib)
+        assert result == {"scaler": "loaded"}
+        fake_joblib.load.assert_called_once()
+
+    def test_blocks_joblib_load_for_rejected_path(self, tmp_path):
+        bad = tmp_path / "evil.pkl"
+        bad.touch()
+        fake_joblib = MagicMock()
+        with pytest.raises(PermissionError):
+            safe_joblib_load(bad, joblib_module=fake_joblib)
+        fake_joblib.load.assert_not_called()
+
+
+class TestSafePickleLoad:
+    def test_loads_allowed_path(self, tmp_path, monkeypatch):
+        import pickle as real_pickle
+        target = tmp_path / "ok.pkl"
+        target.write_bytes(real_pickle.dumps({"k": "v"}))
+        monkeypatch.setenv("HMATS_TORCH_LOAD_ALLOWED_ROOTS", str(tmp_path))
+        result = safe_pickle_load(target)
+        assert result == {"k": "v"}
+
+    def test_blocks_rejected_path(self, tmp_path):
+        import pickle as real_pickle
+        bad = tmp_path / "evil.pkl"
+        bad.write_bytes(real_pickle.dumps({"k": "v"}))
+        # No env override → tmp_path is NOT in default allowlist
+        with pytest.raises(PermissionError):
+            safe_pickle_load(bad)
+
+    def test_extra_allowed_roots_kwarg(self, tmp_path):
+        import pickle as real_pickle
+        target = tmp_path / "ok.pkl"
+        target.write_bytes(real_pickle.dumps([1, 2, 3]))
+        result = safe_pickle_load(target, extra_allowed_roots=[str(tmp_path)])
+        assert result == [1, 2, 3]
