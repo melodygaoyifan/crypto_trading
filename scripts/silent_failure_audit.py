@@ -256,18 +256,24 @@ def collect_class_methods(files: List[Path]) -> Dict[str, Set[str]]:
 # =============================================================================
 
 def main():
+    import json as _json
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--limit", type=int, default=30, help="max items per category")
     p.add_argument("--pattern", choices=["all", "tryexcept", "dictget", "flags"], default="all")
+    p.add_argument("--json", action="store_true",
+                   help="Emit machine-readable JSON to stdout (for CI baseline tooling). "
+                        "When set, suppresses the human-readable output entirely.")
     args = p.parse_args()
 
     files = _live_py_files()
-    print(f"Scanning {len(files)} files in live dirs...\n")
+    if not args.json:
+        print(f"Scanning {len(files)} files in live dirs...\n")
 
     # =========================================================================
     # Pattern 1
     # =========================================================================
     pattern1: List[Dict] = []
+    suspect_methods: List[Tuple[str, str, int]] = []
     if args.pattern in ("all", "tryexcept"):
         for path in files:
             try:
@@ -294,29 +300,30 @@ def main():
             if r not in IGNORE_RECEIVERS and m not in IGNORE_METHODS
         ]
 
-        print("=" * 78)
-        print("PATTERN 1: Method calls inside silent try/except blocks")
-        print("=" * 78)
-        print(f"Total method-call sites under silent except: {len(pattern1)}")
-        print(f"Unique (receiver, method) pairs: {len(by_method)}")
-        print(f"After filtering known-noisy: {len(suspect_methods)}")
-        print()
-        print(f"Top {args.limit} suspect (receiver, method) pairs to verify:")
-        print("(P15-shape: 'does ctx.X.method actually exist on type(X)?')")
-        print()
-        for r, m, c in suspect_methods[:args.limit]:
-            print(f"  {c:3} × {r}.{m}()")
-            # Show a sample call site
-            sample = next(f for f in pattern1 if f["receiver"] == r and f["method"] == m)
-            print(f"      example: {sample['file']}:{sample['line']}")
-            print(f"      {sample['snippet']}")
-        print()
+        if not args.json:
+            print("=" * 78)
+            print("PATTERN 1: Method calls inside silent try/except blocks")
+            print("=" * 78)
+            print(f"Total method-call sites under silent except: {len(pattern1)}")
+            print(f"Unique (receiver, method) pairs: {len(by_method)}")
+            print(f"After filtering known-noisy: {len(suspect_methods)}")
+            print()
+            print(f"Top {args.limit} suspect (receiver, method) pairs to verify:")
+            print("(P15-shape: 'does ctx.X.method actually exist on type(X)?')")
+            print()
+            for r, m, c in suspect_methods[:args.limit]:
+                print(f"  {c:3} × {r}.{m}()")
+                # Show a sample call site
+                sample = next(f for f in pattern1 if f["receiver"] == r and f["method"] == m)
+                print(f"      example: {sample['file']}:{sample['line']}")
+                print(f"      {sample['snippet']}")
+            print()
 
     # =========================================================================
     # Pattern 2
     # =========================================================================
+    pattern2: List[Dict] = []
     if args.pattern in ("all", "dictget"):
-        pattern2: List[Dict] = []
         for path in files:
             try:
                 source = path.read_text(encoding="utf-8", errors="replace")
@@ -324,43 +331,65 @@ def main():
                 continue
             pattern2.extend(detect_dict_get_misuse(path, source))
 
-        print("=" * 78)
-        print("PATTERN 2: dict.get(<var>, <var>) — possible P47-Bug-2 shape")
-        print("=" * 78)
-        print(f"Total suspicious .get() call sites: {len(pattern2)}")
-        print()
-        print(f"Top {args.limit}:")
-        # Sort by file then line
-        pattern2.sort(key=lambda f: (f["file"], f["line"]))
-        for f in pattern2[:args.limit]:
-            print(f"  {f['file']}:{f['line']}  .get({f['key']}, {f['default']})")
-            print(f"      {f['snippet']}")
-        if len(pattern2) > args.limit:
-            print(f"  ... and {len(pattern2) - args.limit} more")
-        print()
+        if not args.json:
+            print("=" * 78)
+            print("PATTERN 2: dict.get(<var>, <var>) — possible P47-Bug-2 shape")
+            print("=" * 78)
+            print(f"Total suspicious .get() call sites: {len(pattern2)}")
+            print()
+            print(f"Top {args.limit}:")
+            # Sort by file then line
+            pattern2.sort(key=lambda f: (f["file"], f["line"]))
+            for f in pattern2[:args.limit]:
+                print(f"  {f['file']}:{f['line']}  .get({f['key']}, {f['default']})")
+                print(f"      {f['snippet']}")
+            if len(pattern2) > args.limit:
+                print(f"  ... and {len(pattern2) - args.limit} more")
+            print()
 
     # =========================================================================
     # Pattern 3
     # =========================================================================
+    no_readers: List[Tuple[str, Dict]] = []
+    declared: Dict[str, Dict] = {}
     if args.pattern in ("all", "flags"):
         declared, reader_count = find_enable_flags(files)
-        print("=" * 78)
-        print("PATTERN 3: ENABLE_* flags declared but never read at runtime")
-        print("=" * 78)
-        print(f"Declared ENABLE_* flags: {len(declared)}")
         no_readers = [(name, info) for name, info in declared.items() if reader_count.get(name, 0) == 0]
-        print(f"Without ANY runtime reader: {len(no_readers)}")
-        print()
-        for name, info in no_readers:
-            print(f"  {name:50}  {info['file']}:{info['line']}")
-        print()
-        print("Flags with VERY FEW readers (1-2 — possibly stale):")
-        few_readers = sorted(
-            [(name, reader_count.get(name, 0), info) for name, info in declared.items() if 0 < reader_count.get(name, 0) <= 2],
-            key=lambda t: t[1],
-        )
-        for name, count, info in few_readers[:args.limit]:
-            print(f"  {name:50}  {count} read(s)  {info['file']}:{info['line']}")
+        if not args.json:
+            print("=" * 78)
+            print("PATTERN 3: ENABLE_* flags declared but never read at runtime")
+            print("=" * 78)
+            print(f"Declared ENABLE_* flags: {len(declared)}")
+            print(f"Without ANY runtime reader: {len(no_readers)}")
+            print()
+            for name, info in no_readers:
+                print(f"  {name:50}  {info['file']}:{info['line']}")
+            print()
+            print("Flags with VERY FEW readers (1-2 — possibly stale):")
+            few_readers = sorted(
+                [(name, reader_count.get(name, 0), info) for name, info in declared.items() if 0 < reader_count.get(name, 0) <= 2],
+                key=lambda t: t[1],
+            )
+            for name, count, info in few_readers[:args.limit]:
+                print(f"  {name:50}  {count} read(s)  {info['file']}:{info['line']}")
+
+    # JSON output for CI baseline tooling.
+    if args.json:
+        out = {
+            "tryexcept_hits": [
+                {"receiver": r, "method": m, "count": c}
+                for r, m, c in suspect_methods
+            ],
+            "dictget_hits": [
+                {"file": f["file"], "line": f["line"], "key": f["key"], "default": f["default"]}
+                for f in pattern2
+            ],
+            "flags_hits": [
+                {"name": name, "file": info["file"], "line": info["line"]}
+                for name, info in no_readers
+            ],
+        }
+        print(_json.dumps(out, indent=2, sort_keys=True))
 
 
 if __name__ == "__main__":

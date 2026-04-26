@@ -1,0 +1,143 @@
+name: auto-deploy
+
+# Auto-deploy to Hetzner on push to main, but ONLY after the codebase-
+# invariants gate passes. Closes the deploy-lag gap that has caused
+# multiple "fix is in main but production still broken" incidents
+# (most recently: P64-B + graceful_shutdown wording fixes shipping
+# in code 24h before they reached the engine).
+#
+# Required GitHub repository secrets (Settings → Secrets → Actions):
+#   HMATS_SSH_PRIVATE_KEY  — private key matching ~/.ssh/authorized_keys
+#                            on the Hetzner box (user 'hmats' or root)
+#   HMATS_SSH_HOST         — server IP or DNS (e.g. hmats.example.com)
+#   HMATS_SSH_USER         — login user (e.g. root or hmats)
+#   HMATS_SSH_KNOWN_HOSTS  — `ssh-keyscan <host>` output, pinned for
+#                            host-key verification (DO NOT use
+#                            StrictHostKeyChecking=no in CI)
+#
+# Optional:
+#   HMATS_DEPLOY_NOTIFY_DISCORD — Discord webhook URL for deploy events
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:  # allow manual re-deploy from Actions tab
+
+permissions:
+  contents: read
+
+concurrency:
+  # Serialize deploys so two close-together pushes don't race on the box.
+  group: hmats-deploy
+  cancel-in-progress: false
+
+jobs:
+  # First gate: invariants must pass on this commit. Re-running here
+  # (instead of using needs:) so the deploy job is self-contained and
+  # cancelling the invariants workflow can't accidentally green-light
+  # a deploy.
+  invariants:
+    uses: ./.github/workflows/codebase-invariants.yml
+
+  deploy:
+    needs: invariants
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Verify required secrets are present
+        run: |
+          missing=""
+          for secret_name in HMATS_SSH_PRIVATE_KEY HMATS_SSH_HOST HMATS_SSH_USER HMATS_SSH_KNOWN_HOSTS; do
+            if [ -z "${!secret_name:-}" ]; then
+              missing="$missing $secret_name"
+            fi
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Missing required secrets:$missing"
+            echo "Configure at: https://github.com/${GITHUB_REPOSITORY}/settings/secrets/actions"
+            exit 1
+          fi
+        env:
+          HMATS_SSH_PRIVATE_KEY: ${{ secrets.HMATS_SSH_PRIVATE_KEY }}
+          HMATS_SSH_HOST: ${{ secrets.HMATS_SSH_HOST }}
+          HMATS_SSH_USER: ${{ secrets.HMATS_SSH_USER }}
+          HMATS_SSH_KNOWN_HOSTS: ${{ secrets.HMATS_SSH_KNOWN_HOSTS }}
+
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "$HMATS_SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          echo "$HMATS_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+          # Pinned host key — fail closed if the host key changes.
+          cat > ~/.ssh/config <<EOF
+          Host hmats
+              HostName $HMATS_SSH_HOST
+              User $HMATS_SSH_USER
+              IdentityFile ~/.ssh/id_ed25519
+              StrictHostKeyChecking yes
+              UserKnownHostsFile ~/.ssh/known_hosts
+              ServerAliveInterval 30
+          EOF
+          chmod 600 ~/.ssh/config
+        env:
+          HMATS_SSH_PRIVATE_KEY: ${{ secrets.HMATS_SSH_PRIVATE_KEY }}
+          HMATS_SSH_HOST: ${{ secrets.HMATS_SSH_HOST }}
+          HMATS_SSH_USER: ${{ secrets.HMATS_SSH_USER }}
+          HMATS_SSH_KNOWN_HOSTS: ${{ secrets.HMATS_SSH_KNOWN_HOSTS }}
+
+      - name: Run deploy script
+        run: |
+          set -o pipefail
+          bash scripts/hetzner_deploy.sh hmats 2>&1 | tee deploy.log
+
+      - name: Tail engine logs for 60s post-deploy (look for fresh errors)
+        run: |
+          # Capture any new ERROR/CRITICAL lines that surface within the
+          # first minute after the engine restarts. If anything shows,
+          # mark the run as failed so operator gets a Slack/email ping
+          # via GitHub's standard fail notification path.
+          ssh hmats "timeout 60 docker logs --since 60s -f hmats-engine 2>&1 | grep -E 'ERROR|CRITICAL' || true" \
+            | tee post_deploy_errors.log
+          if [ -s post_deploy_errors.log ]; then
+            echo "::warning::Fresh ERROR/CRITICAL lines in 60s post-deploy:"
+            cat post_deploy_errors.log
+            # Don't FAIL the workflow — engine startup may emit benign
+            # CRITICALs (existence_fuse warmup, etc.). Operator triages
+            # via the warning.
+          fi
+
+      - name: Notify Discord on deploy outcome (optional)
+        if: always() && env.DISCORD_WEBHOOK != ''
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.HMATS_DEPLOY_NOTIFY_DISCORD }}
+        run: |
+          status="${{ job.status }}"
+          sha_short="${GITHUB_SHA:0:7}"
+          msg_color=$([ "$status" = "success" ] && echo 3066993 || echo 15158332)
+          curl -sS -H "Content-Type: application/json" -X POST "$DISCORD_WEBHOOK" -d "$(cat <<EOF
+          {
+            "embeds": [{
+              "title": "HMATS deploy: $status",
+              "description": "commit \`$sha_short\` deployed to hmats engine\nrun: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}",
+              "color": $msg_color
+            }]
+          }
+          EOF
+          )" || true
+
+      - name: Upload deploy log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deploy-log-${{ github.sha }}
+          path: |
+            deploy.log
+            post_deploy_errors.log
+          retention-days: 14

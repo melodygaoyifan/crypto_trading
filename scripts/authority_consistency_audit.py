@@ -398,7 +398,11 @@ TRACKED_CONSTANTS = [
         # scripts/tools default to 100000. Match only call-keyword form.
         "name": "initial_capital",
         "patterns": [
-            r"\binitial_capital\s*=\s*([0-9]+(?:_[0-9]+)*)\b",
+            # POSIX ERE has no non-capturing groups; use a plain group.
+            # P68 _git_grep error-surfacing caught this silent regex bug
+            # right after the same-shape bug_006 fix landed. Without the
+            # surfacing, this pattern was returning [] (silent dead branch).
+            r"\binitial_capital\s*=\s*([0-9]+(_[0-9]+)*)\b",
         ],
         "expected": "10000",  # production .env value
         "p_history": "scripts/ + tools/ default to 100000; production .env=10000",

@@ -1,0 +1,52 @@
+name: codebase-invariants
+
+# Static-scanner gate. Runs on every push and PR. Refuses to let a change
+# land if it INCREASES the count of silent-failure findings, introduces a
+# new authority-matrix bug, surfaces a new constant drift, etc.
+#
+# To accept an intentional change to the baseline:
+#   python -X utf8 tools/ci_check_invariants.py --update
+#   git add tools/scanner_baselines/
+#   git commit -m "rebaseline: <reason>"
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["main"]
+  workflow_call:  # invoked by auto-deploy.yml as the prerequisite gate
+
+permissions:
+  contents: read
+
+jobs:
+  scanners:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Need full history because the audit script uses `git grep`,
+          # which requires a working tree (already there) but no extra
+          # history. Default fetch-depth=1 is fine.
+          fetch-depth: 1
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Scanners depend only on stdlib + git. No requirements install needed.
+      - name: Run codebase invariants gate
+        run: |
+          python -X utf8 tools/ci_check_invariants.py
+
+      - name: Upload baseline diff (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scanner-baseline-diff
+          path: |
+            tools/scanner_baselines/
+          retention-days: 7
