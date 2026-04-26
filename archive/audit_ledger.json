@@ -1,8 +1,8 @@
 {
-  "generated_at": "2026-04-26T23:42:29.090339+00:00",
+  "generated_at": "2026-04-26T23:50:15.200984+00:00",
   "total_files": 368,
-  "audited_count": 58,
-  "remaining": 310,
+  "audited_count": 62,
+  "remaining": 306,
   "live_dirs": [
     "root",
     "agents",
@@ -824,7 +824,7 @@
     {
       "path": "execution/execution_manager.py",
       "audited": true,
-      "audit_sha": "PENDING_SHA",
+      "audit_sha": "c5be36f",
       "round": "5c-P91"
     },
     {
@@ -1144,7 +1144,7 @@
     {
       "path": "risk/auto_recovery_gate.py",
       "audited": true,
-      "audit_sha": "PENDING_SHA",
+      "audit_sha": "7a509ca",
       "round": "5c"
     },
     {
@@ -1154,7 +1154,7 @@
     {
       "path": "risk/cascade_exhaustion_governor.py",
       "audited": true,
-      "audit_sha": "PENDING_SHA",
+      "audit_sha": "7a509ca",
       "round": "5c"
     },
     {
@@ -1164,7 +1164,7 @@
     {
       "path": "risk/correlation_realtime_controller.py",
       "audited": true,
-      "audit_sha": "PENDING_SHA",
+      "audit_sha": "e48c6ff",
       "round": "5b"
     },
     {
@@ -1173,7 +1173,9 @@
     },
     {
       "path": "risk/dynamic_limits.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_SHA",
+      "round": "5d"
     },
     {
       "path": "risk/exit_drl_kill_switch.py",
@@ -1184,7 +1186,7 @@
     {
       "path": "risk/exit_drl_promotion_gate.py",
       "audited": true,
-      "audit_sha": "PENDING_SHA",
+      "audit_sha": "7a509ca",
       "round": "5c"
     },
     {
@@ -1193,7 +1195,9 @@
     },
     {
       "path": "risk/global_exposure_cap.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_SHA",
+      "round": "5d"
     },
     {
       "path": "risk/high_position_low_volume_filter.py",
@@ -1202,7 +1206,7 @@
     {
       "path": "risk/leverage_guard.py",
       "audited": true,
-      "audit_sha": "PENDING_SHA",
+      "audit_sha": "e48c6ff",
       "round": "5b"
     },
     {
@@ -1228,7 +1232,7 @@
     {
       "path": "risk/stop_loss_authority.py",
       "audited": true,
-      "audit_sha": "PENDING_SHA",
+      "audit_sha": "7a509ca",
       "round": "5c"
     },
     {
@@ -1246,16 +1250,20 @@
     {
       "path": "risk/thesis_budget_governor.py",
       "audited": true,
-      "audit_sha": "PENDING_SHA",
+      "audit_sha": "e48c6ff",
       "round": "5b"
     },
     {
       "path": "risk/tranche_manager.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_SHA",
+      "round": "5d-deferred-architectural"
     },
     {
       "path": "risk/unified_position_sizer.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_SHA",
+      "round": "5d"
     },
     {
       "path": "risk/volatility_alpha_risk.py",

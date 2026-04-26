@@ -232,29 +232,46 @@ class UnifiedPositionSizer:
         if abs(tranche_sum - 1.0) > 0.001:
             raise ValueError(f"Tranche percentages must sum to 1.0, got {tranche_sum}")
     
+    # [P94 2026-04-26] Class-level flag so the import-failure WARNING
+    # fires once per process, not on every tick. Silent ImportError
+    # masking previously meant gambler-mode caps (95%/200%) silently
+    # degraded to NORMAL caps (80%/150%) without any operator visibility.
+    _gambler_import_warned: bool = False
+
     def _is_gambler_mode(self) -> bool:
         """Check if high-risk gambler mode is active."""
         try:
             from configs.high_risk_mode import is_gambler_mode_active
             return is_gambler_mode_active()
-        except ImportError:
+        except ImportError as e:
+            if not UnifiedPositionSizer._gambler_import_warned:
+                logger.warning(
+                    f"[UNIFIED_SIZER] configs.high_risk_mode is unimportable "
+                    f"({type(e).__name__}: {e}). Gambler-mode caps "
+                    f"(95%/200%) UNAVAILABLE; falling back to NORMAL caps "
+                    f"(80%/150%). OPPORTUNITY positions will size at the "
+                    f"lower bound. This warning fires once per process."
+                )
+                UnifiedPositionSizer._gambler_import_warned = True
             return False
-    
+
     def _get_gambler_config(self):
         """Get gambler mode configuration."""
         try:
             from configs.high_risk_mode import get_high_risk_config
             return get_high_risk_config()
         except ImportError:
+            # _is_gambler_mode already surfaced the import problem;
+            # downstream callers should null-check the return value.
             return None
-    
+
     def _log_gambler_action(self, details: Dict = None):
         """Log gambler mode position boost for audit."""
         try:
             from configs.high_risk_mode import log_gambler_action, GamblerModeReason
             log_gambler_action(GamblerModeReason.OPPORTUNITY_MAX_BOOST, details)
         except ImportError:
-            pass
+            pass  # noqa: silent-swallow — _is_gambler_mode already warned
     
     def calculate_position_size(
         self,

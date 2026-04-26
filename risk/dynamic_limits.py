@@ -155,10 +155,30 @@ class DynamicLimits:
             conf_applied = True
 
         # --- Volatility pullback (leverage only) ---
+        # [P94 2026-04-26] NaN guard. `volatility_z > threshold` returns
+        # False for NaN, silently SKIPPING the leverage pullback. Since
+        # the pullback is a downward safety adjustment, fail-OPEN on
+        # NaN volatility data is the wrong direction. Treat NaN as
+        # high-volatility regime (apply pullback) — fail-CLOSED.
         vol_applied = False
-        if volatility_z is not None and volatility_z > self.config.volatility_high_threshold:
-            lev_mult *= self.config.volatility_high_leverage_multiplier
-            vol_applied = True
+        if volatility_z is not None:
+            try:
+                import math
+                _vol_is_nan = math.isnan(float(volatility_z))
+            except (TypeError, ValueError):
+                _vol_is_nan = True  # unparseable → treat as bad data
+            if _vol_is_nan:
+                logger.warning(
+                    f"[DYNAMIC_LIMITS] volatility_z is NaN/unparseable "
+                    f"({volatility_z!r}); applying high-vol pullback "
+                    f"({self.config.volatility_high_leverage_multiplier}x) "
+                    f"as fail-closed default"
+                )
+                lev_mult *= self.config.volatility_high_leverage_multiplier
+                vol_applied = True
+            elif volatility_z > self.config.volatility_high_threshold:
+                lev_mult *= self.config.volatility_high_leverage_multiplier
+                vol_applied = True
 
         # Apply multipliers
         lev *= lev_mult
