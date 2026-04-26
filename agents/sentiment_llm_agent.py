@@ -798,7 +798,12 @@ class LLMSentimentAgent:
         if headlines and len(headlines) > 0 and self._api_key and not circuit_open:
             try:
                 t0 = time.monotonic()
-                result = await self._call_haiku(asset, headlines)
+                # P71: thread regime + funding_rate through to _call_haiku so
+                # _build_user_prompt sees them. Previously these were referenced
+                # inside _call_haiku without being in its signature → NameError.
+                result = await self._call_haiku(
+                    asset, headlines, regime=regime, funding_rate=funding_rate,
+                )
                 latency_ms = round((time.monotonic() - t0) * 1000)
                 haiku_status["used"] = True
                 haiku_status["latency_ms"] = latency_ms
@@ -1085,8 +1090,21 @@ class LLMSentimentAgent:
             self._client_init_failed = True
             return None
 
-    async def _call_haiku(self, asset: str, headlines: List[str]) -> Optional[SentimentResult]:
-        """Call Haiku API with timeout + semaphore. Returns None on any failure."""
+    async def _call_haiku(
+        self,
+        asset: str,
+        headlines: List[str],
+        regime: str = "",
+        funding_rate: float = 0.0,
+    ) -> Optional[SentimentResult]:
+        """Call Haiku API with timeout + semaphore. Returns None on any failure.
+
+        P71: regime + funding_rate were referenced inside this function but
+        not in its signature, raising NameError on every call. The surrounding
+        try/except returned None, silently falling back to the deterministic
+        heuristic — L3 LLM sentiment was effectively dead since this code
+        shipped. Threading the analyze() kwargs through fixes it.
+        """
         client = self._get_client()
         if client is None:
             return None

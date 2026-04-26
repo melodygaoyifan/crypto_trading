@@ -1760,7 +1760,13 @@ class ExecutionManager:
             discrepancies = []
             
             for pos in exchange_positions:
+                # P71: pos.get('symbol') without default returns None on
+                # malformed exchange responses; None then propagates as a
+                # dict key into the discrepancy record and any downstream
+                # `.split('/')` on it AttributeErrors later. Skip such rows.
                 symbol = pos.get('symbol')
+                if not symbol:
+                    continue
                 exchange_size = abs(pos.get('contracts', 0))
                 expected_size = expected_positions.get(symbol, 0)
                 

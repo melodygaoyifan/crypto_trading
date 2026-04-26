@@ -151,8 +151,10 @@ class TradeAttribution:
     asset: str = ""
     direction: int = 0  # 1 = long, -1 = short
     
-    # Timing
-    entry_time: datetime = field(default_factory=datetime.utcnow)
+    # Timing — P71: tz-aware default (sibling of P68 exit_alpha.py:135 fix).
+    # datetime.utcnow returns naive; mixing with tz-aware comparisons elsewhere
+    # raises TypeError. P39/P40 family.
+    entry_time: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     exit_time: Optional[datetime] = None
     
     # PnL

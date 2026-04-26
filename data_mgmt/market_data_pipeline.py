@@ -1253,7 +1253,17 @@ class MarketDataPipeline:
                 _s_conf = min(_sv["strength"], 1.0)
                 _w_sum += _s_numeric * _w * _s_conf
                 _w_conf_sum += _w * _s_conf
-            _ensemble_score = _w_sum / max(_w_conf_sum, 1e-6)
+            # P71: previous `max(_w_conf_sum, 1e-6)` masked div-by-zero by
+            # producing _ensemble_score = _w_sum / 1e-6 = up to ±1e6 when all
+            # strategies abstained (strength=0). The downstream comparison
+            # `_ensemble_score * _best_dir_sign < -0.1` then always fired,
+            # mis-flagging conflict and applying ×0.75 conf penalty for no
+            # real reason. Skip the ensemble penalty entirely when there's
+            # no signal mass to weight.
+            if _w_conf_sum < 1e-6:
+                _ensemble_score = 0.0
+            else:
+                _ensemble_score = _w_sum / _w_conf_sum
             # If Best-of-N says bullish but ensemble score < -0.1, or vice versa: conflict
             _best_dir_sign = 1.0 if quant_dir > 0.05 else (-1.0 if quant_dir < -0.05 else 0.0)
             if _best_dir_sign != 0.0 and _ensemble_score * _best_dir_sign < -0.1:

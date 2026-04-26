@@ -475,7 +475,10 @@ class TradeAttributor:
             side = data.get("side", "")
             session = fill.get("session_id", "")
 
-            if pnl == 0.0:
+            # P71: was `pnl == 0.0`. Exact FP equality after any non-trivial
+            # calc is unreliable; a tiny rounding remainder (1e-15 USD) would
+            # mis-classify an entry as an exit and corrupt trade pairing.
+            if abs(pnl) < 1e-9:
                 # Entry fill
                 direction = -1 if side.upper() == "SELL" else 1
                 trade_id = f"{asset}_{session}_{fill.get('tick_id', 0)}"

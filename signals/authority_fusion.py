@@ -584,7 +584,14 @@ class AuthorityFusionEngine:
                 direction_agreement = max(_n_pos, _n_neg) / _n_active
             else:
                 direction_agreement = 0.0  # nobody voted; no consensus to measure
-            avg_conf = total_weight / len(decide_agents)
+            # P71: divide by _n_active to match FIX-1 (line 573-578) abstain
+            # semantics. Previous `len(decide_agents)` divisor included
+            # abstainers (those with |dir|<0.01) in the denominator — meaning
+            # the BTC solo-DRL case (DRL active conf=0.44, two abstainers conf=0)
+            # produced avg_conf = 0.1938/3 = 0.065 → sqrt = 0.254 instead of
+            # the correct 0.1938/1 = 0.1938 → sqrt = 0.44. The agreement metric
+            # already excluded abstainers; the avg_conf metric should too.
+            avg_conf = total_weight / max(_n_active, 1)
             # avg_conf is built from squared weights so equals avg(confidence²).
             # Take its sqrt to get a comparable "average confidence" for the
             # downstream alpha gate (which expects [0, 1] confidence units).

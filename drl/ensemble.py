@@ -235,8 +235,18 @@ class TQCInference:
                         _q75 = float(_th.quantile(_all_q, 0.75))
                         _med = float(_th.median(_all_q))
                         tqc_uncertainty = (_q75 - _q25) / (abs(_med) + 1e-8)
-            except Exception:
-                pass
+            except Exception as _unc_err:
+                # P71: previously bare `except: pass` left tqc_uncertainty=0.0
+                # silently → fusion saw full DRL conviction even on critic
+                # disagreement / OOM / device errors. Log so silent
+                # overconfidence is observable in heartbeat logs. The
+                # downstream confidence calc at line 246+ already handles
+                # tqc_uncertainty=0.0 correctly (no discount applied).
+                logger.debug(
+                    f"[TQC_UNCERTAINTY] critic-quantile read failed "
+                    f"({type(_unc_err).__name__}: {_unc_err}); "
+                    f"falling back to undiscounted confidence"
+                )
 
         # [FIX-DRL-CONF] Incorporate uncertainty into confidence so fusion sees
         # reduced conviction when critics disagree. Previously confidence = |action| × 0.5

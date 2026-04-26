@@ -544,7 +544,16 @@ class JitoTipMonitor:
         if sig.price_tip_divergence < -0.5:
             adj += 0.05
 
-        if sig.tip_zscore < -1.0 and prices[-1] < prices[-window] if window >= 2 else False:
+        # P71: previous form `... if window >= 2 else False` was a Python
+        # ternary that DID guard window<2, but didn't guard `len(prices) <
+        # window` — so window=5 with 3 prices would IndexError on
+        # prices[-window]. Explicit length guard fixes the real bug.
+        if (
+            window >= 2
+            and len(prices) >= window
+            and sig.tip_zscore < -1.0
+            and prices[-1] < prices[-window]
+        ):
             adj -= 0.05  # de-leverage, don't chase short
 
         sig.short_alpha_adjustment = max(
