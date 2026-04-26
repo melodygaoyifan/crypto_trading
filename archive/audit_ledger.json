@@ -1,0 +1,1595 @@
+{
+  "generated_at": "2026-04-26T23:24:40.252138Z",
+  "total_files": 368,
+  "audited_count": 48,
+  "remaining": 320,
+  "live_dirs": [
+    "root",
+    "agents",
+    "analytics",
+    "core",
+    "data_mgmt",
+    "defense",
+    "drl",
+    "execution",
+    "infra",
+    "integration",
+    "liquidity",
+    "risk",
+    "signals",
+    "strategies",
+    "tools",
+    "scripts",
+    "configs"
+  ],
+  "files": [
+    {
+      "path": "agents/__init__.py",
+      "audited": false
+    },
+    {
+      "path": "agents/attribution_tracker.py",
+      "audited": false
+    },
+    {
+      "path": "agents/drl_agent.py",
+      "audited": true,
+      "audit_sha": "P28",
+      "round": "pre-resume"
+    },
+    {
+      "path": "agents/exit_drl_agent.py",
+      "audited": true,
+      "audit_sha": "P81",
+      "round": "pre-resume"
+    },
+    {
+      "path": "agents/exit_drl_outcome_ledger.py",
+      "audited": true,
+      "audit_sha": "P28",
+      "round": "pre-resume"
+    },
+    {
+      "path": "agents/kraken_quant_agent.py",
+      "audited": false
+    },
+    {
+      "path": "agents/microstructure_agent.py",
+      "audited": true,
+      "audit_sha": "P89-4f",
+      "round": "pre-resume"
+    },
+    {
+      "path": "agents/model_alpha_agent.py",
+      "audited": true,
+      "audit_sha": "P68",
+      "round": "pre-resume"
+    },
+    {
+      "path": "agents/onchain_graph_alpha.py",
+      "audited": false
+    },
+    {
+      "path": "agents/onchain_sentiment_fusion.py",
+      "audited": false
+    },
+    {
+      "path": "agents/onchain_solana_agent.py",
+      "audited": false
+    },
+    {
+      "path": "agents/options_sentiment_agent.py",
+      "audited": false
+    },
+    {
+      "path": "agents/risk_agent.py",
+      "audited": false
+    },
+    {
+      "path": "agents/sentiment_deberta.py",
+      "audited": false
+    },
+    {
+      "path": "agents/sentiment_llm_agent.py",
+      "audited": false
+    },
+    {
+      "path": "agents/short_bias_agent.py",
+      "audited": false
+    },
+    {
+      "path": "agents/signal_envelope.py",
+      "audited": true,
+      "audit_sha": "P57",
+      "round": "pre-resume"
+    },
+    {
+      "path": "agents/sol_exposure_manager.py",
+      "audited": false
+    },
+    {
+      "path": "agents/squeeze_detector_agent.py",
+      "audited": false
+    },
+    {
+      "path": "agents/volatility_alpha_agent.py",
+      "audited": false
+    },
+    {
+      "path": "agents/whale_detector.py",
+      "audited": false
+    },
+    {
+      "path": "analytics/__init__.py",
+      "audited": false
+    },
+    {
+      "path": "analytics/alpha_score_aggregator.py",
+      "audited": false
+    },
+    {
+      "path": "analytics/beta_exposure.py",
+      "audited": false
+    },
+    {
+      "path": "analytics/confidence_scorer.py",
+      "audited": false
+    },
+    {
+      "path": "analytics/drift_policy.py",
+      "audited": false
+    },
+    {
+      "path": "analytics/drl_drift/__init__.py",
+      "audited": false
+    },
+    {
+      "path": "analytics/drl_drift/_common.py",
+      "audited": false
+    },
+    {
+      "path": "analytics/drl_drift/test1_action_distribution.py",
+      "audited": false
+    },
+    {
+      "path": "analytics/drl_drift/test2_qvalue_sanity.py",
+      "audited": false
+    },
+    {
+      "path": "analytics/drl_drift/test3_obs_distribution_shift.py",
+      "audited": false
+    },
+    {
+      "path": "analytics/drl_drift/test4_live_consistency.py",
+      "audited": false
+    },
+    {
+      "path": "analytics/drl_drift/test5_live_action_log.py",
+      "audited": false
+    },
+    {
+      "path": "analytics/drl_realized/drl_counterfactual_sharpe.py",
+      "audited": false
+    },
+    {
+      "path": "analytics/execution_quality_report.py",
+      "audited": false
+    },
+    {
+      "path": "analytics/exit_alpha_tracker.py",
+      "audited": true,
+      "audit_sha": "P68",
+      "round": "pre-resume"
+    },
+    {
+      "path": "analytics/failure_memory.py",
+      "audited": false
+    },
+    {
+      "path": "analytics/fill_rate_kpi.py",
+      "audited": false
+    },
+    {
+      "path": "analytics/ic/__init__.py",
+      "audited": false
+    },
+    {
+      "path": "analytics/ic/backfill_ic.py",
+      "audited": false
+    },
+    {
+      "path": "analytics/ic/compute_ic.py",
+      "audited": false
+    },
+    {
+      "path": "analytics/ic/diagnostic_ic.py",
+      "audited": false
+    },
+    {
+      "path": "analytics/ic/ic_logger.py",
+      "audited": true,
+      "audit_sha": "P68",
+      "round": "pre-resume"
+    },
+    {
+      "path": "analytics/ic/strategy_sign_flip_audit.py",
+      "audited": false
+    },
+    {
+      "path": "analytics/llm_explainer.py",
+      "audited": false
+    },
+    {
+      "path": "analytics/meta_decision.py",
+      "audited": false
+    },
+    {
+      "path": "analytics/meta_decision_memory.py",
+      "audited": false
+    },
+    {
+      "path": "analytics/monitoring_dashboard.py",
+      "audited": false
+    },
+    {
+      "path": "analytics/pnl_attribution.py",
+      "audited": false
+    },
+    {
+      "path": "analytics/pnl_promotion.py",
+      "audited": false
+    },
+    {
+      "path": "analytics/reflection_agent.py",
+      "audited": false
+    },
+    {
+      "path": "analytics/regime_drift_v2/__init__.py",
+      "audited": false
+    },
+    {
+      "path": "analytics/regime_drift_v2/_common.py",
+      "audited": false
+    },
+    {
+      "path": "analytics/regime_drift_v2/smoke_test_canonical.py",
+      "audited": false
+    },
+    {
+      "path": "analytics/regime_drift_v2/summary.py",
+      "audited": false
+    },
+    {
+      "path": "analytics/regime_drift_v2/test0_artifact_audit.py",
+      "audited": false
+    },
+    {
+      "path": "analytics/regime_drift_v2/test1_cluster_drift.py",
+      "audited": false
+    },
+    {
+      "path": "analytics/regime_drift_v2/test2_frequency_drift.py",
+      "audited": false
+    },
+    {
+      "path": "analytics/regime_drift_v2/test3_confidence_drift.py",
+      "audited": false
+    },
+    {
+      "path": "analytics/regime_drift_v2/test4_apple_to_apple.py",
+      "audited": false
+    },
+    {
+      "path": "analytics/regime_drift_v2/test5_disagreement_timeline.py",
+      "audited": false
+    },
+    {
+      "path": "analytics/regime_drift_v2/validate_retrain.py",
+      "audited": false
+    },
+    {
+      "path": "analytics/signal_quality_tracker.py",
+      "audited": true,
+      "audit_sha": "P68",
+      "round": "pre-resume"
+    },
+    {
+      "path": "analytics/sota_metrics_calculator.py",
+      "audited": false
+    },
+    {
+      "path": "analytics/strategy_aging.py",
+      "audited": false
+    },
+    {
+      "path": "analytics/trade_attributor.py",
+      "audited": true,
+      "audit_sha": "P37",
+      "round": "pre-resume"
+    },
+    {
+      "path": "analytics/trade_explainer.py",
+      "audited": false
+    },
+    {
+      "path": "api/__init__.py",
+      "audited": false
+    },
+    {
+      "path": "api/server.py",
+      "audited": false
+    },
+    {
+      "path": "configs/__init__.py",
+      "audited": false
+    },
+    {
+      "path": "configs/canonical_config.py",
+      "audited": false
+    },
+    {
+      "path": "configs/config_resolver.py",
+      "audited": false
+    },
+    {
+      "path": "configs/high_risk_mode.py",
+      "audited": false
+    },
+    {
+      "path": "configs/sota_flags.py",
+      "audited": false
+    },
+    {
+      "path": "configs/strategy_tiers.py",
+      "audited": false
+    },
+    {
+      "path": "core/__init__.py",
+      "audited": false
+    },
+    {
+      "path": "core/account_sync.py",
+      "audited": false
+    },
+    {
+      "path": "core/alpha_boost.py",
+      "audited": false
+    },
+    {
+      "path": "core/alpha_gate_config.py",
+      "audited": false
+    },
+    {
+      "path": "core/anti_churn.py",
+      "audited": true,
+      "audit_sha": "P50",
+      "round": "pre-resume"
+    },
+    {
+      "path": "core/asset_alpha_tilt.py",
+      "audited": false
+    },
+    {
+      "path": "core/authority_chain.py",
+      "audited": true,
+      "audit_sha": "P57",
+      "round": "pre-resume"
+    },
+    {
+      "path": "core/canonical_enums.py",
+      "audited": false
+    },
+    {
+      "path": "core/canonical_imports.py",
+      "audited": false
+    },
+    {
+      "path": "core/cloud_config.py",
+      "audited": false
+    },
+    {
+      "path": "core/component_lifecycle.py",
+      "audited": false
+    },
+    {
+      "path": "core/constants.py",
+      "audited": false
+    },
+    {
+      "path": "core/drl_shadow_diagnostics.py",
+      "audited": false
+    },
+    {
+      "path": "core/exchange_guard.py",
+      "audited": false
+    },
+    {
+      "path": "core/execution_advisory_service.py",
+      "audited": false
+    },
+    {
+      "path": "core/execution_context.py",
+      "audited": true,
+      "audit_sha": "P22",
+      "round": "pre-resume"
+    },
+    {
+      "path": "core/execution_service.py",
+      "audited": true,
+      "audit_sha": "4b5ccfb",
+      "round": "pre-resume"
+    },
+    {
+      "path": "core/feedback_loop.py",
+      "audited": false
+    },
+    {
+      "path": "core/health_validator.py",
+      "audited": true,
+      "audit_sha": "P57",
+      "round": "pre-resume"
+    },
+    {
+      "path": "core/market_data_helpers.py",
+      "audited": false
+    },
+    {
+      "path": "core/paper_fee_service.py",
+      "audited": false
+    },
+    {
+      "path": "core/paper_position_update.py",
+      "audited": false
+    },
+    {
+      "path": "core/profit_calibration_service.py",
+      "audited": false
+    },
+    {
+      "path": "core/regime_smoother.py",
+      "audited": false
+    },
+    {
+      "path": "core/risk_governor.py",
+      "audited": false
+    },
+    {
+      "path": "core/runtime_authority.py",
+      "audited": false
+    },
+    {
+      "path": "core/runtime_control_service.py",
+      "audited": false
+    },
+    {
+      "path": "core/runtime_export_service.py",
+      "audited": false
+    },
+    {
+      "path": "core/runtime_spine.py",
+      "audited": true,
+      "audit_sha": "P50",
+      "round": "pre-resume"
+    },
+    {
+      "path": "core/runtime_state.py",
+      "audited": true,
+      "audit_sha": "P68",
+      "round": "pre-resume"
+    },
+    {
+      "path": "core/sentiment_gate.py",
+      "audited": false
+    },
+    {
+      "path": "core/smart_beta_controller.py",
+      "audited": false
+    },
+    {
+      "path": "core/state_persistence.py",
+      "audited": true,
+      "audit_sha": "2d0a93c",
+      "round": "pre-resume"
+    },
+    {
+      "path": "core/structure_mode_service.py",
+      "audited": false
+    },
+    {
+      "path": "core/tick_context.py",
+      "audited": false
+    },
+    {
+      "path": "core/tick_exit_triggers.py",
+      "audited": true,
+      "audit_sha": "P79",
+      "round": "pre-resume"
+    },
+    {
+      "path": "core/unit_system.py",
+      "audited": false
+    },
+    {
+      "path": "core/warmup_tracker.py",
+      "audited": false
+    },
+    {
+      "path": "dashboard/__init__.py",
+      "audited": false
+    },
+    {
+      "path": "dashboard/app.py",
+      "audited": false
+    },
+    {
+      "path": "dashboard/enhanced_dashboard.py",
+      "audited": false
+    },
+    {
+      "path": "dashboard/integrated_explainer_dashboard.py",
+      "audited": false
+    },
+    {
+      "path": "dashboard/sota_dashboard.py",
+      "audited": false
+    },
+    {
+      "path": "dashboard/volatility_alpha_panel.py",
+      "audited": false
+    },
+    {
+      "path": "data_mgmt/__init__.py",
+      "audited": false
+    },
+    {
+      "path": "data_mgmt/data_health.py",
+      "audited": false
+    },
+    {
+      "path": "data_mgmt/data_validation.py",
+      "audited": false
+    },
+    {
+      "path": "data_mgmt/feeds/__init__.py",
+      "audited": false
+    },
+    {
+      "path": "data_mgmt/feeds/_http.py",
+      "audited": false
+    },
+    {
+      "path": "data_mgmt/feeds/binance_ticker.py",
+      "audited": false
+    },
+    {
+      "path": "data_mgmt/feeds/coinglass_feed.py",
+      "audited": false
+    },
+    {
+      "path": "data_mgmt/feeds/cryptocompare_news_feed.py",
+      "audited": false
+    },
+    {
+      "path": "data_mgmt/feeds/cryptocompare_onchain.py",
+      "audited": false
+    },
+    {
+      "path": "data_mgmt/feeds/cryptopanic_feed.py",
+      "audited": false
+    },
+    {
+      "path": "data_mgmt/feeds/fred_feed.py",
+      "audited": false
+    },
+    {
+      "path": "data_mgmt/feeds/kraken_futures_feed.py",
+      "audited": false
+    },
+    {
+      "path": "data_mgmt/feeds/lob_feed.py",
+      "audited": false
+    },
+    {
+      "path": "data_mgmt/feeds/lunarcrush_feed.py",
+      "audited": false
+    },
+    {
+      "path": "data_mgmt/feeds/macro_feed.py",
+      "audited": false
+    },
+    {
+      "path": "data_mgmt/feeds/onchain_feed.py",
+      "audited": false
+    },
+    {
+      "path": "data_mgmt/feeds/sentiment_feed.py",
+      "audited": false
+    },
+    {
+      "path": "data_mgmt/feeds/solana_onchain.py",
+      "audited": false
+    },
+    {
+      "path": "data_mgmt/feeds/trading_economics_feed.py",
+      "audited": false
+    },
+    {
+      "path": "data_mgmt/global_context_informer.py",
+      "audited": false
+    },
+    {
+      "path": "data_mgmt/market_data_pipeline.py",
+      "audited": true,
+      "audit_sha": "P74",
+      "round": "pre-resume"
+    },
+    {
+      "path": "data_mgmt/proof_log_system.py",
+      "audited": false
+    },
+    {
+      "path": "data_mgmt/shadow_ledger_manager.py",
+      "audited": false
+    },
+    {
+      "path": "defense/__init__.py",
+      "audited": false
+    },
+    {
+      "path": "defense/bitbeast_rules.py",
+      "audited": false
+    },
+    {
+      "path": "defense/confidence_gate.py",
+      "audited": false
+    },
+    {
+      "path": "defense/constitution.py",
+      "audited": true,
+      "audit_sha": "pre-P67",
+      "round": "pre-resume"
+    },
+    {
+      "path": "defense/drift_detector.py",
+      "audited": false
+    },
+    {
+      "path": "defense/execution_guards.py",
+      "audited": false
+    },
+    {
+      "path": "defense/governor_integration.py",
+      "audited": false
+    },
+    {
+      "path": "defense/human_override.py",
+      "audited": false
+    },
+    {
+      "path": "defense/kraken_integrity_shield.py",
+      "audited": false
+    },
+    {
+      "path": "defense/p0_safety_integrator.py",
+      "audited": true,
+      "audit_sha": "24ffcd6",
+      "round": "pre-resume"
+    },
+    {
+      "path": "defense/production_reliability.py",
+      "audited": true,
+      "audit_sha": "P58",
+      "round": "pre-resume"
+    },
+    {
+      "path": "defense/rate_limit_manager.py",
+      "audited": false
+    },
+    {
+      "path": "defense/shadow_ledger_jsonl.py",
+      "audited": true,
+      "audit_sha": "fc10b46",
+      "round": "pre-resume"
+    },
+    {
+      "path": "defense/short_control.py",
+      "audited": true,
+      "audit_sha": "696af82",
+      "round": "pre-resume"
+    },
+    {
+      "path": "defense/sol_defense.py",
+      "audited": false
+    },
+    {
+      "path": "defense/sol_execution_guard.py",
+      "audited": false
+    },
+    {
+      "path": "defense/startup_reconciler.py",
+      "audited": true,
+      "audit_sha": "fc10b46",
+      "round": "pre-resume"
+    },
+    {
+      "path": "defense/strategy_existence_fuse.py",
+      "audited": false
+    },
+    {
+      "path": "defense/trade_gate.py",
+      "audited": true,
+      "audit_sha": "pre-P67",
+      "round": "pre-resume"
+    },
+    {
+      "path": "defense/vram_guard.py",
+      "audited": false
+    },
+    {
+      "path": "drl/__init__.py",
+      "audited": false
+    },
+    {
+      "path": "drl/authority_gate.py",
+      "audited": false
+    },
+    {
+      "path": "drl/ensemble.py",
+      "audited": true,
+      "audit_sha": "P4-regression",
+      "round": "pre-resume"
+    },
+    {
+      "path": "drl/live_experience_buffer.py",
+      "audited": false
+    },
+    {
+      "path": "drl/ood_detector.py",
+      "audited": true,
+      "audit_sha": "Stage9",
+      "round": "pre-resume"
+    },
+    {
+      "path": "drl/promotion_gate.py",
+      "audited": false
+    },
+    {
+      "path": "drl/runtime_obs_builder.py",
+      "audited": true,
+      "audit_sha": "P4",
+      "round": "pre-resume"
+    },
+    {
+      "path": "engine/__init__.py",
+      "audited": false
+    },
+    {
+      "path": "engine/bitbeast/__init__.py",
+      "audited": false
+    },
+    {
+      "path": "engine/compute/__init__.py",
+      "audited": false
+    },
+    {
+      "path": "engine/sota/__init__.py",
+      "audited": false
+    },
+    {
+      "path": "exchange/__init__.py",
+      "audited": false
+    },
+    {
+      "path": "exchange/kraken/__init__.py",
+      "audited": false
+    },
+    {
+      "path": "exchange/kraken/kraken_defensive_link.py",
+      "audited": false
+    },
+    {
+      "path": "exchange/kraken/kraken_quant_agent.py",
+      "audited": false
+    },
+    {
+      "path": "exchange/kraken/kraken_token_bucket.py",
+      "audited": false
+    },
+    {
+      "path": "execution/__init__.py",
+      "audited": false
+    },
+    {
+      "path": "execution/adversarial_tests/adversarial_test_suite.py",
+      "audited": false
+    },
+    {
+      "path": "execution/composite_toxicity.py",
+      "audited": false
+    },
+    {
+      "path": "execution/dead_man_switch.py",
+      "audited": true,
+      "audit_sha": "3ba5bb3",
+      "round": "pre-resume"
+    },
+    {
+      "path": "execution/derivatives_executor.py",
+      "audited": false
+    },
+    {
+      "path": "execution/execution_manager.py",
+      "audited": true,
+      "audit_sha": "eb84b9e",
+      "round": "pre-resume"
+    },
+    {
+      "path": "execution/execution_quality_logger.py",
+      "audited": true,
+      "audit_sha": "P68",
+      "round": "pre-resume"
+    },
+    {
+      "path": "execution/execution_router.py",
+      "audited": false
+    },
+    {
+      "path": "execution/exit_alpha.py",
+      "audited": true,
+      "audit_sha": "P68",
+      "round": "pre-resume"
+    },
+    {
+      "path": "execution/fast_risk_tick.py",
+      "audited": false
+    },
+    {
+      "path": "execution/fees/__init__.py",
+      "audited": false
+    },
+    {
+      "path": "execution/fees/kraken_plus_fee_blender.py",
+      "audited": false
+    },
+    {
+      "path": "execution/impact_calibration.py",
+      "audited": false
+    },
+    {
+      "path": "execution/learned_execution_policy.py",
+      "audited": false
+    },
+    {
+      "path": "execution/level2_analyzer.py",
+      "audited": false
+    },
+    {
+      "path": "execution/loop_controller.py",
+      "audited": false
+    },
+    {
+      "path": "execution/order_manager.py",
+      "audited": false
+    },
+    {
+      "path": "execution/orderbook_analyzer.py",
+      "audited": false
+    },
+    {
+      "path": "execution/passive_aggressive.py",
+      "audited": false
+    },
+    {
+      "path": "execution/production_market_impact.py",
+      "audited": false
+    },
+    {
+      "path": "execution/rl_drift_fallback.py",
+      "audited": false
+    },
+    {
+      "path": "execution/rl_execution_agent.py",
+      "audited": false
+    },
+    {
+      "path": "execution/rl_fallback.py",
+      "audited": false
+    },
+    {
+      "path": "execution/simulator/lob_replay_engine.py",
+      "audited": false
+    },
+    {
+      "path": "execution/sol_execution.py",
+      "audited": false
+    },
+    {
+      "path": "execution/sota_scheduler.py",
+      "audited": false
+    },
+    {
+      "path": "execution/timing_engine.py",
+      "audited": false
+    },
+    {
+      "path": "infra/__init__.py",
+      "audited": false
+    },
+    {
+      "path": "infra/alert_manager.py",
+      "audited": false
+    },
+    {
+      "path": "infra/classified_retry.py",
+      "audited": false
+    },
+    {
+      "path": "infra/data_provider.py",
+      "audited": false
+    },
+    {
+      "path": "infra/data_schema.py",
+      "audited": false
+    },
+    {
+      "path": "infra/event_bus.py",
+      "audited": true,
+      "audit_sha": "P89-4f",
+      "round": "pre-resume"
+    },
+    {
+      "path": "infra/event_integration.py",
+      "audited": false
+    },
+    {
+      "path": "infra/hot_restart_persistence.py",
+      "audited": true,
+      "audit_sha": "P37",
+      "round": "pre-resume"
+    },
+    {
+      "path": "infra/kraken_client.py",
+      "audited": false
+    },
+    {
+      "path": "infra/kraken_derivatives_client.py",
+      "audited": false
+    },
+    {
+      "path": "infra/kraken_link.py",
+      "audited": true,
+      "audit_sha": "ec110cd",
+      "round": "pre-resume"
+    },
+    {
+      "path": "infra/kraken_rest_client.py",
+      "audited": true,
+      "audit_sha": "P77",
+      "round": "pre-resume"
+    },
+    {
+      "path": "infra/market_data_schema.py",
+      "audited": false
+    },
+    {
+      "path": "infra/persistence.py",
+      "audited": false
+    },
+    {
+      "path": "infra/preserve_fresh_state.py",
+      "audited": false
+    },
+    {
+      "path": "infra/safe_torch_load.py",
+      "audited": true,
+      "audit_sha": "P89-4f",
+      "round": "pre-resume"
+    },
+    {
+      "path": "infra/shared_state_registry.py",
+      "audited": false
+    },
+    {
+      "path": "infra/unified_event_v521.py",
+      "audited": false
+    },
+    {
+      "path": "integration/__init__.py",
+      "audited": false
+    },
+    {
+      "path": "integration/core/__init__.py",
+      "audited": false
+    },
+    {
+      "path": "integration/core/compat.py",
+      "audited": false
+    },
+    {
+      "path": "integration/integration_v36.py",
+      "audited": true,
+      "audit_sha": "P55",
+      "round": "pre-resume"
+    },
+    {
+      "path": "liquidity/__init__.py",
+      "audited": false
+    },
+    {
+      "path": "liquidity/integrated_manager.py",
+      "audited": false
+    },
+    {
+      "path": "liquidity/sol_dex_monitor.py",
+      "audited": false
+    },
+    {
+      "path": "liquidity/weekend_manager.py",
+      "audited": true,
+      "audit_sha": "P64",
+      "round": "pre-resume"
+    },
+    {
+      "path": "main.py",
+      "audited": true,
+      "audit_sha": "696af82",
+      "round": "pre-resume"
+    },
+    {
+      "path": "market/__init__.py",
+      "audited": false
+    },
+    {
+      "path": "market/high_risk_config.py",
+      "audited": false
+    },
+    {
+      "path": "market/intraday_correlation_monitor.py",
+      "audited": false
+    },
+    {
+      "path": "market/lead_lag_engine.py",
+      "audited": false
+    },
+    {
+      "path": "market/multi_asset_intelligence.py",
+      "audited": false
+    },
+    {
+      "path": "market/phase_detector.py",
+      "audited": false
+    },
+    {
+      "path": "market/regime_detector.py",
+      "audited": false
+    },
+    {
+      "path": "market/regime_navigator.py",
+      "audited": false
+    },
+    {
+      "path": "market/structure_analyzer.py",
+      "audited": false
+    },
+    {
+      "path": "market/vpin_calculator.py",
+      "audited": false
+    },
+    {
+      "path": "models/__init__.py",
+      "audited": false
+    },
+    {
+      "path": "models/representation/__init__.py",
+      "audited": false
+    },
+    {
+      "path": "models/representation/market_embedding_model.py",
+      "audited": false
+    },
+    {
+      "path": "models/representation/pretrain_contrastive.py",
+      "audited": false
+    },
+    {
+      "path": "orchestration/__init__.py",
+      "audited": false
+    },
+    {
+      "path": "orchestration/aggressive_allocator.py",
+      "audited": false
+    },
+    {
+      "path": "orchestration/gambler_sizing.py",
+      "audited": false
+    },
+    {
+      "path": "orchestration/sota_integration.py",
+      "audited": false
+    },
+    {
+      "path": "orchestration/strategic_coordinator.py",
+      "audited": false
+    },
+    {
+      "path": "orchestration/system_mode.py",
+      "audited": false
+    },
+    {
+      "path": "portfolio/__init__.py",
+      "audited": false
+    },
+    {
+      "path": "portfolio/portfolio_brain_offensive.py",
+      "audited": false
+    },
+    {
+      "path": "reports/__init__.py",
+      "audited": false
+    },
+    {
+      "path": "risk/__init__.py",
+      "audited": false
+    },
+    {
+      "path": "risk/adaptive_stop.py",
+      "audited": false
+    },
+    {
+      "path": "risk/auto_recovery_gate.py",
+      "audited": false
+    },
+    {
+      "path": "risk/bull_transition_detector.py",
+      "audited": false
+    },
+    {
+      "path": "risk/cascade_exhaustion_governor.py",
+      "audited": false
+    },
+    {
+      "path": "risk/correlation_position_sizer.py",
+      "audited": false
+    },
+    {
+      "path": "risk/correlation_realtime_controller.py",
+      "audited": false
+    },
+    {
+      "path": "risk/derivatives_risk_gate.py",
+      "audited": false
+    },
+    {
+      "path": "risk/dynamic_limits.py",
+      "audited": false
+    },
+    {
+      "path": "risk/exit_drl_kill_switch.py",
+      "audited": true,
+      "audit_sha": "72ea60f",
+      "round": "pre-resume"
+    },
+    {
+      "path": "risk/exit_drl_promotion_gate.py",
+      "audited": false
+    },
+    {
+      "path": "risk/gambler_entry_exit.py",
+      "audited": false
+    },
+    {
+      "path": "risk/global_exposure_cap.py",
+      "audited": false
+    },
+    {
+      "path": "risk/high_position_low_volume_filter.py",
+      "audited": false
+    },
+    {
+      "path": "risk/leverage_guard.py",
+      "audited": false
+    },
+    {
+      "path": "risk/opportunity_budget_governor.py",
+      "audited": false
+    },
+    {
+      "path": "risk/regime_transition_buffer.py",
+      "audited": false
+    },
+    {
+      "path": "risk/risk_manager.py",
+      "audited": false
+    },
+    {
+      "path": "risk/short_position_controller.py",
+      "audited": false
+    },
+    {
+      "path": "risk/sota_risk_controller.py",
+      "audited": false
+    },
+    {
+      "path": "risk/stop_loss_authority.py",
+      "audited": false
+    },
+    {
+      "path": "risk/strategy_allocator.py",
+      "audited": false
+    },
+    {
+      "path": "risk/tests/__init__.py",
+      "audited": false
+    },
+    {
+      "path": "risk/tests/verify_r1_r6.py",
+      "audited": false
+    },
+    {
+      "path": "risk/thesis_budget_governor.py",
+      "audited": false
+    },
+    {
+      "path": "risk/tranche_manager.py",
+      "audited": false
+    },
+    {
+      "path": "risk/unified_position_sizer.py",
+      "audited": false
+    },
+    {
+      "path": "risk/volatility_alpha_risk.py",
+      "audited": false
+    },
+    {
+      "path": "risk/volatility_targeting.py",
+      "audited": false
+    },
+    {
+      "path": "scripts/agent_audit_16.py",
+      "audited": false
+    },
+    {
+      "path": "scripts/alpha_gate_postmortem.py",
+      "audited": false
+    },
+    {
+      "path": "scripts/analyze_shadow_ledger.py",
+      "audited": false
+    },
+    {
+      "path": "scripts/audit_dead_code.py",
+      "audited": false
+    },
+    {
+      "path": "scripts/authority_consistency_audit.py",
+      "audited": false
+    },
+    {
+      "path": "scripts/auto_phase1_transition.py",
+      "audited": false
+    },
+    {
+      "path": "scripts/benchmark_suite.py",
+      "audited": false
+    },
+    {
+      "path": "scripts/clean_sentiment_data.py",
+      "audited": false
+    },
+    {
+      "path": "scripts/collect_orderbook.py",
+      "audited": false
+    },
+    {
+      "path": "scripts/completeness_audit.py",
+      "audited": false
+    },
+    {
+      "path": "scripts/diagnostic.py",
+      "audited": false
+    },
+    {
+      "path": "scripts/e2e_debug.py",
+      "audited": false
+    },
+    {
+      "path": "scripts/e2e_full_debug.py",
+      "audited": false
+    },
+    {
+      "path": "scripts/execution_quality_report.py",
+      "audited": false
+    },
+    {
+      "path": "scripts/exit_alpha_weekly_report.py",
+      "audited": false
+    },
+    {
+      "path": "scripts/exit_drl_e2e_diagnostic.py",
+      "audited": false
+    },
+    {
+      "path": "scripts/fast_risk_shadow_analysis.py",
+      "audited": false
+    },
+    {
+      "path": "scripts/full_decision_audit.py",
+      "audited": false
+    },
+    {
+      "path": "scripts/futures_vs_spot_fee_analysis.py",
+      "audited": false
+    },
+    {
+      "path": "scripts/gate_rejection_analysis.py",
+      "audited": false
+    },
+    {
+      "path": "scripts/gmm_diagnostic.py",
+      "audited": false
+    },
+    {
+      "path": "scripts/kq_strategy_diagnostic.py",
+      "audited": false
+    },
+    {
+      "path": "scripts/kraken_credentials_check.py",
+      "audited": false
+    },
+    {
+      "path": "scripts/launch_live.py",
+      "audited": false
+    },
+    {
+      "path": "scripts/launch_optuna_trial.py",
+      "audited": false
+    },
+    {
+      "path": "scripts/launch_paper.py",
+      "audited": false
+    },
+    {
+      "path": "scripts/live_watchdog.py",
+      "audited": false
+    },
+    {
+      "path": "scripts/mark_step16_manual_checks.py",
+      "audited": false
+    },
+    {
+      "path": "scripts/module_decision_audit.py",
+      "audited": false
+    },
+    {
+      "path": "scripts/offline_validation.py",
+      "audited": false
+    },
+    {
+      "path": "scripts/pa_shadow_analysis.py",
+      "audited": false
+    },
+    {
+      "path": "scripts/paper_run_monitor.py",
+      "audited": false
+    },
+    {
+      "path": "scripts/pre_flight_check.py",
+      "audited": false
+    },
+    {
+      "path": "scripts/pre_live_checks.py",
+      "audited": false
+    },
+    {
+      "path": "scripts/quant_hit_rate_deep_dive.py",
+      "audited": false
+    },
+    {
+      "path": "scripts/reflect_weekly.py",
+      "audited": false
+    },
+    {
+      "path": "scripts/resume_trial48.py",
+      "audited": false
+    },
+    {
+      "path": "scripts/run_beta_audit.py",
+      "audited": false
+    },
+    {
+      "path": "scripts/run_validation_suite.py",
+      "audited": false
+    },
+    {
+      "path": "scripts/runtime_parity_check.py",
+      "audited": false
+    },
+    {
+      "path": "scripts/sentiment_ab_report.py",
+      "audited": false
+    },
+    {
+      "path": "scripts/shadow_ledger_report.py",
+      "audited": false
+    },
+    {
+      "path": "scripts/silent_failure_audit.py",
+      "audited": false
+    },
+    {
+      "path": "scripts/startup_agent_wiring_truth.py",
+      "audited": false
+    },
+    {
+      "path": "scripts/startup_drl_truth.py",
+      "audited": false
+    },
+    {
+      "path": "scripts/step15_gate_report.py",
+      "audited": false
+    },
+    {
+      "path": "scripts/trade_report.py",
+      "audited": false
+    },
+    {
+      "path": "scripts/validate_external_data.py",
+      "audited": false
+    },
+    {
+      "path": "scripts/verify_dead_man_switch.py",
+      "audited": false
+    },
+    {
+      "path": "scripts/verify_live_config.py",
+      "audited": false
+    },
+    {
+      "path": "scripts/verify_sanity_suite.py",
+      "audited": false
+    },
+    {
+      "path": "scripts/verify_suite.py",
+      "audited": false
+    },
+    {
+      "path": "scripts/walkforward_validator.py",
+      "audited": false
+    },
+    {
+      "path": "scripts/weekly_agent_report.py",
+      "audited": false
+    },
+    {
+      "path": "shadow/__init__.py",
+      "audited": false
+    },
+    {
+      "path": "signals/__init__.py",
+      "audited": false
+    },
+    {
+      "path": "signals/adaptive_weight_v521.py",
+      "audited": true,
+      "audit_sha": "P15",
+      "round": "pre-resume"
+    },
+    {
+      "path": "signals/alpha_signal_integrator.py",
+      "audited": true,
+      "audit_sha": "P57",
+      "round": "pre-resume"
+    },
+    {
+      "path": "signals/authority_fusion.py",
+      "audited": true,
+      "audit_sha": "72ea60f",
+      "round": "pre-resume"
+    },
+    {
+      "path": "signals/authority_matrix.py",
+      "audited": false
+    },
+    {
+      "path": "signals/deterministic_sentiment.py",
+      "audited": false
+    },
+    {
+      "path": "signals/false_breakout_detector.py",
+      "audited": false
+    },
+    {
+      "path": "signals/flow_signal_integrator.py",
+      "audited": false
+    },
+    {
+      "path": "signals/fringe_panic_detector.py",
+      "audited": false
+    },
+    {
+      "path": "signals/fringe_panic_keywords.py",
+      "audited": false
+    },
+    {
+      "path": "signals/funding_rate_agent.py",
+      "audited": false
+    },
+    {
+      "path": "signals/fusion_patience.py",
+      "audited": false
+    },
+    {
+      "path": "signals/macro_crowd_adapter.py",
+      "audited": false
+    },
+    {
+      "path": "signals/no_trade_triggers.py",
+      "audited": true,
+      "audit_sha": "P89-4f",
+      "round": "pre-resume"
+    },
+    {
+      "path": "signals/opportunity_triggers.py",
+      "audited": false
+    },
+    {
+      "path": "signals/partial_consensus.py",
+      "audited": false
+    },
+    {
+      "path": "signals/profit_max_adapter.py",
+      "audited": false
+    },
+    {
+      "path": "signals/regime_transition_risk.py",
+      "audited": false
+    },
+    {
+      "path": "signals/signal_quality_scorer.py",
+      "audited": false
+    },
+    {
+      "path": "signals/stablecoin_monitor.py",
+      "audited": false
+    },
+    {
+      "path": "strategies/__init__.py",
+      "audited": false
+    },
+    {
+      "path": "strategies/cash_and_carry.py",
+      "audited": true,
+      "audit_sha": "P61",
+      "round": "pre-resume"
+    },
+    {
+      "path": "strategies/vol_convexity.py",
+      "audited": false
+    },
+    {
+      "path": "tools/build_sentiment_history.py",
+      "audited": false
+    },
+    {
+      "path": "tools/calibrate_sentiment_prompt.py",
+      "audited": false
+    },
+    {
+      "path": "tools/ci_check_invariants.py",
+      "audited": false
+    },
+    {
+      "path": "tools/lint_silent_swallow.py",
+      "audited": false
+    },
+    {
+      "path": "tools/monte_carlo_validator.py",
+      "audited": false
+    },
+    {
+      "path": "tools/tweet_filters.py",
+      "audited": false
+    }
+  ]
+}
