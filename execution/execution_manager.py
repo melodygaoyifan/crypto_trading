@@ -1508,13 +1508,30 @@ class ExecutionManager:
             )
 
         def _do_place() -> OrderResult:
+            # P78 2026-04-26: Kraken rejected `ordertype=stop` with
+            #   EGeneral:Invalid arguments:ordertype
+            # because Kraken's valid ordertype literals are 'market',
+            # 'limit', 'stop-loss' (HYPHENATED), 'take-profit', etc.
+            # The previous `type='stop'` produced an invalid `ordertype`
+            # field on the wire. Plus `params={'stopPrice': ...}` was a
+            # Binance-style residue — Kraken takes the trigger in the
+            # standard `price` arg, not as a separate stopPrice param.
+            #
+            # The unified `type='stop-loss'` is what ccxt's Kraken
+            # implementation expects. Belt-and-suspenders: also pass
+            # `ordertype='stop-loss'` in params so a future ccxt version
+            # that changes the unified-type mapping can't silently break
+            # the Kraken wire format.
             order = self.exchange.create_order(
                 symbol=symbol,
-                type='stop',
+                type='stop-loss',
                 side=side.value.lower(),
                 amount=size,
-                price=stop_price,
-                params={'stopPrice': stop_price, 'userref': userref},
+                price=stop_price,  # Kraken: trigger price for stop-loss
+                params={
+                    'userref': userref,
+                    'ordertype': 'stop-loss',  # explicit override
+                },
             )
             order_id = order.get('id')
             self.active_stops[symbol] = order_id
