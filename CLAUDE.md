@@ -203,6 +203,61 @@ mutation path between A and B. Three standard candidates:
 Today's weekend_config bug is a textbook example. CLAUDE.md
 P45 flagged it; follow-up trace was not done.
 
+### Lesson: Parallel-Edit Discipline (operator + Claude)
+
+The operator and Claude often edit the codebase IN PARALLEL.
+Operator commits land between Claude's `git status` checks. Claude's
+mental model of "what's in main" lags reality by minutes-to-hours.
+
+This session's evidence: P82/P83/P84 ALL had operator-titled sibling
+commits (24ffcd6, 2d0a93c, 72ea60f) between Claude's pushes. One of
+those introduced a P15-shape bug (`ShadowLedgerWriter.frozen_allocations`
+read with no writer) that Claude's code didn't touch but cascaded to
+**10 container restarts in 6 minutes** before P85 emergency-fixed it.
+
+**Three rules to enforce parallel-edit safety:**
+
+1. **Re-pull before EVERY non-trivial commit.** Do `git fetch origin
+   && git log HEAD..origin/main` before staging. If origin has new
+   commits, REVIEW them before committing — operator may have already
+   fixed/changed/refactored what you're about to touch.
+
+2. **Every new attribute READ must defend with `getattr(...)` or
+   verify the writer exists in the SAME commit.** P15-shape bugs
+   (reader exists, writer missing) recur because the reader-author
+   trusts a contract the writer-author didn't honor. With parallel
+   edits, that contract drift is invisible at write time. Pattern:
+
+       # WRONG — assumes writer exists somewhere
+       value = self.shadow_ledger.frozen_allocations
+
+       # RIGHT — defaults safely + logs gap
+       value = getattr(self.shadow_ledger, 'frozen_allocations', None)
+       if value is None:
+           logger.warning(f"[X] frozen_allocations attr missing; "
+                          f"degraded behavior: <what we do instead>")
+
+3. **NEVER add code that exits the process on a missing internal
+   attribute.** The reconciler's strict-contract refusal to start LIVE
+   when ORDER_CHECK FAILED was a correct safety pattern, but cascading
+   to "exit and let docker restart" amplified ONE missing attribute
+   into a 10-restart loop. Either:
+   (a) the safety check tolerates the failure mode (defensive guard
+   degrades gracefully, logs WARNING), OR
+   (b) the safety check has a circuit breaker (after N consecutive
+   failures, stop trying to restart and require manual intervention —
+   prevents docker-compose's `restart: always` from making it worse).
+
+**Forcing function:** the P70 CI gate (codebase-invariants workflow)
+runs the silent_failure_audit + lint_silent_swallow on every push.
+A new reader added without a defensive `getattr` will trip the lint
+if it falls inside a try/except: pass shape. But a reader OUTSIDE a
+try/except (like `frozen_allocations`) won't — the strict-contract
+caller (reconciler) wrapped it in try/except internally and surfaced
+the AttributeError as a top-level FAILED. **The CI gate cannot catch
+attribute-access-outside-try/except**; this requires either operator
+discipline or a separate scanner pass (filed for future P-entry).
+
 ---
 
 ## Known Pitfalls (source of repeat bugs — read this before deploying)
@@ -210,6 +265,15 @@ P45 flagged it; follow-up trace was not done.
 > **History:** Detailed P-entries older than the last ~30 days have been moved to [archive/CLAUDE_history.md](archive/CLAUDE_history.md) to keep this file scannable. The summaries below + the foundational invariants (P1-P8) are what every session should load.
 
 ### Recent pitfalls (last ~30 days)
+
+### P85. [EMERGENCY 2026-04-26] ShadowLedgerWriter.frozen_allocations missing → 10 container restarts in 6 min
+- **Symptom:** Engine refused to start LIVE. Each startup attempt crashed in `_reconcile_orders` with `'ShadowLedgerWriter' object has no attribute 'frozen_allocations'`. Reconciler marked ORDER_CHECK as FAILED; main.py's strict contract refused to start LIVE per `LIVE mode requires successful startup reconciliation`. Process exited; docker-compose `restart: always` re-launched; cycle repeated.
+- **10 distinct container starts** between 22:12:43 and 22:18:24 UTC (~40s each — startup + reconciler attempt + refusal exit). Pattern visible in `journalctl -u docker.service | grep hmats-engine` (each `sbJoin` event = container network attach = container start). Docker `RestartCount` showed 0 because P85's deploy at 22:18:24 force-recreated the container, resetting the counter.
+- **Root cause:** `defense/startup_reconciler.py:629` reads `self.shadow_ledger.frozen_allocations`, but `ShadowLedgerWriter` (`defense/shadow_ledger_jsonl.py:64-116`) NEVER declares or sets that attribute. Verified via grep: only the reader exists; zero writers. Classic P15-shape silent reader/writer mismatch — likely introduced by a parallel-edit operator commit (P82-P84 sibling commits 24ffcd6, 2d0a93c, 72ea60f all landed in this window) that added the orphan-detection feature without adding the corresponding writer.
+- **Why the cascade was so violent:** the safety pattern (refuse to start LIVE on reconciler failure) is correct in principle, but composing it with `restart: always` produces an amplification loop. ONE missing attribute → process exit → docker restart → 30s startup → same exit → repeat.
+- **Fix (commit fc10b46):** defensive `getattr(self.shadow_ledger, 'frozen_allocations', None)`. If missing, log WARNING and SKIP orphan cancellation (do NOT default to empty set — that would classify every legitimate exchange order as orphan and cancel them all). Reconciler completes with WARN; LIVE startup proceeds. Proper fix (add `frozen_allocations` to ShadowLedgerWriter with the right semantics — a `Set[str]` of order IDs the ledger has reserved) is a separate architectural commit.
+- **Mitigation pattern (added to Lessons):** every new attribute READ on a third-party / cross-module object must defend with `getattr(obj, 'attr', sentinel)` + WARN log on missing, OR verify the writer exists IN THE SAME COMMIT. With parallel edits, the reader-author can't trust that the writer-author honored the contract.
+- **Mitigation pattern (architectural):** add a circuit breaker to startup-refusal cascades. After N consecutive reconciler failures, stop restarting and require manual intervention. Otherwise `restart: always` weaponizes a missing attribute into a 6-minute outage.
 
 ### P72. [LANDED 2026-04-26 in 142f916] Silent-swallow lint + CI gate + optional pre-commit hook
 - **Why:** Pattern 1 in the recurring-bug analysis (silent feedback loops — P15/P25/P47/P64). The ultrareview-bug-006 incident proved this class can hide undetected for weeks even with the existing scanners. Need a lint that catches it at write time, plus a CI gate that prevents regression.
