@@ -598,7 +598,7 @@ class ExecutionManager:
             return False
         return True
 
-    def _clamp_size_to_balance(
+    def _clamp_size_to_balance_v2(
         self,
         symbol: str,
         side,
@@ -607,6 +607,15 @@ class ExecutionManager:
         order_type,
     ) -> Tuple[float, str]:
         """P87 2026-04-26: dynamic balance check before placing an order.
+
+        NOTE: there's an OLDER `_clamp_size_to_balance` at line ~1536 with
+        a different signature (returns float, uses cached account_sync,
+        90% buffer). That one is still used by 2 internal call sites.
+        DON'T rename or merge without auditing those callers — left in
+        place for v2 supersession in a future commit. This method (_v2)
+        is the new richer version: returns (clamped_size, diagnostic_msg),
+        forces fresh fetch_balance, side-aware safety margins, surfaces
+        operator-actionable likely-cause hypotheses.
 
         Fetches Kraken spot wallet `free` balance, returns (clamped_size,
         reason_str). If the requested size fits available balance with a
@@ -883,7 +892,7 @@ class ExecutionManager:
         # Clamp size to what's actually fundable. If clamped, WARN log.
         # If clamped to 0, REJECT with explicit guidance.
         _orig_size = size
-        size, _balance_msg = self._clamp_size_to_balance(
+        size, _balance_msg = self._clamp_size_to_balance_v2(
             symbol, side, size, price, order_type
         )
         if size <= 0:
