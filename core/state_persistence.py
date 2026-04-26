@@ -35,7 +35,30 @@ def save_state(path: str | Path, data: dict) -> bool:
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2, default=str)
+                # P83: explicit fsync BEFORE rename. Without it, os.replace is
+                # filesystem-atomic but not storage-durable — on power loss
+                # between rename and OS page-cache flush, the renamed file
+                # points to empty/partial content. Closes the gap from P37's
+                # original "atomic-write" claim. Best-effort: fsync may fail
+                # on some FS (e.g., tmpfs); swallow that case.
+                try:
+                    f.flush()
+                    os.fsync(f.fileno())
+                except OSError:
+                    pass
             os.replace(tmp, path)
+            # P83: fsync the parent directory so the rename itself is durable.
+            # Without this, the new directory entry can be lost on power loss
+            # even though the temp file was fsync'd. Best-effort — Windows
+            # doesn't support directory fsync, so skip silently there.
+            try:
+                _dir_fd = os.open(str(path.parent), os.O_RDONLY)
+                try:
+                    os.fsync(_dir_fd)
+                finally:
+                    os.close(_dir_fd)
+            except (OSError, AttributeError):
+                pass  # Windows: O_RDONLY on dir not supported — skip
             return True
         except Exception:
             try:

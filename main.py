@@ -18270,14 +18270,18 @@ class HMATSProductionRunner:
             if self._confidence_scorer is not None and hasattr(self._confidence_scorer, 'save_state'):
                 self._confidence_scorer.save_state()
         except Exception as _e:
-            logger.debug(f"[F7] confidence_scorer save: {_e}")
+            # P83: was logger.debug — silent governor amnesia on restart.
+            # Sibling FIX-27 code at lines 14314-14342 logs same failures
+            # at WARNING. Aligned to match operator visibility.
+            logger.warning(f"[F7] confidence_scorer save: {type(_e).__name__}: {_e}")
 
         # Failure memory (has to_dict/from_dict but no I/O)
         try:
             if self._failure_memory is not None and hasattr(self._failure_memory, 'to_dict'):
                 _ps("data/failure_memory_state.json", self._failure_memory.to_dict())
         except Exception as _e:
-            logger.debug(f"[F7] failure_memory save: {_e}")
+            # P83: same as above — promote DEBUG → WARNING
+            logger.warning(f"[F7] failure_memory save: {type(_e).__name__}: {_e}")
 
         # Cascade exhaustion governor (singleton, has to_dict)
         try:
@@ -18286,14 +18290,16 @@ class HMATSProductionRunner:
             if _gov is not None and hasattr(_gov, 'to_dict'):
                 _ps("data/cascade_governor_state.json", _gov.to_dict())
         except Exception as _e:
-            logger.debug(f"[F7] cascade_gov save: {_e}")
+            # P83: same as above — promote DEBUG → WARNING
+            logger.warning(f"[F7] cascade_gov save: {type(_e).__name__}: {_e}")
 
         # Thesis budget governor
         try:
             if self.thesis_budget_governor is not None and hasattr(self.thesis_budget_governor, 'to_dict'):
                 _ps("data/thesis_budget_state.json", self.thesis_budget_governor.to_dict())
         except Exception as _e:
-            logger.debug(f"[F7] thesis_budget save: {_e}")
+            # P83: same as above — promote DEBUG → WARNING
+            logger.warning(f"[F7] thesis_budget save: {type(_e).__name__}: {_e}")
 
     def _restore_governor_state(self) -> None:
         """[F7-PERSIST 2026-04-15] Restore governor states at startup."""
