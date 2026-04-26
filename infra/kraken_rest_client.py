@@ -25,10 +25,15 @@ Usage:
 ================================================================================
 """
 
+import hashlib
+import json
 import logging
+import os
 import random
 import time
 import threading
+import traceback
+from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -157,8 +162,131 @@ class KrakenRESTClient:
         # Stats
         self._request_count = 0
         self._error_count = 0
-        
+        # Last dead-man-switch error text — read by DeadManSwitch.refresh()
+        # so consecutive-failure WARNING/CRITICAL log carries the cause.
+        self._last_dead_man_error: Optional[str] = None
+
+        # Monotonic nonce ratchet, persisted to disk per API-key fingerprint.
+        # Kraken's last-seen nonce per key survives across our process
+        # restarts; a fresh in-memory ratchet at process start can land
+        # below Kraken's tracker even with load_time_difference(). The
+        # persistent state stores the highest nonce we've successfully used
+        # so the next process boots above it. The state file is keyed by
+        # an HMAC of the API key (not the key itself) so multiple keys can
+        # coexist and a key rotation isn't poisoned by old state.
+        self._nonce_lock = threading.Lock()
+        self._nonce_state_path = Path(
+            os.environ.get("HMATS_KRAKEN_NONCE_STATE")
+            or (Path(__file__).resolve().parents[1] / "data" / "kraken_nonce_state.json")
+        )
+        self._nonce_key_fingerprint = self._compute_key_fingerprint(api_key)
+        self._nonce_ratchet_ms = self._load_persisted_nonce()
+        self._nonce_dirty = False  # set when ratchet advances; flushed periodically
+
         self._init_exchange()
+
+    @staticmethod
+    def _compute_key_fingerprint(api_key: Optional[str]) -> str:
+        """Stable fingerprint for the API key (NOT the key itself).
+
+        Used to key persisted nonce state so a key rotation starts fresh.
+        """
+        if not api_key:
+            return "no_key"
+        return hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:16]
+
+    def _load_persisted_nonce(self) -> int:
+        """Load the highest nonce we've previously issued for this key.
+
+        Returns 0 if no state file or no entry for this key fingerprint.
+        Caller will then fall back to clock-time on first nonce request.
+        """
+        try:
+            if not self._nonce_state_path.exists():
+                return 0
+            with open(self._nonce_state_path, "r") as f:
+                state = json.load(f) or {}
+            entry = state.get(self._nonce_key_fingerprint, {})
+            persisted = int(entry.get("highest_nonce_ms", 0))
+            if persisted > 0:
+                logger.info(
+                    f"[KrakenREST] Loaded persisted nonce ratchet for "
+                    f"key fp={self._nonce_key_fingerprint}: {persisted}"
+                )
+            return persisted
+        except Exception as e:
+            logger.warning(f"[KrakenREST] Could not load nonce state: {e}")
+            return 0
+
+    def _persist_nonce_locked(self) -> None:
+        """Atomic-write the current ratchet to the state file.
+
+        Caller MUST hold self._nonce_lock. Writes the WHOLE state map so
+        multi-key state survives. Best-effort: failures are logged but
+        don't break the request path.
+        """
+        try:
+            self._nonce_state_path.parent.mkdir(parents=True, exist_ok=True)
+            existing: Dict[str, Any] = {}
+            if self._nonce_state_path.exists():
+                try:
+                    with open(self._nonce_state_path, "r") as f:
+                        existing = json.load(f) or {}
+                except Exception:
+                    existing = {}
+            existing[self._nonce_key_fingerprint] = {
+                "highest_nonce_ms": int(self._nonce_ratchet_ms),
+                "updated_at": int(time.time()),
+            }
+            tmp = self._nonce_state_path.with_suffix(".json.tmp")
+            with open(tmp, "w") as f:
+                json.dump(existing, f, separators=(",", ":"))
+            os.replace(tmp, self._nonce_state_path)
+            self._nonce_dirty = False
+        except Exception as e:
+            logger.warning(f"[KrakenREST] Could not persist nonce state: {e}")
+
+    def _monotonic_nonce(self) -> int:
+        """Strictly-monotonic nonce in milliseconds.
+
+        Returns max(local_ms, persisted_high+1). Thread-safe so concurrent
+        REST calls (e.g. dead-man heartbeat thread + main async path) don't
+        emit duplicate nonces. Marks state dirty for periodic flush; we don't
+        flush every call to avoid I/O on the hot path.
+        """
+        with self._nonce_lock:
+            now_ms = int(time.time() * 1000)
+            if self._nonce_ratchet_ms < now_ms:
+                self._nonce_ratchet_ms = now_ms
+            else:
+                self._nonce_ratchet_ms += 1
+            self._nonce_dirty = True
+            # Periodic flush — every ~30s of issued nonces. Cheap I/O,
+            # bounds worst-case loss to one window if the process dies.
+            if self._nonce_ratchet_ms % 30000 < 5:  # opportunistic
+                self._persist_nonce_locked()
+            return self._nonce_ratchet_ms
+
+    def _bump_nonce_past_error(self, seconds: int = 60) -> int:
+        """Jump the nonce ratchet forward by `seconds` after a nonce error.
+
+        Used by retry paths in cancel_all_orders_after / fetch_balance when
+        Kraken returns 'Invalid nonce'. A single `load_time_difference()`
+        only corrects clock skew (typically < 1s); if the previous process
+        left Kraken with a higher last-seen nonce, we need to jump past it.
+
+        Persists immediately so a crash mid-bump doesn't lose ground.
+
+        Returns:
+            The new ratchet value (in ms).
+        """
+        with self._nonce_lock:
+            self._nonce_ratchet_ms = max(
+                self._nonce_ratchet_ms, int(time.time() * 1000)
+            ) + (seconds * 1000)
+            self._nonce_dirty = True
+            self._persist_nonce_locked()  # bumps are rare; flush every time
+            return self._nonce_ratchet_ms
     
     def _init_exchange(self):
         """Initialize ccxt exchange."""
@@ -186,6 +314,13 @@ class KrakenRESTClient:
             if self._sandbox:
                 self._exchange.set_sandbox_mode(True)
 
+            # Replace ccxt's default nonce method with our ratchet so every
+            # path going through this exchange (fetch_balance, place_order,
+            # cancel_all_orders_after, etc.) gets a strictly-monotonic nonce.
+            # ccxt expects the method to be bound to the exchange; bind via
+            # closure so it can call back into our ratchet.
+            self._exchange.nonce = self._monotonic_nonce  # type: ignore[assignment]
+
             # [NONCE-FIX] Pre-warm time difference so first authenticated call
             # uses a Kraken-aligned nonce. Without this, the very first auth call
             # (e.g. dead-man switch on startup) sends a local-time-only nonce that
@@ -195,7 +330,8 @@ class KrakenRESTClient:
                     self._exchange.load_time_difference()
                     logger.info(
                         f"[KrakenREST] Time difference pre-loaded: "
-                        f"{self._exchange.options.get('timeDifference', 0)}ms"
+                        f"{self._exchange.options.get('timeDifference', 0)}ms; "
+                        f"nonce_ratchet={self._nonce_ratchet_ms}"
                     )
                 except Exception as _td_err:
                     logger.warning(f"[KrakenREST] load_time_difference failed: {_td_err}")
@@ -473,7 +609,11 @@ class KrakenRESTClient:
 
         with self._lock:
             timeout_ms = timeout_sec * 1000
-            for attempt in range(2):
+            # 3 attempts: original + nonce ratchet bump + clock skew reload.
+            # Order matters: bump ratchet first (likely cause), then reload
+            # clock as fallback. Production logs on 2026-04-25 showed nonce
+            # errors that single load_time_difference() couldn't fix.
+            for attempt in range(3):
                 try:
                     self._request_count += 1
                     self._exchange.cancel_all_orders_after(timeout_ms)
@@ -481,23 +621,41 @@ class KrakenRESTClient:
                         logger.debug(f"[KrakenREST] Dead-man switch set: {timeout_sec}s")
                     else:
                         logger.info("[KrakenREST] Dead-man switch disabled (timeout=0)")
+                    self._last_dead_man_error = None
                     return True
                 except Exception as e:
                     self._error_count += 1
-                    # [NONCE-FIX] On nonce error, force time-difference reload and retry once.
-                    # Happens when a previous process left Kraken with a higher nonce baseline
-                    # than our current local-time-derived nonce.
-                    if attempt == 0 and "Invalid nonce" in str(e):
-                        try:
-                            self._exchange.load_time_difference()
+                    _err_str = str(e)
+                    if "Invalid nonce" in _err_str:
+                        if attempt == 0:
+                            new_ratchet = self._bump_nonce_past_error(60)
                             logger.warning(
-                                f"[KrakenREST] Nonce mismatch on dead-man switch; reloaded "
-                                f"timeDifference={self._exchange.options.get('timeDifference', 0)}ms, retrying"
+                                f"[KrakenREST] Invalid nonce on dead-man (attempt 1); "
+                                f"bumped ratchet by 60s to {new_ratchet}, retrying"
                             )
                             continue
-                        except Exception as _td_err:
-                            logger.error(f"[KrakenREST] reload time_difference failed: {_td_err}")
-                    logger.error(f"[KrakenREST] Dead-man switch failed: {e}")
+                        if attempt == 1:
+                            try:
+                                self._exchange.load_time_difference()
+                                new_ratchet = self._bump_nonce_past_error(120)
+                                logger.warning(
+                                    f"[KrakenREST] Invalid nonce persisted (attempt 2); "
+                                    f"reloaded timeDifference="
+                                    f"{self._exchange.options.get('timeDifference', 0)}ms "
+                                    f"and bumped ratchet to {new_ratchet}, retrying"
+                                )
+                                continue
+                            except Exception as _td_err:
+                                logger.error(
+                                    f"[KrakenREST] load_time_difference failed: {_td_err}"
+                                )
+                    # Propagate the failure cause so DeadManSwitch.refresh()
+                    # can surface it in the WARNING/CRITICAL log instead of
+                    # generic "Refresh FAILED".
+                    self._last_dead_man_error = f"{type(e).__name__}: {e!r}"
+                    logger.error(
+                        f"[KrakenREST] Dead-man switch failed: {self._last_dead_man_error}"
+                    )
                     return False
 
     def place_order(

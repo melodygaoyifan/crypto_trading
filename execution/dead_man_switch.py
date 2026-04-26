@@ -144,15 +144,20 @@ class DeadManSwitch:
         else:
             self._error_count += 1
             self._consecutive_failures += 1
+            # Pull the underlying cause from the rest client (set in
+            # cancel_all_orders_after's except branch). Without this the
+            # operator has to scroll back to find a [KrakenREST] line and
+            # correlate timestamps. Now each failure message carries why.
+            _cause = getattr(self._rest_client, "_last_dead_man_error", None) or "unknown"
             logger.warning(
                 f"[DEAD_MAN] Refresh FAILED ({self._consecutive_failures}/{MAX_CONSECUTIVE_FAILURES} "
-                f"consecutive). Timer may expire in {self._timeout_sec}s!"
+                f"consecutive). Timer may expire in {self._timeout_sec}s! cause={_cause}"
             )
             if self._consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
                 logger.critical(
                     f"[DEAD_MAN] CRITICAL: {self._consecutive_failures} consecutive refresh "
                     f"failures! Server timer will expire - all orders will be cancelled. "
-                    f"Check network/API connectivity immediately."
+                    f"cause={_cause}. Check network/API connectivity immediately."
                 )
 
         return success

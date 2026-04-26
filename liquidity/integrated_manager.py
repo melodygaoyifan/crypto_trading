@@ -118,7 +118,10 @@ class IntegratedLiquidityConfig:
     # 24/7 crypto markets. min_alpha = weekend_min_alpha_bps * mult.
     weekend_min_alpha_bps: float = 20.0         # was hardcoded 33 in formula
     min_alpha_multiplier_weekend: float = 1.0   # was 2.0
-    min_confidence_weekend: float = 0.50        # was 0.75
+    # P52 lowered the same default in weekend_manager.py to 0.30 but missed
+    # this sibling class. Both classes back the weekend gate; mismatch produced
+    # the "min 50%" rejections in 2026-04-25 ledger entries even after P52.
+    min_confidence_weekend: float = 0.30        # was 0.50 — completes P52
     
     # === Time-based Reduction ===
     reduce_at_hours: int = 12    # Reduce after 12h into weekend

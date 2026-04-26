@@ -205,7 +205,7 @@ class AccountSyncManager:
         # [G2-RATELIMIT 2026-04-15] Also retry on Kraken 429/RateLimitExceeded
         # with exponential backoff (1s, 2s, 4s) to avoid IP-level ban.
         balance = None
-        _max_attempts = 4  # 1 nonce retry + up to 3 rate-limit retries
+        _max_attempts = 5  # 2 nonce retries + up to 3 rate-limit retries
         for _attempt in range(_max_attempts):
             try:
                 balance = await asyncio.wait_for(
@@ -215,16 +215,37 @@ class AccountSyncManager:
                 break
             except Exception as _e:
                 _err_str = str(_e)
-                # Nonce: reload time + retry once
-                if _attempt == 0 and "Invalid nonce" in _err_str:
+                # Nonce: try ratchet bump first, then time-difference reload.
+                # Production logs on 2026-04-25 showed back-to-back fetch_balance
+                # nonce errors after the 1-attempt retry, meaning load_time_difference
+                # alone wasn't enough — the highest nonce Kraken has seen for this
+                # key was beyond clock skew. Bump the wrapper's nonce ratchet by
+                # a fixed offset so the next call clears the tracker.
+                if "Invalid nonce" in _err_str and _attempt < 2:
+                    # Find the wrapper that owns the nonce ratchet (KrakenRESTClient).
+                    _bump = getattr(self.exchange_client, "_bump_nonce_past_error", None)
+                    if _bump is None:
+                        # exchange_client may BE the inner ccxt; reach for the wrapper
+                        # via its parent attribute set in main.py:4281 if available.
+                        _bump = getattr(getattr(self, "_rest_wrapper", None), "_bump_nonce_past_error", None)
                     try:
-                        await asyncio.to_thread(self.exchange_client.load_time_difference)
-                        logger.warning(
-                            "[ACCOUNT_SYNC] Nonce mismatch; reloaded timeDifference, retrying"
-                        )
+                        if _bump is not None:
+                            _new = _bump(60 if _attempt == 0 else 120)
+                            logger.warning(
+                                f"[ACCOUNT_SYNC] Nonce mismatch (attempt {_attempt+1}); "
+                                f"bumped ratchet to {_new}, retrying"
+                            )
+                        else:
+                            await asyncio.to_thread(self.exchange_client.load_time_difference)
+                            logger.warning(
+                                "[ACCOUNT_SYNC] Nonce mismatch; reloaded timeDifference (no ratchet available), retrying"
+                            )
                         continue
-                    except Exception:
-                        pass
+                    except Exception as _bump_err:
+                        logger.warning(
+                            f"[ACCOUNT_SYNC] Nonce ratchet bump failed: {_bump_err}; "
+                            "falling through to fail path"
+                        )
                 # Rate limit: exponential backoff (1, 2, 4 seconds)
                 _is_rate_limited = (
                     "RateLimitExceeded" in type(_e).__name__
@@ -329,9 +350,25 @@ class AccountSyncManager:
             return True, ""
             
         except Exception as e:
+            # Preserve recently-valid state across a transient parse/ticker
+            # exception. The previous behavior wholesale flipped status to
+            # UNAVAILABLE on any exception, which fail-closes thesis_budget
+            # at the call site (main.py:11017) even when the previous equity
+            # snapshot is fresher than the staleness threshold. Only flip to
+            # UNAVAILABLE if the prior state is genuinely stale.
+            _was_valid = self._state.status == EquityStatus.VALID
+            _age = time.time() - self._state.timestamp if self._state.timestamp else float("inf")
+            if _was_valid and _age < MAX_EQUITY_AGE_SECONDS:
+                logger.warning(
+                    f"[ACCOUNT_SYNC] Parse exception but prior equity is fresh "
+                    f"(age={_age:.1f}s < {MAX_EQUITY_AGE_SECONDS:.0f}s); "
+                    f"keeping VALID state. Exception: {type(e).__name__}: {e}"
+                )
+                return False, f"transient_keep_valid: {type(e).__name__}: {e}"
+            logger.exception(f"[ACCOUNT_SYNC] update() failed and prior state stale (age={_age:.1f}s)")
             self._state.status = EquityStatus.UNAVAILABLE
             return False, str(e)
-    
+
     def get_equity(self) -> float:
         """
         Get current account equity.

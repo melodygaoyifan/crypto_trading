@@ -4241,6 +4241,40 @@ class HMATSProductionRunner:
                                     f"LIVE mode requires valid Kraken API credentials. "
                                     f"Validation failed: {_auth_err}"
                                 )
+                            # Also verify the key has Cancel/Close Orders permission.
+                            # fetch_balance only needs "Query Funds"; cancel_all_orders_after
+                            # needs "Cancel/Close Orders". A key missing the latter passes
+                            # the balance check but fails on first dead-man refresh —
+                            # producing the [DEAD_MAN] CRITICAL we saw on 2026-04-25.
+                            # Test by setting then immediately disabling the timer (timeout=0).
+                            try:
+                                _dm_test_ok = self.kraken_rest.cancel_all_orders_after(0)
+                                if _dm_test_ok:
+                                    logger.info(
+                                        "  KrakenRESTClient: PERMISSION VERIFIED "
+                                        "(Cancel/Close Orders OK)"
+                                    )
+                                else:
+                                    _last_err = getattr(self.kraken_rest, "_last_dead_man_error", "unknown")
+                                    logger.critical(
+                                        f"  KrakenRESTClient: KEY MISSING 'Cancel/Close Orders' "
+                                        f"PERMISSION — dead-man switch will fail. "
+                                        f"cause={_last_err}"
+                                    )
+                                    raise RuntimeError(
+                                        "LIVE mode requires Kraken API key with 'Cancel/Close Orders' "
+                                        "permission. Add it on the Kraken API Management page."
+                                    )
+                            except RuntimeError:
+                                raise
+                            except Exception as _perm_err:
+                                logger.critical(
+                                    f"  KrakenRESTClient: dead-man permission check raised — "
+                                    f"{type(_perm_err).__name__}: {_perm_err}"
+                                )
+                                raise RuntimeError(
+                                    f"LIVE mode dead-man permission check failed: {_perm_err}"
+                                )
                     else:
                         logger.warning("  KrakenRESTClient: INIT FAILED")
                         self.kraken_rest = None
@@ -4279,6 +4313,11 @@ class HMATSProductionRunner:
             _acct_exchange = getattr(self.kraken_rest, '_exchange', None) or self._ccxt_exchange
             if _acct_exchange:
                 self.account_sync.exchange_client = _acct_exchange
+                # Wire the wrapper as a sibling so account_sync's nonce-error
+                # retry path can reach the monotonic ratchet
+                # (`_bump_nonce_past_error`) without leaking the ccxt internals.
+                if self.kraken_rest is not None:
+                    self.account_sync._rest_wrapper = self.kraken_rest
                 logger.info(f"  [FIX-ACCT-SYNC] AccountSync wired to {type(_acct_exchange).__name__}")
 
         # [FIX-FEE-TIER] Query actual Kraken fee tier and update execution constants.
