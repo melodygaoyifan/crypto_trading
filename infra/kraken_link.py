@@ -708,10 +708,21 @@ class KrakenDefensiveLink:
         # Also trigger on_error for backward compatibility
         if self._on_error:
             try:
-                error = KrakenLinkError(
-                    message=f"disconnect:{reason}",
+                # P86: was `KrakenLinkError(...)` — class undefined. NameError
+                # was caught by surrounding except, so the error callback
+                # silently never fired since extraction. The on_error contract
+                # passes ClassifiedError objects (see _classifier.classify usage
+                # at line 153 + 892); use the existing ClassifiedError dataclass
+                # consistently. Same shape as P85's ShadowLedgerWriter
+                # frozen_allocations cascade — reader-side trusted a writer-
+                # side contract that didn't exist.
+                error = ClassifiedError(
                     category=ErrorCategory.FATAL,
-                    requires_reset=True
+                    code="DISCONNECT_EVENT",
+                    message=f"disconnect:{reason}",
+                    timestamp=time.time(),
+                    retriable=False,
+                    requires_reset=True,
                 )
                 self._on_error(error)
             except Exception as e:
@@ -994,8 +1005,13 @@ class KrakenDefensiveLink:
                 orderbook = client.fetch_orderbook(symbol)
                 if orderbook:
                     logger.info(f"Fetched REST snapshot for {symbol}: mid={orderbook.mid_price():.2f}")
-                    # Process orderbook into internal format
-                    self._process_orderbook_snapshot(symbol, orderbook.to_dict())
+                    # P86: was `self._process_orderbook_snapshot(symbol, orderbook.to_dict())`
+                    # — method never defined on this class. AttributeError on
+                    # every full-reset path. Agent audit confirmed "data not
+                    # used post-fetch anyway" — the fetch + mid log was the
+                    # actual purpose. Removed the dangling call rather than
+                    # define a no-op (P85 discipline rule 2: don't leave
+                    # broken contracts in the codebase).
                 else:
                     logger.warning(f"Empty orderbook for {symbol}")
             else:
@@ -1289,10 +1305,40 @@ def get_kraken_link(
 
 
 def reset_kraken_link():
-    """Reset singleton (for testing)."""
+    """Reset singleton (for testing).
+
+    P86: was `_kraken_link_instance.close()` — method undefined on
+    KrakenDefensiveLink. The class has `disconnect()` (async) at line 600
+    but no sync `close()`. AttributeError on every reset call (test cleanup
+    path). Defensive getattr+best-effort cancel pattern: try the async
+    disconnect via run_until_complete if no loop is running, else just
+    drop the reference and let GC + WebSocket internals close on their
+    own. Either way the singleton reset succeeds (the goal of this fn).
+    """
     global _kraken_link_instance
-    if _kraken_link_instance:
-        _kraken_link_instance.close()
+    if _kraken_link_instance is not None:
+        # P85 discipline rule 2: defensive getattr — don't trust the
+        # specific cleanup method name, prefer disconnect → close → no-op.
+        _cleanup = getattr(_kraken_link_instance, 'disconnect', None) \
+            or getattr(_kraken_link_instance, 'close', None)
+        if _cleanup is not None:
+            try:
+                import asyncio
+                if asyncio.iscoroutinefunction(_cleanup):
+                    try:
+                        # If a loop is already running (test harness), just
+                        # schedule and move on — don't block.
+                        asyncio.get_event_loop().create_task(_cleanup())
+                    except RuntimeError:
+                        # No running loop — synchronous cleanup is OK.
+                        asyncio.run(_cleanup())
+                else:
+                    _cleanup()
+            except Exception as e:
+                logger.warning(
+                    f"[KRAKEN_LINK] reset_kraken_link cleanup raised "
+                    f"{type(e).__name__}: {e}; dropping reference anyway"
+                )
     _kraken_link_instance = None
 
 
