@@ -598,6 +598,125 @@ class ExecutionManager:
             return False
         return True
 
+    def _clamp_size_to_balance(
+        self,
+        symbol: str,
+        side,
+        size: float,
+        price: Optional[float],
+        order_type,
+    ) -> Tuple[float, str]:
+        """P87 2026-04-26: dynamic balance check before placing an order.
+
+        Fetches Kraken spot wallet `free` balance, returns (clamped_size,
+        reason_str). If the requested size fits available balance with a
+        small safety margin, returns (size, "") unchanged. If balance is
+        insufficient, clamps to what's affordable and returns (clamped,
+        diagnostic). If completely unfundable, returns (0, diagnostic).
+
+        Same shape as the P86 stop-loss balance check, generalized for
+        any order. Called from execute_order before order placement.
+
+        Why dynamic: the system places multiple orders per 4H tick.
+        After the first BUY consumes $700, the spot wallet has $700
+        less for subsequent orders. Position sizing is computed against
+        TOTAL account equity / initial_capital config, NOT against the
+        live changing free balance. Without this clamp, the second/third
+        order in a tick can exceed actual spot balance and get rejected
+        by Kraken (EOrder:Insufficient funds).
+
+        Safety margins:
+          - BUY: needs USD ≥ size × price + Kraken fee buffer (~40bps).
+            Use 99.6% of free quote as max-affordable.
+          - SELL: needs base ≥ size + lot/fee buffer (~20bps). Use 99.8%
+            of free base as max-reservable.
+          - MARKET orders without price: estimate using fetch_ticker.
+            If unavailable, skip the BUY check (better to send than
+            block on a probe failure).
+
+        Failure mode: if fetch_balance itself fails (network blip),
+        return (size, "") — allow the order through; downstream will
+        either succeed or surface a real error via P79's classifier.
+        """
+        try:
+            _bal = self.exchange.fetch_balance()
+        except Exception as _e:  # noqa: silent-swallow
+            # Balance probe failed — let the order through; if Kraken
+            # actually rejects, P79 classifier surfaces the cause.
+            self.logger.warning(
+                f"[ORDER-BALANCE] {symbol}: balance probe failed "
+                f"({type(_e).__name__}: {_e}); proceeding without clamp."
+            )
+            return size, ""
+
+        _free = (_bal or {}).get('free', {}) or {}
+        _used = (_bal or {}).get('used', {}) or {}
+        try:
+            _base, _quote = symbol.split('/')
+        except ValueError:
+            self.logger.warning(
+                f"[ORDER-BALANCE] {symbol}: unexpected symbol shape "
+                f"(no '/' separator); skipping balance clamp."
+            )
+            return size, ""
+
+        _side_str = side.value if hasattr(side, 'value') else str(side)
+        _side_lower = _side_str.lower()
+
+        if _side_lower == 'buy':
+            # Need quote (USD/USDT) for the buy.
+            _free_quote = float(_free.get(_quote, 0.0) or 0.0)
+            # MARKET orders won't have an explicit price; estimate from ticker.
+            _est_price = price
+            if _est_price is None or _est_price <= 0:
+                try:
+                    _t = self.exchange.fetch_ticker(symbol)
+                    _est_price = float(_t.get('last') or _t.get('close') or 0)
+                except Exception:  # noqa: silent-swallow
+                    _est_price = 0.0
+            if _est_price <= 0:
+                # Can't estimate cost — let it through (probe failed twice).
+                self.logger.warning(
+                    f"[ORDER-BALANCE] {symbol} buy: no price estimate "
+                    f"(both `price` arg and ticker probe unavailable); "
+                    f"SKIPPING balance clamp — order may fail at Kraken if "
+                    f"insufficient {_quote}."
+                )
+                return size, ""
+            _required = size * _est_price
+            _max_affordable_usd = _free_quote * 0.996  # ~40bps fee buffer
+            if _required <= _max_affordable_usd:
+                return size, ""  # fits — no clamp needed
+            _max_size = _max_affordable_usd / _est_price if _est_price > 0 else 0.0
+            _used_quote = float(_used.get(_quote, 0.0) or 0.0)
+            _msg = (
+                f"requires ${_required:,.2f} {_quote} but free={_free_quote:,.2f} "
+                f"(used by other orders={_used_quote:,.2f}). Max affordable size "
+                f"at market ≈ {_max_size:.6f} {_base}. Likely cause: prior order "
+                f"this tick already consumed {_quote}, OR funds moved to "
+                f"derivatives/staking, OR position-size config exceeds spot "
+                f"capital."
+            )
+            return _max_size, _msg
+
+        if _side_lower == 'sell':
+            # Need base asset for the sell reservation.
+            _free_base = float(_free.get(_base, 0.0) or 0.0)
+            _max_reservable = _free_base * 0.998  # 20bps lot/fee safety
+            if size <= _max_reservable:
+                return size, ""
+            _used_base = float(_used.get(_base, 0.0) or 0.0)
+            _msg = (
+                f"requires {size:.6f} {_base} but free={_free_base:.6f} "
+                f"(used by other orders={_used_base:.6f}). Max reservable "
+                f"≈ {_max_reservable:.6f} {_base}. Likely cause: prior SELL/stop "
+                f"this tick already reserved {_base}, OR post-fee balance shortfall, "
+                f"OR position size mismatches spot holding."
+            )
+            return _max_reservable, _msg
+
+        return size, ""  # unknown side — pass through
+
     def execute_order(self,
                      symbol: str,
                      side,  # OrderSide or str for v5.1.0-HARDENED compatibility
@@ -743,6 +862,48 @@ class ExecutionManager:
             if userref is not None:
                 self._userref_history[userref] = result.order_id
             return result
+
+        # P87 2026-04-26: dynamic balance check at ENTRY layer.
+        # The system places multiple orders per 4H tick (one entry per
+        # asset). Each order consumes balance — if the first BUY uses
+        # $700 of USD, the second BUY sees $700 less than the upstream
+        # sizer thought. Position sizing is calculated against TOTAL
+        # account equity (or initial_capital config), not against the
+        # live, dynamically-changing spot wallet free balance.
+        #
+        # P86 added this check at stop-loss placement; P87 extends to
+        # entries so the same defensive shape protects the whole order
+        # lifecycle. Failure mode without this: order goes to Kraken,
+        # Kraken rejects EOrder:Insufficient funds, retry burns time +
+        # rate limit, P79 classifier short-circuits PERMANENT, position
+        # entry FAILS — the system thinks it has a position but actually
+        # doesn't, then attempts to place a stop-loss on a phantom
+        # position → cascade of failures.
+        #
+        # Clamp size to what's actually fundable. If clamped, WARN log.
+        # If clamped to 0, REJECT with explicit guidance.
+        _orig_size = size
+        size, _balance_msg = self._clamp_size_to_balance(
+            symbol, side, size, price, order_type
+        )
+        if size <= 0:
+            self.logger.critical(
+                f"[ORDER-BALANCE] {symbol} {side.value}: REJECTED — "
+                f"{_balance_msg}. Operator action: replenish spot balance OR "
+                f"reduce position-size config to match available capital."
+            )
+            return OrderResult(
+                success=False, symbol=symbol,
+                side=side.value, order_type=order_type.value,
+                status=OrderStatus.REJECTED,
+                error_message=f"INSUFFICIENT_SPOT_BALANCE: {_balance_msg}",
+                userref=userref,
+            )
+        if abs(size - _orig_size) > 1e-9 and _balance_msg:
+            self.logger.warning(
+                f"[ORDER-BALANCE] {symbol} {side.value}: clamped size "
+                f"{_orig_size:.6f} → {size:.6f}. {_balance_msg}"
+            )
 
         # [C8] Dedup check: if userref already executed, return cached result
         if userref is not None:
