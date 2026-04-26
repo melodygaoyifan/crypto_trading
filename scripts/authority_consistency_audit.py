@@ -59,13 +59,29 @@ EXCLUDE_DIRS = (
 
 
 def _git_grep(pattern: str, files_only: bool = False) -> list[str]:
-    """Run git grep against the live tree (excluding archive/legacy)."""
+    """Run git grep against the live tree (excluding archive/legacy).
+
+    git grep exit codes:
+      0 = matches found, 1 = no matches, 128 = error (e.g. invalid regex).
+    Treating 128 as "no matches" silently masks regex-syntax bugs that
+    permanently disable a scanner branch (caught by ultrareview on
+    audit/safety-defense slice 1, 2026-04-25 — POSIX ERE rejected a
+    Perl negative-lookahead and the audit never noticed). Surface any
+    return code above 1 to stderr so the next syntax error is loud.
+    """
     args = ["git", "grep", "-n", "-E", pattern]
     if files_only:
         args = ["git", "grep", "-l", "-E", pattern]
     try:
         r = subprocess.run(args, capture_output=True, text=True, cwd=REPO_ROOT)
     except FileNotFoundError:
+        return []
+    if r.returncode > 1:
+        print(
+            f"[_git_grep] git grep failed (exit {r.returncode}) for pattern "
+            f"{pattern!r}: {r.stderr.strip()}",
+            file=sys.stderr,
+        )
         return []
     out = []
     for line in r.stdout.splitlines():
@@ -167,14 +183,45 @@ def audit_authority_consistency() -> dict[str, Any]:
         )
 
         # 3. Attribution extractor: agents/signal_envelope.py:_EXTRACTORS dict
-        #    has a key for this agent.
+        #    has a key for this agent. The runtime registers extractors under
+        #    different keys than the matrix uses (e.g. matrix "microstructure"
+        #    → runtime "micro" → _extract_micro). Use the alias map so we
+        #    check the actual runtime key, not the matrix label.
+        # Updated: 2026-04-25 (refined after first false-positive batch).
+        extractor_alias = {
+            "microstructure": "micro",
+            "funding_rate": "funding",
+        }
+        extractor_key = extractor_alias.get(agent, agent)
+
         env_path = REPO_ROOT / "agents" / "signal_envelope.py"
         if env_path.exists():
             env_src = _read(env_path)
             # _EXTRACTORS: {"agent_name": ...}
             rec["attribution_extractor"] = bool(
-                re.search(rf'["\']\s*{re.escape(agent)}\s*["\']\s*:', env_src)
+                re.search(rf'["\']\s*{re.escape(extractor_key)}\s*["\']\s*:', env_src)
             )
+
+        # Agents that are matrix-listed as DECIDE/ADVISE/CONFIRM but
+        # architecturally non-direction-producing — they contribute as caps,
+        # vetoes, timing edges, or boolean confirms, NOT as direction signals.
+        # Per the comment at main.py:8731-8732, these are deliberately not
+        # wrapped into attribution envelopes. Keep this list in sync with
+        # that runtime comment.
+        # Updated: 2026-04-25.
+        non_direction_skip = {
+            "regime",         # CONFIRM via direction-fallback only (D1 deferred)
+            "macro",          # CAP authority — emits leverage cap, not direction
+            "lead_lag",       # EXECUTE — timing edge, not direction
+            "risk",           # VETO authority
+            "structure",      # CONFIRM via boolean
+            "squeeze",        # one-sided veto on squeeze_risk > threshold
+            "cvd",            # one-sided divergence — not symmetric direction
+            "risk_appetite",  # derived direction, fed via macro_risk_appetite cap path
+            # NOTE: P57 promoted whale + options to direction-producing — they
+            # ARE in _EXTRACTORS now and SHOULD be checked. Do NOT add them
+            # here even though main.py:8731-8732's stale comment lists them.
+        }
 
         if not rec["fusion_consumes"] and expected in (
             "DECIDE",
@@ -186,7 +233,11 @@ def audit_authority_consistency() -> dict[str, Any]:
                 f"DECIDE/ADVISE/CONFIRM agent — fusion does NOT consume '{actual_key}'"
             )
 
-        if expected in ("DECIDE", "ADVISE") and not rec["attribution_extractor"]:
+        if (
+            expected in ("DECIDE", "ADVISE")
+            and not rec["attribution_extractor"]
+            and agent not in non_direction_skip
+        ):
             rec["issues"].append(
                 "no _EXTRACTORS entry — attribution will silently zero this agent (P3)"
             )
@@ -326,8 +377,18 @@ TRACKED_CONSTANTS = [
         # Match only assignments / JSON literals — NOT format strings.
         "name": "hard_drawdown_halt",
         "patterns": [
-            r'"hard_drawdown_halt"\s*:\s*([0-9.]+)',     # JSON
-            r'\bhard_drawdown_halt\s*=\s*([0-9.]+)\b',   # Python assignment
+            r'"hard_drawdown_halt"\s*:\s*([0-9.]+)',          # JSON
+            # Python assignment — exclude docstring percent-form ("= 20%")
+            # which canonical_config.py:14 uses for prose documentation.
+            # Original `(?!\s*%)` was Perl negative lookahead and POSIX ERE
+            # rejects it; git grep -E exited 128 silently (caught by
+            # ultrareview on slice 1 audit/safety-defense, 2026-04-25). The
+            # POSIX-compatible form below requires the value be followed by
+            # a non-percent terminator (whitespace, comma, newline, EOL),
+            # so docstring "20%" no longer matches but real assignments do.
+            # The trailing terminator captures into group(2); audit code
+            # uses group(1) so the value extraction is unchanged.
+            r'\bhard_drawdown_halt\s*=\s*([0-9.]+)([^0-9.%]|$)',
         ],
         "expected": "0.25",  # match live_high_risk.json (the loaded config)
         "p_history": "canonical=0.20 vs live=0.25 — config_resolver warns",
