@@ -45,6 +45,37 @@ MAX_RETRIES = 3
 BACKOFF_BASE_MS = 200     # 200ms, 400ms, 800ms
 BACKOFF_JITTER = 0.1      # ±10% jitter
 
+
+# ---------------------------------------------------------------------------
+# Module-level nonce-state registry (P68 2026-04-26)
+# ---------------------------------------------------------------------------
+# Multiple KrakenRESTClient instances with the SAME API key (e.g. main
+# execution client + dedicated dead-man-switch client per the FIX-DMS-NONCE
+# pattern at main.py:4450) share Kraken's server-side last-seen-nonce but
+# pre-P68 had INDEPENDENT in-memory ratchets. Race:
+#   1. Main mints nonce N; in-memory ratchet = N. Persists every ~30s.
+#   2. DMS mints nonce N+1; works (DMS started after main's last persist).
+#   3. Main mints N+5 in-memory but doesn't persist for 25s.
+#   4. DMS mints from its own ratchet (still ~N+1) → MUCH lower than what
+#      Kraken has actually seen → "Invalid nonce" rejection on every call.
+# This registry shares the ratchet + lock across all clients with the same
+# (api_key_fingerprint, state_file_path) so concurrent in-memory mints stay
+# strictly monotonic regardless of how many client instances exist.
+class _SharedNonceState:
+    """Mutable holder shared across KrakenRESTClient instances by key fp."""
+    __slots__ = ("lock", "ratchet_ms", "dirty", "state_path", "fingerprint")
+
+    def __init__(self, lock: threading.Lock, state_path: Path, fingerprint: str):
+        self.lock = lock
+        self.ratchet_ms: int = 0
+        self.dirty: bool = False
+        self.state_path = state_path
+        self.fingerprint = fingerprint
+
+
+_SHARED_NONCE_STATES: Dict[Tuple[str, str], _SharedNonceState] = {}
+_SHARED_NONCE_REGISTRY_LOCK = threading.Lock()
+
 # Check for ccxt
 CCXT_AVAILABLE = False
 try:
@@ -174,16 +205,47 @@ class KrakenRESTClient:
         # so the next process boots above it. The state file is keyed by
         # an HMAC of the API key (not the key itself) so multiple keys can
         # coexist and a key rotation isn't poisoned by old state.
-        self._nonce_lock = threading.Lock()
-        self._nonce_state_path = Path(
+        # P68 2026-04-26: the lock + ratchet are SHARED across all client
+        # instances with the same (key fingerprint, state path) via the
+        # module-level registry above, so the dead-man-switch dedicated
+        # client and the main client can't race to mint duplicate nonces.
+        nonce_state_path = Path(
             os.environ.get("HMATS_KRAKEN_NONCE_STATE")
             or (Path(__file__).resolve().parents[1] / "data" / "kraken_nonce_state.json")
         )
         self._nonce_key_fingerprint = self._compute_key_fingerprint(api_key)
-        self._nonce_ratchet_ms = self._load_persisted_nonce()
-        self._nonce_dirty = False  # set when ratchet advances; flushed periodically
+        self._shared_nonce = self._get_or_init_shared_nonce(
+            self._nonce_key_fingerprint, nonce_state_path
+        )
 
         self._init_exchange()
+
+    @classmethod
+    def _get_or_init_shared_nonce(
+        cls, fingerprint: str, state_path: Path
+    ) -> "_SharedNonceState":
+        """Look up (or lazily create) the shared nonce state for this key.
+
+        Two clients with the same (fingerprint, state_path) share the same
+        lock + ratchet object. First creation also loads the persisted
+        ratchet from disk so the in-memory counter starts above Kraken's
+        last-seen nonce.
+        """
+        key = (fingerprint, str(state_path.resolve()))
+        with _SHARED_NONCE_REGISTRY_LOCK:
+            existing = _SHARED_NONCE_STATES.get(key)
+            if existing is not None:
+                return existing
+            holder = _SharedNonceState(
+                lock=threading.Lock(),
+                state_path=state_path,
+                fingerprint=fingerprint,
+            )
+            holder.ratchet_ms = cls._load_persisted_nonce_static(
+                state_path, fingerprint
+            )
+            _SHARED_NONCE_STATES[key] = holder
+            return holder
 
     @staticmethod
     def _compute_key_fingerprint(api_key: Optional[str]) -> str:
@@ -195,23 +257,24 @@ class KrakenRESTClient:
             return "no_key"
         return hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:16]
 
-    def _load_persisted_nonce(self) -> int:
-        """Load the highest nonce we've previously issued for this key.
+    @staticmethod
+    def _load_persisted_nonce_static(state_path: Path, fingerprint: str) -> int:
+        """Load highest persisted nonce for this key. Static so the shared
+        nonce state can be initialized before an instance exists.
 
         Returns 0 if no state file or no entry for this key fingerprint.
-        Caller will then fall back to clock-time on first nonce request.
         """
         try:
-            if not self._nonce_state_path.exists():
+            if not state_path.exists():
                 return 0
-            with open(self._nonce_state_path, "r") as f:
+            with open(state_path, "r") as f:
                 state = json.load(f) or {}
-            entry = state.get(self._nonce_key_fingerprint, {})
+            entry = state.get(fingerprint, {})
             persisted = int(entry.get("highest_nonce_ms", 0))
             if persisted > 0:
                 logger.info(
                     f"[KrakenREST] Loaded persisted nonce ratchet for "
-                    f"key fp={self._nonce_key_fingerprint}: {persisted}"
+                    f"key fp={fingerprint}: {persisted}"
                 )
             return persisted
         except Exception as e:
@@ -221,28 +284,29 @@ class KrakenRESTClient:
     def _persist_nonce_locked(self) -> None:
         """Atomic-write the current ratchet to the state file.
 
-        Caller MUST hold self._nonce_lock. Writes the WHOLE state map so
-        multi-key state survives. Best-effort: failures are logged but
-        don't break the request path.
+        Caller MUST hold self._shared_nonce.lock. Writes the WHOLE state
+        map so multi-key state survives. Best-effort: failures are logged
+        but don't break the request path.
         """
+        sn = self._shared_nonce
         try:
-            self._nonce_state_path.parent.mkdir(parents=True, exist_ok=True)
+            sn.state_path.parent.mkdir(parents=True, exist_ok=True)
             existing: Dict[str, Any] = {}
-            if self._nonce_state_path.exists():
+            if sn.state_path.exists():
                 try:
-                    with open(self._nonce_state_path, "r") as f:
+                    with open(sn.state_path, "r") as f:
                         existing = json.load(f) or {}
                 except Exception:
                     existing = {}
-            existing[self._nonce_key_fingerprint] = {
-                "highest_nonce_ms": int(self._nonce_ratchet_ms),
+            existing[sn.fingerprint] = {
+                "highest_nonce_ms": int(sn.ratchet_ms),
                 "updated_at": int(time.time()),
             }
-            tmp = self._nonce_state_path.with_suffix(".json.tmp")
+            tmp = sn.state_path.with_suffix(".json.tmp")
             with open(tmp, "w") as f:
                 json.dump(existing, f, separators=(",", ":"))
-            os.replace(tmp, self._nonce_state_path)
-            self._nonce_dirty = False
+            os.replace(tmp, sn.state_path)
+            sn.dirty = False
         except Exception as e:
             logger.warning(f"[KrakenREST] Could not persist nonce state: {e}")
 
@@ -253,19 +317,23 @@ class KrakenRESTClient:
         REST calls (e.g. dead-man heartbeat thread + main async path) don't
         emit duplicate nonces. Marks state dirty for periodic flush; we don't
         flush every call to avoid I/O on the hot path.
+
+        P68 2026-04-26: state lives on _shared_nonce so multiple
+        KrakenRESTClient instances with the same API key share one ratchet.
         """
-        with self._nonce_lock:
+        sn = self._shared_nonce
+        with sn.lock:
             now_ms = int(time.time() * 1000)
-            if self._nonce_ratchet_ms < now_ms:
-                self._nonce_ratchet_ms = now_ms
+            if sn.ratchet_ms < now_ms:
+                sn.ratchet_ms = now_ms
             else:
-                self._nonce_ratchet_ms += 1
-            self._nonce_dirty = True
+                sn.ratchet_ms += 1
+            sn.dirty = True
             # Periodic flush — every ~30s of issued nonces. Cheap I/O,
             # bounds worst-case loss to one window if the process dies.
-            if self._nonce_ratchet_ms % 30000 < 5:  # opportunistic
+            if sn.ratchet_ms % 30000 < 5:  # opportunistic
                 self._persist_nonce_locked()
-            return self._nonce_ratchet_ms
+            return sn.ratchet_ms
 
     def _bump_nonce_past_error(self, seconds: int = 60) -> int:
         """Jump the nonce ratchet forward by `seconds` after a nonce error.
@@ -280,13 +348,14 @@ class KrakenRESTClient:
         Returns:
             The new ratchet value (in ms).
         """
-        with self._nonce_lock:
-            self._nonce_ratchet_ms = max(
-                self._nonce_ratchet_ms, int(time.time() * 1000)
+        sn = self._shared_nonce
+        with sn.lock:
+            sn.ratchet_ms = max(
+                sn.ratchet_ms, int(time.time() * 1000)
             ) + (seconds * 1000)
-            self._nonce_dirty = True
+            sn.dirty = True
             self._persist_nonce_locked()  # bumps are rare; flush every time
-            return self._nonce_ratchet_ms
+            return sn.ratchet_ms
     
     def _init_exchange(self):
         """Initialize ccxt exchange."""
@@ -331,7 +400,7 @@ class KrakenRESTClient:
                     logger.info(
                         f"[KrakenREST] Time difference pre-loaded: "
                         f"{self._exchange.options.get('timeDifference', 0)}ms; "
-                        f"nonce_ratchet={self._nonce_ratchet_ms}"
+                        f"nonce_ratchet={self._shared_nonce.ratchet_ms}"
                     )
                 except Exception as _td_err:
                     logger.warning(f"[KrakenREST] load_time_difference failed: {_td_err}")
@@ -655,7 +724,65 @@ class KrakenRESTClient:
                     logger.warning(
                         f"[KrakenREST] Dead-man attempt {attempt + 1}/3 failed: {_verbose}"
                     )
-                    if "Invalid nonce" in _err_str:
+                    # ----------------------------------------------------------
+                    # P68 2026-04-26: classify the error so the retry loop
+                    # actually does something different per failure mode.
+                    # Pre-P68 the loop only handled "Invalid nonce" — every
+                    # other error (auth/permission/network/rate-limit) fell
+                    # straight through to a single failed attempt + return
+                    # False, so the operator saw 3 consecutive refresh
+                    # failures with no visibility into which class they were
+                    # AND no actual retry on transient network issues.
+                    # ----------------------------------------------------------
+                    _is_auth = isinstance(
+                        e,
+                        (
+                            getattr(ccxt, "AuthenticationError", Exception),
+                            getattr(ccxt, "PermissionDenied", Exception),
+                        ),
+                    ) or any(
+                        marker in _err_str
+                        for marker in (
+                            "Invalid key",
+                            "Invalid signature",
+                            "Permission denied",
+                            "EAPI:Invalid",
+                            "EGeneral:Permission",
+                        )
+                    )
+                    _is_rate_limit = isinstance(
+                        e, getattr(ccxt, "RateLimitExceeded", Exception)
+                    ) or "Rate limit" in _err_str or "EAPI:Rate limit" in _err_str
+                    _is_network = isinstance(
+                        e,
+                        (
+                            getattr(ccxt, "NetworkError", Exception),
+                            getattr(ccxt, "RequestTimeout", Exception),
+                            getattr(ccxt, "ExchangeNotAvailable", Exception),
+                            getattr(ccxt, "DDoSProtection", Exception),
+                        ),
+                    )
+                    _is_nonce = "Invalid nonce" in _err_str
+
+                    # Auth / permission errors are PERMANENT — no point
+                    # retrying. Surface as CRITICAL with explicit operator
+                    # guidance and break out so we don't waste 2 more rounds.
+                    if _is_auth and not _is_nonce:
+                        logger.critical(
+                            f"[KrakenREST] Dead-man switch AUTH/PERMISSION error "
+                            f"({type(e).__name__}). NOT retrying — this is permanent "
+                            f"until the API key is fixed. Most likely cause: the API "
+                            f"key lacks 'Cancel & Close Orders' permission on Kraken. "
+                            f"Verify at https://www.kraken.com/u/security/api → key → "
+                            f"permissions. Full error: {_verbose}"
+                        )
+                        self._last_dead_man_error = (
+                            f"AUTH_PERMANENT: {_verbose} (likely missing "
+                            f"'Cancel & Close Orders' permission on API key)"
+                        )
+                        return False
+
+                    if _is_nonce:
                         if attempt == 0:
                             new_ratchet = self._bump_nonce_past_error(60)
                             logger.warning(
@@ -679,10 +806,23 @@ class KrakenRESTClient:
                                     f"[KrakenREST] load_time_difference failed: "
                                     f"{type(_td_err).__name__}: {_td_err!r}"
                                 )
-                    # Propagate the failure cause so DeadManSwitch.refresh()
-                    # can surface it in the WARNING/CRITICAL log instead of
-                    # generic "Refresh FAILED". Carry every attempt's error
-                    # so the operator sees the full sequence in one line.
+
+                    # Transient: brief backoff + retry within the same call.
+                    # Network/timeout = 0.5s, rate-limit = 2s. The dead-man
+                    # refresh loop runs every ~30s so a 2s backoff stays well
+                    # within budget. Don't sleep on the final attempt.
+                    if (_is_network or _is_rate_limit) and attempt < 2:
+                        _sleep = 2.0 if _is_rate_limit else 0.5
+                        _kind = "rate-limit" if _is_rate_limit else "network/timeout"
+                        logger.warning(
+                            f"[KrakenREST] Dead-man transient {_kind} on attempt "
+                            f"{attempt + 1}; backing off {_sleep}s and retrying"
+                        )
+                        time.sleep(_sleep)
+                        continue
+
+                    # Either non-classified error, or classified-but-final
+                    # attempt. Cache + log and return.
                     self._last_dead_man_error = " ; ".join(attempt_errors)
                     logger.error(
                         f"[KrakenREST] Dead-man switch failed after {attempt + 1} attempt(s): "
