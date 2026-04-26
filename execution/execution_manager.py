@@ -1759,18 +1759,41 @@ class ExecutionManager:
 
             self.logger.info(
                 f"[STOP-WIRE] {symbol} {side.value.lower()}: sending "
-                f"price={_norm_price_str!r} amount={_norm_size_str!r} "
-                f"(raw price={stop_price}, market={_market_price or 'n/a'})"
+                f"stopLossPrice={_norm_price_str!r} amount={_norm_size_str!r} "
+                f"via type='market'+params (raw price={stop_price}, "
+                f"market={_market_price or 'n/a'})"
             )
+            # P83 2026-04-26: use ccxt's UNIFIED stop-loss API instead
+            # of the bespoke `type='stop-loss' + positional price` shape.
+            # Per ccxt-Kraken master (python/ccxt/kraken.py order_request):
+            #
+            #   stopLossTriggerPrice = self.safe_string(params, 'stopLossPrice')
+            #   if isStopLossTriggerOrder:
+            #       request['price'] = self.price_to_precision(symbol, stopLossTriggerPrice)
+            #       request['ordertype'] = 'stop-loss'   # or 'stop-loss-limit'
+            #
+            # ccxt does the precision normalization + ordertype mapping
+            # internally when stopLossPrice is in params. Our P82 path
+            # (type='stop-loss', positional price) was NOT a recognized
+            # unified type — ccxt skipped the trigger-order branch and
+            # produced a malformed Kraken request that returned
+            # `Invalid arguments:price` regardless of how clean our
+            # input values were.
+            #
+            # Confirmed pattern from issue ccxt#19920 and issue ccxt#20814
+            # comments. Working recipe: type='market' + side + amount +
+            # NO positional price + params['stopLossPrice'].
             order = self.exchange.create_order(
                 symbol=symbol,
-                type='stop-loss',
+                type='market',                          # parent order type
                 side=side.value.lower(),
-                amount=_norm_size_str,    # string form — byte-exact to wire
-                price=_norm_price_str,    # string form — byte-exact to wire
+                amount=_norm_size_str,                  # string — byte-exact
+                price=None,                             # MUST be None — let ccxt
+                                                        # use stopLossPrice from
+                                                        # params as the trigger
                 params={
                     'userref': userref,
-                    'ordertype': 'stop-loss',  # explicit override
+                    'stopLossPrice': _norm_price_str,   # ccxt unified trigger
                 },
             )
             order_id = order.get('id')
