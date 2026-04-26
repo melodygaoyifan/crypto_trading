@@ -288,6 +288,24 @@ class ExecutionManager:
         """
         s = error_str or ""
 
+        # P93 2026-04-26: our own pre-flight rejections (P91 below-min-size,
+        # PREFLIGHT_WRONG_SIDE, INSUFFICIENT_SPOT_BALANCE) are PERMANENT
+        # by definition — same input on retry produces same rejection.
+        # Without this branch, the retry loop wastes 3 attempts (and 3
+        # CRITICAL log lines + ALERT_ONLY noise) on a code-path that
+        # never reaches Kraken in the first place.
+        if any(s.startswith(prefix) for prefix in (
+            "PREFLIGHT_BELOW_MIN_SIZE",
+            "PREFLIGHT_WRONG_SIDE",
+            "INSUFFICIENT_SPOT_BALANCE",
+        )):
+            return ("PERMANENT",
+                    "Pre-flight rejection from our own validation. The "
+                    "input failed local checks before any Kraken call. "
+                    "Retrying with the same input cannot succeed — fix "
+                    "the underlying state (position size / balance / "
+                    "trigger price) first.")
+
         # PERMANENT — retry will never succeed.
         # Argument-validation: malformed type/side/price/etc.
         if "EGeneral:Invalid arguments" in s:
@@ -1892,10 +1910,34 @@ class ExecutionManager:
                     # math). 99.8% of available is still ~99% of position.
                     _max_reservable = _free_base * 0.998
                     if _max_reservable < size:
+                        # P93 2026-04-26: SEPARATE alert when the clamp is
+                        # severe (>50% reduction). That's not a "small fee
+                        # buffer needed" — it's a position-state desync
+                        # (phantom-position pattern from CLAUDE.md P87).
+                        # Internal state thinks position is X; actual free
+                        # balance is far less. Reconciliation needed.
+                        _shrink_pct = (size - _free_base) / size * 100
+                        if _shrink_pct > 50.0:
+                            self.logger.critical(
+                                f"[POSITION-DESYNC] {symbol}: internal state "
+                                f"says position size = {size:.6f} {_base}, "
+                                f"but Kraken free balance = {_free_base:.6f} "
+                                f"({_shrink_pct:.1f}% gap). Phantom-position "
+                                f"pattern (CLAUDE.md P87). Likely causes: "
+                                f"(a) prior order that internal state recorded "
+                                f"as filled never actually filled at Kraken, "
+                                f"(b) operator manually moved {_base} to "
+                                f"derivatives/staking, (c) another stale order "
+                                f"is reserving the {_base}. Operator action: "
+                                f"run `defense/startup_reconciler.py` OR check "
+                                f"`docker exec hmats-engine python -c 'import "
+                                f"ccxt; ...'` to compare paper_positions vs "
+                                f"fetch_balance/fetch_open_orders."
+                            )
                         self.logger.warning(
                             f"[STOP-BALANCE] {symbol} sell: free {_base}="
                             f"{_free_base:.6f} below intended size {size:.6f} "
-                            f"(by {(size - _free_base) / size * 100:.2f}%). "
+                            f"(by {_shrink_pct:.2f}%). "
                             f"Reducing stop reservation to {_max_reservable:.6f} "
                             f"(99.8% of free). Likely cause: post-fee balance, "
                             f"funds moved to derivatives/staking, or another "
