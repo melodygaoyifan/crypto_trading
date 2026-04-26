@@ -415,22 +415,25 @@ class CorrelationRealtimeController:
                 if asset1 >= asset2:
                     continue
                 
-                # [P50 2026-04-25] Was current.get(asset1, asset2) — P47-Bug-2
-                # shape. dict.get(k, default) was treating asset2 as the default,
-                # so a missing pair silently returned the string "ETH" instead of
-                # a correlation float. Downstream subtraction would TypeError but
-                # the surrounding try/except: pass swallowed it. Now uses tuple key.
-                curr_corr = current.get((asset1, asset2), 0.0)
-                prev_corr = previous.get((asset1, asset2), 0.0)
+                # [P90 2026-04-26] The earlier P50 "tuple-key" fix was wrong.
+                # current/previous/_corr_history entries are CorrelationMatrix
+                # instances (see line 358 ctor) whose .get(asset1, asset2)
+                # signature takes TWO STRING args. Passing a tuple as the first
+                # arg + 0.0 as second silently fell through every branch and
+                # returned 0.0 — so curr/prev were always 0.0, change was
+                # always 0.0, and detect_jumps() never fired in production.
+                # Use the actual signature.
+                curr_corr = current.get(asset1, asset2)
+                prev_corr = previous.get(asset1, asset2)
                 change = curr_corr - prev_corr
-                
+
                 # 计算历史变化的标准差
                 changes = []
                 for i in range(1, min(len(self._corr_history["short"]), self.config.jump_lookback)):
                     if i < len(self._corr_history["short"]):
-                        # [P50 2026-04-25] Same P47-Bug-2 shape fix.
-                        c1 = self._corr_history["short"][-i].get((asset1, asset2), 0.0)
-                        c2 = self._corr_history["short"][-i-1].get((asset1, asset2), 0.0)
+                        # [P90 2026-04-26] Same fix as above.
+                        c1 = self._corr_history["short"][-i].get(asset1, asset2)
+                        c2 = self._corr_history["short"][-i-1].get(asset1, asset2)
                         changes.append(c1 - c2)
                 
                 if len(changes) < 5:

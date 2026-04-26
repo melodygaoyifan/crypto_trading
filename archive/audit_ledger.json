@@ -1,8 +1,8 @@
 {
-  "generated_at": "2026-04-26T23:29:55.810818+00:00",
+  "generated_at": "2026-04-26T23:36:29.480136+00:00",
   "total_files": 368,
-  "audited_count": 51,
-  "remaining": 317,
+  "audited_count": 54,
+  "remaining": 314,
   "live_dirs": [
     "root",
     "agents",
@@ -84,7 +84,7 @@
     {
       "path": "agents/risk_agent.py",
       "audited": true,
-      "audit_sha": "PENDING_SHA",
+      "audit_sha": "ee5445d",
       "round": "5a"
     },
     {
@@ -352,7 +352,7 @@
     {
       "path": "core/account_sync.py",
       "audited": true,
-      "audit_sha": "PENDING_SHA",
+      "audit_sha": "ee5445d",
       "round": "5a"
     },
     {
@@ -1022,7 +1022,7 @@
     {
       "path": "liquidity/integrated_manager.py",
       "audited": true,
-      "audit_sha": "PENDING_SHA",
+      "audit_sha": "ee5445d",
       "round": "5a"
     },
     {
@@ -1159,7 +1159,9 @@
     },
     {
       "path": "risk/correlation_realtime_controller.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_SHA",
+      "round": "5b"
     },
     {
       "path": "risk/derivatives_risk_gate.py",
@@ -1193,7 +1195,9 @@
     },
     {
       "path": "risk/leverage_guard.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_SHA",
+      "round": "5b"
     },
     {
       "path": "risk/opportunity_budget_governor.py",
@@ -1233,7 +1237,9 @@
     },
     {
       "path": "risk/thesis_budget_governor.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_SHA",
+      "round": "5b"
     },
     {
       "path": "risk/tranche_manager.py",

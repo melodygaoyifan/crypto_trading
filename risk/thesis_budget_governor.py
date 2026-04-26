@@ -63,12 +63,21 @@ class ThesisBudgetConfig:
 # =============================================================================
 
 class ThesisBudgetVetoReason(Enum):
-    """Reasons for thesis budget veto."""
+    """Reasons for thesis budget veto.
+
+    [P90 2026-04-26] All non-NONE values must contain the substring
+    "THESIS_BUDGET" so that main.py's `_SC_PROTECTED_VETOES` safety net
+    (line 10111) catches every flavor of thesis veto. The earlier values
+    COOLDOWN_ACTIVE/LOSS_STREAK_LIMIT/REENTRY_USED_UP didn't contain
+    that substring, so SHORT_CONTROL would have been allowed to override
+    them if its scope ever widened (defense-in-depth gap). Renamed with
+    THESIS_BUDGET_ prefix to fix that gap.
+    """
     NONE = auto()
     BUDGET_EXHAUSTED = "THESIS_BUDGET_HIT"
-    COOLDOWN_ACTIVE = "COOLDOWN_ACTIVE"
-    LOSS_STREAK_LIMIT = "LOSS_STREAK_LIMIT"
-    REENTRY_USED_UP = "REENTRY_USED_UP"
+    COOLDOWN_ACTIVE = "THESIS_BUDGET_COOLDOWN_ACTIVE"
+    LOSS_STREAK_LIMIT = "THESIS_BUDGET_LOSS_STREAK_LIMIT"
+    REENTRY_USED_UP = "THESIS_BUDGET_REENTRY_USED_UP"
 
 
 @dataclass
