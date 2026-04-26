@@ -132,6 +132,24 @@ class ExitDRLAgent:
         self._predictions_logged: int = 0
         self.shadow_log_path.parent.mkdir(parents=True, exist_ok=True)
 
+        # P81 2026-04-26: self-contained peak tracker for the
+        # `max_unrealized_pnl_pct` state input. The runtime caller never
+        # set position['max_unrealized_pnl_pct'] (P15-shape half-wired
+        # bug — reader at build_state:220 had no writer). Result:
+        # build_state's fallback resolved max_unrealized==unrealized_pnl
+        # ALWAYS → drawdown_from_peak==0 ALWAYS → state inputs [3] and
+        # [4] carried zero information about peak position. Production
+        # action distribution collapsed to HOLD/EXIT_ALL only — zero
+        # PARTIAL_EXIT predictions despite 26-31% expected from offline
+        # validation.
+        #
+        # Fix: track peak per asset inside the agent itself. Reset when
+        # the (direction, entry_price) tuple changes (a new position
+        # opened). The agent now guarantees its own state-input
+        # correctness regardless of caller discipline.
+        self._peak_unrealized_per_asset: Dict[str, float] = {}
+        self._position_id_per_asset: Dict[str, Tuple[float, float]] = {}
+
         if self.mode != ExitDRLMode.DISABLED:
             self._load_all()
 
@@ -273,7 +291,50 @@ class ExitDRLAgent:
         if self._torch is None or self._asset_status.get(asset) != "READY":
             return None
         if not position or float(position.get("direction", 0.0) or 0.0) == 0.0:
+            # No position — clear the peak tracker so a future entry starts
+            # fresh. Per CLAUDE.md P81 invariant.
+            self._peak_unrealized_per_asset.pop(asset, None)
+            self._position_id_per_asset.pop(asset, None)
             return None
+
+        # P81 2026-04-26: maintain own peak tracker (caller was never
+        # writing position['max_unrealized_pnl_pct']). Reset when the
+        # position identity changes — different (direction, entry_price)
+        # = different trade.
+        _direction = float(position.get("direction", 0.0) or 0.0)
+        _entry_price = float(position.get("entry_price", 0.0) or 0.0)
+        _current_price = float(market_data.get("current_price", 0.0) or 0.0)
+        if _entry_price > 0 and _current_price > 0:
+            _curr_pnl = _direction * (_current_price - _entry_price) / _entry_price
+            _pos_id = (_direction, _entry_price)
+            _prev_id = self._position_id_per_asset.get(asset)
+            if _prev_id != _pos_id:
+                # New position — start peak from current pnl (not from
+                # zero — entry might have already moved by the time we
+                # see it).
+                self._peak_unrealized_per_asset[asset] = _curr_pnl
+                self._position_id_per_asset[asset] = _pos_id
+            else:
+                # Same position — ratchet peak upward.
+                _prev_peak = self._peak_unrealized_per_asset.get(asset, _curr_pnl)
+                self._peak_unrealized_per_asset[asset] = max(_prev_peak, _curr_pnl)
+
+            # Inject the tracked peak into the position dict so build_state
+            # gets the real peak instead of falling back to current pnl.
+            # Honor a caller-set value if it's HIGHER (caller might be
+            # tracking via a different mechanism); otherwise use ours.
+            _caller_peak = position.get("max_unrealized_pnl_pct")
+            _our_peak = self._peak_unrealized_per_asset[asset]
+            if _caller_peak is None:
+                position["max_unrealized_pnl_pct"] = _our_peak
+            else:
+                try:
+                    position["max_unrealized_pnl_pct"] = max(
+                        float(_caller_peak), _our_peak
+                    )
+                except (TypeError, ValueError):  # noqa: silent-swallow
+                    # Malformed caller value — defensive fallback to ours.
+                    position["max_unrealized_pnl_pct"] = _our_peak
 
         state_np = self.build_state(position, market_data, bars_held)
         t0 = time.monotonic()

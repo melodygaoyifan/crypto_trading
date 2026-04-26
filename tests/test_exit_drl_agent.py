@@ -176,6 +176,85 @@ def test_dim_mismatch_checkpoint_disables_asset(tmp_path):
     assert agent.predict("BTC", pos, _make_market_data(), bars_held=1) is None
 
 
+def test_p81_peak_tracker_ratchets_across_calls(tmp_path):
+    """P81 self-contained peak tracker: ratchets up across predict() calls
+    on the same position; resets on direction change OR entry-price change.
+
+    This is the regression guard for the half-wired-bug shape that caused
+    Exit-SAC to never predict PARTIAL_EXIT in production (zero
+    `max_unrealized_pnl_pct` writers anywhere in main.py)."""
+    _make_dummy_checkpoint(tmp_path, "BTC")
+    agent = ExitDRLAgent(
+        models_dir=str(tmp_path),
+        shadow_log_path=str(tmp_path / "shadow.jsonl"),
+        mode=ExitDRLMode.SHADOW,
+        assets=["BTC"],
+        extra_allowed_roots=[str(tmp_path)],
+    )
+
+    pos = {"direction": 1.0, "entry_price": 100.0}  # NO max_unrealized_pnl_pct
+
+    # Call 1 — pnl = 0% (current==entry).
+    agent.predict("BTC", pos, _make_market_data(price=100.0), bars_held=1)
+    assert agent._peak_unrealized_per_asset["BTC"] == pytest.approx(0.0)
+
+    # Call 2 — pnl = +5%, peak ratchets up.
+    agent.predict("BTC", pos, _make_market_data(price=105.0), bars_held=2)
+    assert agent._peak_unrealized_per_asset["BTC"] == pytest.approx(0.05)
+
+    # Call 3 — pnl drops to +2%, peak STAYS at +5% (no ratchet down).
+    agent.predict("BTC", pos, _make_market_data(price=102.0), bars_held=3)
+    assert agent._peak_unrealized_per_asset["BTC"] == pytest.approx(0.05)
+
+    # Call 4 — peak goes higher to +8%, ratchets up again.
+    agent.predict("BTC", pos, _make_market_data(price=108.0), bars_held=4)
+    assert agent._peak_unrealized_per_asset["BTC"] == pytest.approx(0.08)
+
+    # Call 5 — direction flips (close + reopen short). Peak resets.
+    pos2 = {"direction": -1.0, "entry_price": 108.0}
+    agent.predict("BTC", pos2, _make_market_data(price=108.0), bars_held=1)
+    assert agent._peak_unrealized_per_asset["BTC"] == pytest.approx(0.0)
+
+    # Call 6 — different entry_price (new long position). Peak resets.
+    pos3 = {"direction": 1.0, "entry_price": 110.0}
+    agent.predict("BTC", pos3, _make_market_data(price=112.0), bars_held=1)
+    assert agent._peak_unrealized_per_asset["BTC"] == pytest.approx(2.0 / 110.0)
+
+    # Call 7 — direction == 0 (position closed). Tracker entry cleared.
+    pos_empty = {"direction": 0.0, "entry_price": 0.0}
+    agent.predict("BTC", pos_empty, _make_market_data(price=110.0), bars_held=0)
+    assert "BTC" not in agent._peak_unrealized_per_asset
+    assert "BTC" not in agent._position_id_per_asset
+
+
+def test_p81_caller_supplied_peak_takes_max(tmp_path):
+    """If the caller already tracks `max_unrealized_pnl_pct` (e.g. via a
+    different mechanism), the agent honors the higher of (caller, ours)."""
+    _make_dummy_checkpoint(tmp_path, "BTC")
+    agent = ExitDRLAgent(
+        models_dir=str(tmp_path),
+        shadow_log_path=str(tmp_path / "shadow.jsonl"),
+        mode=ExitDRLMode.SHADOW,
+        assets=["BTC"],
+        extra_allowed_roots=[str(tmp_path)],
+    )
+
+    # Caller-supplied peak HIGHER than what the tracker would see — use
+    # caller's. (Caller might be tracking via tick-level price, not
+    # bar-level.)
+    pos_high = {"direction": 1.0, "entry_price": 100.0,
+                "max_unrealized_pnl_pct": 0.20}
+    agent.predict("BTC", pos_high, _make_market_data(price=105.0), bars_held=1)
+    assert pos_high["max_unrealized_pnl_pct"] == pytest.approx(0.20)
+
+    # Caller-supplied peak LOWER than tracker (caller forgot to update).
+    # Use tracker's.
+    pos_low = {"direction": 1.0, "entry_price": 100.0,
+               "max_unrealized_pnl_pct": 0.01}
+    agent.predict("BTC", pos_low, _make_market_data(price=110.0), bars_held=2)
+    assert pos_low["max_unrealized_pnl_pct"] == pytest.approx(0.10)
+
+
 def test_real_btc_checkpoint_loads_if_present():
     """If the real checkpoint exists from a real training run, it should load cleanly."""
     real_path = Path("models/exit_drl/BTC/exit_sac_best.pt")
