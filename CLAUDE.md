@@ -211,6 +211,35 @@ P45 flagged it; follow-up trace was not done.
 
 ### Recent pitfalls (last ~30 days)
 
+### P72. [LANDED 2026-04-26 in 142f916] Silent-swallow lint + CI gate + optional pre-commit hook
+- **Why:** Pattern 1 in the recurring-bug analysis (silent feedback loops — P15/P25/P47/P64). The ultrareview-bug-006 incident proved this class can hide undetected for weeks even with the existing scanners. Need a lint that catches it at write time, plus a CI gate that prevents regression.
+- **Symptom of the problem class:** `try: foo() except Exception: pass` (or `logger.debug(...)`) hides exceptions from operator visibility. Method on `foo()` doesn't exist or fails — caller sees neutral result, downstream computes wrong answer, bug surfaces hours-to-weeks later in production. Enumerated cases in archive/CLAUDE_history.md: P15 (record_trade_completed vs record_trade_result), P25 (ctx.intent undeclared), P47 (4 silent attribute swallows), P64 (8 state recorders gated PAPER-only).
+- **What landed (commit 142f916, accidentally bundled with Dockerfile changes — see "Why this commit message is misleading" below):**
+  - **`tools/lint_silent_swallow.py`** — AST-based scanner. Detects 3 sub-patterns:
+    - A) `try: ...; except ...: pass` (full discard)
+    - B) `try: ...; except ...: logger.debug(...)` (below operator visibility)
+    - C) `try: ...; except ...: <no log> ; return/continue/break` (early-exit, no log, no re-raise)
+    - Per-block opt-out via `# noqa: silent-swallow` on except line OR inside body. Forces a deliberate decision at write time.
+    - CLI: default scans LIVE_DIRS + main.py; `paths` for specific files/dirs; `--staged` for pre-commit; `--json` for tooling.
+  - **`tools/ci_check_invariants.py`** — extended with third baseline (silent_swallow_baseline.json). Same "counts can DECREASE freely, INCREASE blocks CI" semantics as the existing two baselines.
+  - **`tools/scanner_baselines/silent_swallow_baseline.json`** — current state frozen: **425 total findings (151 debug, 147 pass, 127 no-log-early-exit) across 121 files.** Future PRs that introduce a new silent swallow fail CI; future PRs that fix or annotate existing swallows green CI naturally as the count drops.
+  - **`.pre-commit-config.yaml`** — optional convenience for developers. Two hooks: silent-swallow-staged (verbose, non-blocking — informational at commit time) and ci-invariants-quick-check (--diff-only at pre-push). Install: `pip install pre-commit && pre-commit install`. Skipping it is fine — CI gate is authoritative.
+- **Why CI gate not pre-commit-blocking on full count:** 425 pre-existing silent swallows (P22-P64 era of accumulation). Hard-blocking on total count would block every commit until they're all fixed/annotated — months of work. Baseline-diff approach lets the count only decrease; operators chip away at existing ones during normal work without race against new additions.
+- **How to drive the count down (each fix is a 1-3 line change):**
+  1. Promote `pass`/`logger.debug` → `logger.warning` with `type(e).__name__` and context.
+  2. Re-raise (or `raise X from e`) if the caller should handle it.
+  3. Annotate `# noqa: silent-swallow` if genuinely intentional (e.g. ImportError on optional dep) — include a brief comment explaining why on the same line.
+- **Why this commit message is misleading:** The 5 P72 files were staged but unpushed when the operator ran a parallel `git add` for a Dockerfile change; the operator's commit swept them all into 142f916 with a Dockerfile-only commit message. The follow-up "P72: CLAUDE.md entry" commit (this entry) documents what's actually in 142f916. Same precedent as 734f921 ("P68: CLAUDE.md entry — covers ca24727").
+- **Effects on the recurring-bug analysis:**
+  - **Pattern 1** (silent feedback loops): blocked from growing. Existing 425 sites have an enforced ceiling — operator can drive down via normal cleanup work.
+  - **Pattern 6** (defensive mitigation hides root cause): the lint surfaces the *mechanism* by which root cause is hidden (pass/debug-only catches). Each annotated swallow now must either (a) explain itself via noqa-comment or (b) actually surface to operator visibility.
+
+### P71. [LANDED 2026-04-26 in 8555fe7] Trim CLAUDE.md — archive P9-P54 entries (1207 → 699 lines)
+- **Why:** Pre-trim CLAUDE.md was 1207 lines / ~52KB; ~75% was the Pitfalls section (800+ lines of P-entry detail). New Claude sessions had to read through hundreds of lines of historical fix narrative to find the non-negotiable rules + recent context. P67 explicitly cited this ("CLAUDE.md context is too long to be a useful index").
+- **What changed:** 52 older P-entries (P9-P54) moved to `archive/CLAUDE_history.md` with FULL body preserved. P1-P8 (foundational invariants — perpetual reference) and P55-P68 (last ~30 days of work) kept in CLAUDE.md as full text. Recent pitfalls now ordered most-recent-first at the top of the Pitfalls section.
+- **Side benefit:** the trim reduced the authority-scanner constant-drift baseline by 2 entries (`MAX_LEVERAGE` and `WEEKEND_MIN_ALPHA_MULTIPLIER` had prose-level "2.0" mentions in archived P-entries that were being falsely matched as drifts). Scanner now reports drift only on actual config files. Baseline updated.
+- **Recovery:** Reversible — every archived entry retains its original heading and body. To restore, copy from archive/CLAUDE_history.md back to the appropriate section.
+
 ### P68. [FIXED 2026-04-26] Explore-agent audit batch 1 — 6 tz-aware + JSONL flush fixes
 - **Why:** After P67 tear-down of the ultrareview slice plan, pivoted to 7 internal Explore agents (one per directory: execution / signals+integration / agents / drl / data_mgmt+market / infra+orchestration+core / analytics+liquidity). Each agent loaded its full slice with a P-history-aware prompt and hunted documented bug shapes (silent-failure / fail-open / threshold-drift / dead-code / authority-drift / datetime-mixing / numerical-stability). 7 reports back in ~5min wall time.
 - **Real bugs fixed (6 across 6 files, 2 documented families):**
