@@ -173,7 +173,12 @@ class ShortControl:
                 result.override_veto = True
                 result.action = "OVERRIDE"
                 result.reason = f"ULTRA_allow_bull_short: regime={regime_upper}"
-                logger.info(
+                # P84: was logger.info — veto override is a defense-in-depth
+                # breach (the SHORT BLOCK was authorized somewhere upstream;
+                # this code is choosing to override it). main.py:10109-10113
+                # already logs the same override at WARNING for operator
+                # visibility. Promoting here too for consistency.
+                logger.warning(
                     f"[P5-01] Short veto OVERRIDDEN: regime={regime_upper}, "
                     f"squeeze={squeeze_risk:.2f}, funding={funding_rate:.4%}"
                 )

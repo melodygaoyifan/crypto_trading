@@ -1261,8 +1261,18 @@ def get_fusion_engine() -> AuthorityFusionEngine:
     return _fusion_engine
 
 def reset_fusion_engine():
-    global _fusion_engine
+    """Reset the fusion engine singleton.
+
+    P84: also reset the module-global `_drl_authority_level` so test
+    isolation is restored. Previously, a test that called
+    `set_drl_authority_level("ACTIVE")` then `reset_fusion_engine()` would
+    leave the next test inheriting ACTIVE state. The module-global is the
+    sole driver of DRL upgrade in `get_authority_matrix()`; bleeding it
+    across resets caused subtle test flakes.
+    """
+    global _fusion_engine, _drl_authority_level
     _fusion_engine = None
+    _drl_authority_level = "DISABLED"
 
 
 # ============================================================================

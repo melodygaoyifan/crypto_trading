@@ -81,6 +81,82 @@ class ExitDRLKillSwitch:
         self.exit_all_window = int(exit_all_window)
         self.exit_all_ratio_max = float(exit_all_ratio_max)
         self._states: Dict[str, _AssetState] = {}
+        # P84: was missing — kill switch wrote JSONL on every state change but
+        # never read it back on restart. Per CLAUDE.md P29 the kill switch is
+        # the safety net for the accelerated Exit-SAC promotion (which bypassed
+        # the 30-day shadow gate); without restart recovery, the consecutive-
+        # loss counter, 7-day rolling PnL, HOLD/EXIT_ALL ratio windows all
+        # reset to empty on every container restart. HMATS restarts frequently
+        # (~8+/day during deploy cycles), so the safety net was effectively
+        # blind. Same shape as P73 anti_churn AC-2 persistence fix.
+        self._load_latest()
+
+    # ------------------------------------------------------------------
+    # State recovery (P84)
+    # ------------------------------------------------------------------
+    def _load_latest(self) -> None:
+        """Read the JSONL file and rebuild self._states from the LAST entry
+        per asset. Best-effort — corrupt lines / missing file → start fresh.
+        """
+        if not self.state_path.exists():
+            return
+        try:
+            # Read all lines; for each asset, keep the latest snapshot.
+            # JSONL is append-only, so the last occurrence per asset wins.
+            latest_per_asset: Dict[str, Dict[str, Any]] = {}
+            with self.state_path.open("r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        rec = json.loads(line)
+                    except Exception:
+                        continue  # corrupt line — skip
+                    states = rec.get("states", {}) or {}
+                    if not isinstance(states, dict):
+                        continue
+                    for asset, asset_state in states.items():
+                        if isinstance(asset_state, dict):
+                            latest_per_asset[asset] = asset_state
+            # Rebuild _AssetState objects from the latest snapshots.
+            for asset, asset_state in latest_per_asset.items():
+                st = _AssetState(asset=asset)
+                st.consecutive_losses = int(asset_state.get("consecutive_losses", 0) or 0)
+                st.promoted_at = asset_state.get("promoted_at")
+                st.last_demote_reason = asset_state.get("last_demote_reason")
+                # P84: pnl_history + recent_step_actions + recent_close_actions
+                # are persisted as full lists (see _persist below — also fixed
+                # in this commit). Old JSONL format only stored *_n counts, so
+                # if we read a pre-P84 entry the deques start empty (the system
+                # gracefully degrades to "consecutive_losses preserved, windows
+                # rebuild over time").
+                _pnl = asset_state.get("pnl_history", [])
+                if isinstance(_pnl, list):
+                    st.pnl_history = [
+                        r for r in _pnl
+                        if isinstance(r, dict) and "ts" in r and "pnl_bps" in r
+                    ]
+                _step = asset_state.get("recent_step_actions", [])
+                if isinstance(_step, list):
+                    for a in _step[-self.hold_ratio_window:]:
+                        st.recent_step_actions.append(str(a))
+                _close = asset_state.get("recent_close_actions", [])
+                if isinstance(_close, list):
+                    for a in _close[-self.exit_all_window:]:
+                        st.recent_close_actions.append(str(a))
+                self._states[asset] = st
+            if latest_per_asset:
+                logger.warning(
+                    f"[EXIT_DRL_KILLSWITCH] Restored state for "
+                    f"{len(latest_per_asset)} asset(s) from {self.state_path}: "
+                    f"{ {a: f'cl={s.consecutive_losses},n_pnl={len(s.pnl_history)}' for a, s in self._states.items()} }"
+                )
+        except Exception as e:
+            logger.warning(
+                f"[EXIT_DRL_KILLSWITCH] Failed to load state from {self.state_path}: "
+                f"{type(e).__name__}: {e}"
+            )
 
     # ------------------------------------------------------------------
     # Promotion lifecycle (called by runner when an asset goes EXIT_ONLY)
@@ -204,7 +280,12 @@ class ExitDRLKillSwitch:
         st.pnl_history = [r for r in st.pnl_history if r["ts"] >= cutoff]
 
     def _persist(self) -> None:
-        """One JSONL line per asset, latest snapshot. Best-effort."""
+        """One JSONL line per state change, full snapshot of all assets.
+        Best-effort. P84: was previously persisting only deque LENGTHS
+        (pnl_history_n, etc.) which made restart recovery impossible — the
+        rolling 7-day PnL window and 50-tick HOLD/EXIT_ALL ratio windows
+        couldn't be rebuilt from counts. Now persists full deque contents
+        so _load_latest() can reconstruct true windows."""
         try:
             payload = {
                 "ts": time.time(),
@@ -212,10 +293,11 @@ class ExitDRLKillSwitch:
                     a: {
                         "consecutive_losses": s.consecutive_losses,
                         "promoted_at": s.promoted_at,
-                        "pnl_history_n": len(s.pnl_history),
-                        "recent_step_actions_n": len(s.recent_step_actions),
-                        "recent_close_actions_n": len(s.recent_close_actions),
                         "last_demote_reason": s.last_demote_reason,
+                        # P84: full lists, not just counts
+                        "pnl_history": list(s.pnl_history),
+                        "recent_step_actions": list(s.recent_step_actions),
+                        "recent_close_actions": list(s.recent_close_actions),
                     }
                     for a, s in self._states.items()
                 },
