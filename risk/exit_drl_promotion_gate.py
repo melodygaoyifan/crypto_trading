@@ -250,10 +250,34 @@ class ExitDRLPromotionGate:
         }
         existing.setdefault("overrides", {})[asset] = record
         try:
-            path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+            # [P92 2026-04-26] Was path.write_text() (no flush/fsync) +
+            # except: logger.debug() (operator-invisible). The override
+            # is the audit-trail SOURCE OF TRUTH — silent loss means the
+            # operator believes BTC was promoted but the kill switch sees
+            # no override record on next restart. Use atomic save_state
+            # helper (P83-verified atomic + fsync) and surface failures
+            # at WARNING so operator knows the override didn't persist.
+            try:
+                from core.state_persistence import save_state
+                save_state(str(path), existing)
+            except Exception:
+                # Fallback to write_text + fsync if save_state import
+                # fails (preserves test-mode and bootstrapping paths).
+                import os
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(json.dumps(existing, indent=2))
+                    f.flush()
+                    os.fsync(f.fileno())
             logger.warning(
                 f"[EXIT_DRL_GATE] {asset}: override recorded — "
                 f"blockers at override = {record['blockers_at_override']}"
             )
         except Exception as e:
-            logger.debug(f"[EXIT_DRL_GATE] override write failed: {e}")
+            logger.warning(
+                f"[EXIT_DRL_GATE] {asset}: override write FAILED "
+                f"({type(e).__name__}: {e}). Audit trail NOT persisted; "
+                f"on restart the kill switch will not see this override. "
+                f"Operator action: re-run the override after fixing the "
+                f"underlying I/O issue (disk full / permissions / "
+                f"symlink)."
+            )

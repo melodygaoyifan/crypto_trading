@@ -267,22 +267,44 @@ class AutoRecoveryGate:
     # -- Persistence ---------------------------------------------------------
 
     def _load_state(self) -> HaltState:
-        """Load persisted halt state from disk."""
+        """Load persisted halt state from disk.
+
+        [P92 2026-04-26] Distinguish "no file" (fresh start, OK) from
+        "file exists but unreadable" (corruption, fail-closed). The
+        previous behavior treated both cases the same — silently returning
+        empty HaltState. If a P0 abort wrote the halt state, then the file
+        got corrupted (truncated by SIGKILL, disk full, etc.), the gate
+        would forget the halt and resume trading on next restart.
+        """
+        if not self.state_path.exists():
+            return HaltState()
         try:
-            if self.state_path.exists():
-                with open(self.state_path) as f:
-                    data = json.load(f)
-                state = HaltState.from_dict(data)
-                if state.is_active:
-                    logger.info(
-                        f"[AUTO_RECOVERY] Restored halt state: "
-                        f"reason={state.halt_reason}, "
-                        f"since={state.halt_since_ts:.0f}"
-                    )
-                return state
+            with open(self.state_path) as f:
+                data = json.load(f)
+            state = HaltState.from_dict(data)
+            if state.is_active:
+                logger.info(
+                    f"[AUTO_RECOVERY] Restored halt state: "
+                    f"reason={state.halt_reason}, "
+                    f"since={state.halt_since_ts:.0f}"
+                )
+            return state
         except Exception as e:
-            logger.warning(f"[AUTO_RECOVERY] Failed to load state: {e}")
-        return HaltState()
+            # File exists but unreadable — fail closed: synthesize a halt
+            # so operator must explicitly clear via manual recovery.
+            # Better to over-halt than to silently resume during a P0
+            # situation that may still be active.
+            logger.critical(
+                f"[AUTO_RECOVERY] State file {self.state_path} EXISTS but "
+                f"is unreadable ({type(e).__name__}: {e}). Synthesizing a "
+                f"halt with reason=STATE_CORRUPTION_DETECTED. Operator "
+                f"action: investigate file contents, then manually clear "
+                f"via clear_halt() if recovery is genuinely safe."
+            )
+            corrupted = HaltState()
+            corrupted.halt_reason = "STATE_CORRUPTION_DETECTED"
+            corrupted.halt_since_ts = time.time()
+            return corrupted
 
     def _persist_state(self) -> None:
         """Atomic persist of halt state (tmp -> rename)."""
