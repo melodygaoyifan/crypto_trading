@@ -10933,6 +10933,11 @@ class HMATSProductionRunner:
                 # intent.direction is float [-1.0, 1.0]; p0_integrator expects int [-1, 0, 1]
                 _p0_direction = -1 if intent.direction < -0.1 else (1 if intent.direction > 0.1 else 0)
 
+                # P82: thread actual run mode (PAPER vs LIVE) so the shadow
+                # ledger record_intent inside p0_integrator stops hardcoding
+                # mode="PAPER". Was P62 C7 deferred concern; forensic tools
+                # filtering by mode were blind to LIVE intents.
+                _p0_mode = str(getattr(self.config.mode, 'value', self.config.mode))
                 p0_check_result = self.p0_integrator.check_pre_execution(
                     asset=asset,
                     direction=_p0_direction,  # [FIX-26] int, not float
@@ -10940,6 +10945,7 @@ class HMATSProductionRunner:
                     is_entry=is_entry,
                     confidence=getattr(intent, 'quant_confidence', 0.5),
                     regime=agent_signals.get("regime_state", "UNKNOWN"),
+                    mode=_p0_mode,
                     dvol=market_data.get("dvol", 0.0),
                     # [BUGFIX AUDIT-A2] Pass actual market context to P0 trade_gate
                     expected_alpha_bps=getattr(intent, 'alpha_estimated_bps', 60.0),

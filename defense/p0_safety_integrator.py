@@ -372,6 +372,13 @@ class P0SafetyIntegrator:
         size: float,
         is_entry: bool,
         confidence: float = 0.5,
+        # P82: was hardcoded "PAPER" in record_intent below. Engine runs with
+        # `--mode live` for production but every shadow ledger intent record
+        # was tagged "PAPER" → forensic tools (gate_rejection_analysis,
+        # alpha_gate_postmortem, etc.) couldn't distinguish PAPER vs LIVE
+        # intents. Filed as P62 C7 deferred concern on 2026-04-25, fixed now.
+        # Caller passes `mode=str(self.config.mode.value)` from main.py.
+        mode: str = "PAPER",
         regime: str = "UNKNOWN",
         dvol: float = 0.0,
         # [BUGFIX AUDIT-A2] Pass actual market context (was hardcoded)
@@ -421,7 +428,10 @@ class P0SafetyIntegrator:
                     is_entry=is_entry,
                     confidence=confidence,
                     regime=regime,
-                    mode="PAPER",
+                    # P82: was hardcoded "PAPER" — see check_pre_execution
+                    # signature comment for context. Caller threads the actual
+                    # run mode through.
+                    mode=mode,
                     extra={"strategy": strategy} if strategy else None,
                 )
             except Exception as e:
