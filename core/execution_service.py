@@ -83,13 +83,54 @@ except ImportError:
 try:
     from configs.canonical_config import (
         EXPOSURE_CAPS, POST_LEVERAGE_CAPS, MIN_REGIME_CONFIDENCE,
-        DATA_DIR,
+        DATA_DIR, REBUILD_COOLDOWN_EXEMPT_ADDON,
     )
 except ImportError:
     EXPOSURE_CAPS = {"BTC": 0.40, "ETH": 0.40, "SOL": 0.50}
     POST_LEVERAGE_CAPS = {"BTC": 0.25, "ETH": 0.25, "SOL": 0.20}
     MIN_REGIME_CONFIDENCE = 0.30
     DATA_DIR = Path("data")
+    REBUILD_COOLDOWN_EXEMPT_ADDON = True  # [P72] safe default matching canonical_config.py:193
+
+# [P72] StopAuthority — was a NameError when execution_service.py was extracted
+# from main.py (the names were defined at main.py:436 + 438-443 but never
+# imported in this module). Path 3165 is wrapped in try/except so the bug was
+# silent — adaptive stops simply never registered for new entries via this code
+# path. Mirror the main.py:436-446 pattern.
+STOP_AUTHORITY_AVAILABLE = False
+try:
+    from risk.stop_loss_authority import (
+        get_stop_authority_manager,
+        StopConfig as StopAuthorityConfig,
+        AuthorityState as StopAuthorityState,
+        SystemMode as StopSystemMode,
+    )
+    STOP_AUTHORITY_AVAILABLE = True
+except ImportError as _sa_err:
+    logger.warning(f"[P72] StopLossAuthorityManager not importable in execution_service: {_sa_err}")
+
+# [P72] StopDirection — was a NameError at line 3017+ inside try/except so silent.
+# The adaptive_stop registration silently skipped on every new entry as a result.
+# Mirror main.py:480.
+try:
+    from risk.adaptive_stop import PositionDirection as StopDirection
+except ImportError as _sd_err:
+    logger.warning(f"[P72] StopDirection not importable in execution_service: {_sd_err}")
+    StopDirection = None  # gates downstream usage via `if StopDirection is not None`
+
+# [P72] Learned Execution Policy types — were NameError at lines 1206-1281 inside
+# try/except so silent. The LEP MARKET->LIMIT execution-type advisory has been
+# completely dead since this file was extracted. Mirror main.py:1232-1244.
+LEARNED_EXEC_TYPES_AVAILABLE = False
+try:
+    from execution.learned_execution_policy import (
+        LOBFeatures as LEPLOBFeatures,
+        ExecutionState as LEPExecState,
+        ExecutionAction as LEPAction,
+    )
+    LEARNED_EXEC_TYPES_AVAILABLE = True
+except ImportError as _lep_err:
+    logger.warning(f"[P72] LearnedExecutionPolicy types not importable in execution_service: {_lep_err}")
 
 # [FIX-SHADOW] Missing imports that caused NameError in shadow path
 try:
@@ -1197,7 +1238,10 @@ async def execute_intent_v2(
             _taker_allowed = False
 
     # T26: Learned Execution Policy advisory (MARKET->LIMIT downgrade only)
-    if ctx.learned_exec_policy:
+    # P72: also gate on LEARNED_EXEC_TYPES_AVAILABLE — without this, the
+    # NameError on LEPLOBFeatures et al. inside the try/except below was
+    # silently disabling the advisory on every entry since extraction.
+    if ctx.learned_exec_policy and LEARNED_EXEC_TYPES_AVAILABLE:
         try:
             _lep_direction_before = float(getattr(intent, "direction", 0.0) or 0.0)
             _lep_exposure_before = float(getattr(intent, "target_exposure", 0.0) or 0.0)
