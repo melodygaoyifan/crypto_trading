@@ -1885,7 +1885,15 @@ class OrnsteinUhlenbeckStrategy(BaseStrategy):
         # Calculate log ratio (spread proxy)
         sol_price = self.price_buffer['SOL'][-1]
         eth_price = self.price_buffer['ETH'][-1]
-        
+        # P75: guard against feed glitch (price=0 or negative) — same shape
+        # as the P39 Kalman fix at line 1659. Without this guard,
+        # np.log(sol/eth) can produce inf or nan and poison ratio_buffer →
+        # estimate_ou_parameters() → z-score → downstream signals until
+        # restart. eth_price=0 also raises ZeroDivisionError on the inner
+        # division before np.log even runs.
+        if sol_price <= 0 or eth_price <= 0:
+            return None
+
         ratio = np.log(sol_price / eth_price)
         self.ratio_buffer.append(ratio)
         
@@ -2321,7 +2329,15 @@ class StrategyAllocator:
         # Check kill switch
         if self.current_drawdown > self.max_drawdown:
             self.killed = True
-            print(f"[WARN]️ KILL SWITCH ACTIVATED: Drawdown {self.current_drawdown:.2%}")
+            # P75: was print() — wouldn't reach the operator's log aggregator
+            # in containerized live mode (Docker stdout vs hmats logger
+            # pipeline). Promoted to logger.warning so the kill-switch
+            # event is auditable in the same place as every other risk
+            # warning. Kill switch is rare so log rate isn't a concern.
+            logger.warning(
+                f"[KQ_KILL_SWITCH] activated: drawdown={self.current_drawdown:.2%} "
+                f"> max={self.max_drawdown:.2%}"
+            )
     
     def process_tick(
         self,
