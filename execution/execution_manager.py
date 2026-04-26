@@ -301,12 +301,60 @@ class ExecutionManager:
                     field = tail.split('"', 1)[0].split("]", 1)[0].strip(":,. ")
             except Exception:  # noqa: silent-swallow
                 pass  # field stays "unknown field"
+            # P80 2026-04-26: per-field guidance. Kraken rejects different
+            # parameters for distinct reasons; one-size-fits-all guidance
+            # was misleading (operators saw "ordertype must be hyphenated"
+            # when the real issue was price precision).
+            field_guidance_map = {
+                "ordertype": (
+                    "ordertype must be one of Kraken's literals: 'market', "
+                    "'limit', 'stop-loss', 'take-profit', 'stop-loss-limit', "
+                    "'take-profit-limit', 'settle-position'. Hyphens matter."
+                ),
+                "price": (
+                    "price (the trigger for stop/take orders) was rejected. "
+                    "Most common causes: (a) precision exceeds the pair's "
+                    "tick-size — call exchange.price_to_precision(symbol, "
+                    "price) before sending; (b) price is 0 or negative; "
+                    "(c) for stop-loss, price is on the wrong side of the "
+                    "current market (stop-loss BUY price must be ABOVE "
+                    "market, SELL price must be BELOW)."
+                ),
+                "price2": (
+                    "price2 (the limit-price for stop-loss-limit / "
+                    "take-profit-limit orders) was rejected. Same precision "
+                    "rules as `price`."
+                ),
+                "volume": (
+                    "volume (the order size) was rejected. Most common "
+                    "causes: (a) below the pair's lot-size minimum — "
+                    "check exchange.markets[symbol]['limits']['amount']"
+                    "['min']; (b) precision exceeds the lot-step — call "
+                    "exchange.amount_to_precision(symbol, amount)."
+                ),
+                "type": (
+                    "type (buy/sell direction) was rejected. Must be "
+                    "lowercase 'buy' or 'sell'."
+                ),
+                "pair": (
+                    "pair (symbol) was rejected. Kraken may have delisted "
+                    "or renamed the pair. Verify against exchange.markets."
+                ),
+                "leverage": (
+                    "leverage was rejected. Spot orders must omit leverage; "
+                    "futures must use a Kraken-supported integer level."
+                ),
+            }
+            specific = field_guidance_map.get(
+                field,
+                f"`{field}` was rejected. Verify the value against Kraken's "
+                f"AddOrder spec at https://docs.kraken.com/rest/"
+                f"#operation/addOrder",
+            )
             return ("PERMANENT",
-                    f"Kraken rejected the order's `{field}` parameter. Verify "
-                    f"the value matches Kraken's accepted literals (e.g. "
-                    f"ordertype must be 'market'/'limit'/'stop-loss'/etc., "
-                    f"hyphenated). No amount of retrying will fix a malformed "
-                    f"argument.")
+                    f"Kraken rejected the order's `{field}` parameter. "
+                    f"{specific} No amount of retrying will fix a malformed "
+                    f"argument — fix the input value, then re-attempt.")
         # Auth / permission (same shape as P68 dead-man classification).
         if any(m in s for m in (
             "EAPI:Invalid key", "EAPI:Invalid signature",
@@ -1627,17 +1675,39 @@ class ExecutionManager:
             # Binance-style residue — Kraken takes the trigger in the
             # standard `price` arg, not as a separate stopPrice param.
             #
+            # P80 2026-04-26: Kraken then rejected `EGeneral:Invalid
+            # arguments:price` because raw float prices like 86.6912345
+            # exceed SOL/USD's pair_decimals=2 precision. ccxt's
+            # `price_to_precision` rounds to the pair's tick-size; same
+            # for `amount_to_precision` and the lot-step. Without these
+            # the order silently fails. Apply BOTH normalizations before
+            # sending — they're cheap and Kraken-safe.
+            #
             # The unified `type='stop-loss'` is what ccxt's Kraken
             # implementation expects. Belt-and-suspenders: also pass
             # `ordertype='stop-loss'` in params so a future ccxt version
             # that changes the unified-type mapping can't silently break
             # the Kraken wire format.
+            try:
+                _norm_price = float(self.exchange.price_to_precision(symbol, stop_price))
+                _norm_size = float(self.exchange.amount_to_precision(symbol, size))
+            except Exception as _norm_e:  # noqa: silent-swallow
+                # If precision lookup fails (markets not loaded, exotic pair),
+                # fall back to raw values. The classifier will surface a
+                # PERMANENT error if Kraken still rejects, with explicit
+                # field-level guidance.
+                self.logger.warning(
+                    f"[STOP-PRECISION] {symbol}: price/amount precision lookup "
+                    f"failed ({type(_norm_e).__name__}: {_norm_e}); sending raw"
+                )
+                _norm_price, _norm_size = stop_price, size
+
             order = self.exchange.create_order(
                 symbol=symbol,
                 type='stop-loss',
                 side=side.value.lower(),
-                amount=size,
-                price=stop_price,  # Kraken: trigger price for stop-loss
+                amount=_norm_size,
+                price=_norm_price,  # Kraken: trigger price for stop-loss
                 params={
                     'userref': userref,
                     'ordertype': 'stop-loss',  # explicit override
