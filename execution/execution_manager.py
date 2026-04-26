@@ -1983,6 +1983,47 @@ class ExecutionManager:
                     f"shortfall on Kraken spot stop reservation."
                 )
 
+            # P91 2026-04-26: pre-flight check against Kraken's market minimum
+            # order size. Production hit `EGeneral:Invalid arguments:volume
+            # minimum not met` for SOL/USD when balance-clamped size dropped
+            # below Kraken's 0.05 SOL minimum. The error is classified as
+            # PERMANENT (line 293) and ALERT_ONLY by policy, leaving the
+            # position WITHOUT a stop. Catch this BEFORE sending so the
+            # operator sees the actionable reason (size below minimum) and
+            # the position-protection state is explicit, not a silent
+            # rejection that just trips the alert path.
+            try:
+                _market = self.exchange.market(symbol)
+                _min_amt = float(
+                    ((_market or {}).get('limits') or {})
+                    .get('amount', {})
+                    .get('min') or 0.0
+                )
+            except Exception as _mkt_e:  # noqa: silent-swallow
+                self.logger.debug(
+                    f"[STOP-MINSIZE] {symbol}: market lookup failed "
+                    f"({type(_mkt_e).__name__}: {_mkt_e}); skipping minsize check"
+                )
+                _min_amt = 0.0
+            if _min_amt > 0 and _norm_size < _min_amt:
+                msg = (
+                    f"stop-loss size {_norm_size:.6f} {symbol.split('/')[0]} "
+                    f"is BELOW Kraken's minimum {_min_amt:.6f}. "
+                    f"Intended position size was {size:.6f}; balance clamp "
+                    f"reduced to {_stop_size_for_kraken:.6f}; precision "
+                    f"normalized to {_norm_size:.6f}. Cannot place stop. "
+                    f"Operator action: the position is now WITHOUT exchange-"
+                    f"native stop protection — close manually OR top up the "
+                    f"{symbol.split('/')[0]} spot balance to restore size "
+                    f">= {_min_amt:.6f}."
+                )
+                self.logger.critical(f"[STOP-MINSIZE] {symbol}: {msg}")
+                return OrderResult(
+                    success=False, symbol=symbol, order_type='stop-loss',
+                    status=OrderStatus.REJECTED,
+                    error_message=f"PREFLIGHT_BELOW_MIN_SIZE: {msg}",
+                )
+
             # Pre-flight side-vs-market validation. Probe current price
             # via fetch_ticker if the markets dict doesn't carry a 'last'.
             # Defensive: if we can't get current price, skip the check
