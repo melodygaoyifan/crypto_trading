@@ -13711,6 +13711,12 @@ class HMATSProductionRunner:
 
         # INV-1: veto_active=True ->target_exposure must be 0
         # Exclude vetoes that legitimately hold existing positions open
+        # OR that block a proposed new entry without flattening (the
+        # "block new entry" shape leaves intent.target_exposure as the
+        # proposed size for diagnostic visibility; downstream execution
+        # correctly skips because veto_active=True). HARD vetoes that
+        # MUST flatten are NOT in this list — see PATCH-4 HARD at
+        # main.py:12107 vs PATCH-4 SOFT BLOCK(NORMAL) at :12155.
         _HOLD_VETOES = {
             "THESIS BUDGET",            # all thesis budget variants
             "VOLUME CONTRACTING",
@@ -13730,6 +13736,17 @@ class HMATSProductionRunner:
             "DISCONNECTED MID TICK",
             "TRANCHE ABORT",
             "VETO",                     # BitBeast 3-in-1 entry quality guard
+            # P74 2026-04-26: PATCH-4 SOFT block fires on corr/vpin/dvol
+            # elevation in NORMAL mode when no existing position. It blocks
+            # a NEW entry but doesn't (and shouldn't) flatten — the
+            # target_exposure carried on the intent is the proposed size,
+            # not actual exposure. Match precisely on "SOFT BLOCK" so the
+            # HARD branch (main.py:12107) still trips the invariant.
+            "PATCH 4] SOFT BLOCK",
+            # Same shape — alpha gate at main.py:12188 sets veto_active
+            # but doesn't zero target_exposure; it's blocking the proposed
+            # entry, not flattening a position.
+            "FRICTION EXCEEDS EDGE",
         }
         _veto_reason = getattr(intent, 'veto_reason', '') or ''
         _veto_reason_norm = _veto_reason.upper().replace("_", " ").replace("-", " ")
