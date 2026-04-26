@@ -194,6 +194,23 @@ class AccountSyncManager:
     async def _refresh_live(self) -> Tuple[bool, str]:
         """Refresh from live Kraken API."""
         if self.exchange_client is None:
+            # [P69 2026-04-26] Same fresh-state preservation as the
+            # exhausted-retry branch below. If the exchange client is
+            # transiently None (e.g. mid-reinit), don't invalidate
+            # fresh cached equity — the staleness threshold will
+            # invalidate it later if it actually goes stale.
+            _was_valid = self._state.status == EquityStatus.VALID
+            _age = (
+                time.time() - self._state.timestamp
+                if self._state.timestamp
+                else float("inf")
+            )
+            if _was_valid and _age < MAX_EQUITY_AGE_SECONDS:
+                logger.warning(
+                    f"[ACCOUNT_SYNC] No exchange client but prior equity is "
+                    f"fresh (age={_age:.1f}s); keeping VALID state."
+                )
+                return False, "transient_keep_valid: no exchange client"
             self._state.status = EquityStatus.UNAVAILABLE
             return False, "No exchange client configured"
 
@@ -261,9 +278,35 @@ class AccountSyncManager:
                     )
                     await asyncio.sleep(_backoff)
                     continue
-                self._state.status = EquityStatus.UNAVAILABLE
+                # [P69 2026-04-26] Preserve fresh cached state across a
+                # transient fetch_balance failure. Pre-P69 ANY exhausted
+                # retry loop unconditionally flipped status to UNAVAILABLE
+                # — even when the prior equity snapshot was 5-30s old and
+                # would have happily satisfied get_equity()'s staleness
+                # check. Production symptom: operator saw
+                # `Status=UNAVAILABLE, Age=23.7s, Equity=$8682.32` blocking
+                # ALL execution via [P0_FAIL_CLOSED] when the cached value
+                # was perfectly usable. Same shape as the parse-exception
+                # branch's existing guard at line 361 — applying here too.
+                # The staleness threshold (MAX_EQUITY_AGE_SECONDS=60s)
+                # remains the authoritative validity gate.
+                _was_valid = self._state.status == EquityStatus.VALID
+                _age = (
+                    time.time() - self._state.timestamp
+                    if self._state.timestamp
+                    else float("inf")
+                )
                 self._failure_count += 1
                 self._last_error = _err_str
+                if _was_valid and _age < MAX_EQUITY_AGE_SECONDS:
+                    logger.warning(
+                        f"[ACCOUNT_SYNC] fetch_balance failed but prior equity "
+                        f"is fresh (age={_age:.1f}s < {MAX_EQUITY_AGE_SECONDS:.0f}s); "
+                        f"keeping VALID state. Last error: {type(_e).__name__}: "
+                        f"{_err_str[:200]}"
+                    )
+                    return False, f"transient_keep_valid: {_err_str}"
+                self._state.status = EquityStatus.UNAVAILABLE
                 logger.error(f"[ACCOUNT_SYNC] fetch_balance failed: {_e}")
                 return False, _err_str
 
