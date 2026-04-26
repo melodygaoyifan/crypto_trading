@@ -35,7 +35,7 @@ RUN pip install --no-cache-dir -r requirements-runtime.txt \
     && pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu \
     && pip install --no-cache-dir sb3-contrib stable-baselines3 joblib scikit-learn \
     && pip install --no-cache-dir transformers \
-    && pip install --no-cache-dir tiktoken sentencepiece
+    && pip install --no-cache-dir tiktoken sentencepiece protobuf
 
 # Application code
 COPY --chown=hmats:hmats main.py ./
