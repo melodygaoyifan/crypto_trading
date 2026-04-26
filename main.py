@@ -13749,6 +13749,47 @@ class HMATSProductionRunner:
             # but doesn't zero target_exposure; it's blocking the proposed
             # entry, not flattening a position.
             "FRICTION EXCEEDS EDGE",
+            # P76 2026-04-26: triage of the 33 unclassified vetos surfaced
+            # by P75 Section G. Each entry below is a "block-new-entry"
+            # shape (cap reached / data unavailable / NO_TRADE / SOFT veto /
+            # size below threshold) where the existing position should NOT
+            # be flattened. See the corresponding code site for the full
+            # condition. Excluded: drawdown/correlation crisis vetoes
+            # (risk_agent.py — those set risk_multiplier=0.0 → MUST_FLATTEN).
+            #
+            # core/authority_chain.py — orphan-instantiated today per
+            # CLAUDE.md but classified for safety in case it gets wired:
+            "DATA GUARD",                # DATA_GUARD_UNAVAILABLE :306
+            "STALE DATA",                # STALE_DATA: :320, :330
+            "DATA INTEGRITY",            # DATA_INTEGRITY_EXCEPTION :342
+            "RISK MANAGER",              # RISK_MANAGER_* :441/463/488/499
+            "LEVERAGE GUARD",            # LEVERAGE_GUARD_* :512/532/543
+            # core/execution_service.py
+            "EXPOSURE BELOW MINIMUM",    # EXPOSURE_BELOW_MINIMUM_VIABLE :525
+            # core/runtime_spine.py — DEPRECATED gate per P36 but classified:
+            "INVALID MARKET DATA",       # :593
+            "PROCESSING ERROR",          # :676
+            # integration/integration_v36.py
+            "STALE SIGNAL",              # [BUGFIX M6] Stale signal :999
+            "DATA VALIDATION",           # [v3.6.1] Data validation failed :1015
+            "NO TRADE",                  # NO_TRADE variants :1143/1145
+            "DATA INVALID",              # [DATA_INVALID] :1226 (explicit "new entries blocked")
+            "ALPHA GATE",                # [v3.6.1] Alpha gate :1304
+            "PROD] SOFT VETO",           # [PROD] SOFT VETO (NORMAL mode) :1736
+                                         # — bracketed-form so it doesn't
+                                         # match HARD VETO (which is in
+                                         # MUST_FLATTEN deny-list).
+            # main.py
+            "PATCH 1] SCHEMA",           # [PATCH-1] Schema fail :5333
+            "AUTO RECOVERY LATCH",       # [AUTO_RECOVERY_LATCH] :9230
+            "[SOTA]",                    # [SOTA] :10552 (bracket-anchored —
+                                         # avoid loose "SOTA" substring match)
+            "REGIME POWER NO TRADE",     # [REGIME_POWER_NO_TRADE] :11164
+            "VC 5]",                     # [VC-5] Notional below minimum :12284
+            "GHOST E] FRINGE PANIC",     # [GHOST-E] FRINGE_PANIC_EXTREME :12420
+                                         # — vetoes new longs, doesn't flatten
+            "PATCH 5] T",                # [PATCH-5] T<n> deadlock :12707
+                                         # — only fires when no position exists
         }
         _veto_reason = getattr(intent, 'veto_reason', '') or ''
         _veto_reason_norm = _veto_reason.upper().replace("_", " ").replace("-", " ")

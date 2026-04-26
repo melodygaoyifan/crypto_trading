@@ -733,6 +733,11 @@ MUST_FLATTEN_VETO_TAGS = {
     "PROD] HARD VETO",     # integration_v36.py:1171/1724
     "TRANCHE DEADLOCK",    # integration_v36.py:1580
     "DEADLOCK ABORT",      # integration_v36.py:1614
+    # P76 2026-04-26: risk_agent.py drawdown/correlation crisis vetoes.
+    # All set risk_multiplier = 0.0 → explicit force-flatten intent.
+    "CRITICAL DRAWDOWN",   # agents/risk_agent.py:594
+    "HALT DRAWDOWN",       # agents/risk_agent.py:601
+    "CORRELATION CRISIS",  # agents/risk_agent.py:622
 }
 
 
@@ -827,6 +832,13 @@ def audit_veto_reason_classification() -> dict[str, Any]:
             continue
         prefix = _extract_static_prefix(line_text)
         if not prefix:
+            continue
+        # Skip purely-dynamic prefixes (`[`, `[ `, etc.) where the
+        # actual veto string is an f-string interpolation like
+        # `f"[{budget_result.veto_reason.value}] ..."`. Runtime
+        # classification handles these via the inner string's tag.
+        # The audit can't statically know what the value will be.
+        if len(prefix.strip()) <= 2:
             continue
         normalized = prefix.upper().replace("_", " ").replace("-", " ")
 
