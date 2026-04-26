@@ -207,6 +207,34 @@ P45 flagged it; follow-up trace was not done.
 
 ## Known Pitfalls (source of repeat bugs — read this before deploying)
 
+### P68. [FIXED 2026-04-26] Explore-agent audit batch 1 — 6 tz-aware + JSONL flush fixes
+- **Why:** After P67 tear-down of the ultrareview slice plan, pivoted to 7 internal Explore agents (one per directory: execution / signals+integration / agents / drl / data_mgmt+market / infra+orchestration+core / analytics+liquidity). Each agent loaded its full slice with a P-history-aware prompt and hunted documented bug shapes (silent-failure / fail-open / threshold-drift / dead-code / authority-drift / datetime-mixing / numerical-stability). 7 reports back in ~5min wall time.
+- **Real bugs fixed (6 across 6 files, 2 documented families):**
+  - **Datetime naive/aware (P39/P40 family — 3 files):**
+    - `execution/exit_alpha.py:135` — `ScaleOutSignal.timestamp` default `datetime.utcnow` → `lambda: datetime.now(timezone.utc)`. Plus added `timezone` to import.
+    - `execution/execution_quality_logger.py:376` — `ExecutionQualityRecord.timestamp` built from naive `datetime.now()`; `_compute_session().hour` therefore read host LOCAL hour, not UTC, silently corrupting session bucketing on non-UTC containers. Lifted to `datetime.now(timezone.utc)` + reused via `_now_utc` local for the `execution_id` timestamp too.
+    - `execution/execution_quality_logger.py:651` — `fromisoformat` fallback for malformed timestamps used naive `datetime.now()`; now matches the success branch (which produces aware via `+00:00`).
+    - `agents/model_alpha_agent.py:643` — `ModelIntent.timestamp` built from naive `datetime.now()` but `to_agent_signal_dict` tags ISO with `"Z"`; timestamp ended up local-time but UTC-tagged.
+  - **JSONL durability (P37 family — 3 files):**
+    - `analytics/exit_alpha_tracker.py` — `_persist` + `_persist_counterfactual` missing `f.flush()`.
+    - `analytics/signal_quality_tracker.py` — `_persist` missing `f.flush()`.
+    - `analytics/ic/ic_logger.py` — `_writer_loop` missing `f.flush()`; IC snapshots are async-queued but each line was buffered in Python text-mode and lost on Docker SIGKILL.
+- **False positives caught and documented (4):** Audit script bias-correction notes for future runs.
+  - `agents/microstructure_agent.py:986,1000` — already uses `datetime.now(timezone.utc)`. Agent misread.
+  - `analytics/ic/backfill_ic.py:159` — one-shot script with `open("w")`; `with` block flushes on close. Per-line flush is no-op for one-shot writers.
+  - `analytics/trade_attributor.py:622` — `_persist_trade` ALREADY has `f.flush()` (P37 fix from 2026-04-24). Agent's "line 334 bulk export" reference was actually a dict-literal in `report()`.
+  - `integration/integration_v36.py:1388` — `tranche_signal_data["signal_conflict"] > 0.5` is DISTINCT from the cosmetic flag at `:1828` (which P23 documents as legitimate `> 0.5`). Line 1388 IS in a fusion-routing path (feeds tranche_scheduler abort detection), but P12's `>= 0.9` threshold was for HARD VETO, not tranche reduction. Tightening or loosening this without runtime evidence violates CLAUDE.md's trade-frequency reality check. **Filed for separate investigation when forensics show tranche-abort fire rate.**
+- **Defensive / informational findings deferred (~7):**
+  - 5 division-by-feed-derived-price guards in `phase_detector` and `structure_analyzer` (theoretical — Kraken BTC/ETH/SOL never hit 0.0 in production).
+  - `drl/ensemble.py:150` `TQC.load` not routed through `safe_torch_load` (paths implicitly safe via hardcoded model dir; SB3's framework loader bypasses our wrapper anyway).
+  - `core/anti_churn.py` `_fills_today` no lock (single-threaded today; would matter if Discord worker ever calls it).
+  - `core/runtime_state.py:80` max_drawdown 0.35 cross-check vs canonical_config.
+  - `signals/authority_fusion.py` module-global `_drl_authority_level` no test-reset path.
+  - `integration/integration_v36.py:2434` soldex confidence ×0.5 dampening — post-promotion leftover, low-impact (SOL only).
+- **Audit ratio:** 6 real fixes / 27 raw findings = **1:4.5** — better than the P51-predicted 1:8 because the Explore-agent prompts were P-history-aware and pre-filtered most known false-positive families. Per-slice ratios: drl/ and infra+orchestration+core were essentially clean (0 HIGH); analytics+liquidity had the densest bug cluster (5/9 real); signals+integration produced 1 real + 1 confirmed false positive + 1 needs-verify; execution and agents each produced 2 real datetime fixes.
+- **Verified clean across all 7 slices:** P4 BEST_FOLDS hardcode (drl/), P22 binance kline (data_mgmt/), P29 Discord/Haiku 429 (infra/), P30/P31 safe_torch_load wrappers (drl/, infra/), P37 atomic state writes (core/, infra/), P39 promotion_gate datetime + Discord lock-across-sleep, P40 feed datetime fixes, P41 GMM cache key scheme, P46 weekend confidence DRL substitution chain, P47 strategic_coordinator rename, P50 fail-closed contracts + runtime_spine deprecation gate + 5-failure escalation, P52 weekend min_confidence 0.30, P56 weekend silent-fallback log, P57 whale + options attribution, P66 Kraken nonce ratchet — ALL still hold.
+- **Mitigation pattern:** Internal Explore agents are the right tool for whole-codebase semantic review. They load full directory context (which `/ultrareview` cannot) and produce structured findings cheaply. Future audits should default to Explore agents per slice; reserve `/ultrareview` for genuine code-change PRs where the diff itself is what needs review.
+
 ### P67. [LESSON 2026-04-26] `/ultrareview` is diff-of-changes review, NOT context-loaded whole-file review
 - **Symptom:** Built `scripts/touch_for_audit.py` (commit 1595979) to insert a 1-line `# [AUDIT-SLICE: ...]` marker per file, intending the resulting commit's diff to put every file "in scope" for an `/ultrareview <branch>` review of the entire codebase. Slice 1 (`audit/safety-defense`, 49 marker files) shipped — but the review's reported scope was "1 file changed, 42 insertions(+), 5 deletions(-)" matching unrelated WIP edits to `scripts/authority_consistency_audit.py`, NOT the 49 markers. Slice 2 (`audit/execution`) errored: "no new commits or changes to review against your audit/execution branch".
 - **Cause:** `/ultrareview` reviews the actual diff content. A 1-line comment insertion produces a 1-line diff — the reviewer sees "added a comment" and has nothing substantive to comment on for the file's actual code. The marker scheme can't trick `/ultrareview` into context-loading the whole file. The reviewer for a real bug doesn't expand context to the entire file just because that file appears in the diff.
