@@ -261,6 +261,90 @@ class ExecutionManager:
         h = hashlib.sha256(raw.encode()).hexdigest()
         return int(h[:8], 16) & 0x7FFFFFFF
 
+    @staticmethod
+    def _classify_kraken_order_error(error_str: str) -> Tuple[str, str]:
+        """Classify a Kraken order-API error string for retry policy.
+
+        Returns (category, operator_guidance) where category is one of:
+
+          - "PERMANENT" — error will recur on every retry. Break out of
+            the retry loop immediately, CRITICAL-log with guidance.
+            Examples: invalid arguments, auth/permission, insufficient
+            funds, position-cap exceeded, market closed.
+          - "TRANSIENT" — fall through to the existing retry path.
+            Examples: nonce, rate limit, network, service unavailable.
+          - "UNKNOWN" — same as TRANSIENT for back-compat (don't break
+            existing behavior on errors we haven't seen yet).
+
+        P79 2026-04-26: codifies the lesson from P78. The previous
+        retry loop wasted all 3 attempts on `EGeneral:Invalid arguments:
+        ordertype` — a PERMANENT error that no retry could ever fix.
+        Same shape as P68 (dead-man-switch wasted 3 attempts on
+        AUTH/PERMISSION errors); resolved with the same pattern
+        (explicit error classification before retry).
+
+        Reference for Kraken error codes:
+          https://docs.kraken.com/rest/#section/General-Usage/Status-codes
+        """
+        s = error_str or ""
+
+        # PERMANENT — retry will never succeed.
+        # Argument-validation: malformed type/side/price/etc.
+        if "EGeneral:Invalid arguments" in s:
+            field = "unknown field"
+            # The Kraken response usually reads `EGeneral:Invalid arguments:<field>`
+            # — extract the field name for the operator log.
+            try:
+                tail = s.split("EGeneral:Invalid arguments", 1)[1]
+                tail = tail.lstrip(":").strip()
+                if tail and tail[0] != '"':
+                    field = tail.split('"', 1)[0].split("]", 1)[0].strip(":,. ")
+            except Exception:  # noqa: silent-swallow
+                pass  # field stays "unknown field"
+            return ("PERMANENT",
+                    f"Kraken rejected the order's `{field}` parameter. Verify "
+                    f"the value matches Kraken's accepted literals (e.g. "
+                    f"ordertype must be 'market'/'limit'/'stop-loss'/etc., "
+                    f"hyphenated). No amount of retrying will fix a malformed "
+                    f"argument.")
+        # Auth / permission (same shape as P68 dead-man classification).
+        if any(m in s for m in (
+            "EAPI:Invalid key", "EAPI:Invalid signature",
+            "EAPI:Invalid permissions", "EGeneral:Permission denied",
+            "Permission denied",
+        )):
+            return ("PERMANENT",
+                    "API key auth/permission failure. Verify at "
+                    "https://www.kraken.com/u/security/api → key → permissions.")
+        # Order-economics: not retry-fixable for THIS attempt.
+        if "EOrder:Insufficient funds" in s:
+            return ("PERMANENT",
+                    "Insufficient funds for this order size. The size must "
+                    "change before any retry can succeed.")
+        if "EOrder:Insufficient margin" in s:
+            return ("PERMANENT",
+                    "Insufficient margin. The size or leverage must change "
+                    "before any retry can succeed.")
+        if "EOrder:Cannot open position" in s or "EOrder:Position limit exceeded" in s:
+            return ("PERMANENT",
+                    "Kraken position-cap rejection. The current open position "
+                    "exceeds the cap; cannot add more.")
+        if "EOrder:Unknown position" in s:
+            return ("PERMANENT",
+                    "Kraken doesn't see a position to attach this stop to "
+                    "(closed in a race?). Reconcile via fetch_positions.")
+        if "EOrder:Order minimum not met" in s or "EOrder:Insufficient size" in s:
+            return ("PERMANENT",
+                    "Order size below Kraken's minimum. Increase size or skip.")
+        if "EService:Market in cancel_only mode" in s or "EService:Market in post_only mode" in s:
+            return ("PERMANENT",
+                    "Kraken has restricted this market to cancel/post-only. "
+                    "No new entries will be accepted until that lifts.")
+
+        # TRANSIENT — fall through to the existing retry path.
+        # (Nonce, rate limit, network, service unavailable.)
+        return ("UNKNOWN", "")
+
     def _with_stop_retries(
         self,
         fn,
@@ -290,6 +374,7 @@ class ExecutionManager:
         max_retries = self.config.stop_order_max_retries
         backoff_ms = self.config.stop_order_backoff_ms
         last_error: Optional[str] = None
+        permanent_break = False
 
         for attempt in range(1, max_retries + 1):
             # Idempotency guard: check if a prior attempt already landed
@@ -321,6 +406,21 @@ class ExecutionManager:
             except Exception as exc:
                 last_error = str(exc)
 
+            # P79 2026-04-26: classify the error before deciding to retry.
+            # PERMANENT errors short-circuit (1 attempt + CRITICAL with
+            # operator guidance) instead of wasting max_retries on a
+            # request that can never succeed. Same shape as P68 dead-man
+            # AUTH classification.
+            category, guidance = self._classify_kraken_order_error(last_error or "")
+            if category == "PERMANENT":
+                self.logger.critical(
+                    f"[STOP-RETRY] {what} {symbol}: PERMANENT failure on "
+                    f"attempt {attempt} ({last_error}). NOT retrying. "
+                    f"Guidance: {guidance}"
+                )
+                permanent_break = True
+                break
+
             self.logger.error(
                 f"[STOP-RETRY] {what} {symbol}: attempt {attempt}/{max_retries} "
                 f"FAILED - {last_error}"
@@ -330,12 +430,19 @@ class ExecutionManager:
                 delay_ms = backoff_ms[min(attempt - 1, len(backoff_ms) - 1)]
                 time.sleep(delay_ms / 1000.0)
 
-        # All retries exhausted
-        self.logger.critical(
-            f"[STOP-ORDER] FAILED_AFTER_RETRIES: {what} for {symbol} "
-            f"failed {max_retries} times. Last error: {last_error}. "
-            f"Policy: {self.config.stop_order_failure_policy}"
-        )
+        # All retries exhausted (or PERMANENT break)
+        if permanent_break:
+            self.logger.critical(
+                f"[STOP-ORDER] PERMANENT_FAILURE: {what} for {symbol} "
+                f"rejected with non-retryable error. Last error: "
+                f"{last_error}. Policy: {self.config.stop_order_failure_policy}"
+            )
+        else:
+            self.logger.critical(
+                f"[STOP-ORDER] FAILED_AFTER_RETRIES: {what} for {symbol} "
+                f"failed {max_retries} times. Last error: {last_error}. "
+                f"Policy: {self.config.stop_order_failure_policy}"
+            )
         self._apply_stop_failure_policy(what, symbol, last_error,
                                         stop_side=stop_side, stop_size=stop_size)
 
@@ -344,7 +451,10 @@ class ExecutionManager:
             symbol=symbol,
             order_type=what,
             status=OrderStatus.REJECTED,
-            error_message=f"RETRIES_EXHAUSTED({max_retries}): {last_error}",
+            error_message=(
+                f"PERMANENT_FAILURE: {last_error}" if permanent_break
+                else f"RETRIES_EXHAUSTED({max_retries}): {last_error}"
+            ),
             userref=userref,
         )
 

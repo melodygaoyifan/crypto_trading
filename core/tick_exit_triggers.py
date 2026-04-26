@@ -57,6 +57,14 @@ def evaluate_exit_triggers(
     exit_alpha: Any = None,
     engine: Any = None,
     regime_exit_fired: Optional[Dict[str, str]] = None,
+    # P73: Exit-SAC bridge dependencies. Were referenced as `runner._exit_drl_*`
+    # at lines 380-381 but `runner` was never defined in scope — every tick
+    # NameError'd and got swallowed by the `except Exception` at line 453,
+    # silently disabling the Exit-SAC bridge since this file was extracted
+    # from main.py. Per CLAUDE.md P29 the bridge should have been firing for
+    # all 3 assets since 2026-04-24; with this param fix it actually does.
+    exit_drl_agent: Any = None,
+    exit_drl_kill_switch: Any = None,
 ) -> ExitTriggerResult:
     """
     Evaluate all exit triggers and apply overrides to intent.
@@ -377,8 +385,10 @@ def evaluate_exit_triggers(
             # We deliberately limit System 3's authority to PARTIAL_EXIT only
             # for v1 — RELEASE_RUNNER and EXIT_ALL stay handled by the existing
             # rule-based triggers (phase / CRACK / momentum / drawdown / stop).
-            _edrl_agent = getattr(runner, '_exit_drl_agent', None)
-            _edrl_killswitch = getattr(runner, '_exit_drl_kill_switch', None)
+            # P73: was `getattr(runner, '_exit_drl_agent', None)` but `runner`
+            # was never defined in this function's scope. Now passed as kwarg.
+            _edrl_agent = exit_drl_agent
+            _edrl_killswitch = exit_drl_kill_switch
             if _edrl_agent is not None and _edrl_agent.should_act_on(asset):
                 # Kill-switch check first
                 _ks_demote = _edrl_killswitch.should_demote(asset) if _edrl_killswitch else None
@@ -451,7 +461,15 @@ def evaluate_exit_triggers(
                 result.triggered = True
                 result.tag = exit_trigger_tags.get(asset, "EXIT_ALPHA")
         except Exception as e:
-            logger.debug(f"[EXIT_ALPHA] Evaluation skipped: {e}")
+            # P73: promoted from logger.debug to logger.warning + type info.
+            # Previously a NameError on `runner` at line 380 was hidden here
+            # silently for the entire post-extraction lifetime of this file.
+            # Promoting makes the next class of silent extraction bugs
+            # observable in operator log greps without further code changes.
+            logger.warning(
+                f"[EXIT_ALPHA] {asset}: evaluation skipped — "
+                f"{type(e).__name__}: {e}"
+            )
 
     # Runner management (only when scale-out didn't just fire)
     if exit_alpha and not result.exit_alpha_fired:

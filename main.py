@@ -9483,6 +9483,14 @@ class HMATSProductionRunner:
             exit_alpha=self.exit_alpha,
             engine=self.engine,
             regime_exit_fired=self._regime_exit_fired,
+            # P73: Exit-SAC bridge — these were missing from the call site,
+            # so tick_exit_triggers fell back to undefined `runner` references
+            # and silently NameError'd on every tick (caught by the broad
+            # except at tick_exit_triggers.py:453, hidden until the per-script
+            # audit). The bridge has been ACTIVE in config since P29
+            # (2026-04-24) but never actually fired in production.
+            exit_drl_agent=getattr(self, '_exit_drl_agent', None),
+            exit_drl_kill_switch=getattr(self, '_exit_drl_kill_switch', None),
         )
         _adaptive_stop_hit = _exit_result.adaptive_stop_hit
         _exit_alpha_fired = _exit_result.exit_alpha_fired
@@ -14369,9 +14377,13 @@ class HMATSProductionRunner:
                 "drl_shadow_diag_state": drl_shadow_diag_state,
                 # L4-14: Regime smoother state for restart continuity
                 "regime_smoother_state": dict(self._regime_smoother_state) if hasattr(self, '_regime_smoother_state') and self._regime_smoother_state else {},
-                # [AC-5] Persist daily fill budget across restarts (via AntiChurnManager)
-                "ac5_fills_today": self._anti_churn._fills_today,
-                "ac5_fills_date": self._anti_churn._fills_date,
+                # [AC-5 + AC-2] Persist daily fill budget AND per-asset rate
+                # limit ticks across restarts (P73: was only persisting AC-5
+                # scalars, AC-2 _fill_ticks restored as {} on every restart
+                # — first 6 ticks post-restart could violate per-asset rate
+                # limit). Now uses anti_churn.to_dict() which packages all 3
+                # fields (ac5_fills_today, ac5_fills_date, ac2_fill_ticks).
+                **self._anti_churn.to_dict(),
             }
             tmp = self._PAPER_POS_FILE.with_suffix(".tmp")
             # [FIX-40] Atomic write with fsync -prevent data loss on crash
