@@ -20,7 +20,7 @@ import json
 import os
 from dataclasses import dataclass, field, asdict
 from typing import Dict, List, Optional, Tuple, Any, Callable
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from collections import deque, defaultdict
 from enum import Enum
 import numpy as np
@@ -372,9 +372,13 @@ class ExecutionQualityLogger:
         else:
             source = ExecutionSource.BASELINE
         
+        # P68: tz-aware so _compute_session().hour reads UTC, not local time.
+        # Naive datetime.now() returns the host's local hour and silently
+        # corrupts session bucketing on non-UTC containers.
+        _now_utc = datetime.now(timezone.utc)
         record = ExecutionQualityRecord(
-            timestamp=datetime.now(),
-            execution_id=f"{asset}_{datetime.now().timestamp():.0f}",
+            timestamp=_now_utc,
+            execution_id=f"{asset}_{_now_utc.timestamp():.0f}",
             asset=asset,
             side=side,
             intended_quantity=intended_qty,
@@ -648,7 +652,9 @@ class ExecutionQualityLogger:
                         try:
                             ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
                         except Exception:
-                            ts = datetime.now()
+                            # P68: tz-aware fallback — match the success branch
+                            # (which produces an aware datetime via "+00:00").
+                            ts = datetime.now(timezone.utc)
                         record = ExecutionQualityRecord(
                             timestamp=ts,
                             execution_id=str(

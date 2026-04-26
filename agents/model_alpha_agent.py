@@ -640,7 +640,9 @@ class ModelAlphaAgent:
                 direction=direction,
                 confidence=adjusted_confidence,
                 horizon=horizon,
-                timestamp=datetime.now(),
+                # P68: tz-aware to_agent_signal_dict tags ISO with Z; using
+                # naive datetime.now() makes the timestamp local-time but Z-tagged.
+                timestamp=datetime.now(timezone.utc),
                 explanation_tokens=explanation,
                 model_type=_effective_model_type,
                 model_version=_effective_version,

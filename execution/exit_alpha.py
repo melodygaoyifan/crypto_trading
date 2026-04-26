@@ -33,7 +33,7 @@ PROFITABILITY IMPACT:
 import logging
 from dataclasses import dataclass, field
 from typing import Dict, Optional, List, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 
 # 修复导入路径 (v6.1.2)
@@ -132,7 +132,9 @@ class ScaleOutSignal:
     peak_profit_bps: float = 0.0
     bars_held: int = 0
     
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    # P68: tz-aware default — datetime.utcnow returns naive, mixing with
+    # tz-aware comparisons elsewhere raises TypeError (P39/P40 family).
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     
     def to_dict(self) -> Dict:
         return {

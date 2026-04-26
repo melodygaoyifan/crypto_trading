@@ -232,6 +232,7 @@ class ExitAlphaTracker:
             self.PERSIST_FILE.parent.mkdir(parents=True, exist_ok=True)
             with open(self.PERSIST_FILE, "a") as f:
                 f.write(json.dumps(record, default=str) + "\n")
+                f.flush()  # P68 (P37 follow-up): survive Docker SIGKILL
         except Exception as e:
             logger.debug(f"[EA] Persist failed: {e}")
 
@@ -241,6 +242,7 @@ class ExitAlphaTracker:
             self.COUNTERFACTUAL_FILE.parent.mkdir(parents=True, exist_ok=True)
             with open(self.COUNTERFACTUAL_FILE, "a") as f:
                 f.write(json.dumps(record, default=str) + "\n")
+                f.flush()  # P68 (P37 follow-up): survive Docker SIGKILL
         except Exception as e:
             logger.debug(f"[EA] Counterfactual persist failed: {e}")
 

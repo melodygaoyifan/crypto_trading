@@ -91,6 +91,7 @@ class _ICLoggerSingleton:
                 logfile = self._current_log_file()
                 with logfile.open("a", encoding="utf-8") as f:
                     f.write(json.dumps(record, default=str) + "\n")
+                    f.flush()  # P68 (P37 follow-up): survive Docker SIGKILL
                 self._written += 1
             except Exception as e:
                 # Best-effort. Even if disk is full or path missing, don't crash.

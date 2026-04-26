@@ -134,6 +134,7 @@ class SignalQualityTracker:
             self.PERSIST_FILE.parent.mkdir(parents=True, exist_ok=True)
             with open(self.PERSIST_FILE, "a") as f:
                 f.write(json.dumps(record, default=str) + "\n")
+                f.flush()  # P68 (P37 follow-up): survive Docker SIGKILL
         except Exception as e:
             logger.debug(f"[SQ] Persist failed: {e}")
 
