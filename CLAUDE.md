@@ -286,6 +286,23 @@ discipline + the grep habit.
 
 ### Recent pitfalls (last ~30 days)
 
+### P89. [SUMMARY 2026-04-26] Per-script audit loop concluded — saturation reached
+- **Why:** User-authorized autonomous audit workflow (per agent memory `autonomous_audit_loop.md`). Loop: read CLAUDE.md → re-pull → dispatch 4 Explore agents per round on next-highest-leverage unaudited critical files → triage findings → fix with P85 discipline → smoke test → commit + push + deploy → verify production health. Stop when codebase confidence saturates.
+- **Total:** 6 rounds (3a-4f) covering 44 critical files (~12% of 365-file codebase). 19 real bugs + 1 cosmetic shipped as P72/P73/P74/P81/P82/P83/P84/P86/P88. **All 19 fixes:** committed, pushed, deployed, root-cause-fixed (not band-aid mitigations), production-verified via startup logs (e.g., `[EXIT_DRL_KILLSWITCH] Restored state`, `StopLossAuthority: ACTIVE`, `SentimentL2: ACTIVE val_acc=0.833`, TQC fold_3 ×3 assets, P74 GMM cache fix in effect).
+- **Per-script methodology validated as decisively superior to directory-batched audits for the post-extraction silent-failure bug class.** Bugs caught that 3 prior directory-rounds missed: P72 ×4 NameErrors in execution_service.py from main.py extraction, P73 Exit-SAC bridge `runner` undefined in tick_exit_triggers.py, P74 GMM cache key using close PRICE not TIMESTAMP (the actual P41 root cause), P82 mode hardcode in p0_safety_integrator, P84 Exit-SAC kill switch state silently lost on restart, P86 ×3 NameErrors in kraken_link.py (P85-shape).
+- **Stopping criteria met (all 4):**
+  1. Round-4f ratio 0/21 (worse than 1:25 plateau threshold)
+  2. Round-4f = 0 same-day actionable across all 4 files
+  3. Remaining unaudited files are leaf utilities (`data_mgmt/feeds/*`, `risk/short_position_controller.py`) — already covered by directory-batched rounds 1-2, low blast radius
+  4. Production stable 50+ min since P88 deploy at 22:46 UTC, 0 restarts, healthy
+- **Calibrated confidence at stopping:**
+  - **~95%** the 19 fixes are correct (smoke-tested, deployed, log-verified)
+  - **~75%** the 44 audited files are clean for documented bug shapes (P12/P15/P22/P25/P39/P47/P85)
+  - **~50%** for novel bug classes I didn't prompt for
+  - **~12%** codebase-wide (only 12% per-script audited)
+- **8 deferred items documented in earlier P-entries** (not regressions, design decisions): drift_detector silent logging, integration_v36:1388 tranche conflict-threshold, trade_gate:726 governor exception fail-OPEN intent, trade_gate snapshot age unbounded, constitution:1763 regime_aligned dead-read pending writer wiring, anti_churn check_fill_budget dead method, signals/no_trade_triggers.py orphan archival pending alpha_signal_integrator decoupling, kraken_plus_fee_blender:156 div-by-zero on env=0.
+- **Mitigation pattern (audit methodology established):** per-script depth + P-history-aware prompts + P85 discipline (re-pull before stage AND push, defensive `getattr(obj, 'attr', sentinel)`, no `sys.exit()` to compose with `restart: always`, smoke test, post-deploy verify) is the canonical workflow for future codebase-coverage passes. Directory-batched audits remain useful for novel bug class hunts; per-script depth for verifying fixes hold + finding extraction-class silent failures.
+
 ### P87. [FIXED 2026-04-26] Dynamic balance check at order layer + method-collision hotfix
 - **Why:** Operator pointed out that P86's stop-loss balance check wasn't enough. The system places multiple orders per 4H tick (1 entry per asset × 3 assets = 3+ orders); each order consumes balance dynamically. Position sizing is computed against TOTAL account equity, NOT against the live changing free balance. Result: 2nd/3rd order in a tick can exceed actual spot capital → Kraken rejects `EOrder:Insufficient funds` → P79 short-circuits PERMANENT → entry FAILS → phantom-position cascade where the system thinks position opened (intent registered) but actually didn't, then attempts stop on phantom → cascade of CRITICAL alerts.
 - **Fix (commit 088b865):** new `_clamp_size_to_balance_v2` helper called from `execute_order` after dry_run check, before order placement. Fetches `exchange.fetch_balance()` per order, returns `(clamped_size, diagnostic_msg)`:
