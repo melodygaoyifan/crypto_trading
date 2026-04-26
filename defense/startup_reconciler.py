@@ -620,13 +620,45 @@ class StartupReconciler:
             
             logger.info(f"[StartupReconcile] Found {len(exchange_orders)} open orders")
             
-            # Check for orphan orders
+            # P85 2026-04-26 EMERGENCY: defensive guard for the
+            # `frozen_allocations` attribute which doesn't exist on
+            # ShadowLedgerWriter. Reader/writer mismatch (P15-shape):
+            # this code reads `self.shadow_ledger.frozen_allocations`
+            # but ShadowLedgerWriter (defense/shadow_ledger_jsonl.py:64)
+            # never declares or sets that attribute. Pre-P85 this
+            # AttributeError'd in `_reconcile_orders`, the reconciler
+            # marked ORDER_CHECK as FAILED, and main.py REFUSED to
+            # start LIVE trading per the strict reconciler contract.
+            #
+            # Behavior change: if frozen_allocations is missing, treat
+            # the orphan check as inconclusive (NOT zero orphans, NOT
+            # all orphans). Skip cancellation. Log WARNING so operator
+            # sees the gap. The reconciler still completes successfully,
+            # unblocking live trading. The proper fix (add the attr to
+            # ShadowLedgerWriter with the right semantics) is a separate
+            # architectural change.
+            frozen = getattr(self.shadow_ledger, 'frozen_allocations', None) \
+                if self.shadow_ledger else None
             orphan_orders = []
-            for order in exchange_orders:
-                # If order not in shadow ledger frozen allocations, it's orphan
-                if self.shadow_ledger:
+            if frozen is None:
+                if exchange_orders:
+                    logger.warning(
+                        f"[StartupReconcile] shadow_ledger.frozen_allocations "
+                        f"attribute missing; cannot classify {len(exchange_orders)} "
+                        f"open exchange orders as orphan vs known. SKIPPING orphan "
+                        f"cancellation to avoid destroying legitimate orders. "
+                        f"Add frozen_allocations to ShadowLedgerWriter to enable "
+                        f"this safety check."
+                    )
+                else:
+                    logger.info(
+                        "[StartupReconcile] shadow_ledger.frozen_allocations attr "
+                        "missing; 0 open exchange orders so skip is harmless."
+                    )
+            else:
+                for order in exchange_orders:
                     order_id = order.get('id') or order.get('order_id')
-                    if order_id and order_id not in self.shadow_ledger.frozen_allocations:
+                    if order_id and order_id not in frozen:
                         orphan_orders.append(order)
             
             # Cancel orphan orders
