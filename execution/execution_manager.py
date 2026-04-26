@@ -1694,24 +1694,96 @@ class ExecutionManager:
             #       so the operator sees the actual diagnostic vs a
             #       generic API rejection.
             # P84 2026-04-26: apply a 0.5% size buffer for SELL stops
-            # (closing LONGs). After P83 fixed the order shape, Kraken
-            # responded EOrder:Insufficient funds — the stop reservation
-            # was for the FULL pre-fee position size but the actual
-            # post-fee spot balance is fractionally less. On SOL/USD
-            # entry of 7.4 SOL at $86.36, Kraken's maker fee can be
-            # deducted from base in some flows + lot-precision rounding
-            # at fill time produces a balance like 7.3984 SOL. Reserving
-            # 7.4 SOL fails. Reducing by 0.5% = 7.363 SOL succeeds AND
-            # still protects ~99.5% of the position (the fraction we
-            # don't stop is below the lot minimum anyway).
+            # as a fallback. P86 supersedes with actual balance fetch.
             #
-            # BUY stops (closing SHORTs) reserve USD for the buy-back —
-            # USD balance isn't depleted by entry fees the same way
-            # (fees come from the SELL proceeds at trigger), so no
-            # buffer needed. Apply the buffer ONLY to SELL stops.
+            # P86 2026-04-26: real spot-balance check. The 0.5% blanket
+            # buffer (P84) defended against fee/rounding shortfalls but
+            # NOT against operator actions like "moved $1000 to
+            # derivatives" that drop the spot wallet's free balance well
+            # below the position size. Solution: fetch_balance() before
+            # placing the stop, clamp size to actual `free` minus a
+            # small safety margin. If balance probe fails, fall back to
+            # the P84 0.5% buffer (better than nothing).
+            #
+            # SELL stops need BASE (SOL/BTC/ETH) — Kraken reserves the
+            # asset on the spot wallet. Cannot reserve more than free.
+            # BUY stops need USD — reservation = trigger_price × size.
             _stop_size_for_kraken = size
-            if side.value.lower() == 'sell':
-                _stop_size_for_kraken = size * 0.995
+            _balance_probe_used = False
+            try:
+                _bal = self.exchange.fetch_balance()
+                _free = (_bal or {}).get('free', {}) or {}
+                _base, _quote = symbol.split('/')
+                if side.value.lower() == 'sell':
+                    # Need BASE asset free for the SELL reservation.
+                    _free_base = float(_free.get(_base, 0.0) or 0.0)
+                    # 0.2% safety margin below free (covers fee tier
+                    # changes / lot rounding inside Kraken's reservation
+                    # math). 99.8% of available is still ~99% of position.
+                    _max_reservable = _free_base * 0.998
+                    if _max_reservable < size:
+                        self.logger.warning(
+                            f"[STOP-BALANCE] {symbol} sell: free {_base}="
+                            f"{_free_base:.6f} below intended size {size:.6f} "
+                            f"(by {(size - _free_base) / size * 100:.2f}%). "
+                            f"Reducing stop reservation to {_max_reservable:.6f} "
+                            f"(99.8% of free). Likely cause: post-fee balance, "
+                            f"funds moved to derivatives/staking, or another "
+                            f"order is holding part of the {_base}."
+                        )
+                        _stop_size_for_kraken = _max_reservable
+                        _balance_probe_used = True
+                    elif size * 1.005 > _free_base:
+                        # Within 0.5% — apply small buffer to be safe.
+                        _stop_size_for_kraken = min(size, _max_reservable)
+                        _balance_probe_used = True
+                else:
+                    # BUY stop — need USD = trigger_price * size.
+                    _free_quote = float(_free.get(_quote, 0.0) or 0.0)
+                    _required_usd = stop_price * size
+                    # Buffer for fees Kraken may charge at trigger
+                    # (~0.4% maker+slip) — conservative.
+                    _max_affordable_usd = _free_quote * 0.996
+                    if _required_usd > _max_affordable_usd:
+                        _max_affordable_size = _max_affordable_usd / stop_price if stop_price > 0 else 0
+                        self.logger.warning(
+                            f"[STOP-BALANCE] {symbol} buy: free {_quote}="
+                            f"{_free_quote:.2f} cannot fund {_required_usd:.2f} "
+                            f"required for {size:.6f} {_base} @ {stop_price:.4f}. "
+                            f"Reducing stop size to {_max_affordable_size:.6f} "
+                            f"(based on 99.6% of free {_quote}). Likely cause: "
+                            f"funds moved to derivatives, or another order is "
+                            f"holding part of the {_quote} balance."
+                        )
+                        _stop_size_for_kraken = _max_affordable_size
+                        _balance_probe_used = True
+            except Exception as _bal_e:  # noqa: silent-swallow
+                # fetch_balance failed — fall back to P84 blanket buffer.
+                self.logger.warning(
+                    f"[STOP-BALANCE] {symbol}: balance probe failed "
+                    f"({type(_bal_e).__name__}: {_bal_e}); falling back to "
+                    f"P84 blanket 0.5% buffer for SELL stops."
+                )
+                if side.value.lower() == 'sell':
+                    _stop_size_for_kraken = size * 0.995
+
+            # Sanity: if our clamping produced a size at/below zero,
+            # don't bother sending — Kraken will reject and we know why.
+            if _stop_size_for_kraken <= 0:
+                msg = (
+                    f"computed stop size = {_stop_size_for_kraken:.8f} "
+                    f"after balance check (intended {size:.6f}). "
+                    f"Spot wallet has no usable balance for this stop. "
+                    f"Skipping API call. Operator action: replenish the "
+                    f"{symbol.split('/')[0 if side.value.lower() == 'sell' else 1]} "
+                    f"spot balance OR close this position manually."
+                )
+                self.logger.critical(f"[STOP-BALANCE] {symbol}: {msg}")
+                return OrderResult(
+                    success=False, symbol=symbol, order_type='stop-loss',
+                    status=OrderStatus.REJECTED,
+                    error_message=f"INSUFFICIENT_SPOT_BALANCE: {msg}",
+                )
             try:
                 _norm_price_str = self.exchange.price_to_precision(symbol, stop_price)
                 _norm_size_str = self.exchange.amount_to_precision(
