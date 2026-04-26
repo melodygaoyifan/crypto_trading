@@ -68,6 +68,12 @@ COPY --chown=hmats:hmats training/drl/__init__.py training/drl/features.py train
 # Exit-DRL training package — runtime needs DiscreteActor + DiscreteQCritic for
 # checkpoint deserialization and the build_state helper for state construction.
 COPY --chown=hmats:hmats training/exit_drl ./training/exit_drl
+# Sentiment v2.2 training script — runtime needs SentimentConfigV22 +
+# SentimentModelV22 class definitions to unpickle models/sentiment_v22_best.pt
+# (P5 __main__ alias pattern; see agents/sentiment_deberta.py:54-60). Without
+# this copy, [L2_SENTIMENT] Failed to load: No module named 'training.sentiment'
+# fires at every container start and L2 sentiment stays UNAVAILABLE forever.
+COPY --chown=hmats:hmats training/sentiment/__init__.py training/sentiment/train_sentiment_agent_v22.py ./training/sentiment/
 # Validator outputs — read by risk/exit_drl_promotion_gate.py for Sharpe lift evidence.
 COPY --chown=hmats:hmats data/exit_drl_validation ./data/exit_drl_validation
 
