@@ -13735,7 +13735,9 @@ class HMATSProductionRunner:
             "SOL TOXICITY",
             "DISCONNECTED MID TICK",
             "TRANCHE ABORT",
-            "VETO",                     # BitBeast 3-in-1 entry quality guard
+            "[VETO]",                   # BitBeast 3-in-1 entry quality guard (main.py:9851)
+                                        # — bracketed so it doesn't substring-match
+                                        # "[PROD] HARD VETO" (a must-flatten veto).
             # P74 2026-04-26: PATCH-4 SOFT block fires on corr/vpin/dvol
             # elevation in NORMAL mode when no existing position. It blocks
             # a NEW entry but doesn't (and shouldn't) flatten — the

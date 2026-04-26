@@ -17,13 +17,22 @@ merge without it".
 ## Files
 
 - `authority_consistency_baseline.json` — frozen output of the authority
-  scanner (Sections A–F: matrix wiring, ENABLE_* flags, constant drift,
-  DRL invariants, real-gate audit, multi-site kwarg consistency).
-  Comparison is structural per section.
+  scanner (Sections A–G: matrix wiring, ENABLE_* flags, constant drift,
+  DRL invariants, real-gate audit, multi-site kwarg consistency,
+  veto-reason classification). Comparison is structural per section.
 - `silent_failure_baseline.json` — frozen counts of silent_failure_audit
   findings (try-except hits, dict.get misuse, ENABLE_* with no reader).
   Comparison is count-based: counts can DECREASE freely (good — fewer
   findings) but any increase fails the gate.
+- `silent_swallow_baseline.json` — frozen counts of lint_silent_swallow
+  findings (P15/P25/P47/P64-shape silent except blocks). Same
+  count-based "decrease OK, increase blocks" semantics.
+
+The veto classification (Section G) was added in P74 to catch the
+specific failure mode P74 itself fixed: new vetoes added to the
+codebase without being added to main.py's `_HOLD_VETOES` allow-list,
+producing CRITICAL "INVARIANT VIOLATION" log spam in production. CI
+now blocks that drift class.
 
 ## Workflow when you make an intentional change
 

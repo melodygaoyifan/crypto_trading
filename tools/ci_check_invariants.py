@@ -149,6 +149,24 @@ def _normalize_authority(raw: Dict[str, Any]) -> Dict[str, Any]:
         if bad_sites:
             out["multisite"][fname] = sorted(bad_sites)
 
+    # --- Section G (veto-reason classification, P74) ---
+    # Lock in the COUNT of UNCLASSIFIED + BOTH veto_reason assignments
+    # so a new unclassified veto fails CI. The actual list of locations
+    # is also tracked for diff visibility but the count is the gate.
+    vetos = raw.get("vetos", {})
+    veto_counts = vetos.get("by_category_counts", {})
+    veto_summary = vetos.get("summary", {})
+    out["vetos"] = {
+        "unclassified_count": veto_counts.get("UNCLASSIFIED", 0),
+        "both_count": veto_counts.get("BOTH", 0),
+        # Track sorted location list — a new unclassified at a NEW
+        # location adds a string to the list, which the diff catches.
+        "unclassified_locations": sorted(
+            veto_summary.get("unclassified_locations") or []
+        ),
+        "both_locations": sorted(veto_summary.get("both_locations") or []),
+    }
+
     return out
 
 

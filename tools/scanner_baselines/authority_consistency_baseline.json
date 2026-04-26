@@ -71,5 +71,45 @@
     "without_real_gates": [],
     "without_real_gates_count": 0
   },
-  "multisite": {}
+  "multisite": {},
+  "vetos": {
+    "both_count": 0,
+    "both_locations": [],
+    "unclassified_count": 33,
+    "unclassified_locations": [
+      "agents/risk_agent.py:594",
+      "agents/risk_agent.py:601",
+      "agents/risk_agent.py:622",
+      "core/authority_chain.py:306",
+      "core/authority_chain.py:320",
+      "core/authority_chain.py:330",
+      "core/authority_chain.py:342",
+      "core/authority_chain.py:441",
+      "core/authority_chain.py:463",
+      "core/authority_chain.py:488",
+      "core/authority_chain.py:499",
+      "core/authority_chain.py:512",
+      "core/authority_chain.py:532",
+      "core/authority_chain.py:543",
+      "core/execution_service.py:525",
+      "core/runtime_spine.py:593",
+      "core/runtime_spine.py:676",
+      "integration/integration_v36.py:1015",
+      "integration/integration_v36.py:1143",
+      "integration/integration_v36.py:1145",
+      "integration/integration_v36.py:1226",
+      "integration/integration_v36.py:1304",
+      "integration/integration_v36.py:1736",
+      "integration/integration_v36.py:999",
+      "main.py:10552",
+      "main.py:11061",
+      "main.py:11164",
+      "main.py:12284",
+      "main.py:12420",
+      "main.py:12707",
+      "main.py:5333",
+      "main.py:9230",
+      "risk/auto_recovery_gate.py:111"
+    ]
+  }
 }

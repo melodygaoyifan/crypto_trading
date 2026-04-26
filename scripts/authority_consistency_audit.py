@@ -699,6 +699,202 @@ def _extract_call_kwargs(file_path: str, line_no: int, max_lines: int = 30) -> s
     return kwargs
 
 
+# ----------------------------------------------------------------------
+# Section G: Veto-reason classification (P74)
+# ----------------------------------------------------------------------
+# The post-tick invariant `_check_invariants` at main.py:13708-13742
+# enforces "veto_active=True ⇒ target_exposure==0", with an allow-list
+# of vetoes that legitimately leave exposure populated (the
+# "block-new-entry" shape, where target_exposure carries the proposed
+# size and downstream execution skips because veto_active=True).
+#
+# Two classes of veto exist in the codebase:
+#   - HOLD vetoes (block-new-entry): MUST be in `_HOLD_VETOES`.
+#   - HARD vetoes (must-flatten): MUST NOT be in `_HOLD_VETOES`.
+#
+# When a developer adds a new veto site (`intent.veto_reason = "..."`)
+# they MUST classify it. P74 found that PATCH-4 SOFT and FRICTION
+# were added without being added to the allow-list, producing CRITICAL
+# log noise in production.
+#
+# This section enumerates every `*.veto_reason = "..."` assignment in
+# the live tree, extracts the static prefix of each veto string, and
+# flags any prefix that's neither in the allow-list nor in an
+# operator-curated must-flatten deny-list.
+
+# Operator-curated: vetoes that must flatten (NOT in allow-list).
+# These should NOT appear in _HOLD_VETOES — adding them would silence
+# a real "veto fired but didn't flatten" bug. Each entry is a
+# normalized substring (uppercase, _→space, -→space).
+MUST_FLATTEN_VETO_TAGS = {
+    "PATCH 4] HARD",       # main.py:12107 — HARD correlation/dvol veto
+    "P0 FORCE FLAT",       # main.py:9891/9911 — P0 force-flatten
+    "BLACK SWAN SENTINEL", # integration_v36.py:845 — BSS=0 crisis
+    "PROD] HARD VETO",     # integration_v36.py:1171/1724
+    "TRANCHE DEADLOCK",    # integration_v36.py:1580
+    "DEADLOCK ABORT",      # integration_v36.py:1614
+}
+
+
+def _parse_main_py_hold_vetoes() -> set[str]:
+    """Read main.py's `_HOLD_VETOES` set. Returns the set of normalized
+    substring tags. Returns empty set on any parse failure (caller
+    treats that as 'all vetoes unclassified').
+
+    Strips Python `# ...` comments per-line BEFORE extracting string
+    literals, so quoted strings inside comments (used as cross-refs to
+    other vetoes — e.g. `# don't substring-match "[PROD] HARD VETO"`)
+    don't pollute the tag set."""
+    main_py = REPO_ROOT / "main.py"
+    if not main_py.exists():
+        return set()
+    src = _read(main_py)
+    # Match the literal `_HOLD_VETOES = { ... }` block.
+    m = re.search(
+        r"_HOLD_VETOES\s*=\s*\{(.*?)\n\s*\}",
+        src,
+        re.DOTALL,
+    )
+    if not m:
+        return set()
+    block = m.group(1)
+    # Strip Python comments line-by-line before extracting string literals.
+    # Naive but correct for this block (no `#` inside the tag literals).
+    stripped_lines = []
+    for line in block.splitlines():
+        comment_idx = line.find("#")
+        if comment_idx >= 0:
+            line = line[:comment_idx]
+        stripped_lines.append(line)
+    code_only = "\n".join(stripped_lines)
+    tags = re.findall(r'"([^"]+)"', code_only)
+    return {t.upper() for t in tags}
+
+
+def _extract_static_prefix(line: str) -> str | None:
+    """Given a code line like:
+        intent.veto_reason = f"[PATCH-4] SOFT block(NORMAL): {x}"
+    extract "[PATCH-4] SOFT block(NORMAL): " (everything before the
+    first `{`).
+
+    Plain strings:
+        intent.veto_reason = "FRICTION_EXCEEDS_EDGE"
+    extract "FRICTION_EXCEEDS_EDGE".
+
+    Returns None for empty assignments (`= ""`) and unparseable lines.
+    """
+    # Find the RHS of the assignment.
+    m = re.search(r'veto_reason\s*=\s*(.+)$', line)
+    if not m:
+        return None
+    rhs = m.group(1).strip()
+    # Strip trailing comma (kwarg form: `veto_reason="...",`).
+    rhs = rhs.rstrip(",").strip()
+    # Match f"..." or "..." or '...'.
+    sm = re.match(r'^f?(["\'])(.*?)(?<!\\)\1', rhs)
+    if not sm:
+        return None
+    raw = sm.group(2)
+    if not raw:
+        return None  # empty string assignment — clearing, not setting
+    # Truncate at first interpolation `{...}`.
+    if "{" in raw:
+        raw = raw.split("{", 1)[0]
+    raw = raw.strip()
+    return raw or None
+
+
+def audit_veto_reason_classification() -> dict[str, Any]:
+    """Enumerate every veto_reason assignment, classify each as
+    HOLD-listed / MUST-FLATTEN / UNCLASSIFIED."""
+    hold_tags = _parse_main_py_hold_vetoes()
+
+    # Find every veto_reason assignment in the live tree.
+    # Pattern matches `<expr>.veto_reason = "..."` or `f"..."` or `[`.
+    hits = _git_grep(r'veto_reason\s*=\s*[f"\[\x27]')
+    assignments: list[dict[str, Any]] = []
+    for h in hits:
+        parts = h.split(":", 2)
+        if len(parts) < 3:
+            continue
+        file_path, line_no, line_text = parts
+        if not file_path.endswith(".py"):
+            continue
+        # Skip dataclass field declarations and function-arg defaults.
+        if re.search(r"veto_reason\s*:\s*[A-Za-z]", line_text):
+            continue
+        if re.search(r"def\s+\w+\(.*veto_reason\s*=", line_text):
+            continue
+        prefix = _extract_static_prefix(line_text)
+        if not prefix:
+            continue
+        normalized = prefix.upper().replace("_", " ").replace("-", " ")
+
+        # Classify.
+        in_hold = any(tag in normalized for tag in hold_tags)
+        in_must_flatten = any(
+            tag in normalized for tag in MUST_FLATTEN_VETO_TAGS
+        )
+
+        category = (
+            "HOLD" if in_hold and not in_must_flatten
+            else "MUST_FLATTEN" if in_must_flatten and not in_hold
+            else "BOTH" if in_hold and in_must_flatten
+            else "UNCLASSIFIED"
+        )
+
+        assignments.append({
+            "location": f"{file_path}:{line_no}",
+            "prefix": prefix,
+            "normalized": normalized,
+            "category": category,
+        })
+
+    # Group by category.
+    by_category: dict[str, list[dict]] = {
+        "HOLD": [],
+        "MUST_FLATTEN": [],
+        "BOTH": [],
+        "UNCLASSIFIED": [],
+    }
+    for a in assignments:
+        by_category[a["category"]].append(a)
+
+    # Issues = UNCLASSIFIED + BOTH (latter is suspicious overlap).
+    issues = []
+    if by_category["UNCLASSIFIED"]:
+        issues.append(
+            f"{len(by_category['UNCLASSIFIED'])} veto_reason assignments "
+            f"are NEITHER in _HOLD_VETOES NOR in MUST_FLATTEN_VETO_TAGS — "
+            f"each must be classified or main.py:_check_invariants will "
+            f"either CRITICAL-log false positives (if it should hold) or "
+            f"silently miss a real flatten-bug (if it should hard-veto)."
+        )
+    if by_category["BOTH"]:
+        issues.append(
+            f"{len(by_category['BOTH'])} veto_reason assignments match BOTH "
+            f"_HOLD_VETOES and MUST_FLATTEN_VETO_TAGS — substring tags "
+            f"overlap. Tighten one tag or the other."
+        )
+
+    return {
+        "n_total_assignments": len(assignments),
+        "n_hold_tags_in_main": len(hold_tags),
+        "n_must_flatten_tags": len(MUST_FLATTEN_VETO_TAGS),
+        "by_category_counts": {k: len(v) for k, v in by_category.items()},
+        "by_category": by_category,
+        "issues": issues,
+        "summary": {
+            "unclassified_locations": [
+                a["location"] for a in by_category["UNCLASSIFIED"]
+            ],
+            "both_locations": [
+                a["location"] for a in by_category["BOTH"]
+            ],
+        },
+    }
+
+
 def audit_multi_site_consistency() -> dict[str, Any]:
     findings: dict[str, Any] = {}
     for fdef in TRACKED_MULTI_SITE_FUNCS:
@@ -797,7 +993,7 @@ def main() -> int:
         "--section",
         choices=[
             "authority", "flags", "constants",
-            "drl", "gates", "multisite", "all",
+            "drl", "gates", "multisite", "vetos", "all",
         ],
         default="all",
     )
@@ -816,6 +1012,8 @@ def main() -> int:
         out["flag_gates"] = audit_enable_flag_gates()
     if args.section in ("multisite", "all"):
         out["multi_site"] = audit_multi_site_consistency()
+    if args.section in ("vetos", "all"):
+        out["vetos"] = audit_veto_reason_classification()
 
     if args.json:
         print(json.dumps(out, indent=2, default=str))
@@ -896,6 +1094,28 @@ def main() -> int:
                 print(f"      e.g. {sample[:140]}")
         if not no_gate:
             print("  ✓ all readable flags have at least one control-flow gate")
+
+    if "vetos" in out:
+        v = out["vetos"]
+        print("\n--- G) VETO-REASON CLASSIFICATION (P74) ---")
+        cc = v.get("by_category_counts", {})
+        print(
+            f"  total assignments: {v.get('n_total_assignments', 0)} "
+            f"(HOLD={cc.get('HOLD', 0)}, MUST_FLATTEN={cc.get('MUST_FLATTEN', 0)}, "
+            f"BOTH={cc.get('BOTH', 0)}, UNCLASSIFIED={cc.get('UNCLASSIFIED', 0)})"
+        )
+        for issue in v.get("issues", []):
+            print(f"  ✗ {issue}")
+        if v.get("by_category", {}).get("UNCLASSIFIED"):
+            print("\n  Unclassified vetos (need allow-list OR deny-list entry):")
+            for a in v["by_category"]["UNCLASSIFIED"][:20]:
+                print(f"    {a['location']}  prefix={a['prefix']!r}")
+        if v.get("by_category", {}).get("BOTH"):
+            print("\n  Vetos matching BOTH lists (substring overlap — fix tags):")
+            for a in v["by_category"]["BOTH"][:20]:
+                print(f"    {a['location']}  prefix={a['prefix']!r}")
+        if not v.get("issues"):
+            print("  ✓ all veto_reason assignments classified")
 
     if "multi_site" in out:
         m = out["multi_site"]
