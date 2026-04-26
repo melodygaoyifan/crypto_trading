@@ -426,11 +426,25 @@ class WeekendOverrideRules:
         weekend_config: Optional[Dict[str, float]] = None,
     ) -> Tuple[bool, str]:
         """Check if entry should be blocked by weekend override."""
-        
+
         if not weekend_state.is_weekend:
             return (False, "")
 
         _wk_cfg = weekend_config or {}
+        # [AP-5] Weekend filter kill switch. User accepts overnight/weekend risk
+        # under 25% DD + 5x leverage aggressive philosophy. When config flag is
+        # explicitly False, entire weekend gate is bypassed (warning logged).
+        # Default behavior preserved: filter active unless operator opts out.
+        if _wk_cfg.get("weekend_filter_enabled", True) is False:
+            try:
+                import logging as _logging
+                _logging.getLogger(__name__).info(
+                    f"[AP-5] WEEKEND_FILTER_DISABLED {asset}: bypassed by config "
+                    f"alpha={estimated_alpha_bps:.0f} conf={confidence:.0%}"
+                )
+            except Exception:
+                pass
+            return (False, "")
         _mode = str(system_mode or "").upper()
         _asset = str(asset or "").upper()
         _opp_alpha_mult_by_asset = _wk_cfg.get("opportunity_alpha_multiplier_weekend_by_asset", {})
@@ -485,11 +499,11 @@ class WeekendOverrideRules:
         )
         min_alpha = _min_alpha_bps_base * _alpha_mult
         if estimated_alpha_bps < min_alpha:
-            return (True, f"Weekend alpha {estimated_alpha_bps:.0f}bps < min {min_alpha:.0f}bps")
-        
+            return (True, f"[AP-5] Weekend alpha {estimated_alpha_bps:.0f}bps < min {min_alpha:.0f}bps (set weekend_filter_enabled=False to bypass)")
+
         # Confidence check
         if confidence < _min_conf:
-            return (True, f"Weekend confidence {confidence:.0%} < min {_min_conf:.0%}")
+            return (True, f"[AP-5] Weekend confidence {confidence:.0%} < min {_min_conf:.0%} (set weekend_filter_enabled=False to bypass)")
         
         return (False, "")
     

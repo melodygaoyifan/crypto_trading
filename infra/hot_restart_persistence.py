@@ -139,11 +139,32 @@ class SystemState:
     # Thesis budget governor state
     thesis_budget_state: Dict[str, Any] = field(default_factory=dict)
 
+    # [AP-14] Gambler sizing — bet timestamps for cooldown + weekly limit.
+    # Without this, post-crash GamblerSizing._bet_timestamps resets to []
+    # and the cooldown / max_bets_per_week guards are bypassed on the
+    # very next OPPORTUNITY window (burst-bet risk).
+    gambler_state: Dict[str, Any] = field(default_factory=dict)
+
+    # [AP-14] FailureAwareMetaMemory — consecutive_failures, caution mode,
+    # density_boost. Without this, post-crash failure-driven sizing
+    # adjustments forget recent losses and re-allow full-size entries.
+    failure_memory_state: Dict[str, Any] = field(default_factory=dict)
+
+    # [AP-14] StrategyConfidenceScorer — per-strategy confidence + accuracy.
+    # The scorer also writes data/confidence_scorer_state.json (F7-PERSIST),
+    # so this is belt-and-suspenders for crash-restart inside SystemState.
+    confidence_scorer_state: Dict[str, Any] = field(default_factory=dict)
+
+    # [AP-14] Per-asset OPPORTUNITY mode TTL (lives on runner._mode_ttl).
+    # Without this, post-crash OPPORTUNITY windows that were timing-out
+    # come back as fresh windows with full TTL.
+    mode_ttl_state: Dict[str, Any] = field(default_factory=dict)
+
     # Metadata
     version: str = "3.3.0"
     persisted_at: str = ""
     persist_event: str = ""
-    
+
     def to_dict(self) -> Dict:
         return {
             "system_mode": self.system_mode,
@@ -153,6 +174,10 @@ class SystemState:
             "stops": {k: asdict(v) for k, v in self.stops.items()},
             "metrics": asdict(self.metrics),
             "thesis_budget_state": self.thesis_budget_state,
+            "gambler_state": self.gambler_state,
+            "failure_memory_state": self.failure_memory_state,
+            "confidence_scorer_state": self.confidence_scorer_state,
+            "mode_ttl_state": self.mode_ttl_state,
             "version": self.version,
             "persisted_at": self.persisted_at,
             "persist_event": self.persist_event,
@@ -183,6 +208,12 @@ class SystemState:
         
         # Thesis budget governor
         state.thesis_budget_state = data.get("thesis_budget_state", {})
+
+        # [AP-14] Governor states (default {} for forward-compat with old DBs)
+        state.gambler_state = data.get("gambler_state", {})
+        state.failure_memory_state = data.get("failure_memory_state", {})
+        state.confidence_scorer_state = data.get("confidence_scorer_state", {})
+        state.mode_ttl_state = data.get("mode_ttl_state", {})
 
         state.version = data.get("version", "3.3.0")
         state.persisted_at = data.get("persisted_at", "")
@@ -228,6 +259,13 @@ class HotRestartPersistence:
         self.lock = threading.Lock()
         self._thesis_budget_governor = None
 
+        # [AP-14] Registered governors / state references for crash-restart capture.
+        # Each is wired in by main.py via the matching set_X() method below.
+        self._gambler_sizing = None
+        self._failure_memory = None
+        self._confidence_scorer = None
+        self._mode_ttl_dict: Optional[Dict[str, Any]] = None
+
         # Initialize database
         self._init_db()
 
@@ -236,6 +274,34 @@ class HotRestartPersistence:
     def set_thesis_budget_governor(self, governor) -> None:
         """Register governor so persist() can capture its state."""
         self._thesis_budget_governor = governor
+
+    def set_gambler_sizing(self, gambler) -> None:
+        """[AP-14] Register GamblerSizing so persist() captures _bet_timestamps.
+
+        Without this, post-crash GamblerSizing._bet_timestamps resets to []
+        and the cooldown / max_bets_per_week guards are bypassed on the
+        very next OPPORTUNITY window.
+        """
+        self._gambler_sizing = gambler
+
+    def set_failure_memory(self, memory) -> None:
+        """[AP-14] Register FailureAwareMetaMemory so persist() captures
+        consecutive_failures, caution mode, density_boost, tranche_delay."""
+        self._failure_memory = memory
+
+    def set_confidence_scorer(self, scorer) -> None:
+        """[AP-14] Register StrategyConfidenceScorer so persist() captures
+        per-strategy confidence + accuracy history."""
+        self._confidence_scorer = scorer
+
+    def set_mode_ttl_dict(self, mode_ttl_dict: Dict[str, Any]) -> None:
+        """[AP-14] Register the runner's _mode_ttl dict (BY REFERENCE).
+
+        Pass the actual mutable dict, not a copy — restore_governors() mutates
+        it in place so the runner's existing reference picks up the restored
+        TTL entries.
+        """
+        self._mode_ttl_dict = mode_ttl_dict
     
     def _init_db(self):
         """Initialize SQLite database."""
@@ -283,6 +349,35 @@ class HotRestartPersistence:
                 )
             except Exception as e:
                 logger.warning(f"[THESIS_BUDGET] Failed to persist governor state: {e}")
+
+        # [AP-14] Capture registered governors. Each block fail-closed-with-warn:
+        # a serialization error must not break persistence of the rest of state.
+        if self._gambler_sizing is not None:
+            try:
+                state.gambler_state = self._gambler_sizing.to_dict()
+            except Exception as e:
+                logger.warning(f"[AP-14] Gambler persist failed: {e}")
+
+        if self._failure_memory is not None:
+            try:
+                state.failure_memory_state = self._failure_memory.to_dict()
+            except Exception as e:
+                logger.warning(f"[AP-14] FailureMemory persist failed: {e}")
+
+        if self._confidence_scorer is not None:
+            try:
+                state.confidence_scorer_state = self._confidence_scorer.to_dict()
+            except Exception as e:
+                logger.warning(f"[AP-14] ConfidenceScorer persist failed: {e}")
+
+        if self._mode_ttl_dict is not None:
+            try:
+                # Snapshot keys with non-None values (None entries are clears, not state).
+                state.mode_ttl_state = {
+                    k: v for k, v in self._mode_ttl_dict.items() if v is not None
+                }
+            except Exception as e:
+                logger.warning(f"[AP-14] mode_ttl persist failed: {e}")
 
         state_json = json.dumps(state.to_dict())
         
@@ -335,7 +430,67 @@ class HotRestartPersistence:
                 except Exception as e:
                     logger.error(f"Failed to load state: {e}")
                     return None
-    
+
+    def restore_governors(self, state: SystemState) -> Dict[str, bool]:
+        """[AP-14] Restore registered governors from a loaded state.
+
+        Call this after load() to push persisted gambler / failure_memory /
+        confidence_scorer / mode_ttl state into the live components that
+        were registered via the matching set_X() methods.
+
+        Each component's restore is independent — one failure does not block
+        the rest. Returns a dict of {component_name: success_bool} for
+        operator visibility.
+        """
+        results: Dict[str, bool] = {}
+
+        if self._gambler_sizing is not None:
+            try:
+                self._gambler_sizing.from_dict(state.gambler_state or {})
+                n = len(state.gambler_state.get("bet_timestamps", []))
+                logger.info(
+                    f"[AP-14] Gambler state restored: "
+                    f"{n} bet timestamp(s) (cooldown / weekly limit preserved)"
+                )
+                results["gambler"] = True
+            except Exception as e:
+                logger.warning(f"[AP-14] Gambler restore failed: {e}")
+                results["gambler"] = False
+
+        if self._failure_memory is not None:
+            try:
+                self._failure_memory.from_dict(state.failure_memory_state or {})
+                results["failure_memory"] = True
+            except Exception as e:
+                logger.warning(f"[AP-14] FailureMemory restore failed: {e}")
+                results["failure_memory"] = False
+
+        if self._confidence_scorer is not None:
+            try:
+                self._confidence_scorer.from_dict(state.confidence_scorer_state or {})
+                results["confidence_scorer"] = True
+            except Exception as e:
+                logger.warning(f"[AP-14] ConfidenceScorer restore failed: {e}")
+                results["confidence_scorer"] = False
+
+        if self._mode_ttl_dict is not None:
+            try:
+                # Mutate the runner's existing dict in place so its reference
+                # stays valid. Clear first to remove any stale-from-init entries.
+                self._mode_ttl_dict.clear()
+                self._mode_ttl_dict.update(state.mode_ttl_state or {})
+                if state.mode_ttl_state:
+                    logger.info(
+                        f"[AP-14] mode_ttl restored: "
+                        f"{len(state.mode_ttl_state)} active TTL entry(s)"
+                    )
+                results["mode_ttl"] = True
+            except Exception as e:
+                logger.warning(f"[AP-14] mode_ttl restore failed: {e}")
+                results["mode_ttl"] = False
+
+        return results
+
     def validate_against_exchange(
         self,
         exchange_positions: Dict[str, Dict],

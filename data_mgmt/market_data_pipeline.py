@@ -996,6 +996,53 @@ class MarketDataPipeline:
                 raw["regime_state"] = smoothed_regime
             raw["_regime_raw"] = _raw_regime
 
+            # ─── [AP-6] / [AP-7] REGIME-CONDITIONAL SIGN-FLIP ─────────────
+            # Per §P40 IC findings (BTC) extended to BB/meanrev/momentum families.
+            # Sign multiplier per regime; |IC|<0.10 + N<50 attenuates weight.
+            # In regimes where empirical IC is negative, FLIP the contrarian
+            # signal sign. Dormant regimes (PANIC/EXTREME/MOMENTUM) get 0.5x
+            # safety dampener — GMM is unverified there per regime-drift v2.
+            _ap6_rules = {
+                # regime: (sign, weight) — sign is multiplier on raw contrarian RSI
+                "TRENDING_BULL":      (+1, 1.0),
+                "TRENDING_BEAR":      (+1, 1.0),
+                "VOLATILE_CHOP":      (+1, 1.0),
+                "REVERSAL":           (+1, 1.0),
+                "WEAK_CONSOLIDATION": ( 0, 0.0),  # |IC|=0.096 < 0.10 -> noise, drop
+                "QUIET_ACCUMULATION": (-1, 0.5),  # IC sign flips, N=31 < 50 -> halve
+                "STEADY_UPTREND":     ( 0, 0.0),  # |IC|=0.032 -> noise
+                "NEUTRAL_DRIFT":      (+1, 0.5),  # no per-regime IC; conservative dampen
+                "MOMENTUM_RALLY":     (+1, 0.5),  # dormant -> safety dampen
+                "EXTREME_VOLATILITY": (+1, 0.5),  # dormant
+                "PANIC_SELLOFF":      (+1, 0.5),  # dormant
+            }
+            _ap6_sign, _ap6_weight = _ap6_rules.get(gmm_regime_name or "", (+1, 0.5))
+            _rsi_extreme = (_rsi < 30) or (_rsi > 70)
+            if _rsi_extreme and (_ap6_sign != 1 or _ap6_weight != 1.0):
+                _rsi_sig_pre = rsi_sig
+                rsi_sig = rsi_sig * _ap6_sign * _ap6_weight
+                logger.debug(
+                    f"[AP-6] {asset} regime={gmm_regime_name} rsi={_rsi:.1f} "
+                    f"sig {_rsi_sig_pre:+.3f} -> {rsi_sig:+.3f} "
+                    f"(sign={_ap6_sign:+d} w={_ap6_weight:.2f})"
+                )
+
+            # [AP-7] BB family: same regime rules (mean-reversion family per §P41)
+            _ap7_mr_rules = {
+                "WEAK_CONSOLIDATION": (-1, 0.5),  # mean-rev family flips per ETH 100% sign-flip
+                "QUIET_ACCUMULATION": (-1, 0.5),
+                "STEADY_UPTREND":     ( 0, 0.0),
+                # Other regimes default contrarian
+            }
+            _bb_sign, _bb_weight = _ap7_mr_rules.get(gmm_regime_name or "", (+1, 1.0))
+            if abs(bb_sig) > 1e-6 and (_bb_sign != 1 or _bb_weight != 1.0):
+                _bb_sig_pre = bb_sig
+                bb_sig = bb_sig * _bb_sign * _bb_weight
+                logger.debug(
+                    f"[AP-7] {asset} regime={gmm_regime_name} BB "
+                    f"sig {_bb_sig_pre:+.3f} -> {bb_sig:+.3f}"
+                )
+
             # ─── [N3] CONSISTENCY SCORING ────────────────────────────────────
             # Check what % of recent bars met signal threshold (Munger pattern).
             # More robust than single-bar check — reduces noise.

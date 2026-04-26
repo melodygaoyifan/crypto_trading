@@ -613,6 +613,7 @@ class KrakenRESTClient:
             # Order matters: bump ratchet first (likely cause), then reload
             # clock as fallback. Production logs on 2026-04-25 showed nonce
             # errors that single load_time_difference() couldn't fix.
+            attempt_errors: List[str] = []
             for attempt in range(3):
                 try:
                     self._request_count += 1
@@ -626,6 +627,34 @@ class KrakenRESTClient:
                 except Exception as e:
                     self._error_count += 1
                     _err_str = str(e)
+                    # Build a verbose, non-truncating error description. ccxt's
+                    # default str(e) on auth errors is just the URL — actual
+                    # Kraken response (EAPI:..., {"error":[...]}, etc.) lives in
+                    # e.args. Concatenate every arg so the response body shows.
+                    _arg_parts: List[str] = []
+                    for _a in (getattr(e, "args", ()) or ()):
+                        try:
+                            _s = _a if isinstance(_a, str) else repr(_a)
+                        except Exception:
+                            _s = "<unrepr>"
+                        if _s and _s not in _arg_parts:
+                            _arg_parts.append(_s)
+                    _cause_chain = ""
+                    _ce = getattr(e, "__cause__", None) or getattr(e, "__context__", None)
+                    if _ce is not None and _ce is not e:
+                        _cause_chain = f" | caused_by={type(_ce).__name__}: {_ce}"
+                    _verbose = (
+                        f"{type(e).__name__}: str={_err_str!r} "
+                        f"args=[{' || '.join(_arg_parts) if _arg_parts else '<empty>'}]"
+                        f"{_cause_chain}"
+                    )
+                    attempt_errors.append(f"attempt{attempt + 1}={_verbose}")
+                    # Per-attempt visibility — without this the operator only
+                    # sees the final summary and can't tell whether attempts
+                    # 1+2 had the same root cause as attempt 3.
+                    logger.warning(
+                        f"[KrakenREST] Dead-man attempt {attempt + 1}/3 failed: {_verbose}"
+                    )
                     if "Invalid nonce" in _err_str:
                         if attempt == 0:
                             new_ratchet = self._bump_nonce_past_error(60)
@@ -647,14 +676,18 @@ class KrakenRESTClient:
                                 continue
                             except Exception as _td_err:
                                 logger.error(
-                                    f"[KrakenREST] load_time_difference failed: {_td_err}"
+                                    f"[KrakenREST] load_time_difference failed: "
+                                    f"{type(_td_err).__name__}: {_td_err!r}"
                                 )
                     # Propagate the failure cause so DeadManSwitch.refresh()
                     # can surface it in the WARNING/CRITICAL log instead of
-                    # generic "Refresh FAILED".
-                    self._last_dead_man_error = f"{type(e).__name__}: {e!r}"
+                    # generic "Refresh FAILED". Carry every attempt's error
+                    # so the operator sees the full sequence in one line.
+                    self._last_dead_man_error = " ; ".join(attempt_errors)
                     logger.error(
-                        f"[KrakenREST] Dead-man switch failed: {self._last_dead_man_error}"
+                        f"[KrakenREST] Dead-man switch failed after {attempt + 1} attempt(s): "
+                        f"{self._last_dead_man_error}\n"
+                        f"Final traceback:\n{traceback.format_exc()}"
                     )
                     return False
 

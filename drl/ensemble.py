@@ -99,12 +99,16 @@ class TQCInference:
         tqc_path: Optional[str] = None,
         feature_cols: Optional[List[str]] = None,
         device: str = "auto",
+        asset: Optional[str] = None,
         # Ignored backward compat params
         dt_path: Optional[str] = None,
         dt_mode: str = "DISABLED",
     ):
         self.feature_cols = feature_cols or []
         self.dt_mode = "DISABLED"
+        # [AP-12] Asset tag for unrounded inference log; falls back to "?" if caller
+        # doesn't supply it (drl_drift validation script uses load_best_model which does).
+        self._asset = asset or "?"
 
         self._tqc_model = None
         self._obs_buffer: deque = deque(maxlen=N_STACK)
@@ -246,6 +250,18 @@ class TQCInference:
         else:
             _adj_conf = _base_conf
 
+        # [AP-12] Unrounded DRL inference log. Counterpart to the rounded
+        # [BEST_OF_N_HOLD_OVERRIDE] punch-through log in integration_v36 which
+        # uses :.2f and made TEST 5 of the drift-validation suite read as
+        # COLLAPSED. Logged here at the predict() return site so operators have
+        # ground-truth precision when auditing live behavior.
+        if self._tqc_model is not None:
+            logger.info(
+                f"[DRL_INFERENCE] {self._asset} "
+                f"dir={tqc_action:+.4f} conf={_adj_conf:+.4f} "
+                f"unc={tqc_uncertainty:.4f} regime={regime}"
+            )
+
         return TQCResult(
             action=tqc_action,
             tqc_action=tqc_action,
@@ -304,6 +320,7 @@ def load_best_model(
         tqc_path=tqc_path,
         feature_cols=feature_cols,
         device=device,
+        asset=asset,
     )
 
     logger.info(f"TQC[{asset}]: {'READY' if tqc.tqc_available else 'NOT FOUND'}")

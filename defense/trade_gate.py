@@ -636,26 +636,13 @@ class TradeGate:
                 details=details
             )
         
-        # Gate 3: Edge Filter (Part 4)
-        # [VC-1] Skip when Constitution alpha_gate already passed (avoids duplicate check)
-        _alpha_gate_passed = kwargs.get('alpha_gate_passed', False)
-        if not _alpha_gate_passed:
-            fee_bps = (self.config.kraken_maker_fee_bps if self.config.use_maker_fee
-                       else self.config.kraken_taker_fee_bps)
-            edge_multiplier = self._get_min_edge_multiplier(proposal.asset, proposal.side)
-            min_edge = edge_multiplier * (
-                fee_bps +
-                self.config.slippage_bps +
-                self.config.latency_cost_bps
-            )
-            details['min_edge_multiplier'] = edge_multiplier
-
-            if float(proposal.expected_alpha_bps) < min_edge:
-                details['min_edge_bps'] = min_edge
-                details['expected_alpha_bps'] = float(proposal.expected_alpha_bps)
-                return self._reject(RejectReason.INSUFFICIENT_EDGE, details)
-        else:
-            details['gate3_skipped'] = 'alpha_gate_passed'
+        # Gate 3: Edge Filter — [AP-2] DEPRECATED.
+        # Constitution alpha_gate (engine.decide()) already runs the same
+        # 1.5*(fee+slippage+latency) check. Running it again here was
+        # redundant and produced duplicate rejection of trades that
+        # already passed Constitution. VC-1 had already gated this on
+        # alpha_gate_passed kwarg; AP-2 makes the skip unconditional.
+        details['gate3_skipped'] = '[AP-2] superseded by Constitution alpha gate'
         
         # Gate 4: DRL Constraints (Part 7)
         drl_allowed, adjusted_drl_weight, drl_reason = self.drl_enforcer.evaluate(

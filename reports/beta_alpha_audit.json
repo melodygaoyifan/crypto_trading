@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-04-12T04:40:05.361699+00:00",
+  "timestamp": "2026-04-12T05:03:03.635532+00:00",
   "num_trades": 18,
   "verdict": "ALPHA_ONLY_REASONABLE",
   "explanation": "Low beta and correlation \u2192 strategy returns largely independent of market direction",
@@ -18,7 +18,7 @@
     "ETH_vs_BTC": {
       "beta": 1.2233,
       "correlation": 0.9068,
-      "downside_beta": 1.258,
+      "downside_beta": 1.2581,
       "upside_capture": 1.18,
       "downside_capture": 1.197,
       "bars": 719,
@@ -27,16 +27,16 @@
     "SOL_vs_BTC": {
       "beta": 1.2668,
       "correlation": 0.8697,
-      "downside_beta": 1.3465,
+      "downside_beta": 1.3469,
       "upside_capture": 1.236,
-      "downside_capture": 1.299,
+      "downside_capture": 1.298,
       "bars": 719,
       "risk_level": "EXTREME"
     },
     "BTC_vs_Basket": {
       "beta": 0.7846,
       "correlation": 0.9543,
-      "downside_beta": 0.7772,
+      "downside_beta": 0.7771,
       "bars": 719,
       "risk_level": "HIGH"
     },
@@ -50,7 +50,7 @@
     "SOL_vs_Basket": {
       "beta": 1.1485,
       "correlation": 0.9603,
-      "downside_beta": 1.1582,
+      "downside_beta": 1.1583,
       "bars": 719,
       "risk_level": "EXTREME"
     }
