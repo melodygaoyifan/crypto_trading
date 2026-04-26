@@ -258,6 +258,26 @@ the AttributeError as a top-level FAILED. **The CI gate cannot catch
 attribute-access-outside-try/except**; this requires either operator
 discipline or a separate scanner pass (filed for future P-entry).
 
+**Rule 4: When adding a new helper method, grep `def <name>` FIRST.**
+P87 (commit 088b865) hit a method-collision-shadows bug — added a new
+`_clamp_size_to_balance` method to `execution_manager.py:601`, but a
+PRE-EXISTING method with the same name lived at `:1545` with a
+different signature (4 args returning float vs 5 args returning tuple).
+Python silently picks the LAST definition, so callers expecting the
+new signature got the old one → `TypeError: takes from 4 to 5 positional
+arguments but 6 were given` on every entry attempt → 4-minute
+production outage. The hotfix renamed to `_v2`. Lesson: long files
+(execution_manager.py is 2400+ lines) make manual scanning unreliable;
+EXPLICIT `grep "def <name>"` before adding any non-trivial helper
+catches collisions at write time. Add to the standard pre-commit
+mental checklist alongside the parallel-edit rules above.
+
+**The CI gate cannot catch this either** — both methods are valid
+Python; collision only fails at call time when callers expect
+different signatures. Filed under "static analysis can't see
+method-resolution-order bugs"; remediation is purely operator
+discipline + the grep habit.
+
 ---
 
 ## Known Pitfalls (source of repeat bugs — read this before deploying)
@@ -265,6 +285,22 @@ discipline or a separate scanner pass (filed for future P-entry).
 > **History:** Detailed P-entries older than the last ~30 days have been moved to [archive/CLAUDE_history.md](archive/CLAUDE_history.md) to keep this file scannable. The summaries below + the foundational invariants (P1-P8) are what every session should load.
 
 ### Recent pitfalls (last ~30 days)
+
+### P87. [FIXED 2026-04-26] Dynamic balance check at order layer + method-collision hotfix
+- **Why:** Operator pointed out that P86's stop-loss balance check wasn't enough. The system places multiple orders per 4H tick (1 entry per asset × 3 assets = 3+ orders); each order consumes balance dynamically. Position sizing is computed against TOTAL account equity, NOT against the live changing free balance. Result: 2nd/3rd order in a tick can exceed actual spot capital → Kraken rejects `EOrder:Insufficient funds` → P79 short-circuits PERMANENT → entry FAILS → phantom-position cascade where the system thinks position opened (intent registered) but actually didn't, then attempts stop on phantom → cascade of CRITICAL alerts.
+- **Fix (commit 088b865):** new `_clamp_size_to_balance_v2` helper called from `execute_order` after dry_run check, before order placement. Fetches `exchange.fetch_balance()` per order, returns `(clamped_size, diagnostic_msg)`:
+  - BUY: needs quote (USD/USDT) ≥ size × price + 40bps fee buffer; uses 99.6% of free quote as max-affordable. For MARKET orders without price, estimates via fetch_ticker.
+  - SELL: needs base ≥ size + 20bps lot/fee buffer; uses 99.8% of free base.
+  - Clamped → WARN log with both `free` AND `used` (held by other orders) + 3-hypothesis cause list ("prior order this tick consumed", "funds moved to derivatives/staking", "position-size config exceeds spot capital").
+  - Clamps to 0 → REJECT with explicit operator guidance.
+- **Hotfix (commit eb84b9e — see Lesson Rule 4 above):** initial P87 caused a 4-minute outage because `_clamp_size_to_balance` was the name of a PRE-EXISTING method at `execution_manager.py:1545` with a different signature (4 args returning float). Python silently picked the LAST definition → `TypeError: takes from 4 to 5 positional arguments but 6 were given` on every entry attempt. Hotfix renamed to `_v2`; old method left in place with its 2 existing callers untouched. Future cleanup: merge the two methods into one with the richer return signature.
+- **Result:** entries that would have failed with `EOrder:Insufficient funds` now either succeed with a clamped size (logged via `[ORDER-BALANCE]` WARN) or REJECT early with explicit guidance. Combined with P86 (stop-loss balance check), both ENTRY and EXIT sides of every order validate against live spot balance before reaching Kraken. Phantom-position cascades are structurally prevented at both ends.
+- **Mitigation pattern:** any code path that mutates external resources (places orders, sends webhooks, writes to shared state) needs the same shape — defensive fetch + clamp + diagnostic log. The pattern was added per-site in P86 and P87; future similar paths should reuse the helpers OR follow the same template (fetch live state → compute requirement → return `(clamped_value, reason)` → caller logs WARN if clamped, REJECTS if zeroed).
+
+### P86. [FIXED 2026-04-26] Stop-loss `EOrder:Insufficient funds` — actual fetch_balance() check
+- **Why:** P83 fixed the order-shape (Kraken accepted the request structurally) but Kraken still rejected with `EOrder:Insufficient funds`. P84's blanket 0.5% size buffer was sized for fee/rounding shortfalls, NOT for operator-induced moves like "moved $1000 to derivatives" that drop the spot wallet's free SOL by 1.7% from intended position size.
+- **Fix (commit 6db05eb):** `fetch_balance()` before placing the stop, clamp size to `free[base] × 0.998` for SELL or `free[quote] × 0.996 / trigger_price` for BUY. Same defensive shape as P87 (which generalizes the pattern to all orders).
+- **Mitigation:** stop-loss size now lives on the LIVE Kraken spot wallet, not a stale config-derived value.
 
 ### P85. [EMERGENCY 2026-04-26] ShadowLedgerWriter.frozen_allocations missing → 10 container restarts in 6 min
 - **Symptom:** Engine refused to start LIVE. Each startup attempt crashed in `_reconcile_orders` with `'ShadowLedgerWriter' object has no attribute 'frozen_allocations'`. Reconciler marked ORDER_CHECK as FAILED; main.py's strict contract refused to start LIVE per `LIVE mode requires successful startup reconciliation`. Process exited; docker-compose `restart: always` re-launched; cycle repeated.
