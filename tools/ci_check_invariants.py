@@ -34,6 +34,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 BASELINES_DIR = REPO_ROOT / "tools" / "scanner_baselines"
 AUTHORITY_BASELINE = BASELINES_DIR / "authority_consistency_baseline.json"
 SILENT_BASELINE = BASELINES_DIR / "silent_failure_baseline.json"
+SWALLOW_BASELINE = BASELINES_DIR / "silent_swallow_baseline.json"
 
 
 def _run_scanner(args: List[str]) -> Dict[str, Any]:
@@ -165,6 +166,28 @@ def _normalize_silent(raw: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _normalize_swallow(raw: Dict[str, Any]) -> Dict[str, Any]:
+    """Silent-swallow lint output → comparable counts.
+
+    Unannotated silent-except blocks. Bucketed by kind so a regression
+    in one category surfaces independently. Files-with-findings count
+    tracked separately so refactors that consolidate sites without
+    fixing them don't accidentally go green.
+    """
+    findings = raw.get("findings") or []
+    return {
+        "total_count": len(findings),
+        "by_kind": {
+            "pass": sum(1 for f in findings if f.get("kind") == "pass"),
+            "debug": sum(1 for f in findings if f.get("kind") == "debug"),
+            "no-log-early-exit": sum(
+                1 for f in findings if f.get("kind") == "no-log-early-exit"
+            ),
+        },
+        "files_with_findings": len({f.get("file") for f in findings}),
+    }
+
+
 def _diff(label: str, baseline: Any, current: Any) -> List[str]:
     """Return list of human-readable diffs (empty = clean)."""
     diffs: List[str] = []
@@ -229,6 +252,13 @@ def main() -> int:
     ])
     silent_norm = _normalize_silent(silent_raw)
 
+    print("[ci_check] running lint_silent_swallow...", file=sys.stderr)
+    swallow_raw = _run_scanner([
+        "tools/lint_silent_swallow.py",
+        "--json",
+    ])
+    swallow_norm = _normalize_swallow(swallow_raw)
+
     if args.update:
         AUTHORITY_BASELINE.write_text(
             json.dumps(auth_norm, indent=2, sort_keys=True), encoding="utf-8"
@@ -236,28 +266,39 @@ def main() -> int:
         SILENT_BASELINE.write_text(
             json.dumps(silent_norm, indent=2, sort_keys=True), encoding="utf-8"
         )
+        SWALLOW_BASELINE.write_text(
+            json.dumps(swallow_norm, indent=2, sort_keys=True), encoding="utf-8"
+        )
         print(
             f"[ci_check] baselines updated:\n"
             f"  - {AUTHORITY_BASELINE.relative_to(REPO_ROOT)}\n"
-            f"  - {SILENT_BASELINE.relative_to(REPO_ROOT)}",
+            f"  - {SILENT_BASELINE.relative_to(REPO_ROOT)}\n"
+            f"  - {SWALLOW_BASELINE.relative_to(REPO_ROOT)}",
             file=sys.stderr,
         )
         return 0
 
-    if not AUTHORITY_BASELINE.exists() or not SILENT_BASELINE.exists():
+    missing = [
+        p.name for p in (AUTHORITY_BASELINE, SILENT_BASELINE, SWALLOW_BASELINE)
+        if not p.exists()
+    ]
+    if missing:
         print(
-            "[ci_check] no baseline files yet. Run with --update to seed.",
+            f"[ci_check] no baseline files yet for: {missing}. "
+            f"Run with --update to seed.",
             file=sys.stderr,
         )
         return 2
 
     auth_baseline = json.loads(AUTHORITY_BASELINE.read_text(encoding="utf-8"))
     silent_baseline = json.loads(SILENT_BASELINE.read_text(encoding="utf-8"))
+    swallow_baseline = json.loads(SWALLOW_BASELINE.read_text(encoding="utf-8"))
 
     auth_diffs = _diff("authority", auth_baseline, auth_norm)
     silent_diffs = _diff("silent", silent_baseline, silent_norm)
+    swallow_diffs = _diff("swallow", swallow_baseline, swallow_norm)
 
-    if not auth_diffs and not silent_diffs:
+    if not auth_diffs and not silent_diffs and not swallow_diffs:
         print("[ci_check] OK — no new findings vs baseline.", file=sys.stderr)
         return 0
 
@@ -268,11 +309,17 @@ def main() -> int:
         print(f"  {d}")
     for d in silent_diffs:
         print(f"  {d}")
+    for d in swallow_diffs:
+        print(f"  {d}")
     print("=" * 70)
     print(
         "If these are intentional, re-baseline:\n"
         "  python -X utf8 tools/ci_check_invariants.py --update\n"
-        "and commit the updated tools/scanner_baselines/*.json files."
+        "and commit the updated tools/scanner_baselines/*.json files.\n"
+        "\n"
+        "If new silent-swallow findings: either annotate with\n"
+        "`# noqa: silent-swallow` (intentional) or convert the swallow into\n"
+        "a logger.warning/error call with type(e).__name__ + context."
     )
 
     return 0 if args.diff_only else 1

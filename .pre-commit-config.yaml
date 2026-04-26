@@ -1,0 +1,42 @@
+# HMATS pre-commit hooks. Optional convenience for developers — the
+# AUTHORITATIVE enforcement is the GitHub Actions CI gate (which runs
+# the same checks against a frozen baseline). Install locally with:
+#
+#   pip install pre-commit
+#   pre-commit install
+#
+# Then every `git commit` runs the hooks below on staged files only.
+#
+# To skip a hook for a single commit (use sparingly):
+#   git commit --no-verify
+#
+# Why optional + non-blocking on staged scope:
+#   The codebase has 425 pre-existing silent-swallow blocks (P70 baseline).
+#   Blocking on the full count would block every commit. Instead the local
+#   hook scans only STAGED files and reports — it's an early-warning
+#   system, not a hard gate. The CI baseline is what actually blocks
+#   regressions.
+
+repos:
+  - repo: local
+    hooks:
+      - id: silent-swallow-staged
+        name: silent-swallow lint (staged files only)
+        entry: python -X utf8 tools/lint_silent_swallow.py --staged
+        language: system
+        types: [python]
+        pass_filenames: false
+        # Prints findings but doesn't fail commit — local early warning.
+        # CI gate enforces that totals don't increase.
+        verbose: true
+        stages: [pre-commit]
+
+      - id: ci-invariants-quick-check
+        name: ci_check_invariants (full scanner suite, ~3-5s)
+        entry: python -X utf8 tools/ci_check_invariants.py --diff-only
+        language: system
+        pass_filenames: false
+        # Runs FULL scanner suite locally + diffs vs baseline. --diff-only
+        # exits 0 always; output is informational. The CI gate enforces.
+        verbose: true
+        stages: [pre-push]

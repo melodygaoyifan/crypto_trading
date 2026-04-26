@@ -27,15 +27,13 @@
     "MAX_LEVERAGE": {
       "drift_values": [
         "2",
-        "2.0",
         "3"
       ],
       "expected": "3.0"
     },
     "WEEKEND_MIN_ALPHA_MULTIPLIER": {
       "drift_values": [
-        "0.9",
-        "2.0"
+        "0.9"
       ],
       "expected": "1.0"
     },
