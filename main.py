@@ -5693,9 +5693,21 @@ class HMATSProductionRunner:
                 _cascade_phase = _cascade_status.get("phase", "NONE")
                 market_data["cascade_phase"] = _cascade_phase
                 if _cascade_phase not in ("NONE", "STOP"):
+                    # P88: was `_cascade_status.get('intensity', 0)` — but
+                    # `cascade_exhaustion_governor.get_status()` puts intensity
+                    # at `["current_metrics"]["cascade_intensity"]`, NOT at the
+                    # top level. The default-0 fallback meant the operator log
+                    # always showed `intensity=0.00` even during real cascades
+                    # — silent metric misreporting. Per P85 discipline rule 2
+                    # use defensive nested `.get()` chain so a future schema
+                    # change (e.g., metrics restructured) gracefully degrades
+                    # to 0 instead of KeyError.
+                    _cascade_intensity = (
+                        _cascade_status.get("current_metrics", {}) or {}
+                    ).get("cascade_intensity", 0.0)
                     logger.info(
                         f"[V10A] CascadeGovernor {asset}: phase={_cascade_phase}, "
-                        f"intensity={_cascade_status.get('intensity', 0):.2f}"
+                        f"intensity={_cascade_intensity:.2f}"
                     )
             except Exception as _e:
                 logger.debug(f"[V10A] CascadeGovernor update skipped: {_e}")
