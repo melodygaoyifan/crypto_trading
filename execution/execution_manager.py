@@ -1670,27 +1670,36 @@ class ExecutionManager:
             #   EGeneral:Invalid arguments:ordertype
             # because Kraken's valid ordertype literals are 'market',
             # 'limit', 'stop-loss' (HYPHENATED), 'take-profit', etc.
-            # The previous `type='stop'` produced an invalid `ordertype`
-            # field on the wire. Plus `params={'stopPrice': ...}` was a
-            # Binance-style residue — Kraken takes the trigger in the
-            # standard `price` arg, not as a separate stopPrice param.
             #
             # P80 2026-04-26: Kraken then rejected `EGeneral:Invalid
-            # arguments:price` because raw float prices like 86.6912345
-            # exceed SOL/USD's pair_decimals=2 precision. ccxt's
-            # `price_to_precision` rounds to the pair's tick-size; same
-            # for `amount_to_precision` and the lot-step. Without these
-            # the order silently fails. Apply BOTH normalizations before
-            # sending — they're cheap and Kraken-safe.
+            # arguments:price` — first hypothesis was tick-size
+            # precision, fix was `float(price_to_precision(...))`.
             #
-            # The unified `type='stop-loss'` is what ccxt's Kraken
-            # implementation expects. Belt-and-suspenders: also pass
-            # `ordertype='stop-loss'` in params so a future ccxt version
-            # that changes the unified-type mapping can't silently break
-            # the Kraken wire format.
+            # P82 2026-04-26: P80 didn't actually solve it. Two reasons
+            # found by tracing the live order at 21:47:04:
+            #   (a) The float round-trip (`float(price_to_precision(...))`)
+            #       can re-introduce decimals — float repr of "79071.3"
+            #       might become 79071.30000000001 on some platforms,
+            #       and ccxt then re-stringifies adding noise digits.
+            #       Fix: pass the STRING directly to create_order. ccxt
+            #       accepts both, but the string form is byte-exact what
+            #       Kraken receives.
+            #   (b) Pre-flight side-vs-market validation. For a SHORT
+            #       stop-loss (BUY-back), the stop price MUST be ABOVE
+            #       current market. For a LONG stop-loss (SELL), BELOW.
+            #       If the upstream price calc produces a wrong-side
+            #       value (e.g. fast market move between entry and stop
+            #       placement), Kraken rejects with the same `Invalid
+            #       arguments:price` error. We catch this BEFORE sending
+            #       so the operator sees the actual diagnostic vs a
+            #       generic API rejection.
             try:
-                _norm_price = float(self.exchange.price_to_precision(symbol, stop_price))
-                _norm_size = float(self.exchange.amount_to_precision(symbol, size))
+                _norm_price_str = self.exchange.price_to_precision(symbol, stop_price)
+                _norm_size_str = self.exchange.amount_to_precision(symbol, size)
+                # Keep float forms for our pre-flight checks below; pass
+                # the STRINGS to create_order to avoid float repr noise.
+                _norm_price = float(_norm_price_str)
+                _norm_size = float(_norm_size_str)
             except Exception as _norm_e:  # noqa: silent-swallow
                 # If precision lookup fails (markets not loaded, exotic pair),
                 # fall back to raw values. The classifier will surface a
@@ -1700,14 +1709,65 @@ class ExecutionManager:
                     f"[STOP-PRECISION] {symbol}: price/amount precision lookup "
                     f"failed ({type(_norm_e).__name__}: {_norm_e}); sending raw"
                 )
+                _norm_price_str = str(stop_price)
+                _norm_size_str = str(size)
                 _norm_price, _norm_size = stop_price, size
 
+            # Pre-flight side-vs-market validation. Probe current price
+            # via fetch_ticker if the markets dict doesn't carry a 'last'.
+            # Defensive: if we can't get current price, skip the check
+            # and let Kraken decide.
+            try:
+                _ticker = self.exchange.fetch_ticker(symbol)
+                _market_price = float(_ticker.get('last') or _ticker.get('close') or 0)
+            except Exception as _t_e:  # noqa: silent-swallow
+                self.logger.debug(
+                    f"[STOP-PREFLIGHT] {symbol}: ticker probe failed "
+                    f"({type(_t_e).__name__}: {_t_e}); skipping side check"
+                )
+                _market_price = 0.0
+            if _market_price > 0:
+                _side_lower = side.value.lower()
+                if _side_lower == 'buy' and _norm_price <= _market_price:
+                    msg = (
+                        f"stop-loss BUY (close-short) price ${_norm_price:,.4f} "
+                        f"is NOT above current market ${_market_price:,.4f} — "
+                        f"would trigger immediately. Kraken rejects this. "
+                        f"Likely cause: position moved against us between entry "
+                        f"and stop placement, OR upstream stop calc used a "
+                        f"stale entry price. Skipping API call."
+                    )
+                    self.logger.error(f"[STOP-PREFLIGHT] {symbol}: {msg}")
+                    return OrderResult(
+                        success=False, symbol=symbol, order_type='stop-loss',
+                        status=OrderStatus.REJECTED,
+                        error_message=f"PREFLIGHT_WRONG_SIDE: {msg}",
+                    )
+                if _side_lower == 'sell' and _norm_price >= _market_price:
+                    msg = (
+                        f"stop-loss SELL (close-long) price ${_norm_price:,.4f} "
+                        f"is NOT below current market ${_market_price:,.4f} — "
+                        f"would trigger immediately. Kraken rejects this. "
+                        f"Skipping API call."
+                    )
+                    self.logger.error(f"[STOP-PREFLIGHT] {symbol}: {msg}")
+                    return OrderResult(
+                        success=False, symbol=symbol, order_type='stop-loss',
+                        status=OrderStatus.REJECTED,
+                        error_message=f"PREFLIGHT_WRONG_SIDE: {msg}",
+                    )
+
+            self.logger.info(
+                f"[STOP-WIRE] {symbol} {side.value.lower()}: sending "
+                f"price={_norm_price_str!r} amount={_norm_size_str!r} "
+                f"(raw price={stop_price}, market={_market_price or 'n/a'})"
+            )
             order = self.exchange.create_order(
                 symbol=symbol,
                 type='stop-loss',
                 side=side.value.lower(),
-                amount=_norm_size,
-                price=_norm_price,  # Kraken: trigger price for stop-loss
+                amount=_norm_size_str,    # string form — byte-exact to wire
+                price=_norm_price_str,    # string form — byte-exact to wire
                 params={
                     'userref': userref,
                     'ordertype': 'stop-loss',  # explicit override
