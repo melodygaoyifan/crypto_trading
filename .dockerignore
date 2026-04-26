@@ -37,6 +37,13 @@ training/train_*.py
 # glob matches train_exit_sac.py.
 !training/exit_drl
 !training/exit_drl/**
+# Sentiment v2.2 — runtime needs the class definitions to unpickle
+# models/sentiment_v22_best.pt (P5 __main__ alias pattern, see
+# agents/sentiment_deberta.py:54-60). Keep the training/sentiment/ exclude
+# above; re-include just the two files the runtime imports. The .pt/.pkl
+# excludes below still apply, so the 748MB checkpoint stays out of the image.
+!training/sentiment/__init__.py
+!training/sentiment/train_sentiment_agent_v22.py
 training/**/*.pt
 training/**/*.pkl
 training/**/*.zip
