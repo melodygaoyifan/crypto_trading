@@ -1922,12 +1922,24 @@ class MarketDataPipeline:
         asset = raw.get("asset", "?")
 
         # [Phase 3] GMM cache
+        # P74: was `_last_bar_ts = closes[-1] if n > 0 else 0` — closes[-1]
+        # is a CLOSE PRICE, not a timestamp. The override at the next line
+        # (TA cache last_ts) only saved cache validity in steady state; on
+        # first call before TA cache populated, the GMM cache was keyed by
+        # close price. P41 documented "110 STALE_DATA rejections all
+        # showing identical alpha=66.36" — strong evidence of cache thrash
+        # in cold-start / regime-transition windows. Now require a real
+        # timestamp from TA cache; if absent (cold start), force cache miss
+        # by skipping the lookup. After both caches steady-state the
+        # behavior is unchanged. Found by per-script audit round-3c.
         _gmm_cache_key = f"{asset}_gmm"
-        _last_bar_ts = closes[-1] if n > 0 else 0
+        _last_bar_ts = None
         _ta_c = self._ta_cache.get(asset)
         if _ta_c:
-            _last_bar_ts = _ta_c.get("last_ts", _last_bar_ts)
-        _gmm_cached = self._ta_cache.get(_gmm_cache_key)
+            _last_bar_ts = _ta_c.get("last_ts")
+        _gmm_cached = (
+            self._ta_cache.get(_gmm_cache_key) if _last_bar_ts is not None else None
+        )
         if (_gmm_cached is not None
                 and _gmm_cached["ts"] == _last_bar_ts
                 and _gmm_cached["n"] == n):
@@ -2045,18 +2057,21 @@ class MarketDataPipeline:
             logger.debug(f"[GMM_DIAG] {asset}: Raw features: {feature_dump}")
             logger.debug(f"[GMM_DIAG] {asset}: Scaled features: {scaled_dump}")
 
-        # Store GMM cache
-        _gmm_raw_keys = {
-            "_gmm_regime_idx": raw.get("_gmm_regime_idx"),
-            "_gmm_regime_name": raw.get("_gmm_regime_name"),
-            "_gmm_probs": raw.get("_gmm_probs"),
-            "_gmm_n_extreme_features": raw.get("_gmm_n_extreme_features"),
-        }
-        self._ta_cache[_gmm_cache_key] = {
-            "ts": _last_bar_ts, "n": n,
-            "result": (confidence, regime_name),
-            "raw_keys": _gmm_raw_keys,
-        }
+        # Store GMM cache (only if we have a real timestamp from TA cache —
+        # P74: don't poison the cache with a None ts that would never match
+        # on subsequent reads).
+        if _last_bar_ts is not None:
+            _gmm_raw_keys = {
+                "_gmm_regime_idx": raw.get("_gmm_regime_idx"),
+                "_gmm_regime_name": raw.get("_gmm_regime_name"),
+                "_gmm_probs": raw.get("_gmm_probs"),
+                "_gmm_n_extreme_features": raw.get("_gmm_n_extreme_features"),
+            }
+            self._ta_cache[_gmm_cache_key] = {
+                "ts": _last_bar_ts, "n": n,
+                "result": (confidence, regime_name),
+                "raw_keys": _gmm_raw_keys,
+            }
 
         return confidence, regime_name
 
