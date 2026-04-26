@@ -1,8 +1,8 @@
 {
-  "generated_at": "2026-04-26T23:24:40.252138Z",
+  "generated_at": "2026-04-26T23:29:55.810818+00:00",
   "total_files": 368,
-  "audited_count": 48,
-  "remaining": 320,
+  "audited_count": 51,
+  "remaining": 317,
   "live_dirs": [
     "root",
     "agents",
@@ -83,7 +83,9 @@
     },
     {
       "path": "agents/risk_agent.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_SHA",
+      "round": "5a"
     },
     {
       "path": "agents/sentiment_deberta.py",
@@ -349,7 +351,9 @@
     },
     {
       "path": "core/account_sync.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_SHA",
+      "round": "5a"
     },
     {
       "path": "core/alpha_boost.py",
@@ -1017,7 +1021,9 @@
     },
     {
       "path": "liquidity/integrated_manager.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_SHA",
+      "round": "5a"
     },
     {
       "path": "liquidity/sol_dex_monitor.py",

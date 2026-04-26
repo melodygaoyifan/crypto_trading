@@ -364,8 +364,16 @@ class AccountSyncManager:
                     asyncio.to_thread(self.exchange_client.fetch_positions),
                     timeout=15.0,
                 )
-            except (asyncio.TimeoutError, Exception):
-                pass  # Positions optional for spot
+            except (asyncio.TimeoutError, Exception) as _pos_err:
+                # Positions optional for spot, but a silent swallow hid Kraken
+                # API errors (P25/P64 silent-failure pattern). Surface at WARNING
+                # so operator sees fetch_positions failures instead of a
+                # mysterious notional=0.0 in leverage calculations.
+                logger.warning(
+                    f"[ACCOUNT_SYNC] fetch_positions failed: "
+                    f"{type(_pos_err).__name__}: {_pos_err}; "
+                    f"using empty positions list (notional=0.0)"
+                )
             
             total_notional = 0.0
             unrealized_pnl = 0.0

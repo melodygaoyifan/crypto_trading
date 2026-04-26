@@ -10112,6 +10112,9 @@ class HMATSProductionRunner:
                 "TRADE_GATE",                   # main.py:10885 + freshness/DVOL paths
                 "WEEKEND",                      # main.py:10663 (intentional gate, never override)
                 "REGIME_POWER_NO_TRADE",        # main.py:11015
+                "CRITICAL drawdown",            # agents/risk_agent.py:594 — drawdown veto
+                "HALT drawdown",                # agents/risk_agent.py:601 — drawdown veto
+                "Correlation crisis",           # agents/risk_agent.py:622 — correlation veto
             }
             _sc_veto_reason = getattr(intent, 'veto_reason', '') or ''
             _sc_is_protected = any(pv in _sc_veto_reason for pv in _SC_PROTECTED_VETOES)
