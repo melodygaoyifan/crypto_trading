@@ -47,7 +47,8 @@ BACKOFF_JITTER = 0.1      # ±10% jitter
 
 
 # ---------------------------------------------------------------------------
-# Module-level nonce-state registry (P68 2026-04-26)
+# Module-level nonce-state registry (P68 2026-04-26, migrated to
+# infra.shared_state_registry helper in P77 2026-04-26)
 # ---------------------------------------------------------------------------
 # Multiple KrakenRESTClient instances with the SAME API key (e.g. main
 # execution client + dedicated dead-man-switch client per the FIX-DMS-NONCE
@@ -61,20 +62,34 @@ BACKOFF_JITTER = 0.1      # ±10% jitter
 # This registry shares the ratchet + lock across all clients with the same
 # (api_key_fingerprint, state_file_path) so concurrent in-memory mints stay
 # strictly monotonic regardless of how many client instances exist.
-class _SharedNonceState:
-    """Mutable holder shared across KrakenRESTClient instances by key fp."""
-    __slots__ = ("lock", "ratchet_ms", "dirty", "state_path", "fingerprint")
+#
+# P77 migration: the bespoke `_SharedNonceState` + `_SHARED_NONCE_STATES`
+# dict + `_SHARED_NONCE_REGISTRY_LOCK` were replaced by a single
+# `SharedRegistry[_NonceState]` from `infra.shared_state_registry`. The
+# registry guarantees identical semantics to the inline implementation
+# (per-key lock, first-init runs once, key-based holder identity) but
+# the contract is now a reusable helper rather than ad-hoc inline code.
+from dataclasses import dataclass as _dc, field as _field
+from infra.shared_state_registry import SharedRegistry, SharedHolder
 
-    def __init__(self, lock: threading.Lock, state_path: Path, fingerprint: str):
-        self.lock = lock
-        self.ratchet_ms: int = 0
-        self.dirty: bool = False
-        self.state_path = state_path
-        self.fingerprint = fingerprint
+
+@_dc
+class _NonceState:
+    """Per-key shared state. Lock lives on the SharedHolder.
+
+    state_path + fingerprint are needed by `_persist_nonce_locked` which
+    writes the multi-key state file; both are determined at first-init
+    and never change for a given key."""
+    state_path: Optional[Path] = None
+    fingerprint: str = ""
+    ratchet_ms: int = 0
+    dirty: bool = False
 
 
-_SHARED_NONCE_STATES: Dict[Tuple[str, str], _SharedNonceState] = {}
-_SHARED_NONCE_REGISTRY_LOCK = threading.Lock()
+_NONCE_REGISTRY: SharedRegistry[_NonceState] = SharedRegistry(
+    factory=_NonceState,
+    label="kraken_nonce",
+)
 
 # Check for ccxt
 CCXT_AVAILABLE = False
@@ -223,29 +238,32 @@ class KrakenRESTClient:
     @classmethod
     def _get_or_init_shared_nonce(
         cls, fingerprint: str, state_path: Path
-    ) -> "_SharedNonceState":
+    ) -> "SharedHolder[_NonceState]":
         """Look up (or lazily create) the shared nonce state for this key.
 
         Two clients with the same (fingerprint, state_path) share the same
         lock + ratchet object. First creation also loads the persisted
         ratchet from disk so the in-memory counter starts above Kraken's
         last-seen nonce.
+
+        P77 2026-04-26: routes through SharedRegistry[_NonceState] from
+        infra.shared_state_registry. Behavior identical to the prior
+        inline implementation; the registry helper just generalizes the
+        pattern.
         """
         key = (fingerprint, str(state_path.resolve()))
-        with _SHARED_NONCE_REGISTRY_LOCK:
-            existing = _SHARED_NONCE_STATES.get(key)
-            if existing is not None:
-                return existing
-            holder = _SharedNonceState(
-                lock=threading.Lock(),
-                state_path=state_path,
-                fingerprint=fingerprint,
-            )
-            holder.ratchet_ms = cls._load_persisted_nonce_static(
+
+        def _init_holder(holder: "SharedHolder[_NonceState]") -> None:
+            # First-init runs ONCE per key. Populate the per-key state
+            # fields and load the persisted ratchet from disk so the
+            # in-memory counter starts above Kraken's last-seen nonce.
+            holder.value.state_path = state_path
+            holder.value.fingerprint = fingerprint
+            holder.value.ratchet_ms = cls._load_persisted_nonce_static(
                 state_path, fingerprint
             )
-            _SHARED_NONCE_STATES[key] = holder
-            return holder
+
+        return _NONCE_REGISTRY.get_or_create(key, first_init=_init_holder)
 
     @staticmethod
     def _compute_key_fingerprint(api_key: Optional[str]) -> str:
@@ -287,26 +305,34 @@ class KrakenRESTClient:
         Caller MUST hold self._shared_nonce.lock. Writes the WHOLE state
         map so multi-key state survives. Best-effort: failures are logged
         but don't break the request path.
+
+        P77 2026-04-26: state fields live on `holder.value` (a _NonceState
+        dataclass managed by SharedRegistry); the lock lives on
+        `holder.lock`. Same semantics as P68; cleaner ownership model.
         """
-        sn = self._shared_nonce
+        nonce = self._shared_nonce.value
         try:
-            sn.state_path.parent.mkdir(parents=True, exist_ok=True)
+            nonce.state_path.parent.mkdir(parents=True, exist_ok=True)
             existing: Dict[str, Any] = {}
-            if sn.state_path.exists():
+            if nonce.state_path.exists():
                 try:
-                    with open(sn.state_path, "r") as f:
+                    with open(nonce.state_path, "r") as f:
                         existing = json.load(f) or {}
-                except Exception:
+                except Exception:  # noqa: silent-swallow
+                    # Corrupt/missing state file — start fresh. Not a
+                    # silent failure: the upstream `_persist_nonce_locked`
+                    # caller will overwrite with the current ratchet on
+                    # the next write, which restores the file.
                     existing = {}
-            existing[sn.fingerprint] = {
-                "highest_nonce_ms": int(sn.ratchet_ms),
+            existing[nonce.fingerprint] = {
+                "highest_nonce_ms": int(nonce.ratchet_ms),
                 "updated_at": int(time.time()),
             }
-            tmp = sn.state_path.with_suffix(".json.tmp")
+            tmp = nonce.state_path.with_suffix(".json.tmp")
             with open(tmp, "w") as f:
                 json.dump(existing, f, separators=(",", ":"))
-            os.replace(tmp, sn.state_path)
-            sn.dirty = False
+            os.replace(tmp, nonce.state_path)
+            nonce.dirty = False
         except Exception as e:
             logger.warning(f"[KrakenREST] Could not persist nonce state: {e}")
 
@@ -318,22 +344,24 @@ class KrakenRESTClient:
         emit duplicate nonces. Marks state dirty for periodic flush; we don't
         flush every call to avoid I/O on the hot path.
 
-        P68 2026-04-26: state lives on _shared_nonce so multiple
-        KrakenRESTClient instances with the same API key share one ratchet.
+        P77 2026-04-26: state lives on holder.value (SharedRegistry); the
+        lock lives on holder.lock. Multiple KrakenRESTClient instances
+        with the same API key share one ratchet.
         """
-        sn = self._shared_nonce
-        with sn.lock:
+        holder = self._shared_nonce
+        nonce = holder.value
+        with holder.lock:
             now_ms = int(time.time() * 1000)
-            if sn.ratchet_ms < now_ms:
-                sn.ratchet_ms = now_ms
+            if nonce.ratchet_ms < now_ms:
+                nonce.ratchet_ms = now_ms
             else:
-                sn.ratchet_ms += 1
-            sn.dirty = True
+                nonce.ratchet_ms += 1
+            nonce.dirty = True
             # Periodic flush — every ~30s of issued nonces. Cheap I/O,
             # bounds worst-case loss to one window if the process dies.
-            if sn.ratchet_ms % 30000 < 5:  # opportunistic
+            if nonce.ratchet_ms % 30000 < 5:  # opportunistic
                 self._persist_nonce_locked()
-            return sn.ratchet_ms
+            return nonce.ratchet_ms
 
     def _bump_nonce_past_error(self, seconds: int = 60) -> int:
         """Jump the nonce ratchet forward by `seconds` after a nonce error.
@@ -348,14 +376,15 @@ class KrakenRESTClient:
         Returns:
             The new ratchet value (in ms).
         """
-        sn = self._shared_nonce
-        with sn.lock:
-            sn.ratchet_ms = max(
-                sn.ratchet_ms, int(time.time() * 1000)
+        holder = self._shared_nonce
+        nonce = holder.value
+        with holder.lock:
+            nonce.ratchet_ms = max(
+                nonce.ratchet_ms, int(time.time() * 1000)
             ) + (seconds * 1000)
-            sn.dirty = True
+            nonce.dirty = True
             self._persist_nonce_locked()  # bumps are rare; flush every time
-            return sn.ratchet_ms
+            return nonce.ratchet_ms
     
     def _init_exchange(self):
         """Initialize ccxt exchange."""
@@ -400,7 +429,7 @@ class KrakenRESTClient:
                     logger.info(
                         f"[KrakenREST] Time difference pre-loaded: "
                         f"{self._exchange.options.get('timeDifference', 0)}ms; "
-                        f"nonce_ratchet={self._shared_nonce.ratchet_ms}"
+                        f"nonce_ratchet={self._shared_nonce.value.ratchet_ms}"
                     )
                 except Exception as _td_err:
                     logger.warning(f"[KrakenREST] load_time_difference failed: {_td_err}")

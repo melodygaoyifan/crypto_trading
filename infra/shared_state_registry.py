@@ -16,10 +16,13 @@ The pattern this codifies (P68 — cross-instance nonce ratchet drift):
     All instances with the same key look up the SAME state holder.
 
 The pattern has appeared (or should appear) in this codebase:
-  - infra/kraken_rest_client.py P68 — cross-instance nonce ratchet.
-    Currently uses an inline `_SHARED_NONCE_STATES` dict + ad-hoc
-    `_get_or_init_shared_nonce` classmethod. Could migrate to this
-    helper for consistency.
+  - infra/kraken_rest_client.py P68 → migrated to this helper in P77
+    2026-04-26. The cross-instance nonce ratchet now uses
+    `_NONCE_REGISTRY: SharedRegistry[_NonceState]` instead of an inline
+    `_SHARED_NONCE_STATES` dict + ad-hoc classmethod. End-to-end
+    invariants verified post-migration (same-key shared identity,
+    monotonic across instances, key isolation, bump propagation,
+    persistence).
   - Latent: any singleton-like state (cascade_governor, failure_memory,
     confidence_scorer) where two callers reach for the same global —
     this helper makes the intent explicit.
