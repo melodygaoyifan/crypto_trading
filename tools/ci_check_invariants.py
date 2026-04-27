@@ -37,6 +37,7 @@ SILENT_BASELINE = BASELINES_DIR / "silent_failure_baseline.json"
 SWALLOW_BASELINE = BASELINES_DIR / "silent_swallow_baseline.json"
 NAIVE_DT_BASELINE = BASELINES_DIR / "naive_datetime_baseline.json"  # [P111]
 SELF_CONFIG_BASELINE = BASELINES_DIR / "self_config_undefined_baseline.json"  # [P111]
+MYPY_BASELINE = BASELINES_DIR / "mypy_baseline.json"  # [P113 (4/6)]
 
 
 def _run_scanner(args: List[str]) -> Dict[str, Any]:
@@ -296,6 +297,15 @@ def main() -> int:
     ])
     self_config_norm = self_config_raw
 
+    # [P113 (4/6) 2026-04-27] mypy baseline — locks current 982-error
+    # state by error-code; new errors block CI, fixes lower the count.
+    print("[ci_check] running lint_mypy_baseline...", file=sys.stderr)
+    mypy_raw = _run_scanner([
+        "tools/lint_mypy_baseline.py",
+        "--baseline-format",
+    ])
+    mypy_norm = mypy_raw
+
     if args.update:
         AUTHORITY_BASELINE.write_text(
             json.dumps(auth_norm, indent=2, sort_keys=True), encoding="utf-8"
@@ -312,13 +322,17 @@ def main() -> int:
         SELF_CONFIG_BASELINE.write_text(
             json.dumps(self_config_norm, indent=2, sort_keys=True), encoding="utf-8"
         )
+        MYPY_BASELINE.write_text(
+            json.dumps(mypy_norm, indent=2, sort_keys=True), encoding="utf-8"
+        )
         print(
             f"[ci_check] baselines updated:\n"
             f"  - {AUTHORITY_BASELINE.relative_to(REPO_ROOT)}\n"
             f"  - {SILENT_BASELINE.relative_to(REPO_ROOT)}\n"
             f"  - {SWALLOW_BASELINE.relative_to(REPO_ROOT)}\n"
             f"  - {NAIVE_DT_BASELINE.relative_to(REPO_ROOT)}\n"
-            f"  - {SELF_CONFIG_BASELINE.relative_to(REPO_ROOT)}",
+            f"  - {SELF_CONFIG_BASELINE.relative_to(REPO_ROOT)}\n"
+            f"  - {MYPY_BASELINE.relative_to(REPO_ROOT)}",
             file=sys.stderr,
         )
         return 0
@@ -326,7 +340,7 @@ def main() -> int:
     missing = [
         p.name for p in (AUTHORITY_BASELINE, SILENT_BASELINE,
                          SWALLOW_BASELINE, NAIVE_DT_BASELINE,
-                         SELF_CONFIG_BASELINE)
+                         SELF_CONFIG_BASELINE, MYPY_BASELINE)
         if not p.exists()
     ]
     if missing:
@@ -342,14 +356,16 @@ def main() -> int:
     swallow_baseline = json.loads(SWALLOW_BASELINE.read_text(encoding="utf-8"))
     naive_dt_baseline = json.loads(NAIVE_DT_BASELINE.read_text(encoding="utf-8"))
     self_config_baseline = json.loads(SELF_CONFIG_BASELINE.read_text(encoding="utf-8"))
+    mypy_baseline = json.loads(MYPY_BASELINE.read_text(encoding="utf-8"))
 
     auth_diffs = _diff("authority", auth_baseline, auth_norm)
     silent_diffs = _diff("silent", silent_baseline, silent_norm)
     swallow_diffs = _diff("swallow", swallow_baseline, swallow_norm)
     naive_dt_diffs = _diff("naive_datetime", naive_dt_baseline, naive_dt_norm)
     self_config_diffs = _diff("self_config", self_config_baseline, self_config_norm)
+    mypy_diffs = _diff("mypy", mypy_baseline, mypy_norm)
 
-    if not auth_diffs and not silent_diffs and not swallow_diffs and not naive_dt_diffs and not self_config_diffs:
+    if not auth_diffs and not silent_diffs and not swallow_diffs and not naive_dt_diffs and not self_config_diffs and not mypy_diffs:
         print("[ci_check] OK — no new findings vs baseline.", file=sys.stderr)
         return 0
 
@@ -365,6 +381,8 @@ def main() -> int:
     for d in naive_dt_diffs:
         print(f"  {d}")
     for d in self_config_diffs:
+        print(f"  {d}")
+    for d in mypy_diffs:
         print(f"  {d}")
     print("=" * 70)
     print(

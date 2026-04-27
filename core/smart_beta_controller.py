@@ -154,7 +154,12 @@ class SmartBetaController:
             elif regime in _BEARISH_REGIMES:
                 state.trend_dir = max(-0.5 - abs(mtf_mom) * 5, -1.0)
             else:
-                state.trend_dir = float(np.clip(mtf_mom * 5, -0.3, 0.3)) if 'np' in dir() else max(-0.3, min(0.3, mtf_mom * 5))
+                # [P113 (4/6) 2026-04-27] Was `if 'np' in dir() else ...`
+                # — `'np' in dir()` checks LOCAL scope and never matches a
+                # module-level import, so the np.clip branch was unreachable
+                # dead code. Fallback python clamp is the actual behavior.
+                # mypy [name-defined] caught it.
+                state.trend_dir = max(-0.3, min(0.3, mtf_mom * 5))
 
             # Trend strength: ADX-based
             state.trend_strength = min(max(adx - 15, 0) / 35.0, 1.0)
