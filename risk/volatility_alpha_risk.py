@@ -18,7 +18,7 @@ import logging
 import numpy as np
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple, Any, Callable
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 
 logger = logging.getLogger(__name__)
@@ -208,7 +208,7 @@ class VolAlphaRiskController:
                 "vol_utilization": self._vol_utilization,
                 "vol_alpha_weight": self._vol_alpha_weight,
                 "is_bear_market": self._is_bear_market,
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             })
         except Exception as e:
             logger.warning(f"Failed to publish risk event: {e}")

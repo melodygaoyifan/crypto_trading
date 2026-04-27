@@ -1849,6 +1849,70 @@ class ExecutionManager:
             f"(userref={userref})"
         )
 
+        # P98 2026-04-27: ROOT CAUSE FIX for the recurring SOL/BTC stop-loss
+        # cascade. P95 fixed userref hash to be stable per (symbol, side) but
+        # any pre-P95 stops (or stops placed during the deploy gap) used a
+        # different userref scheme. check_userref_executed() never matches
+        # them, so place_stop_loss() submits a NEW order each tick — orphan
+        # stops accumulate at Kraken, locking the asset balance, leaving the
+        # next tick's free-balance below P91 min-size pre-flight → endless
+        # CRITICAL [STOP-MINSIZE] + [POSITION-DESYNC] cascade.
+        #
+        # Root cause is that userref-only dedup is fragile across deploys.
+        # Ground truth is `fetch_open_orders()`. Before placing a new stop,
+        # cancel any existing OPEN stop order for this (symbol, side) pair,
+        # regardless of userref. This guarantees at most ONE stop per
+        # (symbol, side) at any time, surviving any future userref scheme
+        # changes or operator-side parallel order placement.
+        if not self.dry_run:
+            try:
+                _existing = self.exchange.fetch_open_orders(symbol=symbol)
+                _orphans = []
+                _side_lower = side.value.lower()
+                for _o in (_existing or []):
+                    _o_side = (_o.get('side') or '').lower()
+                    _o_type = (_o.get('type') or '').lower()
+                    if _o_side == _side_lower and (
+                        'stop' in _o_type or _o_type == 'market'
+                    ):
+                        _o_id = _o.get('id')
+                        if _o_id:
+                            _orphans.append(_o_id)
+                if _orphans:
+                    self.logger.warning(
+                        f"[STOP-DEDUP] {symbol} {_side_lower}: "
+                        f"{len(_orphans)} pre-existing stop order(s) found "
+                        f"({_orphans}); cancelling before placing new stop "
+                        f"to avoid balance-lock cascade. Root cause is that "
+                        f"userref-only dedup is fragile across deploys; "
+                        f"ground truth is fetch_open_orders."
+                    )
+                    for _oid in _orphans:
+                        try:
+                            self.exchange.cancel_order(_oid, symbol)
+                            self.logger.info(
+                                f"[STOP-DEDUP] {symbol}: cancelled orphan "
+                                f"stop {_oid}"
+                            )
+                        except Exception as _ce:  # noqa: silent-swallow
+                            # Cancel failure is logged but not fatal — proceed
+                            # with placement anyway. Worst case: balance still
+                            # locked, P91 min-size catches it cleanly.
+                            self.logger.warning(
+                                f"[STOP-DEDUP] {symbol}: cancel of {_oid} "
+                                f"failed ({type(_ce).__name__}: {_ce}); "
+                                f"proceeding with new placement"
+                            )
+            except Exception as _foe:  # noqa: silent-swallow
+                # fetch_open_orders failure is logged but doesn't abort —
+                # P95 userref dedup is still in play as the second line of
+                # defense.
+                self.logger.warning(
+                    f"[STOP-DEDUP] {symbol}: fetch_open_orders failed "
+                    f"({type(_foe).__name__}: {_foe}); falling back to "
+                    f"userref-only dedup (P95)"
+                )
+
         if self.dry_run:
             import uuid
             order_id = f"SL_{uuid.uuid4().hex[:8]}"

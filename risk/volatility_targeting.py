@@ -174,7 +174,7 @@ class PositionSizeRecommendation:
 @dataclass
 class PortfolioRiskState:
     """Current portfolio risk state."""
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     
     # Portfolio volatility
     target_daily_vol: float = 0.02  # 2% daily target
@@ -552,7 +552,24 @@ class EnhancedVolatilityTargetingSizer:
             asset_target_vol *= regime_scale
         
         # Calculate vol adjustment
-        if asset_current_vol > 0.001:
+        # [P98 2026-04-27] NaN guard mirrors P94 dynamic_limits fix.
+        # `asset_current_vol > 0.001` returns False on NaN, silently
+        # falling to vol_adjustment=1.0 (no scaling, position grows
+        # without vol-target discipline) — fail-OPEN. Treat NaN as
+        # high-vol regime → fail-CLOSED via 0.5x adjustment.
+        try:
+            import math as _math
+            _vol_is_nan = _math.isnan(float(asset_current_vol))
+        except (TypeError, ValueError):
+            _vol_is_nan = True
+        if _vol_is_nan:
+            logger.warning(
+                f"[VOL_TARGET] {symbol}: realized vol is NaN/unparseable "
+                f"({asset_current_vol!r}); applying 0.5x fail-closed "
+                f"adjustment instead of pass-through 1.0x."
+            )
+            vol_adjustment = 0.5
+        elif asset_current_vol > 0.001:
             vol_adjustment = asset_target_vol / asset_current_vol
         else:
             vol_adjustment = 1.0
