@@ -1,0 +1,9 @@
+{
+  "blind_only_keys_count": 177,
+  "by_category": {
+    "BLIND": 266,
+    "GUARDED": 6,
+    "TIMESTAMPED": 5
+  },
+  "total_writes": 277
+}

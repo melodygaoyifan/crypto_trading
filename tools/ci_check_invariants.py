@@ -38,6 +38,7 @@ SWALLOW_BASELINE = BASELINES_DIR / "silent_swallow_baseline.json"
 NAIVE_DT_BASELINE = BASELINES_DIR / "naive_datetime_baseline.json"  # [P111]
 SELF_CONFIG_BASELINE = BASELINES_DIR / "self_config_undefined_baseline.json"  # [P111]
 MYPY_BASELINE = BASELINES_DIR / "mypy_baseline.json"  # [P113 (4/6)]
+FRESHNESS_BASELINE = BASELINES_DIR / "signal_freshness_baseline.json"  # [P120]
 
 
 def _run_scanner(args: List[str]) -> Dict[str, Any]:
@@ -306,6 +307,17 @@ def main() -> int:
     ])
     mypy_norm = mypy_raw
 
+    # [P120 2026-04-27] signal-freshness baseline — locks 266 BLIND
+    # agent_signals[X] writes (no freshness guard, no per-signal timestamp).
+    # New BLIND writes block CI; promotions to GUARDED/TIMESTAMPED naturally
+    # drop the count. Same gate semantics as silent_swallow.
+    print("[ci_check] running lint_signal_freshness...", file=sys.stderr)
+    freshness_raw = _run_scanner([
+        "tools/lint_signal_freshness.py",
+        "--baseline-format",
+    ])
+    freshness_norm = freshness_raw
+
     if args.update:
         AUTHORITY_BASELINE.write_text(
             json.dumps(auth_norm, indent=2, sort_keys=True), encoding="utf-8"
@@ -325,6 +337,9 @@ def main() -> int:
         MYPY_BASELINE.write_text(
             json.dumps(mypy_norm, indent=2, sort_keys=True), encoding="utf-8"
         )
+        FRESHNESS_BASELINE.write_text(
+            json.dumps(freshness_norm, indent=2, sort_keys=True), encoding="utf-8"
+        )
         print(
             f"[ci_check] baselines updated:\n"
             f"  - {AUTHORITY_BASELINE.relative_to(REPO_ROOT)}\n"
@@ -332,7 +347,8 @@ def main() -> int:
             f"  - {SWALLOW_BASELINE.relative_to(REPO_ROOT)}\n"
             f"  - {NAIVE_DT_BASELINE.relative_to(REPO_ROOT)}\n"
             f"  - {SELF_CONFIG_BASELINE.relative_to(REPO_ROOT)}\n"
-            f"  - {MYPY_BASELINE.relative_to(REPO_ROOT)}",
+            f"  - {MYPY_BASELINE.relative_to(REPO_ROOT)}\n"
+            f"  - {FRESHNESS_BASELINE.relative_to(REPO_ROOT)}",
             file=sys.stderr,
         )
         return 0
@@ -340,7 +356,8 @@ def main() -> int:
     missing = [
         p.name for p in (AUTHORITY_BASELINE, SILENT_BASELINE,
                          SWALLOW_BASELINE, NAIVE_DT_BASELINE,
-                         SELF_CONFIG_BASELINE, MYPY_BASELINE)
+                         SELF_CONFIG_BASELINE, MYPY_BASELINE,
+                         FRESHNESS_BASELINE)
         if not p.exists()
     ]
     if missing:
@@ -357,6 +374,7 @@ def main() -> int:
     naive_dt_baseline = json.loads(NAIVE_DT_BASELINE.read_text(encoding="utf-8"))
     self_config_baseline = json.loads(SELF_CONFIG_BASELINE.read_text(encoding="utf-8"))
     mypy_baseline = json.loads(MYPY_BASELINE.read_text(encoding="utf-8"))
+    freshness_baseline = json.loads(FRESHNESS_BASELINE.read_text(encoding="utf-8"))
 
     auth_diffs = _diff("authority", auth_baseline, auth_norm)
     silent_diffs = _diff("silent", silent_baseline, silent_norm)
@@ -364,8 +382,11 @@ def main() -> int:
     naive_dt_diffs = _diff("naive_datetime", naive_dt_baseline, naive_dt_norm)
     self_config_diffs = _diff("self_config", self_config_baseline, self_config_norm)
     mypy_diffs = _diff("mypy", mypy_baseline, mypy_norm)
+    freshness_diffs = _diff("freshness", freshness_baseline, freshness_norm)
 
-    if not auth_diffs and not silent_diffs and not swallow_diffs and not naive_dt_diffs and not self_config_diffs and not mypy_diffs:
+    if (not auth_diffs and not silent_diffs and not swallow_diffs
+            and not naive_dt_diffs and not self_config_diffs
+            and not mypy_diffs and not freshness_diffs):
         print("[ci_check] OK — no new findings vs baseline.", file=sys.stderr)
         return 0
 
@@ -383,6 +404,8 @@ def main() -> int:
     for d in self_config_diffs:
         print(f"  {d}")
     for d in mypy_diffs:
+        print(f"  {d}")
+    for d in freshness_diffs:
         print(f"  {d}")
     print("=" * 70)
     print(
