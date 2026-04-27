@@ -1,8 +1,8 @@
 {
-  "generated_at": "2026-04-27T01:27:16.262681+00:00",
+  "generated_at": "2026-04-27T01:30:57.781491+00:00",
   "total_files": 368,
-  "audited_count": 276,
-  "remaining": 92,
+  "audited_count": 325,
+  "remaining": 43,
   "live_dirs": [
     "root",
     "agents",
@@ -369,7 +369,9 @@
     },
     {
       "path": "api/__init__.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5q-stub"
     },
     {
       "path": "api/server.py",
@@ -413,7 +415,9 @@
     },
     {
       "path": "core/__init__.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5q-bulk-core-clean"
     },
     {
       "path": "core/account_sync.py",
@@ -429,7 +433,9 @@
     },
     {
       "path": "core/alpha_gate_config.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5q-bulk-core-clean"
     },
     {
       "path": "core/anti_churn.py",
@@ -439,7 +445,9 @@
     },
     {
       "path": "core/asset_alpha_tilt.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5q-bulk-core-clean"
     },
     {
       "path": "core/authority_chain.py",
@@ -455,31 +463,45 @@
     },
     {
       "path": "core/canonical_imports.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5q-bulk-core-clean"
     },
     {
       "path": "core/cloud_config.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5q-bulk-core-clean"
     },
     {
       "path": "core/component_lifecycle.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5q-bulk-core-clean"
     },
     {
       "path": "core/constants.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5q-bulk-core-clean"
     },
     {
       "path": "core/drl_shadow_diagnostics.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5q-bulk-core-clean"
     },
     {
       "path": "core/exchange_guard.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5q-bulk-core-clean"
     },
     {
       "path": "core/execution_advisory_service.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5q-bulk-core-clean"
     },
     {
       "path": "core/execution_context.py",
@@ -507,39 +529,57 @@
     },
     {
       "path": "core/market_data_helpers.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5q-bulk-core-clean"
     },
     {
       "path": "core/paper_fee_service.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5q-bulk-core-clean"
     },
     {
       "path": "core/paper_position_update.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5q-bulk-core-clean"
     },
     {
       "path": "core/profit_calibration_service.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5q-bulk-core-clean"
     },
     {
       "path": "core/regime_smoother.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5q-bulk-core-clean"
     },
     {
       "path": "core/risk_governor.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5q-bulk-core-clean"
     },
     {
       "path": "core/runtime_authority.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5q-bulk-core-clean"
     },
     {
       "path": "core/runtime_control_service.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5q-bulk-core-clean"
     },
     {
       "path": "core/runtime_export_service.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5q-bulk-core-clean"
     },
     {
       "path": "core/runtime_spine.py",
@@ -555,11 +595,15 @@
     },
     {
       "path": "core/sentiment_gate.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5q-bulk-core-clean"
     },
     {
       "path": "core/smart_beta_controller.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5q-bulk-core-clean"
     },
     {
       "path": "core/state_persistence.py",
@@ -569,11 +613,15 @@
     },
     {
       "path": "core/structure_mode_service.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5q-bulk-core-clean"
     },
     {
       "path": "core/tick_context.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5q-bulk-core-clean"
     },
     {
       "path": "core/tick_exit_triggers.py",
@@ -583,7 +631,9 @@
     },
     {
       "path": "core/unit_system.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5q-bulk-core-clean"
     },
     {
       "path": "core/warmup_tracker.py",
@@ -593,7 +643,9 @@
     },
     {
       "path": "dashboard/__init__.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5q-stub"
     },
     {
       "path": "dashboard/app.py",
@@ -603,11 +655,15 @@
     },
     {
       "path": "dashboard/enhanced_dashboard.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5q-defer-display"
     },
     {
       "path": "dashboard/integrated_explainer_dashboard.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5q-defer-display"
     },
     {
       "path": "dashboard/sota_dashboard.py",
@@ -617,7 +673,9 @@
     },
     {
       "path": "dashboard/volatility_alpha_panel.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5q-clean"
     },
     {
       "path": "data_mgmt/__init__.py",
@@ -875,7 +933,9 @@
     },
     {
       "path": "drl/authority_gate.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5q-clean"
     },
     {
       "path": "drl/ensemble.py",
@@ -885,7 +945,9 @@
     },
     {
       "path": "drl/live_experience_buffer.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5q-clean"
     },
     {
       "path": "drl/ood_detector.py",
@@ -905,39 +967,57 @@
     },
     {
       "path": "engine/__init__.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5q-stub"
     },
     {
       "path": "engine/bitbeast/__init__.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5q-stub"
     },
     {
       "path": "engine/compute/__init__.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5q-stub"
     },
     {
       "path": "engine/sota/__init__.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5q-stub"
     },
     {
       "path": "exchange/__init__.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5q-clean"
     },
     {
       "path": "exchange/kraken/__init__.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5q-clean"
     },
     {
       "path": "exchange/kraken/kraken_defensive_link.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5q-stub"
     },
     {
       "path": "exchange/kraken/kraken_quant_agent.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5q-stub"
     },
     {
       "path": "exchange/kraken/kraken_token_bucket.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5q-stub"
     },
     {
       "path": "execution/__init__.py",
@@ -1227,7 +1307,9 @@
     },
     {
       "path": "market/__init__.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5q-stub"
     },
     {
       "path": "market/high_risk_config.py",
@@ -1243,11 +1325,15 @@
     },
     {
       "path": "market/lead_lag_engine.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5q-defer-design"
     },
     {
       "path": "market/multi_asset_intelligence.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5q"
     },
     {
       "path": "market/phase_detector.py",
@@ -1257,7 +1343,9 @@
     },
     {
       "path": "market/regime_detector.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5q"
     },
     {
       "path": "market/regime_navigator.py",
@@ -1267,11 +1355,15 @@
     },
     {
       "path": "market/structure_analyzer.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5q-clean"
     },
     {
       "path": "market/vpin_calculator.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5q-clean"
     },
     {
       "path": "models/__init__.py",
@@ -1293,15 +1385,21 @@
     },
     {
       "path": "orchestration/__init__.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5q-stub"
     },
     {
       "path": "orchestration/aggressive_allocator.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5q-clean-config"
     },
     {
       "path": "orchestration/gambler_sizing.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5q-clean-config"
     },
     {
       "path": "orchestration/sota_integration.py",

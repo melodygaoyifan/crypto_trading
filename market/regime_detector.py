@@ -190,8 +190,8 @@ class EnhancedRegimeState:
     liquidity_regime: str = "moderate"  # "deep", "moderate", "thin", "critical"
     
     # Timestamps
-    last_update: datetime = field(default_factory=datetime.utcnow)
-    regime_started_at: datetime = field(default_factory=datetime.utcnow)
+    last_update: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    regime_started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     
     def is_no_trade(self) -> bool:
         """Check if we're in NO_TRADE state."""

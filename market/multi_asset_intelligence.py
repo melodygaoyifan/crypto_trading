@@ -20,7 +20,7 @@ import json
 import time
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
 from collections import deque
@@ -536,7 +536,7 @@ Be specific. Consider correlations - don't overweight correlated assets."""
             
             asset_states[asset] = AssetStrategicState(
                 asset=asset,
-                timestamp=datetime.now(),
+                timestamp=datetime.now(timezone.utc),
                 regime=a.get("regime", "unknown"),
                 regime_strength=0.5,
                 trend_direction=a.get("trend_direction", 0),
@@ -549,14 +549,14 @@ Be specific. Consider correlations - don't overweight correlated assets."""
                 volatility_regime="normal",
                 scenarios=scenarios,
                 recommended_allocation=a.get("recommended_allocation", 0.25),
-                valid_until=datetime.now() + timedelta(hours=self.config.heavy_interval_hours)
+                valid_until=datetime.now(timezone.utc) + timedelta(hours=self.config.heavy_interval_hours)
             )
         
         correlations = analysis.get("correlations", {})
         allocation = analysis.get("portfolio_allocation", {})
         
         return PortfolioStrategicState(
-            timestamp=datetime.now(),
+            timestamp=datetime.now(timezone.utc),
             asset_states=asset_states,
             market_regime=analysis.get("market_regime", "mixed"),
             correlation_btc_eth=correlations.get("btc_eth", 0.85),
@@ -566,7 +566,7 @@ Be specific. Consider correlations - don't overweight correlated assets."""
             allocation_weights={k: v for k, v in allocation.items() if k != "cash"},
             portfolio_var_24h=0.05,
             max_position_value=self.config.initial_capital * self.config.max_single_asset,
-            valid_until=datetime.now() + timedelta(hours=self.config.heavy_interval_hours)
+            valid_until=datetime.now(timezone.utc) + timedelta(hours=self.config.heavy_interval_hours)
         )
 
 
@@ -695,7 +695,7 @@ class MultiAssetLightModel:
             
             if roc_1h > 0 and asset_state.directional_bias > 0.3:
                 return MultiAssetSignal(
-                    timestamp=datetime.now(),
+                    timestamp=datetime.now(timezone.utc),
                     asset=asset,
                     action="LONG",
                     size_pct=asset_state.recommended_allocation * 1.2,
@@ -728,7 +728,7 @@ class MultiAssetLightModel:
             stop = tp = price
         
         return MultiAssetSignal(
-            timestamp=datetime.now(),
+            timestamp=datetime.now(timezone.utc),
             asset=scenario.asset,
             action=scenario.action,
             size_pct=scenario.size_pct,
