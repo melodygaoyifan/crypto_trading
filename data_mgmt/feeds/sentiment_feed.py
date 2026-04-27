@@ -23,6 +23,7 @@ Sentiment Data Feed
 
 import logging
 import asyncio
+import os
 import aiohttp
 from data_mgmt.feeds._http import create_session, fetch_with_retry
 from dataclasses import dataclass, field
@@ -335,7 +336,15 @@ class SentimentFeed:
     
     async def _fetch_lunar_crush(self) -> Dict[str, Any]:
         """Fetch from LunarCrush API (requires API key)."""
-        api_key = getattr(self.config, 'lunar_crush_api_key', '')
+        # [P101 2026-04-27] Same self.config-undefined fix as onchain_feed.
+        # SentimentFeed.__init__ doesn't set self.config; the bare access
+        # raised AttributeError and silently fell into mock fallback for
+        # every call. Defensive getattr-on-self + env-var fallback.
+        _cfg = getattr(self, 'config', None) or {}
+        if isinstance(_cfg, dict):
+            api_key = _cfg.get('lunar_crush_api_key', '') or os.environ.get('LUNARCRUSH_API_KEY', '')
+        else:
+            api_key = getattr(_cfg, 'lunar_crush_api_key', '') or os.environ.get('LUNARCRUSH_API_KEY', '')
         if not api_key:
             logger.debug("LunarCrush API key not configured, using mock")
             return await self._fetch_mock()

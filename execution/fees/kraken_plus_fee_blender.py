@@ -146,10 +146,20 @@ class KrakenPlusFeeBlender:
         V = monthly_volume_usd
         free_tier = self.config.free_tier_usd
         blend_band = self.config.blend_band_usd
-        
+
         if V <= free_tier:
             return 0.0
         elif V >= free_tier + blend_band:
+            return 1.0
+        # [P100 2026-04-27] CLAUDE.md P89 deferred: div-by-zero when
+        # operator sets HMATS_KRAKEN_PLUS_BLEND_BAND_USD=0 (or config
+        # override to 0.0). Without this guard, the linear-interp branch
+        # would crash. blend_band=0 semantically means "no transition
+        # zone — step from 0% to 100% at free_tier". Honour that intent.
+        elif blend_band <= 0:
+            # No interpolation zone — V is past free_tier and below
+            # free_tier+0, which can't be reached. Defensive: return 1.0
+            # (above free_tier → full blend).
             return 1.0
         else:
             # Linear interpolation in blend band

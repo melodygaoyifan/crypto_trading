@@ -131,11 +131,20 @@ class SolanaOnChainFeed:
             ) as resp:
                 if resp.status != 200:
                     logger.warning(f"[SOL_ONCHAIN] RPC returned {resp.status}")
+                    # [P101 2026-04-27] Mark mock so downstream is_mock
+                    # checks distinguish "RPC down" from "RPC says quiet".
+                    data.is_mock = True
                     return
 
                 result = await resp.json()
                 samples = result.get("result", [])
                 if not samples:
+                    logger.warning(
+                        f"[SOL_ONCHAIN] RPC returned 200 but empty samples "
+                        f"(result keys: {list(result.keys())}); marking mock "
+                        f"so downstream skips bogus zero TPS reading."
+                    )
+                    data.is_mock = True
                     return
 
                 total_txs = sum(s.get("numTransactions", 0) for s in samples)
@@ -165,6 +174,9 @@ class SolanaOnChainFeed:
             ) as resp:
                 if resp.status != 200:
                     logger.warning(f"[SOL_ONCHAIN] Jito returned {resp.status}")
+                    # [P101 2026-04-27] Don't mark whole-data as mock here
+                    # (TPS may still be valid); just log so operator knows
+                    # MEV pressure signal is missing this fetch.
                     return
 
                 tip_data = await resp.json()
@@ -177,6 +189,19 @@ class SolanaOnChainFeed:
                     entry = tip_data[0]
                 elif isinstance(tip_data, dict):
                     entry = tip_data
+
+                if not entry:
+                    # [P101 2026-04-27] Empty Jito payload had silent
+                    # zero-fallthrough — jito_pressure stayed at 0.0
+                    # (dataclass default), indistinguishable from real
+                    # "no MEV pressure". Surface so operator knows the
+                    # feed returned 200 but no usable data.
+                    logger.warning(
+                        f"[SOL_ONCHAIN] Jito returned 200 but no usable "
+                        f"tip_data ({type(tip_data).__name__}, "
+                        f"len={len(tip_data) if hasattr(tip_data, '__len__') else 'N/A'}); "
+                        f"jito_pressure stays at default."
+                    )
 
                 if entry:
                     data.jito_tip_50th_sol = float(entry.get("landed_tips_50th_percentile", 0))

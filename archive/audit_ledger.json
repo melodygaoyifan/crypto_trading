@@ -1,8 +1,8 @@
 {
-  "generated_at": "2026-04-27T00:38:49.109352+00:00",
+  "generated_at": "2026-04-27T00:48:11.014999+00:00",
   "total_files": 368,
-  "audited_count": 77,
-  "remaining": 291,
+  "audited_count": 88,
+  "remaining": 280,
   "live_dirs": [
     "root",
     "agents",
@@ -559,27 +559,39 @@
     },
     {
       "path": "data_mgmt/feeds/_http.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5j"
     },
     {
       "path": "data_mgmt/feeds/binance_ticker.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "1bcd061",
+      "round": "5i-clean"
     },
     {
       "path": "data_mgmt/feeds/coinglass_feed.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5i"
     },
     {
       "path": "data_mgmt/feeds/cryptocompare_news_feed.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5j-defer-dedup"
     },
     {
       "path": "data_mgmt/feeds/cryptocompare_onchain.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5j-clean"
     },
     {
       "path": "data_mgmt/feeds/cryptopanic_feed.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5j-defer-dedup"
     },
     {
       "path": "data_mgmt/feeds/fred_feed.py",
@@ -595,7 +607,9 @@
     },
     {
       "path": "data_mgmt/feeds/lunarcrush_feed.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5j"
     },
     {
       "path": "data_mgmt/feeds/macro_feed.py",
@@ -603,15 +617,21 @@
     },
     {
       "path": "data_mgmt/feeds/onchain_feed.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5j"
     },
     {
       "path": "data_mgmt/feeds/sentiment_feed.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5j"
     },
     {
       "path": "data_mgmt/feeds/solana_onchain.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5j"
     },
     {
       "path": "data_mgmt/feeds/trading_economics_feed.py",
@@ -853,7 +873,9 @@
     },
     {
       "path": "execution/fees/kraken_plus_fee_blender.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5i-P89-finished"
     },
     {
       "path": "execution/impact_calibration.py",
@@ -969,7 +991,7 @@
       "path": "infra/kraken_rest_client.py",
       "audited": true,
       "audit_sha": "P77",
-      "round": "pre-resume"
+      "round": "5i-already-fixed"
     },
     {
       "path": "infra/market_data_schema.py",
@@ -1136,7 +1158,7 @@
     {
       "path": "risk/__init__.py",
       "audited": true,
-      "audit_sha": "PENDING_SHA",
+      "audit_sha": "1bcd061",
       "round": "5h"
     },
     {
@@ -1154,7 +1176,7 @@
     {
       "path": "risk/bull_transition_detector.py",
       "audited": true,
-      "audit_sha": "PENDING_SHA",
+      "audit_sha": "1bcd061",
       "round": "5h"
     },
     {
@@ -1214,7 +1236,7 @@
     {
       "path": "risk/high_position_low_volume_filter.py",
       "audited": true,
-      "audit_sha": "PENDING_SHA",
+      "audit_sha": "1bcd061",
       "round": "5h"
     },
     {
@@ -1294,7 +1316,7 @@
     {
       "path": "risk/volatility_alpha_risk.py",
       "audited": true,
-      "audit_sha": "PENDING_SHA",
+      "audit_sha": "1bcd061",
       "round": "5h-reverified"
     },
     {

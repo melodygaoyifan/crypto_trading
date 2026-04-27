@@ -416,38 +416,47 @@ class LunarCrushFeed:
     # =========================================================================
     
     async def _fetch_mock(self) -> LunarCrushAttentionData:
-        """Generate mock data."""
+        """Generate mock data.
+
+        [P101 2026-04-27] PATCH-7a principle (per sentiment_feed.py:380):
+        random in mock data injects non-deterministic NOISE into agent
+        signals, making fallback indistinguishable from real low-signal
+        data and causing non-reproducible trades on test/CI runs.
+        Replaced with NEUTRAL CONSTANTS that explicitly signal "no
+        opinion" — galaxy_score=50 (mid-range), bullish=bearish=0.5
+        (perfectly neutral), volumes/contributors at moderate fixed
+        values. Downstream consumers can detect mock via is_mock=True
+        if needed.
+        """
         await asyncio.sleep(0.1)
-        
+
         now = datetime.now(timezone.utc)
         data = LunarCrushAttentionData(timestamp=now, staleness_sec=0.0)
-        
-        import random
-        
+
+        # Per-symbol social_dominance is the only varying field — it
+        # reflects real market structure (BTC dominates), so keeping it
+        # asymmetric is informative even in mock.
         for symbol in SUPPORTED_SYMBOLS:
-            galaxy_score = random.uniform(40, 80)
-            bullish_pct = random.uniform(0.3, 0.7)
-            
             data.metrics[symbol] = LunarCrushMetrics(
                 symbol=symbol,
-                galaxy_score=galaxy_score,
-                alt_rank=random.randint(1, 100),
-                social_volume=random.uniform(10000, 100000),
-                social_volume_change_24h=random.uniform(-20, 20),
+                galaxy_score=50.0,                    # mid-range neutral
+                alt_rank=50,                          # mid-list
+                social_volume=50000.0,                # moderate fixed
+                social_volume_change_24h=0.0,         # no change → neutral
                 social_dominance={"BTC": 40, "ETH": 25, "SOL": 5}.get(symbol, 5),
-                social_contributors=random.randint(1000, 10000),
-                social_engagement=random.uniform(50000, 500000),
-                social_engagement_change_24h=random.uniform(-10, 10),
-                bullish_pct=bullish_pct,
-                bearish_pct=1 - bullish_pct,
-                correlation_rank=random.randint(1, 50),
+                social_contributors=5000,             # moderate fixed
+                social_engagement=250000.0,           # moderate fixed
+                social_engagement_change_24h=0.0,     # no change → neutral
+                bullish_pct=0.5,                      # perfectly neutral
+                bearish_pct=0.5,                      # perfectly neutral
+                correlation_rank=25,                  # mid-list
                 timestamp=now,
             )
-        
+
         self._compute_attention_metrics(data)
         self._last_data = data
         self._last_fetch_time = now
-        
+
         return data
 
 

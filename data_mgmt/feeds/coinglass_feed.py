@@ -211,21 +211,44 @@ class CoinglassFeed:
         try:
             if self._mock_mode:
                 return await self._fetch_mock()
-            
+
             if not self.api_key:
                 logger.warning("[COINGLASS] No API key, using mock")
                 return await self._fetch_mock()
-            
+
             return await self._fetch_real()
-            
+
         except Exception as e:
             logger.error(f"[COINGLASS] Fetch failed: {e}")
             self._fetch_errors += 1
-            return self._last_data
-    
+            # [P100 2026-04-27] Update staleness_sec on the stale fallback
+            # so downstream data_health gates can detect aged data. Field
+            # was previously frozen at 0.0 at fetch time, making stale
+            # crowd data look fresh forever.
+            return self._refreshed_staleness(self._last_data)
+
     def get_latest(self) -> Optional[CoinglassCrowdData]:
-        """Get cached data."""
-        return self._last_data
+        """Get cached data with up-to-date staleness_sec."""
+        # [P100 2026-04-27] Compute current staleness on every read so
+        # consumers see actual age, not the 0.0 baked in at fetch time.
+        return self._refreshed_staleness(self._last_data)
+
+    def _refreshed_staleness(
+        self, data: Optional[CoinglassCrowdData]
+    ) -> Optional[CoinglassCrowdData]:
+        """Update staleness_sec on cached data based on current time."""
+        if data is None or data.timestamp is None:
+            return data
+        try:
+            now = datetime.now(timezone.utc)
+            data.staleness_sec = max(
+                0.0, (now - data.timestamp).total_seconds()
+            )
+        except Exception as _e:  # noqa: silent-swallow
+            # naive vs aware mismatch shouldn't happen (we control both
+            # ends), but defend so the read path never crashes.
+            logger.debug(f"[COINGLASS] staleness compute skipped: {_e}")
+        return data
     
     def get_crowd_metrics(self, symbol: str = "BTC") -> Dict[str, Any]:
         """
@@ -576,7 +599,17 @@ class CoinglassFeed:
                     )
 
             except Exception as e:
-                logger.debug(f"[COINGLASS] Liquidation v3 {symbol}: {e}")
+                # [P100 2026-04-27] Promoted DEBUG → WARNING. Liquidation
+                # v3 per-symbol exceptions (auth fail, parse error, API
+                # timeout) were invisible in production at INFO level.
+                # Asymmetric vs other endpoints in this file which already
+                # log at WARNING. Liquidation imbalance feeds the crowding
+                # detector + position sizer; silent per-symbol miss leaks
+                # stale data downstream.
+                logger.warning(
+                    f"[COINGLASS] Liquidation v3 {symbol} FAILED "
+                    f"({type(e).__name__}: {e}); using stale data."
+                )
 
     # =========================================================================
     # METRICS COMPUTATION

@@ -22,6 +22,7 @@ On-Chain Data Feed
 
 import logging
 import asyncio
+import os
 import aiohttp
 from data_mgmt.feeds._http import create_session
 from dataclasses import dataclass, field
@@ -365,7 +366,17 @@ class OnChainFeed:
 
     async def _fetch_helius(self) -> Dict[str, Any]:
         """Fetch from Helius API (requires API key)."""
-        api_key = getattr(self.config, 'helius_api_key', '')
+        # [P101 2026-04-27] `self.config` was never initialized in __init__,
+        # so the bare `self.config` access threw AttributeError → caught by
+        # outer try/except → silent fallback to mock for every call. Read
+        # via getattr-on-self with empty-dict default first; ALSO fall back
+        # to env vars so operators can supply the key without restructuring.
+        # The same pattern applies to _fetch_solana_rpc below.
+        _cfg = getattr(self, 'config', None) or {}
+        if isinstance(_cfg, dict):
+            api_key = _cfg.get('helius_api_key', '') or os.environ.get('HELIUS_API_KEY', '')
+        else:
+            api_key = getattr(_cfg, 'helius_api_key', '') or os.environ.get('HELIUS_API_KEY', '')
         if not api_key:
             logger.debug("Helius API key not configured, using mock")
             return await self._fetch_mock()
@@ -429,7 +440,16 @@ class OnChainFeed:
     
     async def _fetch_solana_rpc(self) -> Dict[str, Any]:
         """Fetch from Solana RPC (public endpoint or custom)."""
-        rpc_url = getattr(self.config, 'solana_rpc_url', 'https://api.mainnet-beta.solana.com')
+        # [P101 2026-04-27] Same self.config-undefined fix as _fetch_helius.
+        _cfg = getattr(self, 'config', None) or {}
+        if isinstance(_cfg, dict):
+            rpc_url = _cfg.get('solana_rpc_url') or os.environ.get(
+                'SOLANA_RPC_URL', 'https://api.mainnet-beta.solana.com'
+            )
+        else:
+            rpc_url = getattr(_cfg, 'solana_rpc_url', None) or os.environ.get(
+                'SOLANA_RPC_URL', 'https://api.mainnet-beta.solana.com'
+            )
         
         try:
             async with create_session() as session:
