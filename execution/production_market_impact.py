@@ -29,7 +29,7 @@ import logging
 import numpy as np
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple, Any, Callable
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from collections import deque
 from enum import Enum
 import json
@@ -242,7 +242,7 @@ class OrderBookAnalyzer:
             OrderBookSnapshot
         """
         snapshot = OrderBookSnapshot(
-            timestamp=datetime.now(),
+            timestamp=datetime.now(timezone.utc),
             symbol=symbol,
         )
         
@@ -451,7 +451,7 @@ class AdaptiveMarketImpactModel:
             "daily_volume": daily_volume,
             "volatility": volatility,
             "avg_spread_bps": avg_spread_bps,
-            "updated_at": datetime.now().isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
         }
     
     def _get_market_data(self, symbol: str) -> Dict[str, float]:
@@ -548,7 +548,7 @@ class AdaptiveMarketImpactModel:
         self._stats["predictions"] += 1
         
         prediction = ImpactPrediction(
-            timestamp=datetime.now(),
+            timestamp=datetime.now(timezone.utc),
             symbol=symbol,
             side=side,
             size=size_usd,
@@ -670,7 +670,7 @@ class AdaptiveMarketImpactModel:
             execution_risk = "low"
         
         plan = SlicingPlan(
-            timestamp=datetime.now(),
+            timestamp=datetime.now(timezone.utc),
             symbol=symbol,
             side=side,
             total_size=total_size_usd,
@@ -727,7 +727,7 @@ class AdaptiveMarketImpactModel:
         pred = self.predict_impact(symbol, side, size * arrival_price)
         
         record = ExecutionRecord(
-            timestamp=datetime.now(),
+            timestamp=datetime.now(timezone.utc),
             symbol=symbol,
             side=side,
             intended_size=size,

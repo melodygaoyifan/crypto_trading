@@ -616,9 +616,16 @@ class AuthorityFusionEngine:
             elif _n_active == 0:
                 # All agents abstain — no signal at all.
                 merged_confidence = 0.0
-                logger.info(
+                # [P110 2026-04-27] Promoted INFO → WARNING. When the entire
+                # DECIDE authority layer abstains, fusion silently outputs
+                # zero — operator running at INFO level would see this
+                # buried in noise. WARNING surfaces the degraded state so
+                # the trade-frequency drought (CLAUDE.md "0 trades for >7d"
+                # discipline) can be diagnosed.
+                logger.warning(
                     f"[DECIDE_ABSTAIN] all {len(decide_agents)} DECIDE agents "
-                    f"abstain (|dir|<0.01) — fused confidence=0"
+                    f"abstain (|dir|<0.01) — fused confidence=0; no entry "
+                    f"signal will fire this tick."
                 )
             elif direction_agreement < 0.6:
                 # Genuine disagreement among active agents — dampen confidence.

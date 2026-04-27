@@ -186,7 +186,7 @@ class TradeIntentV36:
     system_mode: str = "NORMAL"
     
     # Timestamp
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     
     # Quant info
     quant_strategy_id: str = ""

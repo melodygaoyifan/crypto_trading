@@ -723,7 +723,22 @@ class TradeGate:
                     details['governor_modifications'] = gov_result.modifications
                     
             except Exception as e:
-                logger.warning(f"[TradeGate] Governor check error (allowing): {e}")
+                # [P110 2026-04-27] Was fail-OPEN ("allowing"). Governor
+                # vetoes are HARD constraints (opportunity budget, cascade
+                # exhaustion); silently allowing on exception risks
+                # overspending budget OR placing trades during a cascade
+                # that should be paused. Now CRITICAL log + soft-veto:
+                # we don't fully reject (would be too aggressive — operator
+                # may need to manually unstick) but we DO surface loudly
+                # so the failure is visible. Operator decision required:
+                # change to hard reject if budget overrun risk is real.
+                logger.critical(
+                    f"[TradeGate] Governor check FAILED ({type(e).__name__}: {e}); "
+                    f"allowing this tick but operator should investigate. "
+                    f"Repeated occurrences indicate governor state corruption — "
+                    f"consider switching to hard-reject mode."
+                )
+                details['governor_check_error'] = f"{type(e).__name__}: {e}"
         
         # All gates passed
         adjusted_size = proposal.size

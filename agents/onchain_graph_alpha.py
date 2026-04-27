@@ -723,6 +723,23 @@ class OnChainDataSimulator:
     _PRODUCTION_GUARD = True  # set to False in tests if needed
 
     def __init__(self, engine: OnChainGraphAlphaEngine):
+        # [P110 2026-04-27] The _PRODUCTION_GUARD flag was decorative —
+        # never enforced anywhere. Add an explicit env-gate so accidental
+        # production instantiation (e.g. via misconfigured init script)
+        # raises loudly instead of silently injecting random data into
+        # agent signals. Tests + __main__ self-test should set
+        # HMATS_ALLOW_TEST_SIMULATORS=1 in their environment.
+        import os
+        if self._PRODUCTION_GUARD and os.environ.get(
+            "HMATS_ALLOW_TEST_SIMULATORS", "0"
+        ) != "1":
+            raise RuntimeError(
+                "OnChainDataSimulator is a TEST-ONLY class with random "
+                "data generators. Set HMATS_ALLOW_TEST_SIMULATORS=1 in "
+                "the environment to use it (typically only in __main__ "
+                "self-tests). Production code paths must use the real "
+                "OnChainGraphAlphaEngine + on-chain feeds, not this."
+            )
         self.engine = engine
         self.tx_counter = 0
 

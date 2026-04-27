@@ -349,12 +349,12 @@ class SOTAMetricsCalculator:
         dd_duration = self._calculate_dd_duration(equity_curve)
         
         # Volatility (annualized)
-        volatility = daily_returns.std() * np.sqrt(252)
+        volatility = daily_returns.std() * np.sqrt(365)  # [P110 2026-04-27] 24/7 crypto uses 365-day year for vol annualization to match return annualization (line 307 already uses 365). Earlier 252 was equity-market convention; mismatch overstates Sharpe by sqrt(365/252)=1.20x.
         
         # Downside Volatility (only negative returns)
         negative_returns = daily_returns[daily_returns < 0]
         if len(negative_returns) > 0:
-            downside_vol = negative_returns.std() * np.sqrt(252)
+            downside_vol = negative_returns.std() * np.sqrt(365)  # [P110 2026-04-27] 24/7 crypto uses 365-day year for vol annualization to match return annualization (line 307 already uses 365). Earlier 252 was equity-market convention; mismatch overstates Sharpe by sqrt(365/252)=1.20x.
         else:
             downside_vol = 0.0
         
