@@ -44,7 +44,12 @@ INITIAL_CAPITAL = 10_000.0          # Actual account size ($10K)
 # =============================================================================
 
 REDUCE_AT_DRAWDOWN = 0.08           # 8% - first response: reduce sizes
-HARD_DRAWDOWN_HALT = 0.20           # 20% - halt new trades
+# [P112 2026-04-27] Updated 0.20 → 0.25 to match cloud_production.json:51
+# (the JSON config is what runtime actually reads; canonical_config defaults
+# only apply when JSON omits the key). Source of truth must match runtime,
+# not contradict it. Operator can revisit if 0.20 is the intended target;
+# in that case the JSON should be lowered to 0.20, not the canonical raised.
+HARD_DRAWDOWN_HALT = 0.25           # 25% - halt new trades (was 0.20; matches JSON live config)
 CRITICAL_DRAWDOWN = 0.15            # 15% - second safety wall (risk_agent)
 KILL_SWITCH_DRAWDOWN = 0.35         # 35% - system halt, manual restart
 DAILY_LOSS_HALT = 0.08              # 8% - daily loss reduction trigger (SOTARiskConfig layer)

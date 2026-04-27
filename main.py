@@ -11298,8 +11298,22 @@ class HMATSProductionRunner:
                 _regime_leverage_called = True
                 regime_state_lev = agent_signals.get("regime_state", "UNKNOWN").upper()
                 regime_leverage = self.config.regime_leverage_map.get(regime_state_lev, 1.0)
-                _max_lev = self.config.max_leverage  # P1-01: from config
-                regime_leverage = max(1.0, min(regime_leverage, _max_lev))  # Clamp [1x, max]
+                # [P112 2026-04-27] Enforce 3-source leverage hierarchy as
+                # min() — defense-in-depth principle, tightest cap wins.
+                # Sources:
+                #   1. self.config.max_leverage (canonical / JSON profile)
+                #   2. tier max_leverage (strategy_tiers.py per-tier cap)
+                #   3. regime_leverage (per-regime override above)
+                # Previously only #1 was enforced; tier cap was advisory.
+                # If any source is missing, defaults to permissive (no extra
+                # constraint), so this is backwards-compatible.
+                _max_lev = self.config.max_leverage  # canonical / JSON
+                try:
+                    _tier_lev = float(get_budget(intent.tier).get('max_leverage', _max_lev))
+                except Exception:
+                    _tier_lev = _max_lev
+                _max_lev = min(_max_lev, _tier_lev)
+                regime_leverage = max(1.0, min(regime_leverage, _max_lev))  # Clamp [1x, min-of-all]
                 _regime_leverage_base = regime_leverage
 
                 # [SIG-4] Direction-based leverage cap (bull regime + short ->1x)
@@ -18237,11 +18251,34 @@ class HMATSProductionRunner:
                     pass
             sched_pos.direction = "long" if live_direction > 0 else "short"
             sched_pos.target_exposure = live_exposure
-            sched_pos.current_exposure = live_exposure
 
+            # [P112 2026-04-27] Wire tranche_manager.update_executed (was
+            # never called per audit gap 9b). The previous direct mutation
+            # of `sched_pos.current_exposure = live_exposure` overwrote
+            # the field but skipped the weighted-avg avg_price math
+            # inside update_executed (lines 710-723 of tranche_manager.py).
+            # Without that, T3 PnL escalation thresholds use the entry_price
+            # from the FIRST fill, ignoring price drift across T1→T2→T3
+            # add-on fills. Now: call update_executed so avg_price tracks
+            # actual fill economics. Wrapped in try so existing sync flow
+            # is robust if tranche_manager API ever changes.
             entry_price = float(live_pos.get("entry_price", 0.0) or 0.0)
-            if entry_price > 0:
-                sched_pos.entry_price = entry_price
+            try:
+                if hasattr(scheduler, "update_executed") and entry_price > 0:
+                    scheduler.update_executed(asset, live_exposure, entry_price)
+                else:
+                    sched_pos.current_exposure = live_exposure
+                    if entry_price > 0:
+                        sched_pos.entry_price = entry_price
+            except Exception as _ue_err:
+                logger.warning(
+                    f"[TRANCHE_SYNC] {asset}: update_executed failed "
+                    f"({type(_ue_err).__name__}: {_ue_err}); falling back "
+                    f"to direct mutation"
+                )
+                sched_pos.current_exposure = live_exposure
+                if entry_price > 0:
+                    sched_pos.entry_price = entry_price
 
             entry_meta = self._position_entry_times.get(asset, {})
             entry_time = entry_meta.get("entry_time")

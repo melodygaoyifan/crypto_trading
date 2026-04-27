@@ -226,13 +226,28 @@ class ExecutionRouter:
                 "liquidation_price": result.liquidation_price,
             }
         except Exception as e:
-            logger.error(f"[WIRE-ROUTER] Derivatives exec error: {e}")
+            # [P112 2026-04-27] Add error classifier so upstream retry logic
+            # can decide retry vs escalate (P79 family). Same shape as
+            # _classify_kraken_order_error in execution_manager.py.
+            err_str = str(e).lower()
+            err_type = (
+                "network" if isinstance(e, (TimeoutError, ConnectionError))
+                or any(s in err_str for s in ("timeout", "connection", "unreachable"))
+                else "auth" if any(s in err_str for s in ("401", "403", "unauthorized", "permission denied"))
+                else "validation" if any(s in err_str for s in ("invalid", "malformed", "bad request"))
+                else "unknown"
+            )
+            logger.error(
+                f"[WIRE-ROUTER] Derivatives exec error ({err_type}: "
+                f"{type(e).__name__}): {e}"
+            )
             return {
                 "route": decision.route.value,
                 "route_reason": decision.reason,
                 "success": False,
                 "status": "FAILED",
-                "reason": f"exception:{e}",
+                "reason": f"derivatives_{err_type}_exception:{type(e).__name__}",
+                "error_class": err_type,
             }
 
     async def _execute_spot_margin(
@@ -262,11 +277,24 @@ class ExecutionRouter:
                     exec_result["derivatives_gate_veto"] = decision.gate_veto
             return exec_result
         except Exception as e:
-            logger.error(f"[WIRE-ROUTER] Spot/margin exec error: {e}")
+            # [P112 2026-04-27] Same classifier shape as _execute_derivatives.
+            err_str = str(e).lower()
+            err_type = (
+                "network" if isinstance(e, (TimeoutError, ConnectionError))
+                or any(s in err_str for s in ("timeout", "connection", "unreachable"))
+                else "auth" if any(s in err_str for s in ("401", "403", "unauthorized", "permission denied"))
+                else "validation" if any(s in err_str for s in ("invalid", "malformed", "bad request"))
+                else "unknown"
+            )
+            logger.error(
+                f"[WIRE-ROUTER] Spot/margin exec error ({err_type}: "
+                f"{type(e).__name__}): {e}"
+            )
             return {
                 "route": decision.route.value,
                 "success": False,
-                "reason": f"spot_exception:{e}",
+                "reason": f"spot_{err_type}_exception:{type(e).__name__}",
+                "error_class": err_type,
             }
 
     # ------------------------------------------------------------------

@@ -61,6 +61,15 @@ class LeverageConfig:
     These are NON-NEGOTIABLE safety constraints for derivatives trading.
     """
     # Leverage limits
+    # [P112 2026-04-27] DESIGN NOTE: macro_leverage_cap from agent_signals
+    # is INTENTIONALLY NOT wired into leverage_guard. Per authority matrix
+    # row 5 (CLAUDE.md), macro is CAP authority on `macro_leverage_cap`,
+    # but the CAP applies at the FUSION layer (leverage_cap on intent),
+    # NOT at this validation guard. Wiring it here would create dual
+    # enforcement points → silent drift if they ever disagree. Single
+    # cap point = single source of truth. If operator wants macro to
+    # gate the guard, swap fusion-layer enforcement for guard-layer
+    # enforcement, don't add a second one.
     max_leverage: float = 3.0           # Maximum allowed leverage
     min_leverage: float = 1.0           # Minimum (1x = no leverage)
     
