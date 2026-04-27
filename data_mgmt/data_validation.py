@@ -92,7 +92,7 @@ class DataFallback:
     quality: DataQuality = DataQuality.VALID
     source: str = "primary"              # Where the value came from
     is_missing: bool = False             # True if using fallback
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     stale_seconds: float = 0.0           # How stale the data is
     original_value: Optional[Any] = None # Pre-fallback value if modified
     

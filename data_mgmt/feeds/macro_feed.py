@@ -26,7 +26,7 @@ import logging
 import asyncio
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any, Callable
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 import random
 
@@ -141,10 +141,25 @@ class MacroTick:
     
     def has_high_impact_event_soon(self, hours: int = 24) -> bool:
         """检查是否有高影响力事件即将发生"""
-        cutoff = datetime.now() + timedelta(hours=hours)
+        # [P102 2026-04-27] cutoff was naive datetime.now(); event_time
+        # may be aware (parsed from ISO with tz marker). Subtraction/
+        # comparison would TypeError silently inside any caller's try
+        # block. Force aware UTC for cutoff; defend the per-event
+        # comparison against naive event_time too.
+        cutoff = datetime.now(timezone.utc) + timedelta(hours=hours)
         for event in self.upcoming_events:
-            if event.importance == "high" and event.event_time <= cutoff:
-                return True
+            if event.importance != "high":
+                continue
+            _et = event.event_time
+            try:
+                if _et is not None and _et.tzinfo is None:
+                    _et = _et.replace(tzinfo=timezone.utc)
+                if _et is not None and _et <= cutoff:
+                    return True
+            except Exception:  # noqa: silent-swallow
+                # Malformed event_time on a single record shouldn't
+                # poison the whole "any high-impact soon?" query.
+                continue
         return False
 
 

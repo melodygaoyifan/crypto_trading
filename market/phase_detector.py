@@ -32,7 +32,7 @@ import logging
 import numpy as np
 from dataclasses import dataclass, field
 from typing import Dict, Optional, List, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 
 logger = logging.getLogger(__name__)
@@ -113,7 +113,7 @@ class RegimePhaseResult:
     
     # Supporting data
     indicators: Optional[PhaseIndicators] = None
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     
     @property
     def is_early_phase(self) -> bool:

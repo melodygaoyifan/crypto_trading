@@ -312,12 +312,21 @@ class LOBFeed:
                     url = f"https://api.binance.com/api/v3/depth?symbol={symbol}&limit={self.depth_levels}"
                     
                     async with session.get(url, timeout=5) as response:
+                        if response.status != 200:
+                            # [P102 2026-04-27] Was silent fallthrough → mock.
+                            # 429/404/5xx all looked identical to operators.
+                            logger.warning(
+                                f"[LOB-FEED] Binance {symbol} returned "
+                                f"HTTP {response.status}; falling back to "
+                                f"mock for this symbol."
+                            )
+                            continue
                         if response.status == 200:
                             data = await response.json()
-                            
-                            bids = [{"price": float(b[0]), "size": float(b[1]), "orders_count": 1} 
+
+                            bids = [{"price": float(b[0]), "size": float(b[1]), "orders_count": 1}
                                    for b in data.get("bids", [])[:self.depth_levels]]
-                            asks = [{"price": float(a[0]), "size": float(a[1]), "orders_count": 1} 
+                            asks = [{"price": float(a[0]), "size": float(a[1]), "orders_count": 1}
                                    for a in data.get("asks", [])[:self.depth_levels]]
                             
                             if bids and asks:
@@ -377,6 +386,14 @@ class LOBFeed:
                     url = f"https://api.kraken.com/0/public/Depth?pair={kraken_symbol}&count={self.depth_levels}"
                     
                     async with session.get(url, timeout=5) as response:
+                        if response.status != 200:
+                            # [P102 2026-04-27] Same Binance-side fix.
+                            logger.warning(
+                                f"[LOB-FEED] Kraken {kraken_symbol} returned "
+                                f"HTTP {response.status}; falling back to "
+                                f"mock for this symbol."
+                            )
+                            continue
                         if response.status == 200:
                             data = await response.json()
                             result = data.get("result", {})

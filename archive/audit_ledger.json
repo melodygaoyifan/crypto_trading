@@ -1,8 +1,8 @@
 {
-  "generated_at": "2026-04-27T00:48:11.014999+00:00",
+  "generated_at": "2026-04-27T00:57:33.557108+00:00",
   "total_files": 368,
-  "audited_count": 88,
-  "remaining": 280,
+  "audited_count": 101,
+  "remaining": 267,
   "live_dirs": [
     "root",
     "agents",
@@ -551,7 +551,9 @@
     },
     {
       "path": "data_mgmt/data_validation.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5k"
     },
     {
       "path": "data_mgmt/feeds/__init__.py",
@@ -595,15 +597,21 @@
     },
     {
       "path": "data_mgmt/feeds/fred_feed.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5k-defer-stale"
     },
     {
       "path": "data_mgmt/feeds/kraken_futures_feed.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5k-clean"
     },
     {
       "path": "data_mgmt/feeds/lob_feed.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5k"
     },
     {
       "path": "data_mgmt/feeds/lunarcrush_feed.py",
@@ -613,7 +621,9 @@
     },
     {
       "path": "data_mgmt/feeds/macro_feed.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5k"
     },
     {
       "path": "data_mgmt/feeds/onchain_feed.py",
@@ -635,11 +645,15 @@
     },
     {
       "path": "data_mgmt/feeds/trading_economics_feed.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5k-defer-stale"
     },
     {
       "path": "data_mgmt/global_context_informer.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5k-defer-arch"
     },
     {
       "path": "data_mgmt/market_data_pipeline.py",
@@ -649,11 +663,15 @@
     },
     {
       "path": "data_mgmt/proof_log_system.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5k-defer-cosmetic"
     },
     {
       "path": "data_mgmt/shadow_ledger_manager.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5k-defer-arch"
     },
     {
       "path": "defense/__init__.py",
@@ -1069,11 +1087,15 @@
     },
     {
       "path": "market/high_risk_config.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5k-defer-design"
     },
     {
       "path": "market/intraday_correlation_monitor.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5k-defer-design"
     },
     {
       "path": "market/lead_lag_engine.py",
@@ -1085,7 +1107,9 @@
     },
     {
       "path": "market/phase_detector.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5k"
     },
     {
       "path": "market/regime_detector.py",
@@ -1093,7 +1117,9 @@
     },
     {
       "path": "market/regime_navigator.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5k-defer-arch"
     },
     {
       "path": "market/structure_analyzer.py",
