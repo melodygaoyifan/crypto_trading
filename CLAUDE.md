@@ -286,6 +286,37 @@ discipline + the grep habit.
 
 ### Recent pitfalls (last ~30 days)
 
+### P109. [COMPLETION 2026-04-27] Full-codebase audit loop FINISHED — 368/368 files (100%)
+- **Why:** User instruction "i need the entire code base be audit, can you refine your memory and continue" superseded P89's saturation-based stop. Memory rule rewritten to require exhaustive coverage of every `.py` in the live tree (not just high-leverage files).
+- **Loop totals:** 18 rounds (5a → 5r) over the resumption arc. Built `archive/audit_ledger.json` as ground truth (368 files in scope: root + agents/ + analytics/ + api/ + configs/ + core/ + dashboard/ + data_mgmt/ + defense/ + drl/ + engine/ + exchange/ + execution/ + infra/ + integration/ + liquidity/ + market/ + models/ + orchestration/ + portfolio/ + reports/ + risk/ + scripts/ + shadow/ + signals/ + strategies/ + tools/ + tests/conftest.py + tests/test_backfill_smoke.py).
+- **Real fixes shipped (P90 → P109):** ~30 across 14 deploys — covering production hotfixes (P91 stop-loss min-size, P93 PREFLIGHT_* PERMANENT classifier, P95 stop-order userref leak, P98 fetch_open_orders dedup, P98b cancel-all OrderNotFound tolerance) AND systematic sweeps (datetime.utcnow → tz-aware lambda across ~15 dataclass defaults, silent-except → logger.warning across ~10 sites, NaN guards in dynamic_limits + volatility_targeting, atomic-write + fsync in exit_drl_promotion_gate, alert_manager thread-safety, np.load path-prefix guard for RCE).
+- **Operator-paced deploy cadence:** Initial deploys per round caused container-recreation gaps that surfaced as duplicate orders (P95-shape). Operator adjusted policy mid-loop: "do deploy per 100 files, right now is still too frequent." Memory rule updated; final cadence was 4 batched deploys (covering P90→P99 individually + P100→P106 batched + P107→P109 batched at completion).
+- **Bug class distribution by file shape:**
+  - **datetime tz mixing (P39/P40):** ~15 dataclass defaults using `datetime.utcnow` (naive); ~25 bare `datetime.now()` sites in dataclasses, schedulers, and timestamp comparisons. By far the most common silent-failure shape — entire module families had inherited the pattern from early code.
+  - **silent-except (P25/P47/P64):** ~10 sites promoted from `except: pass` or `except: logger.debug` to `logger.warning` with `type(e).__name__` + context. Highest-impact: api/server.py /health endpoint (silently returned stale=True on parse fail), exit_drl_promotion_gate write failure, opportunity_budget shadow-ledger write, sota correlation calculation, account_sync fetch_positions, weekend_manager per-asset config overrides.
+  - **silent reader/writer mismatch (P15/P85):** 4 verified — onchain_feed.py + sentiment_feed.py both had `self.config` undefined, silently degrading to mock for every Helius/SOL RPC and LunarCrush call. Plus `meta_decision.py` Callable import missing for type hints, `risk/__init__.py` VolatilityTargeting re-export drift + TrancheLevel collision.
+  - **stop-order chain bugs:** 4 tightly-coupled fixes (P91/P93/P95/P98) covering pre-flight min-size check, our-own-PREFLIGHT errors classified PERMANENT, userref dedup independent of stop_price drift, and fetch_open_orders ground-truth dedup surviving across deploys.
+  - **NaN/Inf fail-OPEN to fail-CLOSED:** dynamic_limits.py volatility (P94) and volatility_targeting.py realized_vol (P98) — both silently let leverage stay HIGH on bad data; now apply downward adjustment as conservative default.
+  - **Cross-thread state safety:** alert_manager.py _alert_counter + _callbacks (P104) — added RLock + snapshot-under-lock pattern to prevent ID collision and mid-iteration mutation.
+  - **Method collision shadow (P87 family):** 0 new instances found — earlier P87 fix established the grep-before-add discipline.
+  - **fail-closed cascade prevention (P50 family):** auto_recovery_gate state-corruption now synthesizes halt instead of silently treating "unreadable" same as "missing"; np.load path-prefix guard prevents arbitrary-path pickle RCE.
+- **Bug density by directory** (real bugs ÷ files audited):
+  - risk/ (29 files): 8 bugs → 27% — highest density due to many dataclass defaults + thread-sensitive state
+  - signals/ (16 files): 4 bugs → 25%
+  - data_mgmt/feeds/ (16 files): 5 bugs → 31% — mostly `self.config` undefined family
+  - execution/ (23 files): 6 bugs → 26% — including the P91-P98 stop-order chain
+  - analytics/ (42 files): 6 bugs → 14% — mostly datetime
+  - core/, infra/, agents/, market/: 1-2 bugs each
+  - configs/, dashboard/, engine/, api/, exchange/, models/, portfolio/, reports/, shadow/, strategies/, tools/, tests/, scripts/: zero or design-only
+- **8+ deferred items** (not regressions, design decisions or operator-review): canonical 0.20 vs JSON 0.25 hard_drawdown; portfolio_brain hardcoded multipliers; strategic_coordinator leverage gating debug; dashboard observability silent-excepts; tools/ noqa annotations; risk_manager threshold drift vs canonical (different gate); leverage_guard macro_leverage_cap orphaned wire; tranche_manager update_executed never called from main.
+- **Calibrated confidence at completion:**
+  - **~95%** the 30+ shipped fixes are correct (smoke-tested locally + production verified after each batch deploy)
+  - **~90%** the audited files are clean for the 7 documented bug shapes (P15 / P22 / P25 / P39 / P50 / P85 / P87)
+  - **~70%** for novel bug classes that weren't in any agent prompt
+  - **~30%** for bugs that require multi-tick runtime traces to surface (the audit was static; runtime regression suites + production observability handle the rest)
+- **Methodology validation:** per-script depth + P-history-aware prompts + verify-via-grep before fix (10:1 false-positive rate held throughout; agents repeatedly claimed "self.config undefined" or "datetime mismatch" that turned out to be properly initialized or already-fixed) + batched deploys remain the canonical workflow. Future codebase-coverage passes should adopt this same shape; saturation-based stop is the WRONG criterion when the user wants exhaustive coverage.
+- **Final state at completion:** all 14 deploys verified healthy, RestartCount=0, all expected startup signals firing (StopLossAuthority ACTIVE, EXIT_DRL_KILLSWITCH restored ×3, TQC fold_3 ×3, SentimentL2 ACTIVE, GMM ×3). No live cascades since the P98 root-cause fix.
+
 ### P98. [ROOT-CAUSE 2026-04-27] fetch_open_orders dedup — survives userref scheme drift
 - **Symptom:** Production cascade resumed AFTER P95 deploy. Same `[POSITION-DESYNC] SOL/USD` + `[STOP-MINSIZE]` + `[STOP-RETRY] PERMANENT_FAILURE` chain firing every tick. Operator confirmed nothing was phantom; Kraken showed the SOL on balance, just locked.
 - **Root cause:** P95 fixed userref hash to be stable for FUTURE stops, but pre-P95 stops at Kraken used the OLD scheme (with `stop_price` embedded). `check_userref_executed()` queried by NEW userref → no match → `place_stop_loss()` submitted ANOTHER stop. Old stops kept locking the asset, free balance dropped below P91 min-size, cascade resumed.
