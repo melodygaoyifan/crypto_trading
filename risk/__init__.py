@@ -88,8 +88,22 @@ get_sota_risk_controller = None
 reset_sota_risk_controller = None
 
 # Try to import volatility_targeting
+# [P99 2026-04-27] Import the actual class names. The earlier `import
+# VolatilityTargeting` was a re-export drift bug — no class with that
+# name exists in volatility_targeting.py (the actual classes are
+# EnhancedVolatilityTargetingSizer at line 350 and the back-compat
+# subclass VolatilityTargetingSizer at line 794). The bad import
+# silently fell into the except below, leaving `risk.VolatilityTargeting
+# = None` — any future consumer would see None instead of getting an
+# ImportError they could handle. Aliasing the back-compat class keeps
+# the public name available for callers who already type
+# `risk.VolatilityTargeting`.
 try:
-    from .volatility_targeting import VolatilityTargeting
+    from .volatility_targeting import (
+        VolatilityTargetingSizer,
+        EnhancedVolatilityTargetingSizer,
+    )
+    VolatilityTargeting = VolatilityTargetingSizer
     _VOLATILITY_TARGETING_AVAILABLE = True
 except ImportError as e:
     _logger.debug(f"volatility_targeting not available: {e}")
@@ -323,12 +337,22 @@ except ImportError:
     _REGIME_TRANSITION_AVAILABLE = False
 
 # Cascade Exhaustion Governor
+# [P99 2026-04-27] Aliased the cascade governor's local TrancheLevel
+# enum to CascadeTrancheLevel at the package level to avoid colliding
+# with `TrancheLevel` exported from unified_position_sizer (which itself
+# re-exports core.canonical_enums.TrancheLevel — the canonical one).
+# Without this rename, whichever import ran second would silently
+# overwrite the canonical TrancheLevel in the risk.* namespace, and
+# downstream code expecting the canonical enum would receive incompatible
+# values. The internal cascade_exhaustion_governor module is unaffected
+# (still uses its own TrancheLevel locally); only the package re-export
+# is renamed.
 try:
     from .cascade_exhaustion_governor import (
         CascadeExhaustionGovernor,
         CascadeExhaustionConfig,
         CascadePhase,
-        TrancheLevel,
+        TrancheLevel as CascadeTrancheLevel,
         TrancheCheckResult,
         get_cascade_exhaustion_governor,
         reset_cascade_exhaustion_governor,
@@ -339,7 +363,7 @@ try:
         "CascadeExhaustionGovernor",
         "CascadeExhaustionConfig",
         "CascadePhase",
-        "TrancheLevel",
+        "CascadeTrancheLevel",
         "TrancheCheckResult",
         "get_cascade_exhaustion_governor",
         "reset_cascade_exhaustion_governor",

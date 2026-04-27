@@ -1,8 +1,8 @@
 {
-  "generated_at": "2026-04-27T00:32:12.123729+00:00",
+  "generated_at": "2026-04-27T00:38:49.109352+00:00",
   "total_files": 368,
-  "audited_count": 74,
-  "remaining": 294,
+  "audited_count": 77,
+  "remaining": 291,
   "live_dirs": [
     "root",
     "agents",
@@ -1135,7 +1135,9 @@
     },
     {
       "path": "risk/__init__.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_SHA",
+      "round": "5h"
     },
     {
       "path": "risk/adaptive_stop.py",
@@ -1151,7 +1153,9 @@
     },
     {
       "path": "risk/bull_transition_detector.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_SHA",
+      "round": "5h"
     },
     {
       "path": "risk/cascade_exhaustion_governor.py",
@@ -1209,7 +1213,9 @@
     },
     {
       "path": "risk/high_position_low_volume_filter.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_SHA",
+      "round": "5h"
     },
     {
       "path": "risk/leverage_guard.py",
@@ -1288,8 +1294,8 @@
     {
       "path": "risk/volatility_alpha_risk.py",
       "audited": true,
-      "audit_sha": "c29ef59",
-      "round": "5g"
+      "audit_sha": "PENDING_SHA",
+      "round": "5h-reverified"
     },
     {
       "path": "risk/volatility_targeting.py",
