@@ -66,11 +66,38 @@ STREAM_ALIASES = {
 }
 
 # Agents intentionally absent from attribution stream (non-directional per
-# CLAUDE.md "16-agent coverage" — risk/macro/lead_lag/cvd/structure/options
-# pre-2026-04-25 are architecturally non-attribution producers).
+# CLAUDE.md "16-agent coverage" — risk/macro/lead_lag/cvd/structure are
+# architecturally non-attribution producers).
 NON_DIRECTIONAL = {
     "macro", "risk", "structure", "cvd", "lead_lag", "regime",
     "squeeze", "risk_appetite",
+}
+
+# Agents that ARE in attribution but emit `*_short_confirmation` /
+# `*_data_quality` flags rather than ±direction by architectural design.
+# Their direction stays 0.0 by spec — silence here is NOT a bug.
+NON_DIRECTIONAL_IN_STREAM = {
+    "options",   # options_short_confirmation (PCR sentiment, 0..1 scale)
+    "vol_alpha", # always 0 direction; runs via intensity (matrix row 23)
+}
+
+# Agents gated by regime — silence is expected in listed regimes.
+# Source: main.py:6849 [FIX-SHORT-BIAS] for short_bias.
+REGIME_GATED = {
+    "short_bias": {"QUIET_ACCUMULATION", "WEAK_CONSOLIDATION", "NEUTRAL_DRIFT"},
+}
+
+# Agents disabled by config — silence is expected, operator-controlled.
+# Verified at runtime via startup log line "<engine> initialized (enabled=False)".
+DISABLED_BY_CONFIG = {
+    "onchain": "OnChainSentimentAlphaEngine initialized (enabled=False)",
+}
+
+# Agents whose writer requires upstream consensus/payload — silence in
+# quiet regimes is the expected behavior, not a wiring bug.
+CONSENSUS_GATED = {
+    # main.py:6592 — only writes when strategic_check['prior_direction'] is truthy
+    "two_stage": "writer at main.py:6592 requires StrategicCoordinator prior_direction",
 }
 
 # Per-asset routing — agents legitimately appear only on certain assets
@@ -164,8 +191,17 @@ def validate(records: list[dict]) -> int:
             status = f"WRONG_ROUTE(saw={s['assets']})"
             structural_failures += 1
         elif s["fired"] == 0:
-            status = "SILENT"
-            silent_agents.append(name)
+            if name in NON_DIRECTIONAL_IN_STREAM:
+                status = "OK_NON_DIR_INSTR"  # non-directional by architecture
+            elif name in REGIME_GATED:
+                status = f"OK_REGIME_GATED({','.join(sorted(REGIME_GATED[name]))})"
+            elif name in DISABLED_BY_CONFIG:
+                status = "OK_DISABLED_BY_CONFIG"
+            elif name in CONSENSUS_GATED:
+                status = "OK_CONSENSUS_GATED"
+            else:
+                status = "SILENT_DATA_QUIET"  # writer wired + active, no signal in window
+                silent_agents.append(name)
 
         print(f"{name:22s} {auth:18s} {want_auth:10s} {s['ticks']:>6d} "
               f"{fired_pct:>6.1f}% {dir_pct:>7.1f}% {status}")
