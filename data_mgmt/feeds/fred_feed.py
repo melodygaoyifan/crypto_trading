@@ -522,11 +522,22 @@ class FREDFeed:
     # =========================================================================
     
     async def _fetch_mock(self) -> FREDMacroData:
-        """Generate mock data for testing."""
+        """Generate mock data for testing.
+
+        [P113 (3/6) 2026-04-27] WARN-level signal so production operator
+        can detect when this fallback is taken. P101 silent-mock-fallback
+        prevention.
+        """
+        if not getattr(self, '_mock_warned', False):
+            logger.warning(
+                "[FRED] _fetch_mock invoked — production using mock macro "
+                "data. Verify FRED_API_KEY configured + endpoint reachable."
+            )
+            self._mock_warned = True
         await asyncio.sleep(0.1)  # Simulate latency
-        
+
         now = datetime.now(timezone.utc)
-        
+
         data = FREDMacroData(
             timestamp=now,
             staleness_sec=0.0,

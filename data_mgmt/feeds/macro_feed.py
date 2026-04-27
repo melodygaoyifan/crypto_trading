@@ -285,9 +285,19 @@ class MacroFeed:
         return await self._fetch_mock()
     
     async def _fetch_mock(self) -> Dict[str, Any]:
-        """Mock 数据源"""
+        """Mock 数据源.
+
+        [P113 (3/6) 2026-04-27] WARN signal for mock fallback visibility.
+        P101 prevention.
+        """
+        if not getattr(self, '_mock_warned', False):
+            logger.warning(
+                "[MACRO] _fetch_mock invoked — macro indicators using mock "
+                "data. VIX, rates, indices are SYNTHETIC this fetch."
+            )
+            self._mock_warned = True
         await asyncio.sleep(0.1)
-        
+
         now = datetime.now()
         
         # 模拟利率数据

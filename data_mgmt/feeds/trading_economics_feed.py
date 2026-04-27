@@ -520,12 +520,23 @@ class TradingEconomicsFeed:
     # =========================================================================
     
     async def _fetch_mock(self) -> TradingEconomicsData:
-        """Generate mock data for testing."""
+        """Generate mock data for testing.
+
+        [P113 (3/6) 2026-04-27] WARN signal for mock fallback visibility.
+        P101 prevention.
+        """
+        if not getattr(self, '_mock_warned', False):
+            logger.warning(
+                "[TRADING_ECON] _fetch_mock invoked — calendar events are "
+                "SYNTHETIC. has_high_impact_event_soon() will report mock "
+                "events. Verify TRADING_ECONOMICS_API_KEY configured."
+            )
+            self._mock_warned = True
         await asyncio.sleep(0.1)
-        
+
         import random
         now = datetime.now(timezone.utc)
-        
+
         data = TradingEconomicsData(timestamp=now, staleness_sec=0.0)
         
         # Generate some mock upcoming events

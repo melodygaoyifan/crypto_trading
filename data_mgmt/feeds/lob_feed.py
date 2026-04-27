@@ -443,9 +443,19 @@ class LOBFeed:
         return await self._fetch_mock()
     
     async def _fetch_mock(self) -> Dict[str, Any]:
-        """Mock 数据源"""
+        """Mock 数据源.
+
+        [P113 (3/6) 2026-04-27] WARN signal — production operator
+        visibility for mock fallback. P101 prevention.
+        """
+        if not getattr(self, '_mock_warned', False):
+            logger.warning(
+                "[LOB] _fetch_mock invoked — orderbook depth using mock "
+                "data. Microstructure signals will be neutral."
+            )
+            self._mock_warned = True
         await asyncio.sleep(0.05)  # 模拟低延迟
-        
+
         now = datetime.now()
         snapshots = {}
         

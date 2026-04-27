@@ -450,9 +450,21 @@ class CryptoPanicFeed:
     # =========================================================================
     
     async def _fetch_mock(self) -> CryptoPanicData:
-        """Generate mock data."""
+        """Generate mock data.
+
+        [P113 (3/6) 2026-04-27] WARN-level signal so production operator
+        can detect when this fallback is taken. Silent mock fallback was
+        the P101 bug class. Test test_mock_fallback_signaling.py enforces
+        this contract.
+        """
+        if not getattr(self, '_mock_warned', False):
+            logger.warning(
+                "[CRYPTOPANIC] _fetch_mock invoked — production using "
+                "mock data. Verify API key configured + endpoint reachable."
+            )
+            self._mock_warned = True
         await asyncio.sleep(0.1)
-        
+
         now = datetime.now(timezone.utc)
         data = CryptoPanicData(timestamp=now, staleness_sec=0.0)
         
