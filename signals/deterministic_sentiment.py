@@ -187,7 +187,7 @@ class DeterministicSentimentOutput:
     sources: Dict[str, Any] = field(default_factory=dict)
     
     # Metadata
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     is_stale: bool = False
     
     def to_dict(self) -> Dict[str, Any]:

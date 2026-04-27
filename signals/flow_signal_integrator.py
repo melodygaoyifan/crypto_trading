@@ -24,7 +24,7 @@ import statistics
 import time
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Tuple, Any
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 
 logger = logging.getLogger(__name__)
@@ -172,7 +172,7 @@ class FlowSignalIntegrator:
         # State
         self._current_state = FlowState()
         self._signals: Dict[str, FlowSignal] = {}
-        self._last_update = datetime.now()
+        self._last_update = datetime.now(timezone.utc)
         
         # Initialize components
         self._init_components()
@@ -218,7 +218,7 @@ class FlowSignalIntegrator:
         Returns:
             Updated FlowState
         """
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         state = FlowState(timestamp=now)
         
         # 1. Get whale & exchange flow from OnChainFeed

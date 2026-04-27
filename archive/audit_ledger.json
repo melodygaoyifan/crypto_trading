@@ -1,8 +1,8 @@
 {
-  "generated_at": "2026-04-27T01:21:35.806311+00:00",
+  "generated_at": "2026-04-27T01:27:16.262681+00:00",
   "total_files": 368,
-  "audited_count": 235,
-  "remaining": 133,
+  "audited_count": 276,
+  "remaining": 92,
   "live_dirs": [
     "root",
     "agents",
@@ -52,7 +52,7 @@
     {
       "path": "agents/kraken_quant_agent.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5m-clean"
     },
     {
@@ -74,7 +74,7 @@
     {
       "path": "agents/onchain_sentiment_fusion.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5m-defer-design"
     },
     {
@@ -88,7 +88,7 @@
     {
       "path": "agents/risk_agent.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5o"
     },
     {
@@ -98,13 +98,13 @@
     {
       "path": "agents/sentiment_llm_agent.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5m-defer-design"
     },
     {
       "path": "agents/short_bias_agent.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5m"
     },
     {
@@ -136,7 +136,7 @@
     {
       "path": "analytics/alpha_score_aggregator.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5l"
     },
     {
@@ -158,49 +158,49 @@
     {
       "path": "analytics/drl_drift/_common.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5l-clean"
     },
     {
       "path": "analytics/drl_drift/test1_action_distribution.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5l-clean"
     },
     {
       "path": "analytics/drl_drift/test2_qvalue_sanity.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5l-clean"
     },
     {
       "path": "analytics/drl_drift/test3_obs_distribution_shift.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5l-clean"
     },
     {
       "path": "analytics/drl_drift/test4_live_consistency.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5l-clean"
     },
     {
       "path": "analytics/drl_drift/test5_live_action_log.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5l-clean"
     },
     {
       "path": "analytics/drl_realized/drl_counterfactual_sharpe.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5l"
     },
     {
       "path": "analytics/execution_quality_report.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5l-defer-NaN"
     },
     {
@@ -212,13 +212,13 @@
     {
       "path": "analytics/failure_memory.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5l-defer-design"
     },
     {
       "path": "analytics/fill_rate_kpi.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5l-defer-design"
     },
     {
@@ -228,19 +228,19 @@
     {
       "path": "analytics/ic/backfill_ic.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5l"
     },
     {
       "path": "analytics/ic/compute_ic.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5l-clean"
     },
     {
       "path": "analytics/ic/diagnostic_ic.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5l-clean"
     },
     {
@@ -252,13 +252,13 @@
     {
       "path": "analytics/ic/strategy_sign_flip_audit.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5l-clean"
     },
     {
       "path": "analytics/llm_explainer.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5l-defer"
     },
     {
@@ -268,25 +268,25 @@
     {
       "path": "analytics/meta_decision_memory.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5l"
     },
     {
       "path": "analytics/monitoring_dashboard.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5l-defer"
     },
     {
       "path": "analytics/pnl_attribution.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5l-defer-arch"
     },
     {
       "path": "analytics/pnl_promotion.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5l-defer-NaN"
     },
     {
@@ -295,7 +295,9 @@
     },
     {
       "path": "analytics/regime_drift_v2/__init__.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5p-clean"
     },
     {
       "path": "analytics/regime_drift_v2/_common.py",
@@ -350,7 +352,7 @@
     {
       "path": "analytics/strategy_aging.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5l"
     },
     {
@@ -362,7 +364,7 @@
     {
       "path": "analytics/trade_explainer.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5l"
     },
     {
@@ -372,7 +374,7 @@
     {
       "path": "api/server.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5n"
     },
     {
@@ -382,24 +384,32 @@
     {
       "path": "configs/canonical_config.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5n-defer-operator"
     },
     {
       "path": "configs/config_resolver.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5p-clean"
     },
     {
       "path": "configs/high_risk_mode.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5p-clean"
     },
     {
       "path": "configs/sota_flags.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5p-clean"
     },
     {
       "path": "configs/strategy_tiers.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5p-defer-design"
     },
     {
       "path": "core/__init__.py",
@@ -414,7 +424,7 @@
     {
       "path": "core/alpha_boost.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5l-defer-design"
     },
     {
@@ -440,7 +450,7 @@
     {
       "path": "core/canonical_enums.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5l-clean"
     },
     {
@@ -486,7 +496,7 @@
     {
       "path": "core/feedback_loop.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5l-defer-design"
     },
     {
@@ -578,7 +588,7 @@
     {
       "path": "core/warmup_tracker.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5l-clean"
     },
     {
@@ -588,7 +598,7 @@
     {
       "path": "dashboard/app.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5n-defer-observability"
     },
     {
@@ -602,7 +612,7 @@
     {
       "path": "dashboard/sota_dashboard.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5n-defer-observability"
     },
     {
@@ -620,7 +630,7 @@
     {
       "path": "data_mgmt/data_validation.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5k"
     },
     {
@@ -630,7 +640,7 @@
     {
       "path": "data_mgmt/feeds/_http.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5j"
     },
     {
@@ -642,85 +652,85 @@
     {
       "path": "data_mgmt/feeds/coinglass_feed.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5i"
     },
     {
       "path": "data_mgmt/feeds/cryptocompare_news_feed.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5j-defer-dedup"
     },
     {
       "path": "data_mgmt/feeds/cryptocompare_onchain.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5j-clean"
     },
     {
       "path": "data_mgmt/feeds/cryptopanic_feed.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5j-defer-dedup"
     },
     {
       "path": "data_mgmt/feeds/fred_feed.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5k-defer-stale"
     },
     {
       "path": "data_mgmt/feeds/kraken_futures_feed.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5k-clean"
     },
     {
       "path": "data_mgmt/feeds/lob_feed.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5k"
     },
     {
       "path": "data_mgmt/feeds/lunarcrush_feed.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5j"
     },
     {
       "path": "data_mgmt/feeds/macro_feed.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5k"
     },
     {
       "path": "data_mgmt/feeds/onchain_feed.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5j"
     },
     {
       "path": "data_mgmt/feeds/sentiment_feed.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5j"
     },
     {
       "path": "data_mgmt/feeds/solana_onchain.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5j"
     },
     {
       "path": "data_mgmt/feeds/trading_economics_feed.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5k-defer-stale"
     },
     {
       "path": "data_mgmt/global_context_informer.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5k-defer-arch"
     },
     {
@@ -732,13 +742,13 @@
     {
       "path": "data_mgmt/proof_log_system.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5k-defer-cosmetic"
     },
     {
       "path": "data_mgmt/shadow_ledger_manager.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5k-defer-arch"
     },
     {
@@ -747,11 +757,15 @@
     },
     {
       "path": "defense/bitbeast_rules.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5p-clean"
     },
     {
       "path": "defense/confidence_gate.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5p-clean"
     },
     {
       "path": "defense/constitution.py",
@@ -761,23 +775,33 @@
     },
     {
       "path": "defense/drift_detector.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5p-clean"
     },
     {
       "path": "defense/execution_guards.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5p-clean"
     },
     {
       "path": "defense/governor_integration.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5p-clean"
     },
     {
       "path": "defense/human_override.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5p-clean"
     },
     {
       "path": "defense/kraken_integrity_shield.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5p-clean"
     },
     {
       "path": "defense/p0_safety_integrator.py",
@@ -788,12 +812,14 @@
     {
       "path": "defense/production_reliability.py",
       "audited": true,
-      "audit_sha": "P58",
-      "round": "pre-resume"
+      "audit_sha": "PENDING_BATCH",
+      "round": "5p"
     },
     {
       "path": "defense/rate_limit_manager.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5p-clean"
     },
     {
       "path": "defense/shadow_ledger_jsonl.py",
@@ -809,11 +835,15 @@
     },
     {
       "path": "defense/sol_defense.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5p-clean"
     },
     {
       "path": "defense/sol_execution_guard.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5p-clean"
     },
     {
       "path": "defense/startup_reconciler.py",
@@ -823,7 +853,9 @@
     },
     {
       "path": "defense/strategy_existence_fuse.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5p-clean"
     },
     {
       "path": "defense/trade_gate.py",
@@ -833,7 +865,9 @@
     },
     {
       "path": "defense/vram_guard.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5p-clean"
     },
     {
       "path": "drl/__init__.py",
@@ -915,7 +949,9 @@
     },
     {
       "path": "execution/composite_toxicity.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5p-defer-design"
     },
     {
       "path": "execution/dead_man_switch.py",
@@ -926,7 +962,7 @@
     {
       "path": "execution/derivatives_executor.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5m-defer-design"
     },
     {
@@ -943,7 +979,9 @@
     },
     {
       "path": "execution/execution_router.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5p-defer-arch"
     },
     {
       "path": "execution/exit_alpha.py",
@@ -953,7 +991,9 @@
     },
     {
       "path": "execution/fast_risk_tick.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5p-clean"
     },
     {
       "path": "execution/fees/__init__.py",
@@ -962,7 +1002,7 @@
     {
       "path": "execution/fees/kraken_plus_fee_blender.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5i-P89-finished"
     },
     {
@@ -992,7 +1032,7 @@
     {
       "path": "execution/passive_aggressive.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5m-defer-design"
     },
     {
@@ -1018,13 +1058,13 @@
     {
       "path": "execution/sol_execution.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5m-defer-design"
     },
     {
       "path": "execution/sota_scheduler.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5m"
     },
     {
@@ -1038,24 +1078,26 @@
     {
       "path": "infra/alert_manager.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5m"
     },
     {
       "path": "infra/classified_retry.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5m-defer-arch"
     },
     {
       "path": "infra/data_provider.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5m-defer-arch"
     },
     {
       "path": "infra/data_schema.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5p-clean"
     },
     {
       "path": "infra/event_bus.py",
@@ -1065,7 +1107,9 @@
     },
     {
       "path": "infra/event_integration.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5p-clean"
     },
     {
       "path": "infra/hot_restart_persistence.py",
@@ -1075,11 +1119,15 @@
     },
     {
       "path": "infra/kraken_client.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5p-clean"
     },
     {
       "path": "infra/kraken_derivatives_client.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5p-clean"
     },
     {
       "path": "infra/kraken_link.py",
@@ -1095,15 +1143,21 @@
     },
     {
       "path": "infra/market_data_schema.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5p-clean"
     },
     {
       "path": "infra/persistence.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5p-clean"
     },
     {
       "path": "infra/preserve_fresh_state.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5p-clean-annotated"
     },
     {
       "path": "infra/safe_torch_load.py",
@@ -1114,12 +1168,14 @@
     {
       "path": "infra/shared_state_registry.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5m-clean"
     },
     {
       "path": "infra/unified_event_v521.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5p-clean"
     },
     {
       "path": "integration/__init__.py",
@@ -1142,7 +1198,7 @@
     {
       "path": "liquidity/__init__.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5n-stub"
     },
     {
@@ -1154,13 +1210,13 @@
     {
       "path": "liquidity/sol_dex_monitor.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5n-defer-cosmetic"
     },
     {
       "path": "liquidity/weekend_manager.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5n"
     },
     {
@@ -1176,13 +1232,13 @@
     {
       "path": "market/high_risk_config.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5k-defer-design"
     },
     {
       "path": "market/intraday_correlation_monitor.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5k-defer-design"
     },
     {
@@ -1196,7 +1252,7 @@
     {
       "path": "market/phase_detector.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5k"
     },
     {
@@ -1206,7 +1262,7 @@
     {
       "path": "market/regime_navigator.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5k-defer-arch"
     },
     {
@@ -1228,7 +1284,7 @@
     {
       "path": "models/representation/market_embedding_model.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5n"
     },
     {
@@ -1250,13 +1306,13 @@
     {
       "path": "orchestration/sota_integration.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5n-defer-arch"
     },
     {
       "path": "orchestration/strategic_coordinator.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5n-defer-arch"
     },
     {
@@ -1266,19 +1322,19 @@
     {
       "path": "portfolio/__init__.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5n-stub"
     },
     {
       "path": "portfolio/portfolio_brain_offensive.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5n-defer-design"
     },
     {
       "path": "reports/__init__.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5n-stub"
     },
     {
@@ -1415,11 +1471,15 @@
     },
     {
       "path": "risk/tests/__init__.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5p-stub"
     },
     {
       "path": "risk/tests/verify_r1_r6.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5p-clean-unit-test"
     },
     {
       "path": "risk/thesis_budget_governor.py",
@@ -1454,331 +1514,331 @@
     {
       "path": "scripts/agent_audit_16.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5o-bulk-diagnostic"
     },
     {
       "path": "scripts/alpha_gate_postmortem.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5o-bulk-diagnostic"
     },
     {
       "path": "scripts/analyze_shadow_ledger.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5o-bulk-diagnostic"
     },
     {
       "path": "scripts/audit_dead_code.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5o-bulk-diagnostic"
     },
     {
       "path": "scripts/authority_consistency_audit.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5o-bulk-diagnostic"
     },
     {
       "path": "scripts/auto_phase1_transition.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5o-bulk-diagnostic"
     },
     {
       "path": "scripts/benchmark_suite.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5o-bulk-diagnostic"
     },
     {
       "path": "scripts/clean_sentiment_data.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5o-bulk-diagnostic"
     },
     {
       "path": "scripts/collect_orderbook.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5o-bulk-diagnostic"
     },
     {
       "path": "scripts/completeness_audit.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5o-bulk-diagnostic"
     },
     {
       "path": "scripts/diagnostic.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5o-bulk-diagnostic"
     },
     {
       "path": "scripts/e2e_debug.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5o-bulk-diagnostic"
     },
     {
       "path": "scripts/e2e_full_debug.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5o-bulk-diagnostic"
     },
     {
       "path": "scripts/execution_quality_report.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5o-bulk-diagnostic"
     },
     {
       "path": "scripts/exit_alpha_weekly_report.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5o-bulk-diagnostic"
     },
     {
       "path": "scripts/exit_drl_e2e_diagnostic.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5o-bulk-diagnostic"
     },
     {
       "path": "scripts/fast_risk_shadow_analysis.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5o-bulk-diagnostic"
     },
     {
       "path": "scripts/full_decision_audit.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5o-bulk-diagnostic"
     },
     {
       "path": "scripts/futures_vs_spot_fee_analysis.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5o-bulk-diagnostic"
     },
     {
       "path": "scripts/gate_rejection_analysis.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5o-bulk-diagnostic"
     },
     {
       "path": "scripts/gmm_diagnostic.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5o-bulk-diagnostic"
     },
     {
       "path": "scripts/kq_strategy_diagnostic.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5o-bulk-diagnostic"
     },
     {
       "path": "scripts/kraken_credentials_check.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5o-bulk-diagnostic"
     },
     {
       "path": "scripts/launch_live.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5o-clean"
     },
     {
       "path": "scripts/launch_optuna_trial.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5o-bulk-diagnostic"
     },
     {
       "path": "scripts/launch_paper.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5o-clean"
     },
     {
       "path": "scripts/live_watchdog.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5o-bulk-diagnostic"
     },
     {
       "path": "scripts/mark_step16_manual_checks.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5o-bulk-diagnostic"
     },
     {
       "path": "scripts/module_decision_audit.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5o-bulk-diagnostic"
     },
     {
       "path": "scripts/offline_validation.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5o-bulk-diagnostic"
     },
     {
       "path": "scripts/pa_shadow_analysis.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5o-bulk-diagnostic"
     },
     {
       "path": "scripts/paper_run_monitor.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5o-bulk-diagnostic"
     },
     {
       "path": "scripts/pre_flight_check.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5o-defer-design"
     },
     {
       "path": "scripts/pre_live_checks.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5o-bulk-diagnostic"
     },
     {
       "path": "scripts/quant_hit_rate_deep_dive.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5o-bulk-diagnostic"
     },
     {
       "path": "scripts/reflect_weekly.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5o-bulk-diagnostic"
     },
     {
       "path": "scripts/resume_trial48.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5o-bulk-diagnostic"
     },
     {
       "path": "scripts/run_beta_audit.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5o-bulk-diagnostic"
     },
     {
       "path": "scripts/run_validation_suite.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5o-bulk-diagnostic"
     },
     {
       "path": "scripts/runtime_parity_check.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5o-bulk-diagnostic"
     },
     {
       "path": "scripts/sentiment_ab_report.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5o-bulk-diagnostic"
     },
     {
       "path": "scripts/shadow_ledger_report.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5o-bulk-diagnostic"
     },
     {
       "path": "scripts/silent_failure_audit.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5o-bulk-diagnostic"
     },
     {
       "path": "scripts/startup_agent_wiring_truth.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5o-bulk-diagnostic"
     },
     {
       "path": "scripts/startup_drl_truth.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5o-clean-diagnostic"
     },
     {
       "path": "scripts/step15_gate_report.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5o-bulk-diagnostic"
     },
     {
       "path": "scripts/trade_report.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5o-bulk-diagnostic"
     },
     {
       "path": "scripts/validate_external_data.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5o-bulk-diagnostic"
     },
     {
       "path": "scripts/verify_dead_man_switch.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5o-bulk-diagnostic"
     },
     {
       "path": "scripts/verify_live_config.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5o-bulk-diagnostic"
     },
     {
       "path": "scripts/verify_sanity_suite.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5o-bulk-diagnostic"
     },
     {
       "path": "scripts/verify_suite.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5o-bulk-diagnostic"
     },
     {
       "path": "scripts/walkforward_validator.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5o-bulk-diagnostic"
     },
     {
       "path": "scripts/weekly_agent_report.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5o-bulk-diagnostic"
     },
     {
       "path": "shadow/__init__.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5n-clean"
     },
     {
@@ -1805,42 +1865,56 @@
     },
     {
       "path": "signals/authority_matrix.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5p-clean"
     },
     {
       "path": "signals/deterministic_sentiment.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5p"
     },
     {
       "path": "signals/false_breakout_detector.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5p-clean"
     },
     {
       "path": "signals/flow_signal_integrator.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5p"
     },
     {
       "path": "signals/fringe_panic_detector.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5m-clean"
     },
     {
       "path": "signals/fringe_panic_keywords.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5p-clean-data"
     },
     {
       "path": "signals/funding_rate_agent.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5p-clean"
     },
     {
       "path": "signals/fusion_patience.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5p-clean"
     },
     {
       "path": "signals/macro_crowd_adapter.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5m-clean"
     },
     {
@@ -1851,36 +1925,44 @@
     },
     {
       "path": "signals/opportunity_triggers.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5p-defer-design"
     },
     {
       "path": "signals/partial_consensus.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5p-clean"
     },
     {
       "path": "signals/profit_max_adapter.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5m-clean"
     },
     {
       "path": "signals/regime_transition_risk.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5p-clean"
     },
     {
       "path": "signals/signal_quality_scorer.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5m-clean"
     },
     {
       "path": "signals/stablecoin_monitor.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5p-clean"
     },
     {
       "path": "strategies/__init__.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5n-stub"
     },
     {
@@ -1892,43 +1974,43 @@
     {
       "path": "strategies/vol_convexity.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5n-clean"
     },
     {
       "path": "tools/build_sentiment_history.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5n-defer-noqa"
     },
     {
       "path": "tools/calibrate_sentiment_prompt.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5n-defer-noqa"
     },
     {
       "path": "tools/ci_check_invariants.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5n-clean"
     },
     {
       "path": "tools/lint_silent_swallow.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5n-defer-noqa"
     },
     {
       "path": "tools/monte_carlo_validator.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5n-clean"
     },
     {
       "path": "tools/tweet_filters.py",
       "audited": true,
-      "audit_sha": "PENDING_BATCH",
+      "audit_sha": "2bf01f2",
       "round": "5n-clean"
     }
   ]
