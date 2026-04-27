@@ -1,0 +1,27 @@
+# cosmic-ray config for HMATS targeted mutation testing (P122)
+# ============================================================
+# Targeted mutation testing on highest-leverage SAFETY-CRITICAL pure
+# functions. Whole-codebase mutation would take days; this scope is
+# tractable in minutes.
+#
+# Coverage matrix (run separately per module):
+#   1. defense/trade_gate.py - RejectReason classifier branches
+#   2. execution/execution_manager.py - _classify_kraken_order_error
+#      (Kraken error -> retry policy mapping; P79/P93 fixes)
+#
+# Usage:
+#   cosmic-ray init tools/cosmic_ray_config.toml session.sqlite
+#   cosmic-ray exec tools/cosmic_ray_config.toml session.sqlite
+#   cr-report session.sqlite
+
+[cosmic-ray]
+module-path = "execution/execution_manager.py"
+timeout = 30.0
+excluded-modules = []
+test-command = "python -X utf8 -m pytest tests/test_property_invariants.py::TestClassifyKrakenError -x -q"
+
+[cosmic-ray.distributor]
+name = "local"
+
+[cosmic-ray.distributor.local]
+max-workers = 4

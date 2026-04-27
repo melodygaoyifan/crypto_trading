@@ -77,3 +77,17 @@ jobs:
       - name: P119 external API fuzz tests
         run: |
           python -X utf8 -m pytest tests/test_external_api_fuzz.py -v
+
+      # P121-P123 (Tier A3 + Tier C7-C8): trade-gate coverage + extended
+      # mutation audit + concurrent-stress safety net.
+      - name: P121 trade-gate coverage tests
+        run: |
+          python -X utf8 -m pytest tests/test_trade_gate_coverage_p121.py -v
+
+      - name: P122 mutation audit (extended)
+        run: |
+          python -X utf8 -m pytest tests/test_mutation_audit_p122.py -v
+
+      - name: P123 concurrent stress
+        run: |
+          python -X utf8 -m pytest tests/test_concurrent_stress.py -v
