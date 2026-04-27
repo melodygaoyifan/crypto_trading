@@ -91,3 +91,7 @@ jobs:
       - name: P123 concurrent stress
         run: |
           python -X utf8 -m pytest tests/test_concurrent_stress.py -v
+
+      - name: P124 dynamic-dispatch reject coverage
+        run: |
+          python -X utf8 -m pytest tests/test_trade_gate_coverage_p124.py -v
