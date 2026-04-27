@@ -37,7 +37,7 @@ import logging
 import threading
 import math
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Dict, List, Optional, Tuple
 from collections import deque
@@ -283,7 +283,7 @@ class MultiWindowATRCalculator:
                 self._states[symbol] = MultiWindowATRState(symbol=symbol)
             
             state = self._states[symbol]
-            ts = timestamp or datetime.now()
+            ts = timestamp or datetime.now(timezone.utc)
             
             # Calculate True Range
             if state.last_close is not None:
@@ -439,7 +439,7 @@ class CalmarCalculator:
                 self._equity_curves[symbol] = deque(maxlen=self.lookback_days)
             
             curve = self._equity_curves[symbol]
-            ts = timestamp or datetime.now()
+            ts = timestamp or datetime.now(timezone.utc)
             curve.append({"value": equity_value, "timestamp": ts})
             
             return self._calculate_metrics(list(curve))
@@ -691,7 +691,7 @@ class EnhancedAdaptiveStopManager:
         Register a new position with v5.0.5 enhanced stop calculation.
         """
         with self._lock:
-            ts = entry_time or datetime.now()
+            ts = entry_time or datetime.now(timezone.utc)
             
             # Get ATR state for recording
             atr_state = self.atr_calculator.get_state(symbol)
@@ -765,7 +765,7 @@ class EnhancedAdaptiveStopManager:
             if not state:
                 return None
             
-            ts = timestamp or datetime.now()
+            ts = timestamp or datetime.now(timezone.utc)
             old_stop = state.current_stop
             
             # Calculate R-multiple
@@ -929,7 +929,7 @@ class EnhancedAdaptiveStopManager:
             
             # Check time decay
             if not hit and self.config.max_holding_hours > 0:
-                holding_hours = (datetime.now() - state.entry_time).total_seconds() / 3600
+                holding_hours = (datetime.now(timezone.utc) - state.entry_time).total_seconds() / 3600
                 if holding_hours > self.config.max_holding_hours:
                     hit = True
                     reason = StopTriggerReason.TIME_DECAY

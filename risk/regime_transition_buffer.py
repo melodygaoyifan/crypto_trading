@@ -36,7 +36,7 @@ TRANSITION 行为:
 import logging
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from collections import deque
 
@@ -66,7 +66,7 @@ class ConditionStatus:
     triggered: bool = False
     value: float = 0.0
     threshold: float = 0.0
-    last_checked: datetime = field(default_factory=datetime.now)
+    last_checked: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     details: str = ""
     
     def to_dict(self) -> Dict:
@@ -212,7 +212,7 @@ class RegimeTransitionBuffer:
             liq_change_pct_7d: Liquidation change % over 7 days
             btc_price_change_7d: BTC price change % over 7 days
         """
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         
         # Update MA data
         if btc_ma50 is not None:
@@ -285,12 +285,12 @@ class RegimeTransitionBuffer:
         if conditions_met >= self.config.min_conditions_for_transition:
             if self._state == TransitionState.INACTIVE:
                 self._state = TransitionState.ACTIVE
-                self._transition_start = datetime.now()
+                self._transition_start = datetime.now(timezone.utc)
                 logger.warning(f"[TRANSITION] ACTIVATED | conditions_met={conditions_met}")
             elif self._state == TransitionState.ACTIVE:
                 # Check if confirmed
                 if self._transition_start:
-                    days_active = (datetime.now() - self._transition_start).days
+                    days_active = (datetime.now(timezone.utc) - self._transition_start).days
                     if days_active >= self.config.confirm_days:
                         self._state = TransitionState.CONFIRMED
                         logger.warning(f"[TRANSITION] CONFIRMED | active for {days_active} days")
@@ -304,7 +304,7 @@ class RegimeTransitionBuffer:
         
         # Check expiration
         if self._transition_start:
-            days_active = (datetime.now() - self._transition_start).days
+            days_active = (datetime.now(timezone.utc) - self._transition_start).days
             if days_active >= self.config.transition_duration_days:
                 logger.info(f"[TRANSITION] Expired after {days_active} days")
                 self._state = TransitionState.INACTIVE
@@ -394,7 +394,7 @@ class RegimeTransitionBuffer:
         self._blocks_count += 1
         
         block_record = {
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "intent_type": intent_type,
             "symbol": symbol,
             "direction": direction,
@@ -436,7 +436,7 @@ class RegimeTransitionBuffer:
             "conditions_met": sum(1 for c in self._conditions.values() if c.triggered),
             "min_conditions": self.config.min_conditions_for_transition,
             "transition_start": self._transition_start.isoformat() if self._transition_start else None,
-            "days_active": (datetime.now() - self._transition_start).days if self._transition_start else 0,
+            "days_active": (datetime.now(timezone.utc) - self._transition_start).days if self._transition_start else 0,
             "conditions": {c.value: s.to_dict() for c, s in self._conditions.items()},
             "statistics": {
                 "blocks": self._blocks_count,

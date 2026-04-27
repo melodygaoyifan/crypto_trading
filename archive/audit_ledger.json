@@ -1,8 +1,8 @@
 {
-  "generated_at": "2026-04-27T00:04:19.948081+00:00",
+  "generated_at": "2026-04-27T00:19:26.339867+00:00",
   "total_files": 368,
-  "audited_count": 66,
-  "remaining": 302,
+  "audited_count": 70,
+  "remaining": 298,
   "live_dirs": [
     "root",
     "agents",
@@ -1139,7 +1139,9 @@
     },
     {
       "path": "risk/adaptive_stop.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_SHA",
+      "round": "5f"
     },
     {
       "path": "risk/auto_recovery_gate.py",
@@ -1159,7 +1161,9 @@
     },
     {
       "path": "risk/correlation_position_sizer.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_SHA",
+      "round": "5f"
     },
     {
       "path": "risk/correlation_realtime_controller.py",
@@ -1191,7 +1195,9 @@
     },
     {
       "path": "risk/gambler_entry_exit.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_SHA",
+      "round": "5f"
     },
     {
       "path": "risk/global_exposure_cap.py",
@@ -1217,7 +1223,9 @@
     },
     {
       "path": "risk/regime_transition_buffer.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_SHA",
+      "round": "5f"
     },
     {
       "path": "risk/risk_manager.py",
