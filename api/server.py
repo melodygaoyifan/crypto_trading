@@ -78,7 +78,17 @@ def _is_fresh(state: Dict, max_age_seconds: int = 600) -> bool:
             return False
         age = (datetime.now(timezone.utc) - dt).total_seconds()
         return age < max_age_seconds
-    except Exception:
+    except Exception as _e:  # noqa: silent-swallow
+        # [P105 2026-04-27] Was bare except: return False — health
+        # endpoint reported "stale" silently on any parse failure
+        # (timestamp shape change, naive vs aware, etc.). Surface so
+        # operator can see a parse-failure pattern even if the answer
+        # (False=stale) is correct conservatively.
+        import logging as _log
+        _log.getLogger(__name__).warning(
+            f"[API] _is_fresh parse failed ({type(_e).__name__}: {_e}); "
+            f"returning stale=True conservatively"
+        )
         return False
 
 
@@ -273,7 +283,15 @@ def logs_recent(lines: int = 50):
                 content = raw.decode("utf-8", errors="replace")
                 all_lines = content.splitlines()
                 return {"file": lp.name, "lines": all_lines[-lines:]}
-            except Exception:
+            except Exception as _e:  # noqa: silent-swallow
+                # [P105 2026-04-27] Was bare except: continue — read
+                # errors silently fell through to next log file. Now
+                # logged so operator can see permission/encoding issues.
+                import logging as _log
+                _log.getLogger(__name__).warning(
+                    f"[API] /logs read of {lp.name} failed "
+                    f"({type(_e).__name__}: {_e}); trying next log file"
+                )
                 continue
     return {"file": "", "lines": []}
 

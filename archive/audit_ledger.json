@@ -1,8 +1,8 @@
 {
-  "generated_at": "2026-04-27T01:09:47.916012+00:00",
+  "generated_at": "2026-04-27T01:14:56.020942+00:00",
   "total_files": 368,
-  "audited_count": 143,
-  "remaining": 225,
+  "audited_count": 164,
+  "remaining": 204,
   "live_dirs": [
     "root",
     "agents",
@@ -371,7 +371,9 @@
     },
     {
       "path": "api/server.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5n"
     },
     {
       "path": "configs/__init__.py",
@@ -379,7 +381,9 @@
     },
     {
       "path": "configs/canonical_config.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5n-defer-operator"
     },
     {
       "path": "configs/config_resolver.py",
@@ -583,7 +587,9 @@
     },
     {
       "path": "dashboard/app.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5n-defer-observability"
     },
     {
       "path": "dashboard/enhanced_dashboard.py",
@@ -595,7 +601,9 @@
     },
     {
       "path": "dashboard/sota_dashboard.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5n-defer-observability"
     },
     {
       "path": "dashboard/volatility_alpha_panel.py",
@@ -1133,7 +1141,9 @@
     },
     {
       "path": "liquidity/__init__.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5n-stub"
     },
     {
       "path": "liquidity/integrated_manager.py",
@@ -1143,13 +1153,15 @@
     },
     {
       "path": "liquidity/sol_dex_monitor.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5n-defer-cosmetic"
     },
     {
       "path": "liquidity/weekend_manager.py",
       "audited": true,
-      "audit_sha": "P64",
-      "round": "pre-resume"
+      "audit_sha": "PENDING_BATCH",
+      "round": "5n"
     },
     {
       "path": "main.py",
@@ -1215,7 +1227,9 @@
     },
     {
       "path": "models/representation/market_embedding_model.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5n"
     },
     {
       "path": "models/representation/pretrain_contrastive.py",
@@ -1235,11 +1249,15 @@
     },
     {
       "path": "orchestration/sota_integration.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5n-defer-arch"
     },
     {
       "path": "orchestration/strategic_coordinator.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5n-defer-arch"
     },
     {
       "path": "orchestration/system_mode.py",
@@ -1247,15 +1265,21 @@
     },
     {
       "path": "portfolio/__init__.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5n-stub"
     },
     {
       "path": "portfolio/portfolio_brain_offensive.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5n-defer-design"
     },
     {
       "path": "reports/__init__.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5n-stub"
     },
     {
       "path": "risk/__init__.py",
@@ -1645,7 +1669,9 @@
     },
     {
       "path": "shadow/__init__.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5n-clean"
     },
     {
       "path": "signals/__init__.py",
@@ -1745,7 +1771,9 @@
     },
     {
       "path": "strategies/__init__.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5n-stub"
     },
     {
       "path": "strategies/cash_and_carry.py",
@@ -1755,31 +1783,45 @@
     },
     {
       "path": "strategies/vol_convexity.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5n-clean"
     },
     {
       "path": "tools/build_sentiment_history.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5n-defer-noqa"
     },
     {
       "path": "tools/calibrate_sentiment_prompt.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5n-defer-noqa"
     },
     {
       "path": "tools/ci_check_invariants.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5n-clean"
     },
     {
       "path": "tools/lint_silent_swallow.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5n-defer-noqa"
     },
     {
       "path": "tools/monte_carlo_validator.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5n-clean"
     },
     {
       "path": "tools/tweet_filters.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5n-clean"
     }
   ]
 }

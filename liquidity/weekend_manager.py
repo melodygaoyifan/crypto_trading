@@ -442,7 +442,10 @@ class WeekendOverrideRules:
                     f"[AP-5] WEEKEND_FILTER_DISABLED {asset}: bypassed by config "
                     f"alpha={estimated_alpha_bps:.0f} conf={confidence:.0%}"
                 )
-            except Exception:
+            except Exception as _log_e:  # noqa: silent-swallow
+                # Best-effort log path for the bypass diagnostic; if even
+                # logging fails (e.g. logging module unloaded mid-shutdown),
+                # the bypass decision itself is still safe.
                 pass
             return (False, "")
         _mode = str(system_mode or "").upper()
@@ -466,8 +469,17 @@ class WeekendOverrideRules:
             if _asset_override is not None:
                 try:
                     _alpha_mult = float(_asset_override)
-                except Exception:
-                    pass
+                except (TypeError, ValueError) as _e:
+                    # [P105 2026-04-27] Was bare except: pass — operator
+                    # had no idea their per-asset weekend override was
+                    # malformed (e.g. set to "0.5x" string instead of 0.5).
+                    import logging as _log
+                    _log.getLogger(__name__).warning(
+                        f"[WEEKEND] {_asset}: per-asset alpha multiplier "
+                        f"override invalid ({_asset_override!r}, "
+                        f"{type(_e).__name__}); using global default "
+                        f"_alpha_mult={_alpha_mult}"
+                    )
         _min_conf = float(
             _wk_cfg.get(
                 "opportunity_confidence_weekend",
@@ -487,8 +499,15 @@ class WeekendOverrideRules:
             if _conf_override is not None:
                 try:
                     _min_conf = float(_conf_override)
-                except Exception:
-                    pass
+                except (TypeError, ValueError) as _e:
+                    # [P105 2026-04-27] Same fix shape as alpha_mult above.
+                    import logging as _log
+                    _log.getLogger(__name__).warning(
+                        f"[WEEKEND] {_asset}: per-asset confidence "
+                        f"override invalid ({_conf_override!r}, "
+                        f"{type(_e).__name__}); using global default "
+                        f"_min_conf={_min_conf}"
+                    )
 
         # Alpha check
         # [P42 2026-04-25] Base value (was hardcoded 33) now configurable
