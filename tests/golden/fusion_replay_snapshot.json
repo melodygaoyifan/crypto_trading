@@ -1,0 +1,41 @@
+{
+  "digest": "33b003e7560bf67f",
+  "payload": {
+    "corpus_size": 217,
+    "per_asset": {
+      "BTC": {
+        "n_ticks": 73,
+        "direction_sum": 0.0,
+        "direction_nonzero_count": 0,
+        "decider_distribution": {
+          "missing_veto_risk": 73
+        },
+        "veto_distribution": {
+          "missing_veto:risk": 73
+        }
+      },
+      "ETH": {
+        "n_ticks": 69,
+        "direction_sum": 0.0,
+        "direction_nonzero_count": 0,
+        "decider_distribution": {
+          "missing_veto_risk": 69
+        },
+        "veto_distribution": {
+          "missing_veto:risk": 69
+        }
+      },
+      "SOL": {
+        "n_ticks": 75,
+        "direction_sum": 0.0,
+        "direction_nonzero_count": 0,
+        "decider_distribution": {
+          "missing_veto_risk": 75
+        },
+        "veto_distribution": {
+          "missing_veto:risk": 75
+        }
+      }
+    }
+  }
+}

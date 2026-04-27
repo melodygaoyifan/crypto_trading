@@ -36,8 +36,9 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           # Pinned versions so test runs are reproducible. Mypy is for
-          # the lint_mypy_baseline scanner; pydantic for config_schema.
-          pip install pytest pytest-asyncio pydantic mypy
+          # the lint_mypy_baseline scanner; pydantic for config_schema;
+          # hypothesis for P117 property tests + P119 fuzz harness.
+          pip install pytest pytest-asyncio pydantic mypy hypothesis
 
       # P111 invariant tests — the regression suite that turns every
       # P-fix into a forcing function. If one fails, a P-fix was
@@ -62,3 +63,17 @@ jobs:
       - name: Chaos test harness
         run: |
           python -X utf8 -m pytest tests/chaos/ -v
+
+      # P116-P119 (Tier A confidence push): replay golden-trace + Hypothesis
+      # property tests + JSON fuzz tests. Caught the P118 0.0-or-0.5 bug.
+      - name: P116 fusion replay (golden trace)
+        run: |
+          python -X utf8 -m pytest tests/test_replay_fusion.py -v
+
+      - name: P117 Hypothesis property tests
+        run: |
+          python -X utf8 -m pytest tests/test_property_invariants.py -v
+
+      - name: P119 external API fuzz tests
+        run: |
+          python -X utf8 -m pytest tests/test_external_api_fuzz.py -v

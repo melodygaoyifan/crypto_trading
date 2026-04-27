@@ -5115,10 +5115,18 @@ class HMATSProductionRunner:
         - drl_confidence >= 0.3   (matches P19/P20 thresholds)
         - drl_confidence > quant_confidence (only swap if it actually helps)
         """
-        _quant_conf = float(getattr(intent, 'quant_confidence', 0.5) or 0.5)
-        _drl_auth = str(agent_signals.get("drl_authority_level", "DISABLED") or "DISABLED").upper()
-        _drl_dir = float(agent_signals.get("drl_direction", 0.0) or 0.0)
-        _drl_conf = float(agent_signals.get("drl_confidence", 0.0) or 0.0)
+        # [P118 2026-04-27] DO NOT use `... or 0.5` — Python treats 0.0 as
+        # falsy, silently coercing a legitimate quant_confidence=0.0 ("no
+        # confidence") into 0.5 ("medium"). Caught by Hypothesis property
+        # test (test_property_invariants.py). Same risk for drl_dir/drl_conf:
+        # explicit None-check, not `or` short-circuit.
+        _qc = getattr(intent, 'quant_confidence', None)
+        _quant_conf = float(_qc) if _qc is not None else 0.5
+        _drl_auth = str(agent_signals.get("drl_authority_level") or "DISABLED").upper()
+        _dd = agent_signals.get("drl_direction")
+        _drl_dir = float(_dd) if _dd is not None else 0.0
+        _dc = agent_signals.get("drl_confidence")
+        _drl_conf = float(_dc) if _dc is not None else 0.0
         if (_drl_auth == "ACTIVE"
                 and abs(_drl_dir) >= 0.5
                 and _drl_conf >= 0.3
