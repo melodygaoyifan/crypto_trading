@@ -57,7 +57,7 @@ class ModeTransitionReason(Enum):
 class ModeState:
     """Current mode state with metadata."""
     mode: SystemMode = SystemMode.NORMAL
-    entered_at: datetime = field(default_factory=datetime.utcnow)
+    entered_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     reason: ModeTransitionReason = ModeTransitionReason.DEFAULT_STATE
     ttl_expires_at: Optional[datetime] = None
     decay_strength: float = 1.0  # For OPPORTUNITY decay
@@ -94,7 +94,7 @@ class ModeTransition:
     from_mode: SystemMode
     to_mode: SystemMode
     reason: ModeTransitionReason
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     details: str = ""
 
 

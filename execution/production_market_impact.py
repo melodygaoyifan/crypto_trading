@@ -860,11 +860,20 @@ class AdaptiveMarketImpactModel:
     
     def _emit_event(self, event_type: str, data: Dict):
         """发送事件"""
+        # [P109 2026-04-27] Was bare except: pass — callback failures
+        # silently lost. Per-callback exception logged so operator sees
+        # broken subscribers; loop continues to next callback so one
+        # bad subscriber doesn't poison event distribution.
         for callback in self._event_callbacks:
             try:
                 callback(event_type, data)
-            except Exception:
-                pass
+            except Exception as _cb_e:  # noqa: silent-swallow
+                import logging as _log
+                _log.getLogger(__name__).warning(
+                    f"[MARKET_IMPACT] event_callback {getattr(callback, '__name__', '?')} "
+                    f"raised on event_type={event_type} "
+                    f"({type(_cb_e).__name__}: {_cb_e}); skipping callback"
+                )
     
     # =========================================================================
     # UTILITY

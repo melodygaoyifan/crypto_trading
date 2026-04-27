@@ -27,7 +27,7 @@ import os
 import numpy as np
 from dataclasses import dataclass, field, asdict
 from typing import Dict, List, Optional, Tuple, Any, Callable
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from collections import deque, defaultdict
 from enum import Enum
 
@@ -208,7 +208,7 @@ class ImpactCalibrationTable:
             
             data = {
                 "version": "5.2.1",
-                "updated_at": datetime.now().isoformat(),
+                "updated_at": datetime.now(timezone.utc).isoformat(),
                 "entries": {
                     k: v.to_dict() for k, v in self._entries.items()
                 }
@@ -383,7 +383,7 @@ class ImpactCalibrationTable:
             avg_realized_impact_bps=avg_realized,
             std_realized_impact_bps=std_realized,
             avg_prediction_error_bps=avg_error,
-            last_updated=datetime.now(),
+            last_updated=datetime.now(timezone.utc),
         )
     
     # =========================================================================
@@ -440,7 +440,7 @@ class ImpactCalibrationTable:
             
             # 更新统计
             current.avg_prediction_error_bps = avg_error
-            current.last_updated = datetime.now()
+            current.last_updated = datetime.now(timezone.utc)
     
     # =========================================================================
     # REPORTING
@@ -538,7 +538,7 @@ class ProductionMarketImpactCalibrationBridge:
             (eta, gamma, confidence)
         """
         # 计算 session
-        hour = datetime.now().hour
+        hour = datetime.now(timezone.utc).hour
         if hour < 4:
             session = "asia_morning"
         elif hour < 8:
@@ -588,7 +588,7 @@ class ProductionMarketImpactCalibrationBridge:
         记录执行结果用于在线校准
         """
         # 计算 session
-        hour = datetime.now().hour
+        hour = datetime.now(timezone.utc).hour
         if hour < 4:
             session = "asia_morning"
         elif hour < 8:
@@ -603,7 +603,7 @@ class ProductionMarketImpactCalibrationBridge:
             session = "us_afternoon"
         
         sample = CalibrationSample(
-            timestamp=datetime.now(),
+            timestamp=datetime.now(timezone.utc),
             asset=asset,
             side=side,
             size_usd=size_usd,
@@ -666,7 +666,7 @@ if __name__ == "__main__":
         realized = expected * (1.1 + 0.2 * np.random.random())
         
         sample = CalibrationSample(
-            timestamp=datetime.now(),
+            timestamp=datetime.now(timezone.utc),
             asset=asset,
             side="buy" if i % 3 else "sell",
             size_usd=10000 + 90000 * np.random.random(),

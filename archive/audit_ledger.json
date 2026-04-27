@@ -1,8 +1,8 @@
 {
-  "generated_at": "2026-04-27T01:30:57.781491+00:00",
+  "generated_at": "2026-04-27T01:34:48.771887+00:00",
   "total_files": 368,
-  "audited_count": 325,
-  "remaining": 43,
+  "audited_count": 368,
+  "remaining": 0,
   "live_dirs": [
     "root",
     "agents",
@@ -145,7 +145,9 @@
     },
     {
       "path": "analytics/confidence_scorer.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5r-clean"
     },
     {
       "path": "analytics/drift_policy.py",
@@ -153,7 +155,9 @@
     },
     {
       "path": "analytics/drl_drift/__init__.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5r-stub"
     },
     {
       "path": "analytics/drl_drift/_common.py",
@@ -223,7 +227,9 @@
     },
     {
       "path": "analytics/ic/__init__.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5r-stub"
     },
     {
       "path": "analytics/ic/backfill_ic.py",
@@ -291,7 +297,9 @@
     },
     {
       "path": "analytics/reflection_agent.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5r-defer-design"
     },
     {
       "path": "analytics/regime_drift_v2/__init__.py",
@@ -301,43 +309,63 @@
     },
     {
       "path": "analytics/regime_drift_v2/_common.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5r-clean-diagnostic"
     },
     {
       "path": "analytics/regime_drift_v2/smoke_test_canonical.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5r-clean-diagnostic"
     },
     {
       "path": "analytics/regime_drift_v2/summary.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5r-clean-diagnostic"
     },
     {
       "path": "analytics/regime_drift_v2/test0_artifact_audit.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5r-clean-diagnostic"
     },
     {
       "path": "analytics/regime_drift_v2/test1_cluster_drift.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5r-clean-diagnostic"
     },
     {
       "path": "analytics/regime_drift_v2/test2_frequency_drift.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5r-clean-diagnostic"
     },
     {
       "path": "analytics/regime_drift_v2/test3_confidence_drift.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5r-clean-diagnostic"
     },
     {
       "path": "analytics/regime_drift_v2/test4_apple_to_apple.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5r-clean-diagnostic"
     },
     {
       "path": "analytics/regime_drift_v2/test5_disagreement_timeline.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5r-clean-diagnostic"
     },
     {
       "path": "analytics/regime_drift_v2/validate_retrain.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5r-clean-diagnostic"
     },
     {
       "path": "analytics/signal_quality_tracker.py",
@@ -347,7 +375,9 @@
     },
     {
       "path": "analytics/sota_metrics_calculator.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5r-defer"
     },
     {
       "path": "analytics/strategy_aging.py",
@@ -381,7 +411,9 @@
     },
     {
       "path": "configs/__init__.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5r-stub"
     },
     {
       "path": "configs/canonical_config.py",
@@ -679,7 +711,9 @@
     },
     {
       "path": "data_mgmt/__init__.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5r-stub"
     },
     {
       "path": "data_mgmt/data_health.py",
@@ -693,7 +727,9 @@
     },
     {
       "path": "data_mgmt/feeds/__init__.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5r-stub"
     },
     {
       "path": "data_mgmt/feeds/_http.py",
@@ -811,7 +847,9 @@
     },
     {
       "path": "defense/__init__.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5r-stub"
     },
     {
       "path": "defense/bitbeast_rules.py",
@@ -957,7 +995,9 @@
     },
     {
       "path": "drl/promotion_gate.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5r-clean"
     },
     {
       "path": "drl/runtime_obs_builder.py",
@@ -1021,11 +1061,15 @@
     },
     {
       "path": "execution/__init__.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5r-stub"
     },
     {
       "path": "execution/adversarial_tests/adversarial_test_suite.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5r-clean-test"
     },
     {
       "path": "execution/composite_toxicity.py",
@@ -1077,7 +1121,9 @@
     },
     {
       "path": "execution/fees/__init__.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5r-stub"
     },
     {
       "path": "execution/fees/kraken_plus_fee_blender.py",
@@ -1087,27 +1133,39 @@
     },
     {
       "path": "execution/impact_calibration.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5r"
     },
     {
       "path": "execution/learned_execution_policy.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5r-defer-design"
     },
     {
       "path": "execution/level2_analyzer.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5r-clean-deferred"
     },
     {
       "path": "execution/loop_controller.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5r-clean-deferred"
     },
     {
       "path": "execution/order_manager.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5r-clean-deferred"
     },
     {
       "path": "execution/orderbook_analyzer.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5r-clean-deferred"
     },
     {
       "path": "execution/passive_aggressive.py",
@@ -1117,23 +1175,33 @@
     },
     {
       "path": "execution/production_market_impact.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5r"
     },
     {
       "path": "execution/rl_drift_fallback.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5r-clean"
     },
     {
       "path": "execution/rl_execution_agent.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5r-clean-deferred"
     },
     {
       "path": "execution/rl_fallback.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5r-clean-deferred"
     },
     {
       "path": "execution/simulator/lob_replay_engine.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5r-clean-deferred"
     },
     {
       "path": "execution/sol_execution.py",
@@ -1149,11 +1217,15 @@
     },
     {
       "path": "execution/timing_engine.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5r-clean-deferred"
     },
     {
       "path": "infra/__init__.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5r-stub"
     },
     {
       "path": "infra/alert_manager.py",
@@ -1259,11 +1331,15 @@
     },
     {
       "path": "integration/__init__.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5r-stub"
     },
     {
       "path": "integration/core/__init__.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5r-stub"
     },
     {
       "path": "integration/core/compat.py",
@@ -1367,11 +1443,15 @@
     },
     {
       "path": "models/__init__.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5r-stub"
     },
     {
       "path": "models/representation/__init__.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5r-stub"
     },
     {
       "path": "models/representation/market_embedding_model.py",
@@ -1381,7 +1461,9 @@
     },
     {
       "path": "models/representation/pretrain_contrastive.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5r-clean-gitignored"
     },
     {
       "path": "orchestration/__init__.py",
@@ -1415,7 +1497,9 @@
     },
     {
       "path": "orchestration/system_mode.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5r"
     },
     {
       "path": "portfolio/__init__.py",
@@ -1941,7 +2025,9 @@
     },
     {
       "path": "signals/__init__.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5r-stub"
     },
     {
       "path": "signals/adaptive_weight_v521.py",
