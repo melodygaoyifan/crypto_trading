@@ -30,7 +30,7 @@ CRITICAL PRINCIPLE:
 import logging
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 
 from market.phase_detector import RegimePhase, RegimePhaseResult
@@ -464,7 +464,7 @@ class RiskAssessment:
     # Metadata
     drawdown: float = 0.0
     correlation: float = 0.0
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def to_dict(self) -> Dict:
         return {

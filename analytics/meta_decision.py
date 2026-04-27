@@ -36,7 +36,7 @@ ARCHITECTURE INTEGRATION:
 
 import logging
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional, Tuple, Any, Callable
 from datetime import datetime, timezone, timedelta
 from enum import Enum
 from collections import deque

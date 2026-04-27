@@ -21,7 +21,7 @@ Data Health Monitoring and Degradation
 import logging
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any, Callable
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from collections import deque
 
@@ -258,7 +258,7 @@ class DataHealthMonitor:
         
         # 记录历史
         self._history[source_type].append({
-            "timestamp": datetime.now(),
+            "timestamp": datetime.now(timezone.utc),
             "available": available,
             "staleness_sec": staleness_sec,
             "confidence": confidence,
@@ -288,7 +288,7 @@ class DataHealthMonitor:
         health = SourceHealth(
             source_type=source_type,
             status=status,
-            last_update=datetime.now() if available else None,
+            last_update=datetime.now(timezone.utc) if available else None,
             staleness_sec=staleness_sec,
             is_stale=is_stale,
             available=available,
@@ -309,7 +309,7 @@ class DataHealthMonitor:
         Returns:
             DataHealthSnapshot: 当前健康状态快照
         """
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         
         # 统计
         healthy_count = 0
