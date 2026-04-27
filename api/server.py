@@ -141,6 +141,61 @@ def health():
     )
 
 
+@app.get("/decision-trace")
+def decision_trace(hours: int = 24):
+    """[P111 Tier1#3 2026-04-27] Gate-rejection histogram + abstain
+    detection over the last N hours. Wraps decision_trace_watcher.py
+    so dashboards/operators can poll a single endpoint instead of
+    SSH+grep workflow.
+
+    Surfaces:
+      - DECIDE_ABSTAIN streak length + percentage
+      - per-agent abstain rate (catches "kraken_quant 100% dead")
+      - top veto-reason histogram
+      - PERMANENT_FAILURE outcome count
+      - operator-actionable warnings list
+    """
+    try:
+        # Import here to avoid hard dependency at module-load time;
+        # the watcher script is the single source of truth for analysis logic.
+        import sys as _sys
+        from pathlib import Path as _Path
+        _scripts_dir = _Path(__file__).resolve().parents[1] / "scripts"
+        if str(_scripts_dir) not in _sys.path:
+            _sys.path.insert(0, str(_scripts_dir))
+        from decision_trace_watcher import (  # type: ignore[import-not-found]
+            _resolve_attr_dir, _iter_recent_records,
+            analyze_signals, analyze_outcomes, detect_anomalies,
+        )
+    except Exception as _e:
+        return {
+            "error": "decision_trace_watcher unavailable",
+            "detail": f"{type(_e).__name__}: {_e}",
+        }
+    try:
+        attr_dir = _resolve_attr_dir()
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+        signals = _iter_recent_records(attr_dir, "signals_*.jsonl", cutoff, 5000)
+        outcomes = _iter_recent_records(attr_dir, "outcomes_*.jsonl", cutoff, 5000)
+        sig_summary = analyze_signals(signals)
+        out_summary = analyze_outcomes(outcomes)
+        warnings = detect_anomalies(sig_summary, out_summary, hours)
+        return {
+            "hours_lookback": hours,
+            "signals": sig_summary,
+            "outcomes": out_summary,
+            "warnings": warnings,
+            "warning_count": len(warnings),
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        }
+    except Exception as _e:
+        import logging as _log
+        _log.getLogger(__name__).warning(
+            f"[API] /decision-trace failed ({type(_e).__name__}: {_e})"
+        )
+        return {"error": str(_e)}
+
+
 @app.get("/status")
 def status():
     """Full system status summary."""

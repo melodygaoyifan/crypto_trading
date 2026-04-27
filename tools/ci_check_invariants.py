@@ -35,6 +35,8 @@ BASELINES_DIR = REPO_ROOT / "tools" / "scanner_baselines"
 AUTHORITY_BASELINE = BASELINES_DIR / "authority_consistency_baseline.json"
 SILENT_BASELINE = BASELINES_DIR / "silent_failure_baseline.json"
 SWALLOW_BASELINE = BASELINES_DIR / "silent_swallow_baseline.json"
+NAIVE_DT_BASELINE = BASELINES_DIR / "naive_datetime_baseline.json"  # [P111]
+SELF_CONFIG_BASELINE = BASELINES_DIR / "self_config_undefined_baseline.json"  # [P111]
 
 
 def _run_scanner(args: List[str]) -> Dict[str, Any]:
@@ -277,6 +279,23 @@ def main() -> int:
     ])
     swallow_norm = _normalize_swallow(swallow_raw)
 
+    # [P111 Tier2#4 2026-04-27] lint_naive_datetime added to gate.
+    # Same baseline-diff semantics as silent_swallow.
+    print("[ci_check] running lint_naive_datetime...", file=sys.stderr)
+    naive_dt_raw = _run_scanner([
+        "tools/lint_naive_datetime.py",
+        "--baseline-format",
+    ])
+    naive_dt_norm = naive_dt_raw  # already in normalized shape
+
+    # [P111 Tier2#5 2026-04-27] lint_self_config_undefined added to gate.
+    print("[ci_check] running lint_self_config_undefined...", file=sys.stderr)
+    self_config_raw = _run_scanner([
+        "tools/lint_self_config_undefined.py",
+        "--baseline-format",
+    ])
+    self_config_norm = self_config_raw
+
     if args.update:
         AUTHORITY_BASELINE.write_text(
             json.dumps(auth_norm, indent=2, sort_keys=True), encoding="utf-8"
@@ -287,17 +306,27 @@ def main() -> int:
         SWALLOW_BASELINE.write_text(
             json.dumps(swallow_norm, indent=2, sort_keys=True), encoding="utf-8"
         )
+        NAIVE_DT_BASELINE.write_text(
+            json.dumps(naive_dt_norm, indent=2, sort_keys=True), encoding="utf-8"
+        )
+        SELF_CONFIG_BASELINE.write_text(
+            json.dumps(self_config_norm, indent=2, sort_keys=True), encoding="utf-8"
+        )
         print(
             f"[ci_check] baselines updated:\n"
             f"  - {AUTHORITY_BASELINE.relative_to(REPO_ROOT)}\n"
             f"  - {SILENT_BASELINE.relative_to(REPO_ROOT)}\n"
-            f"  - {SWALLOW_BASELINE.relative_to(REPO_ROOT)}",
+            f"  - {SWALLOW_BASELINE.relative_to(REPO_ROOT)}\n"
+            f"  - {NAIVE_DT_BASELINE.relative_to(REPO_ROOT)}\n"
+            f"  - {SELF_CONFIG_BASELINE.relative_to(REPO_ROOT)}",
             file=sys.stderr,
         )
         return 0
 
     missing = [
-        p.name for p in (AUTHORITY_BASELINE, SILENT_BASELINE, SWALLOW_BASELINE)
+        p.name for p in (AUTHORITY_BASELINE, SILENT_BASELINE,
+                         SWALLOW_BASELINE, NAIVE_DT_BASELINE,
+                         SELF_CONFIG_BASELINE)
         if not p.exists()
     ]
     if missing:
@@ -311,12 +340,16 @@ def main() -> int:
     auth_baseline = json.loads(AUTHORITY_BASELINE.read_text(encoding="utf-8"))
     silent_baseline = json.loads(SILENT_BASELINE.read_text(encoding="utf-8"))
     swallow_baseline = json.loads(SWALLOW_BASELINE.read_text(encoding="utf-8"))
+    naive_dt_baseline = json.loads(NAIVE_DT_BASELINE.read_text(encoding="utf-8"))
+    self_config_baseline = json.loads(SELF_CONFIG_BASELINE.read_text(encoding="utf-8"))
 
     auth_diffs = _diff("authority", auth_baseline, auth_norm)
     silent_diffs = _diff("silent", silent_baseline, silent_norm)
     swallow_diffs = _diff("swallow", swallow_baseline, swallow_norm)
+    naive_dt_diffs = _diff("naive_datetime", naive_dt_baseline, naive_dt_norm)
+    self_config_diffs = _diff("self_config", self_config_baseline, self_config_norm)
 
-    if not auth_diffs and not silent_diffs and not swallow_diffs:
+    if not auth_diffs and not silent_diffs and not swallow_diffs and not naive_dt_diffs and not self_config_diffs:
         print("[ci_check] OK — no new findings vs baseline.", file=sys.stderr)
         return 0
 
@@ -328,6 +361,10 @@ def main() -> int:
     for d in silent_diffs:
         print(f"  {d}")
     for d in swallow_diffs:
+        print(f"  {d}")
+    for d in naive_dt_diffs:
+        print(f"  {d}")
+    for d in self_config_diffs:
         print(f"  {d}")
     print("=" * 70)
     print(

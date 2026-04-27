@@ -20,6 +20,24 @@ COMPOSE_FILE="docker-compose.hetzner.yml"
 
 echo "=== HMATS Deploy to ${SERVER} ==="
 
+# --- Step 0: Local pre-deploy CI gate ---
+# [P111 Tier1#2 2026-04-27] Run scanner baselines BEFORE pushing the
+# deploy. CI gate (codebase-invariants.yml) catches regressions on
+# push, but local pre-deploy catches them BEFORE 30s of container
+# churn + the operator round-trip of "push → deploy → see CI fail →
+# revert → push → deploy". Same scanners, different timing.
+if command -v python &>/dev/null; then
+    echo "[0/5] Running local CI gate (scanner baselines)..."
+    if ! python -X utf8 tools/ci_check_invariants.py; then
+        echo "ERROR: Local CI gate FAILED. Either:"
+        echo "  - rebaseline if intentional: python -X utf8 tools/ci_check_invariants.py --update"
+        echo "  - or fix the new findings before deploying."
+        echo "Refusing to deploy. Re-run after rebaseline OR fix."
+        exit 1
+    fi
+    echo "  CI gate: PASS"
+fi
+
 # --- Step 1: Pull latest code ---
 echo "[1/5] Pulling latest code..."
 ssh "${SERVER}" "su - ${REMOTE_USER} -c 'cd ${APP_DIR} && git pull origin main'" 2>&1
