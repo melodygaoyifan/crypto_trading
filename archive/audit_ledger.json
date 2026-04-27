@@ -1,8 +1,8 @@
 {
-  "generated_at": "2026-04-27T01:02:42.498027+00:00",
+  "generated_at": "2026-04-27T01:09:47.916012+00:00",
   "total_files": 368,
-  "audited_count": 127,
-  "remaining": 241,
+  "audited_count": 143,
+  "remaining": 225,
   "live_dirs": [
     "root",
     "agents",
@@ -51,7 +51,9 @@
     },
     {
       "path": "agents/kraken_quant_agent.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5m-clean"
     },
     {
       "path": "agents/microstructure_agent.py",
@@ -71,7 +73,9 @@
     },
     {
       "path": "agents/onchain_sentiment_fusion.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5m-defer-design"
     },
     {
       "path": "agents/onchain_solana_agent.py",
@@ -93,11 +97,15 @@
     },
     {
       "path": "agents/sentiment_llm_agent.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5m-defer-design"
     },
     {
       "path": "agents/short_bias_agent.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5m"
     },
     {
       "path": "agents/signal_envelope.py",
@@ -909,7 +917,9 @@
     },
     {
       "path": "execution/derivatives_executor.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5m-defer-design"
     },
     {
       "path": "execution/execution_manager.py",
@@ -973,7 +983,9 @@
     },
     {
       "path": "execution/passive_aggressive.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5m-defer-design"
     },
     {
       "path": "execution/production_market_impact.py",
@@ -997,11 +1009,15 @@
     },
     {
       "path": "execution/sol_execution.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5m-defer-design"
     },
     {
       "path": "execution/sota_scheduler.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5m"
     },
     {
       "path": "execution/timing_engine.py",
@@ -1013,15 +1029,21 @@
     },
     {
       "path": "infra/alert_manager.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5m"
     },
     {
       "path": "infra/classified_retry.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5m-defer-arch"
     },
     {
       "path": "infra/data_provider.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5m-defer-arch"
     },
     {
       "path": "infra/data_schema.py",
@@ -1083,7 +1105,9 @@
     },
     {
       "path": "infra/shared_state_registry.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5m-clean"
     },
     {
       "path": "infra/unified_event_v521.py",
@@ -1663,7 +1687,9 @@
     },
     {
       "path": "signals/fringe_panic_detector.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5m-clean"
     },
     {
       "path": "signals/fringe_panic_keywords.py",
@@ -1679,7 +1705,9 @@
     },
     {
       "path": "signals/macro_crowd_adapter.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5m-clean"
     },
     {
       "path": "signals/no_trade_triggers.py",
@@ -1697,7 +1725,9 @@
     },
     {
       "path": "signals/profit_max_adapter.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5m-clean"
     },
     {
       "path": "signals/regime_transition_risk.py",
@@ -1705,7 +1735,9 @@
     },
     {
       "path": "signals/signal_quality_scorer.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_BATCH",
+      "round": "5m-clean"
     },
     {
       "path": "signals/stablecoin_monitor.py",

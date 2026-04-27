@@ -145,7 +145,7 @@ class ScheduledOrder:
     urgency: UrgencyLevel
     
     # Timing
-    start_time: datetime = field(default_factory=datetime.utcnow)
+    start_time: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     end_time: Optional[datetime] = None
     duration_seconds: Optional[int] = None
     

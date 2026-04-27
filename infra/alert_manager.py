@@ -232,12 +232,21 @@ class AlertManager:
         
         # Callbacks for custom handlers
         self._callbacks: List[Callable[[Alert], None]] = []
-        
+
+        # [P104 2026-04-27] Thread-safety: _callbacks mutated from main
+        # thread (register_callback) but iterated from worker thread
+        # (_process_queue → _dispatch_alert). _alert_counter incremented
+        # from main thread but Alert.id uses it as suffix; concurrent
+        # send_alert from multiple threads previously could collide. Use
+        # a single RLock for both shared structures (cheap; alerts are
+        # not high-frequency).
+        self._lock = threading.RLock()
+
         # Start background worker
         self._running = True
         self._worker_thread = threading.Thread(target=self._process_queue, daemon=True)
         self._worker_thread.start()
-        
+
         # Counter for alert IDs
         self._alert_counter = 0
         
@@ -246,7 +255,10 @@ class AlertManager:
     
     def register_callback(self, callback: Callable[[Alert], None]):
         """Register custom alert handler."""
-        self._callbacks.append(callback)
+        # [P104 2026-04-27] Hold lock so _process_queue's iteration
+        # snapshot doesn't see a mid-mutation list.
+        with self._lock:
+            self._callbacks.append(callback)
     
     # =========================================================================
     # ALERT CREATION
@@ -281,9 +293,14 @@ class AlertManager:
             return None
         
         # Create alert
-        self._alert_counter += 1
+        # [P104 2026-04-27] Atomically increment + read counter so
+        # concurrent send_alert calls from multiple threads (e.g. worker
+        # threads of various subsystems) don't collide on Alert.id.
+        with self._lock:
+            self._alert_counter += 1
+            _alert_seq = self._alert_counter
         alert = Alert(
-            id=f"ALERT-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{self._alert_counter}",
+            id=f"ALERT-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{_alert_seq}",
             alert_type=alert_type,
             severity=severity,
             title=title,
@@ -356,7 +373,12 @@ class AlertManager:
             self._send_popup(alert)
         
         # Custom callbacks
-        for callback in self._callbacks:
+        # [P104 2026-04-27] Snapshot under lock to avoid mutation during
+        # iteration (callback errors could otherwise drop subsequent
+        # callbacks if the list was being appended to mid-loop).
+        with self._lock:
+            _cb_snapshot = list(self._callbacks)
+        for callback in _cb_snapshot:
             try:
                 callback(alert)
             except Exception as e:

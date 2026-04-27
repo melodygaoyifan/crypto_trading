@@ -161,7 +161,7 @@ class ShortBiasSignal:
     veto_direction: Optional[str] = None  # DEPRECATED: short-only agent, always None
 
     # === 时间戳 ===
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     # === 建议 ===
     suggested_stop_pct: float = 0.03
