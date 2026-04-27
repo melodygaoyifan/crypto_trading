@@ -286,6 +286,26 @@ discipline + the grep habit.
 
 ### Recent pitfalls (last ~30 days)
 
+### P98. [ROOT-CAUSE 2026-04-27] fetch_open_orders dedup — survives userref scheme drift
+- **Symptom:** Production cascade resumed AFTER P95 deploy. Same `[POSITION-DESYNC] SOL/USD` + `[STOP-MINSIZE]` + `[STOP-RETRY] PERMANENT_FAILURE` chain firing every tick. Operator confirmed nothing was phantom; Kraken showed the SOL on balance, just locked.
+- **Root cause:** P95 fixed userref hash to be stable for FUTURE stops, but pre-P95 stops at Kraken used the OLD scheme (with `stop_price` embedded). `check_userref_executed()` queried by NEW userref → no match → `place_stop_loss()` submitted ANOTHER stop. Old stops kept locking the asset, free balance dropped below P91 min-size, cascade resumed.
+- **Diagnostic snapshot before fix:**
+  - Kraken open orders: SOL/USD sell 7.26 stop OMH2LP, BTC/USD sell 0.0109 stop ORZLMV, BTC/USD sell 0.0085 stop OCCO6F
+  - Kraken SOL: free=0.014, used=7.26 (locked in stop), total=7.27 — **NOT phantom, position is real**
+  - paper_positions.SOL: long 7.0 SOL, $608, T4 — matches Kraken total
+- **Fix (commit c29ef59):** `place_stop_loss()` now calls `fetch_open_orders(symbol)` BEFORE placing, identifies any existing stop order on the same `(symbol, side)` pair (regardless of userref), and cancels them first. Ground-truth dedup against Kraken state, not local userref lookup. Surviving any future userref scheme changes or operator-side parallel order placement. Failure modes: `fetch_open_orders` failure → log WARN + fall back to P95 userref dedup; per-orphan `cancel_order` failure → log WARN + proceed (P91 catches at min-size).
+- **Operator action this session:** 3 stale orders cancelled via API helper script. After P98 deploy, engine on next tick will see 0 open stops and place a single fresh one cleanly.
+- **Mitigation pattern:** when a dedup mechanism depends on a key whose generation logic could change across deploys, the dedup is fragile. Prefer dedup against ground-truth EXTERNAL state (open orders, positions) over local key matching. Local key matching is a useful SECOND line of defense, not the primary.
+- **Bonus fixes in same commit (Round 5g audit findings):**
+  - `risk/volatility_targeting.py:177` — `field(default_factory=datetime.utcnow)` was naive; switched to `lambda: datetime.now(timezone.utc)`. P97 sweep missed it (used `utcnow` not `now()`).
+  - `risk/volatility_targeting.py:555` — NaN realized vol fell to `vol_adjustment=1.0` (fail-OPEN, position grows on bad data). Mirror of P94 dynamic_limits NaN guard: now `math.isnan()` → 0.5x fail-CLOSED + WARN.
+  - `risk/volatility_alpha_risk.py:211` — `datetime.now()` → `datetime.now(timezone.utc)` + timezone import.
+
+### P97. [FIXED 2026-04-27] Round 5f — datetime tz-aware sweep
+- `risk/adaptive_stop.py` — converted 5 `datetime.now()` sites to `datetime.now(timezone.utc)`. Most critical: holding_hours calc against UTC-aware `state.entry_time` would silently drift hours on non-UTC container.
+- `risk/regime_transition_buffer.py` — converted 6 `datetime.now()` sites + `field(default_factory=datetime.now)` at line 69 to UTC-aware. `_transition_start` was stored naive; `days_active` math could silently drift.
+- **False positives dismissed (Round 5f):** correlation_position_sizer hardcoded thresholds (different gate from crisis halt — design); P90 tuple-key bug NOT present here (uses correct 2-string signature); `regime_transition_buffer` "per-asset isolation" — `_btc_ma50/_btc_ma200` are BY DESIGN a market-wide BTC-leading-indicator monitor, not state-bleed; `gambler_entry_exit` "dead code" — agent failed to grep main.py:464 (singletons ARE imported).
+
 ### P95. [FIXED 2026-04-27] Stop-order userref leak — 6 stops for one position
 - **Symptom:** Production cascade where each 4H tick produced a fresh stop order on top of prior unfilled stops. Diagnostic snapshot: 6 BTC stop orders for ONE BTC short position (ages 1.5/9/21/47/95/109 min) + 1 stale SOL stop sell holding 7.26 SOL locked. Free SOL dropped to 0.014 → next tick's stop hit P91 min-size pre-flight → P93 [POSITION-DESYNC] + [STOP-MINSIZE] CRITICAL alerts fired every tick.
 - **Root cause:** `_generate_stop_userref()` at `execution/execution_manager.py:253` hashed `f"{symbol}_{side}_{stop_price:.8f}_{suffix}"`. The trigger price recomputes against the moving market each tick (different by tens of bps) → different hash → different userref → `check_userref_executed()` never matched the prior tick's stop → `place_stop_loss()` submitted a brand-new order each tick instead of recognizing existing one.

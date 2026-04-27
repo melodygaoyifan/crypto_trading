@@ -1,8 +1,8 @@
 {
-  "generated_at": "2026-04-27T00:19:26.339867+00:00",
+  "generated_at": "2026-04-27T00:32:12.123729+00:00",
   "total_files": 368,
-  "audited_count": 70,
-  "remaining": 298,
+  "audited_count": 74,
+  "remaining": 294,
   "live_dirs": [
     "root",
     "agents",
@@ -824,7 +824,7 @@
     {
       "path": "execution/execution_manager.py",
       "audited": true,
-      "audit_sha": "PENDING_SHA",
+      "audit_sha": "a1c5275",
       "round": "5e-P95"
     },
     {
@@ -1140,7 +1140,7 @@
     {
       "path": "risk/adaptive_stop.py",
       "audited": true,
-      "audit_sha": "PENDING_SHA",
+      "audit_sha": "a1c5275",
       "round": "5f"
     },
     {
@@ -1162,7 +1162,7 @@
     {
       "path": "risk/correlation_position_sizer.py",
       "audited": true,
-      "audit_sha": "PENDING_SHA",
+      "audit_sha": "a1c5275",
       "round": "5f"
     },
     {
@@ -1173,7 +1173,9 @@
     },
     {
       "path": "risk/derivatives_risk_gate.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "c29ef59",
+      "round": "5g-deferred-signalonly"
     },
     {
       "path": "risk/dynamic_limits.py",
@@ -1196,7 +1198,7 @@
     {
       "path": "risk/gambler_entry_exit.py",
       "audited": true,
-      "audit_sha": "PENDING_SHA",
+      "audit_sha": "a1c5275",
       "round": "5f"
     },
     {
@@ -1218,29 +1220,31 @@
     {
       "path": "risk/opportunity_budget_governor.py",
       "audited": true,
-      "audit_sha": "PENDING_SHA",
+      "audit_sha": "a1c5275",
       "round": "5e"
     },
     {
       "path": "risk/regime_transition_buffer.py",
       "audited": true,
-      "audit_sha": "PENDING_SHA",
+      "audit_sha": "a1c5275",
       "round": "5f"
     },
     {
       "path": "risk/risk_manager.py",
       "audited": true,
-      "audit_sha": "PENDING_SHA",
+      "audit_sha": "a1c5275",
       "round": "5e-deferred-arch"
     },
     {
       "path": "risk/short_position_controller.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "c29ef59",
+      "round": "5g-deferred-deadcode"
     },
     {
       "path": "risk/sota_risk_controller.py",
       "audited": true,
-      "audit_sha": "PENDING_SHA",
+      "audit_sha": "a1c5275",
       "round": "5e"
     },
     {
@@ -1252,7 +1256,7 @@
     {
       "path": "risk/strategy_allocator.py",
       "audited": true,
-      "audit_sha": "PENDING_SHA",
+      "audit_sha": "a1c5275",
       "round": "5e-deferred-arch"
     },
     {
@@ -1283,11 +1287,15 @@
     },
     {
       "path": "risk/volatility_alpha_risk.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "c29ef59",
+      "round": "5g"
     },
     {
       "path": "risk/volatility_targeting.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "c29ef59",
+      "round": "5g"
     },
     {
       "path": "scripts/agent_audit_16.py",

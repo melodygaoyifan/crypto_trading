@@ -2309,6 +2309,21 @@ class ExecutionManager:
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         
+        # P98b 2026-04-27: tolerate "already-gone" cancellations. When the
+        # operator (or another process) cancels an order out-of-band, our
+        # active_stops / pending_orders dict still holds the stale id. The
+        # cancel_order() then returns `EOrder:Unknown order` which is
+        # SEMANTICALLY a SUCCESS (the order is no longer at the exchange,
+        # which is the desired end state). Treat it as success + clean local
+        # state, instead of logging ERROR + counting as "failed".
+        def _is_unknown_order_error(_exc: Exception) -> bool:
+            _s = str(_exc) or ""
+            return (
+                "EOrder:Unknown order" in _s
+                or "Order not found" in _s
+                or "OrderNotFound" in type(_exc).__name__
+            )
+
         # Cancel pending orders
         for order_id, order_info in list(self.pending_orders.items()):
             results["total_orders"] += 1
@@ -2316,31 +2331,51 @@ class ExecutionManager:
                 if not self.dry_run and self.exchange:
                     symbol = order_info.get('symbol', '')
                     self.exchange.cancel_order(order_id, symbol)
-                
+
                 del self.pending_orders[order_id]
                 results["cancelled"] += 1
                 self.logger.info(f"[CANCEL-ALL] Cancelled order {order_id}")
-                
+
             except Exception as e:
-                results["failed"] += 1
-                results["errors"].append(f"Order {order_id}: {str(e)}")
-                self.logger.error(f"[CANCEL-ALL] Failed to cancel {order_id}: {e}")
-        
+                if _is_unknown_order_error(e):
+                    # Order already gone; treat as success + clean local state.
+                    self.pending_orders.pop(order_id, None)
+                    results["cancelled"] += 1
+                    self.logger.info(
+                        f"[CANCEL-ALL] Order {order_id} already gone at "
+                        f"exchange; cleaned local state"
+                    )
+                else:
+                    results["failed"] += 1
+                    results["errors"].append(f"Order {order_id}: {str(e)}")
+                    self.logger.error(f"[CANCEL-ALL] Failed to cancel {order_id}: {e}")
+
         # Cancel all stop losses
         for symbol, stop_id in list(self.active_stops.items()):
             results["total_orders"] += 1
             try:
                 if not self.dry_run and self.exchange:
                     self.exchange.cancel_order(stop_id, symbol)
-                
+
                 del self.active_stops[symbol]
                 results["cancelled"] += 1
                 self.logger.info(f"[CANCEL-ALL] Cancelled stop {stop_id} for {symbol}")
-                
+
             except Exception as e:
-                results["failed"] += 1
-                results["errors"].append(f"Stop {stop_id}: {str(e)}")
-                self.logger.error(f"[CANCEL-ALL] Failed to cancel stop {stop_id}: {e}")
+                if _is_unknown_order_error(e):
+                    # Stop already gone (e.g. operator cancelled out-of-band,
+                    # or it triggered/filled between checks). Clean local state
+                    # so we don't keep retrying stale ids.
+                    self.active_stops.pop(symbol, None)
+                    results["cancelled"] += 1
+                    self.logger.info(
+                        f"[CANCEL-ALL] Stop {stop_id} for {symbol} already "
+                        f"gone at exchange; cleaned local state"
+                    )
+                else:
+                    results["failed"] += 1
+                    results["errors"].append(f"Stop {stop_id}: {str(e)}")
+                    self.logger.error(f"[CANCEL-ALL] Failed to cancel stop {stop_id}: {e}")
         
         # Log summary
         self.logger.critical(
