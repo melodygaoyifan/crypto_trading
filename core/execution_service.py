@@ -1552,6 +1552,34 @@ async def execute_intent_v2(
                 )
     except Exception as _ic_err:
         logger.debug(f"[SOTA] ImpactCal->Slicer skipped: {_ic_err}")
+    # [P127 2026-04-27] Cap slice count so each slice >= exchange minimum.
+    # Production hit "EGeneral:Invalid arguments:volume minimum not met" on
+    # a 6-slice SOL close where base_quantity / 6 fell below Kraken's 0.05
+    # minimum. The downstream P127 pre-flight catches each slice REJECTED
+    # but we still wasted 1 round-trip + an ERROR log + the [BUGFIX H1]
+    # aborter cancelling the rest. Cap the slice count here so the
+    # downstream check never trips for slicing reasons.
+    try:
+        if ctx.execution_manager and hasattr(ctx.execution_manager, 'exchange'):
+            _slicer_market = ctx.execution_manager.exchange.market(f"{asset}/USD")
+            _slicer_min = float(
+                ((_slicer_market or {}).get('limits') or {})
+                .get('amount', {}).get('min') or 0.0
+            )
+            if _slicer_min > 0 and _num_slices > 1:
+                # Each slice needs to be >= min_size * 1.05 (5% safety margin
+                # for balance clamp + precision rounding).
+                _slicer_max_slices = max(1, int(base_quantity / (_slicer_min * 1.05)))
+                if _num_slices > _slicer_max_slices:
+                    logger.info(
+                        f"[DYN_SLICER_MINSIZE] {asset}: capping slices "
+                        f"{_num_slices} -> {_slicer_max_slices} so each slice "
+                        f">= min={_slicer_min:.6f} (base_qty={base_quantity:.6f})"
+                    )
+                    _num_slices = _slicer_max_slices
+    except Exception as _sl_err:
+        logger.debug(f"[DYN_SLICER_MINSIZE] {asset}: cap check skipped: {_sl_err}")
+
     logger.info(
         f"[DYN_SLICER] {asset}: slices={_num_slices} "
         f"atr_ratio={_atr_ratio:.2f} vpin={_vpin_val:.2f}"

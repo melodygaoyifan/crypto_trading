@@ -1113,6 +1113,40 @@ class ExecutionManager:
                     status=OrderStatus.REJECTED,
                     error_message="Insufficient balance after clamping"
                 )
+
+            # [P127 2026-04-27] Pre-flight min-size check — same shape as P91
+            # (stop-loss) and the market-order branch above. Prevents the
+            # round-trip + ERROR log + partial-position cascade when sliced
+            # orders fall below Kraken's per-asset min.
+            try:
+                _market = self.exchange.market(symbol)
+                _min_amt = float(
+                    ((_market or {}).get('limits') or {})
+                    .get('amount', {})
+                    .get('min') or 0.0
+                )
+            except Exception as _mkt_e:
+                self.logger.debug(
+                    f"[LIMIT-MINSIZE] {symbol}: market lookup failed "
+                    f"({type(_mkt_e).__name__}: {_mkt_e}); skipping minsize check"
+                )
+                _min_amt = 0.0
+            if _min_amt > 0 and float(size) < _min_amt:
+                msg = (
+                    f"limit order size {size:.6f} {symbol.split('/')[0]} "
+                    f"is BELOW Kraken's minimum {_min_amt:.6f}. "
+                    f"Most common cause: order was sliced into too-small "
+                    f"chunks ([BUGFIX H1] slicing). Operator action: increase "
+                    f"slice size, reduce slice count, or skip this order."
+                )
+                self.logger.critical(f"[LIMIT-MINSIZE] {symbol}: {msg}")
+                return OrderResult(
+                    success=False, symbol=symbol, side=side.value,
+                    order_type=OrderType.LIMIT.value,
+                    status=OrderStatus.REJECTED,
+                    error_message=f"PREFLIGHT_BELOW_MIN_SIZE: {msg}",
+                )
+
             order = self.exchange.create_limit_order(
                 symbol=symbol,
                 side=side.value.lower(),
@@ -1683,6 +1717,47 @@ class ExecutionManager:
                     status=OrderStatus.REJECTED,
                     error_message="Insufficient balance after clamping"
                 )
+
+            # [P127 2026-04-27] Pre-flight min-size check (same shape as P91
+            # for stop-loss at :2104). Production hit
+            # `EGeneral:Invalid arguments:volume minimum not met` on a 6-slice
+            # market close where each slice was below Kraken's 0.05 SOL min.
+            # Without this check, the slice fails at the exchange + the
+            # [BUGFIX H1] aborter stops the remaining 5 slices, leaving the
+            # position partially closed. P79 classifier already maps the error
+            # to PERMANENT, but by then we've already paid round-trip latency
+            # + spammed an ERROR log. Catching it BEFORE the API call gives
+            # the operator an actionable message + the size info.
+            try:
+                _market = self.exchange.market(symbol)
+                _min_amt = float(
+                    ((_market or {}).get('limits') or {})
+                    .get('amount', {})
+                    .get('min') or 0.0
+                )
+            except Exception as _mkt_e:
+                self.logger.debug(
+                    f"[MARKET-MINSIZE] {symbol}: market lookup failed "
+                    f"({type(_mkt_e).__name__}: {_mkt_e}); skipping minsize check"
+                )
+                _min_amt = 0.0
+            if _min_amt > 0 and float(size) < _min_amt:
+                msg = (
+                    f"market order size {size:.6f} {symbol.split('/')[0]} "
+                    f"is BELOW Kraken's minimum {_min_amt:.6f}. "
+                    f"Most common cause: order was sliced into too-small "
+                    f"chunks ([BUGFIX H1] slicing). Operator action: increase "
+                    f"slice size, reduce slice count, or skip this order. "
+                    f"Position state UNCHANGED — slice was rejected pre-flight."
+                )
+                self.logger.critical(f"[MARKET-MINSIZE] {symbol}: {msg}")
+                return OrderResult(
+                    success=False, symbol=symbol, side=side.value,
+                    order_type=OrderType.MARKET.value,
+                    status=OrderStatus.REJECTED,
+                    error_message=f"PREFLIGHT_BELOW_MIN_SIZE: {msg}",
+                )
+
             order = self.exchange.create_market_order(
                 symbol=symbol,
                 side=side.value.lower(),
