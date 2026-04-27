@@ -82,6 +82,17 @@ META_KEY_SUFFIXES = (
     "_reconnect_grace",
 )
 
+# [P125 2026-04-27] Underscore-prefix keys are TICK-LOCAL SCRATCH values:
+# computed each tick from upstream signals, never read across ticks.
+# Examples: _alpha_score, _chaos_index, _regime_position_size_mult,
+# _ood_*, _ghost_*. They INHERIT freshness from upstream — adding a
+# per-key freshness check would be redundant noise.
+#
+# Exempt them from BLIND classification. If a key starting with `_`
+# really IS cross-tick state (rare), it should be renamed without the
+# underscore prefix so it gets the freshness check.
+TICK_LOCAL_EXEMPT_PREFIX = "_"
+
 
 class SignalWriteVisitor(ast.NodeVisitor):
     """Find `agent_signals[<key>] = <expr>` and `agent_signals.update(...)`
@@ -251,17 +262,29 @@ def scan_path(root: Path) -> List[Dict]:
 
 
 def summarize(writes: List[Dict]) -> Dict:
-    """Group writes by category + key for reporting."""
+    """Group writes by category + key for reporting.
+
+    [P125] Underscore-prefix keys are tick-local scratch — exempt from
+    BLIND classification (they inherit freshness from their upstream).
+    """
+    # Apply P125 exemption: reclassify underscore-prefix BLIND -> EXEMPT
+    for w in writes:
+        if (w["category"] == "BLIND"
+                and w["key"].startswith(TICK_LOCAL_EXEMPT_PREFIX)
+                and w["key"] != "<dynamic>"):
+            w["category"] = "EXEMPT_TICK_LOCAL"
+            w["evidence"] = "underscore-prefix tick-local scratch (P125 exempt)"
+
     by_cat = defaultdict(int)
     by_key_cat: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
     for w in writes:
         by_cat[w["category"]] += 1
         by_key_cat[w["key"]][w["category"]] += 1
 
-    # Surface BLIND keys for operator review
     blind_keys = sorted([
         k for k, cats in by_key_cat.items()
-        if cats.get("BLIND", 0) > 0 and cats.get("GUARDED", 0) == 0 and cats.get("TIMESTAMPED", 0) == 0
+        if cats.get("BLIND", 0) > 0 and cats.get("GUARDED", 0) == 0
+        and cats.get("TIMESTAMPED", 0) == 0 and cats.get("EXEMPT_TICK_LOCAL", 0) == 0
     ])
 
     return {

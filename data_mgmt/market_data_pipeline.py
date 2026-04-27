@@ -657,6 +657,12 @@ class MarketDataPipeline:
                 _p0_tg.update_data_timestamp("orderbook", _now)
                 _p0_tg.update_data_timestamp("vpin", _now)
 
+        # [P126 2026-04-27] Default quant_data_quality to 0.0 for any early
+        # return path. Strategy selection sets it to 1.0 on success below.
+        # Without this default, the stale quant_direction from prev tick
+        # would propagate through fusion as if it were fresh.
+        raw.setdefault("quant_data_quality", 0.0)
+
         if not _TA_AVAILABLE:
             logger.warning("[PREPARE_DATA] ta library unavailable, returning raw data")
             return raw
@@ -1301,6 +1307,11 @@ class MarketDataPipeline:
             raw["quant_direction"] = quant_dir
             raw["quant_confidence"] = quant_conf
             raw["strategy_agreement"] = agreement
+            # [P126 2026-04-27] Per-agent freshness marker. Best-of-N
+            # selection completed successfully this tick -> 1.0. The
+            # except path below sets 0.0 so fusion downweights when
+            # the strategy selector silently fails.
+            raw["quant_data_quality"] = 1.0
             # [FIX-ALPHA-CAL] Was 150 → realized alpha analysis shows +41bps avg win
             # but 50% win rate → effective ~20bps. With avg |quant_dir|≈0.3:
             # multiplier = 20 / 0.3 ≈ 65. Use 65 to align estimate with reality.

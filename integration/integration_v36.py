@@ -2081,6 +2081,18 @@ class HMATSv36Engine:
                 f"(strategy={strategy_name})"
             )
 
+        # [P126 2026-04-27] Per-agent freshness guard. data_mgmt/
+        # market_data_pipeline.py:1308 sets quant_data_quality=1.0 only
+        # when Best-of-N strategy selection succeeded; setdefault(0.0) at
+        # line 660 covers all early-return failure paths. If dq<0.5,
+        # zero confidence so fusion downweights the stale quant_direction.
+        quant_dq = float(agent_signals.get("quant_data_quality", 1.0))
+        if quant_dq < 0.5:
+            logger.warning(
+                f"[P126] quant excluded from fusion: data_quality={quant_dq:.2f} "
+                f"(<0.5 threshold). Strategy selector failed or returned early."
+            )
+            quant_confidence = 0.0
         signals["quant"] = AgentSignal(
             direction=agent_signals.get("quant_direction", 0.0),
             confidence=quant_confidence,
@@ -2178,6 +2190,19 @@ class HMATSv36Engine:
         _drl_conf = agent_signals.get("drl_confidence", 0.0)
         _drl_level = self.drl_gate.get_authority().value if hasattr(self.drl_gate, "get_authority") else "DISABLED"
 
+        # [P126 2026-04-27] Per-agent freshness guard. If drl_data_quality
+        # is BELOW 0.5, the writer at main.py:7424 caught a predict failure
+        # and the drl_direction we just read is from a previous tick. Force
+        # confidence to 0 so the fusion-entry gate (>0.05) excludes DRL.
+        _drl_dq = float(agent_signals.get("drl_data_quality", 1.0))
+        if _drl_dq < 0.5:
+            logger.warning(
+                f"[P126] DRL excluded from fusion: data_quality={_drl_dq:.2f} "
+                f"(<0.5 threshold). Stale/failed inference — drl_direction "
+                f"reading from previous tick."
+            )
+            _drl_conf = 0.0
+
         # [FIX-DRIFT] Apply drift multiplier to DRL confidence.
         # _drl_drift_weight: 1.0 (no drift) → 0.0 (critical drift). Written by
         # DriftDetector at main.py (~L9047).
@@ -2263,7 +2288,14 @@ class HMATSv36Engine:
         # =================================================================
         two_stage_direction = agent_signals.get("two_stage_direction", 0.0)
         two_stage_confidence = agent_signals.get("two_stage_confidence", 0.0)
-        
+        # [P126 2026-04-27] Per-agent freshness guard. main.py:6601 sets
+        # two_stage_data_quality=0.0 when strategic_check produced no
+        # consensus this tick. Without this guard, the stale prior_direction
+        # from a previous tick would feed into fusion as if fresh.
+        two_stage_dq = float(agent_signals.get("two_stage_data_quality", 1.0))
+        if two_stage_dq < 0.5:
+            two_stage_confidence = 0.0  # excludes from fusion (gate is >0)
+
         if two_stage_confidence > 0:
             signals["two_stage"] = AgentSignal(
                 direction=two_stage_direction,

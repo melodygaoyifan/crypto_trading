@@ -6600,6 +6600,14 @@ class HMATSProductionRunner:
                 if strategic_check.get('prior_direction'):
                     agent_signals['two_stage_direction'] = strategic_check['prior_direction']
                     agent_signals['two_stage_confidence'] = strategic_check['prior_confidence']
+                    # [P126 2026-04-27] Mark fresh — strategic coordinator
+                    # produced a real consensus this tick.
+                    agent_signals['two_stage_data_quality'] = 1.0
+                else:
+                    # [P126] No consensus = stale (fall back to whatever was
+                    # in the dict from previous tick if anything). dq=0.0
+                    # signals to fusion to ignore.
+                    agent_signals['two_stage_data_quality'] = 0.0
                 
                 # V6: Inject adjusted weights into agent_signals
                 # These will be used by the fusion engine
@@ -7401,6 +7409,10 @@ class HMATSProductionRunner:
                     # [FIX 2026-04-24 P19] Expose authority level so downstream
                     # BEST_OF_N_HOLD override in integration_v36 can honor DRL promotion.
                     agent_signals['drl_authority_level'] = self._drl_authority_level
+                    # [P126 2026-04-27] Per-agent freshness marker. Readers
+                    # downweight when dq < 0.5. Set 0.0 in the except block
+                    # so silent inference failures don't propagate stale value.
+                    agent_signals['drl_data_quality'] = 1.0
                     logger.info(
                         f"[DRL_SHADOW] {asset}: action={_tqc_result.action:+.4f} "
                         f"conf={_tqc_result.confidence:.3f} unc={_tqc_result.tqc_uncertainty_ratio:.3f} "
@@ -7422,7 +7434,15 @@ class HMATSProductionRunner:
                             tqc_uncertainty=_tqc_result.tqc_uncertainty_ratio,
                         )
             except Exception as _drl_err:
-                logger.debug(f"[DRL] {asset}: shadow predict failed: {_drl_err}")
+                # [P126 2026-04-27] Promoted from logger.debug + flag failure
+                # via drl_data_quality=0.0 so fusion downweights the stale
+                # drl_direction from the previous tick instead of trusting it.
+                logger.warning(
+                    f"[DRL] {asset}: predict failed ({type(_drl_err).__name__}: "
+                    f"{_drl_err}); marking drl_data_quality=0.0 — fusion will "
+                    f"downweight."
+                )
+                agent_signals['drl_data_quality'] = 0.0
 
         # [WIRE] Strategy Allocator -risk budget suggestion (shadow)
         if self._strategy_allocator is not None and not p0_abort_tick:
@@ -7603,6 +7623,13 @@ class HMATSProductionRunner:
         market_data['risk_veto'] = p0_force_flat  # Also in market_data for _execute_intent scope
         logger.info(f"[{asset}] risk_veto={p0_force_flat}")
         agent_signals['structure_confirmed'] = market_data.get('higher_lows_detected', False)
+        # [P126 2026-04-27] structure_data_quality reflects whether the
+        # underlying structure detector ran this tick. If higher_lows_detected
+        # key is MISSING (vs explicitly False), data_quality=0.0 — fusion
+        # downweights instead of treating "missing" as "no breakout".
+        agent_signals['structure_data_quality'] = (
+            1.0 if 'higher_lows_detected' in market_data else 0.0
+        )
         logger.debug(f"[{asset}] structure_confirmed={agent_signals['structure_confirmed']}")
 
         # [Section B] drl_direction: explicit 0 when DRL disabled (v36 L783 reads this)
