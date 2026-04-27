@@ -1,8 +1,8 @@
 {
-  "generated_at": "2026-04-26T23:50:15.200984+00:00",
+  "generated_at": "2026-04-27T00:04:19.948081+00:00",
   "total_files": 368,
-  "audited_count": 62,
-  "remaining": 306,
+  "audited_count": 66,
+  "remaining": 302,
   "live_dirs": [
     "root",
     "agents",
@@ -824,8 +824,8 @@
     {
       "path": "execution/execution_manager.py",
       "audited": true,
-      "audit_sha": "c5be36f",
-      "round": "5c-P91"
+      "audit_sha": "PENDING_SHA",
+      "round": "5e-P95"
     },
     {
       "path": "execution/execution_quality_logger.py",
@@ -1174,7 +1174,7 @@
     {
       "path": "risk/dynamic_limits.py",
       "audited": true,
-      "audit_sha": "PENDING_SHA",
+      "audit_sha": "ae5f553",
       "round": "5d"
     },
     {
@@ -1196,7 +1196,7 @@
     {
       "path": "risk/global_exposure_cap.py",
       "audited": true,
-      "audit_sha": "PENDING_SHA",
+      "audit_sha": "ae5f553",
       "round": "5d"
     },
     {
@@ -1211,7 +1211,9 @@
     },
     {
       "path": "risk/opportunity_budget_governor.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_SHA",
+      "round": "5e"
     },
     {
       "path": "risk/regime_transition_buffer.py",
@@ -1219,7 +1221,9 @@
     },
     {
       "path": "risk/risk_manager.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_SHA",
+      "round": "5e-deferred-arch"
     },
     {
       "path": "risk/short_position_controller.py",
@@ -1227,7 +1231,9 @@
     },
     {
       "path": "risk/sota_risk_controller.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_SHA",
+      "round": "5e"
     },
     {
       "path": "risk/stop_loss_authority.py",
@@ -1237,7 +1243,9 @@
     },
     {
       "path": "risk/strategy_allocator.py",
-      "audited": false
+      "audited": true,
+      "audit_sha": "PENDING_SHA",
+      "round": "5e-deferred-arch"
     },
     {
       "path": "risk/tests/__init__.py",
@@ -1256,13 +1264,13 @@
     {
       "path": "risk/tranche_manager.py",
       "audited": true,
-      "audit_sha": "PENDING_SHA",
+      "audit_sha": "ae5f553",
       "round": "5d-deferred-architectural"
     },
     {
       "path": "risk/unified_position_sizer.py",
       "audited": true,
-      "audit_sha": "PENDING_SHA",
+      "audit_sha": "ae5f553",
       "round": "5d"
     },
     {

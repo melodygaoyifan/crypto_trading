@@ -27,7 +27,7 @@ Purpose: 限制同时活跃的 OPPORTUNITY 机会数量，防止极端行情中�
 import logging
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 
 logger = logging.getLogger(__name__)
@@ -83,7 +83,7 @@ class OpportunitySlot:
     
     @property
     def is_expired(self) -> bool:
-        return datetime.now() > self.expires_at
+        return datetime.now(timezone.utc) > self.expires_at
     
     def to_dict(self) -> Dict:
         return {
@@ -188,7 +188,7 @@ class OpportunityBudgetGovernor:
     
     def _cleanup_expired(self):
         """Remove expired opportunity slots."""
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         expired_ids = [
             oid for oid, slot in self._active_slots.items()
             if slot.is_expired
@@ -277,14 +277,14 @@ class OpportunityBudgetGovernor:
             return result
         
         # Allowed - activate the slot
-        opportunity_id = f"{op_type.value}_{symbol}_{datetime.now().strftime('%H%M%S')}"
+        opportunity_id = f"{op_type.value}_{symbol}_{datetime.now(timezone.utc).strftime('%H%M%S')}"
         
         slot = OpportunitySlot(
             opportunity_id=opportunity_id,
             opportunity_type=op_type,
             symbol=symbol,
             budget_cost=budget_cost,
-            activated_at=datetime.now(),
+            activated_at=datetime.now(timezone.utc),
             ttl_hours=ttl_hours or self.config.default_ttl_hours,
             direction=direction,
             confidence=confidence,
@@ -314,7 +314,7 @@ class OpportunityBudgetGovernor:
         self._total_rejected += 1
         
         rejection_record = {
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "opportunity_type": op_type.value,
             "symbol": symbol,
             "direction": direction,
@@ -340,7 +340,15 @@ class OpportunityBudgetGovernor:
                     details=rejection_record,
                 )
             except Exception as e:
-                logger.debug(f"[OP_BUDGET] Shadow ledger write failed: {e}")
+                # [P96 2026-04-26] Promoted DEBUG → WARNING. Same P64
+                # silent-failure pattern as P92 exit_drl_promotion_gate.
+                # Operator running at INFO level previously couldn't see
+                # that the audit trail wasn't being written.
+                logger.warning(
+                    f"[OP_BUDGET] Shadow ledger write FAILED "
+                    f"({type(e).__name__}: {e}); rejection record NOT "
+                    f"persisted to audit trail."
+                )
         
         # Update runtime state
         self._update_runtime_state()

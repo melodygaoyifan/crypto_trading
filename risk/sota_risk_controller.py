@@ -345,7 +345,18 @@ class SOTARiskController:
             return corr
             
         except Exception as e:
-            logger.debug(f"Correlation calculation error: {e}")
+            # [P96 2026-04-26] Promoted DEBUG → WARNING. Correlation
+            # collapse detection is mission-critical; if _calculate_correlation
+            # silently returns NaN due to numpy issues / malformed prices,
+            # _check_correlation_collapse() returns early and the gate
+            # goes blind. Operator running at INFO previously had no
+            # visibility. Includes asset names + exception type for triage.
+            logger.warning(
+                f"[SOTA_RISK] Correlation calculation FAILED "
+                f"({type(e).__name__}: {e}); returning NaN. "
+                f"Correlation collapse check will be skipped this tick — "
+                f"investigate price-history quality."
+            )
             return np.nan
     
     def _check_correlation_collapse(self):
