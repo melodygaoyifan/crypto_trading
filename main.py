@@ -8739,18 +8739,21 @@ class HMATSProductionRunner:
             _attr_tick_id = (
                 f"{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')}_{_attr_asset}"
             )
-            # [ATTR-EXPAND] Extended tracker: 16/25 matrix agents with direction+confidence.
+            # [ATTR-EXPAND] Extended tracker: 17/25 matrix agents with direction+confidence.
             # Skipped (non-direction by architecture): regime, macro, lead_lag, risk,
-            # structure, squeeze, cvd, risk_appetite, options, whale.
+            # structure, squeeze, cvd, risk_appetite. (P57 added whale+options.)
             # [FIX 2026-04-24 P19] drl authority label must reflect runtime promotion
             # state (ADVISE when SHADOW/DISABLED, DECIDE when ACTIVE) to match the
             # authority_fusion upgrade. Previously hardcoded to ADVISE, so attribution
             # JSONL always labeled drl=ADVISE even when fusion treated it as DECIDE.
             # kraken_quant is permanent DECIDE since the 2026-04-22 promotion.
+            # [P114 2026-04-27] micro=ADVISE (was TRIGGER) — matches fusion authority
+            # at signals/authority_fusion.py:187 and CLAUDE.md matrix row 19. Caught by
+            # scripts/agent_attribution_validate.py.
             _drl_attr_auth = "DECIDE" if str(getattr(self, "_drl_authority_level", "DISABLED") or "").upper() == "ACTIVE" else "ADVISE"
             _ATTR_AUTHORITY = {
                 "quant": "DECIDE", "short_bias": "ADVISE", "sentiment": "ADVISE",
-                "onchain_sol": "ADVISE", "vol_alpha": "ADVISE", "micro": "TRIGGER",
+                "onchain_sol": "ADVISE", "vol_alpha": "ADVISE", "micro": "ADVISE",
                 "model_alpha": "ADVISE", "kraken_quant": "DECIDE",
                 # [ATTR-EXPAND] newly tracked
                 "drl": _drl_attr_auth, "two_stage": "CONFIRM", "funding": "ADVISE",
