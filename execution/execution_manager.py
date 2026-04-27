@@ -254,10 +254,22 @@ class ExecutionManager:
         """
         Generate deterministic userref for a stop order.
 
-        Same (symbol, side, stop_price, suffix) always produces the same userref,
-        ensuring retry idempotency - retries won't create duplicate orders.
+        [P95 2026-04-26] DROPPED stop_price from the hash. Including the
+        trigger price meant every tick generated a NEW userref because the
+        upstream stop calc recomputes against the moving market price. The
+        existing-userref idempotency guard at check_userref_executed()
+        therefore never matched, and place_stop_loss() stacked a fresh
+        stop order every tick. Production showed 6 BTC stop orders for
+        ONE BTC short position (ages 1.5/9/21/47/95/109 min) and 1 stale
+        SOL stop holding 7.26 SOL locked → leaving only 0.014 SOL free →
+        next tick's stop fails the min-size pre-flight (P91) → cascade.
+
+        New scheme: userref keyed on (symbol, side, suffix) only. One stop
+        per (symbol, side) at any time. Callers that need to update the
+        trigger price should cancel-and-replace via the active_stops dict,
+        not place a parallel order with a different userref.
         """
-        raw = f"{symbol}_{side}_{stop_price:.8f}_{suffix}"
+        raw = f"{symbol}_{side}_{suffix}"
         h = hashlib.sha256(raw.encode()).hexdigest()
         return int(h[:8], 16) & 0x7FFFFFFF
 
