@@ -124,7 +124,7 @@ class AggressivenessModifier:
     recovery_progress: float = 1.0  # 0 = fully suppressed, 1 = fully recovered
     
     # Time info
-    last_update: datetime = field(default_factory=datetime.utcnow)
+    last_update: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     
     def to_dict(self) -> Dict:
         return {

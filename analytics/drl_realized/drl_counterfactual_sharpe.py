@@ -33,6 +33,11 @@ def parse_ts(s):
     return datetime.fromisoformat(s)
 
 # Load all closed trades
+# [P103 2026-04-27] Bare `except: pass/continue` swallowed JSON decode
+# errors and timestamp parse errors silently. Counterfactual Sharpe
+# would silently drop corrupt records, biasing the alpha attribution.
+# Promoted to logged + counted so operator can see corruption rate.
+_parse_errors = {"trades_json": 0, "signals_json": 0, "ts_parse": 0}
 trades = []
 with open(TRADES) as f:
     for line in f:
@@ -40,7 +45,8 @@ with open(TRADES) as f:
             t = json.loads(line)
             if t.get("is_closed"):
                 trades.append(t)
-        except: pass
+        except json.JSONDecodeError:
+            _parse_errors["trades_json"] += 1
 
 # Build signal lookup index: per (asset, day) → list of (ts, drl_dir, drl_conf)
 sig_idx = defaultdict(list)
@@ -49,12 +55,17 @@ for sig_file in sorted(SIG_DIR.glob("signals_*.jsonl")):
         for line in f:
             try:
                 rec = json.loads(line)
-            except: continue
+            except json.JSONDecodeError:
+                _parse_errors["signals_json"] += 1
+                continue
             asset = rec.get("asset")
             ts_str = rec.get("ts")
             if not asset or not ts_str: continue
-            try: ts = parse_ts(ts_str)
-            except: continue
+            try:
+                ts = parse_ts(ts_str)
+            except (ValueError, TypeError):
+                _parse_errors["ts_parse"] += 1
+                continue
             drl_dir = drl_conf = drl_auth = None
             for s in rec.get("signals", []):
                 if s.get("agent_name") == "drl":
@@ -168,8 +179,12 @@ hi_aligned = []; hi_opposed = []
 lo_aligned = []; lo_opposed = []
 for t in trades:
     if not t.get("entry_time"): continue
-    try: entry_ts = parse_ts(t["entry_time"])
-    except: continue
+    try:
+        entry_ts = parse_ts(t["entry_time"])
+    except (ValueError, TypeError):
+        # [P103] same parse-error tracking as above; was bare except
+        _parse_errors["ts_parse"] += 1
+        continue
     sig = find_drl_signal(t["asset"], entry_ts)
     if sig is None: continue
     _, drl_dir, drl_conf, _ = sig
@@ -190,3 +205,19 @@ for name, data in [("HIGH-CONF aligned", hi_aligned), ("HIGH-CONF opposed", hi_o
     m=statistics.mean(data); sd=statistics.stdev(data) if n>=2 else 0
     sharpe = (m/sd)*math.sqrt(252) if sd>0 else 0
     print(f"  {name:<22} N={n:<3} winrate={wins/n*100:>5.1f}%  total=${sum(data):+9.2f}  mean=${m:+7.2f}  Sharpe={sharpe:+7.2f}")
+
+
+# [P103 2026-04-27] Surface corruption visibility — was previously
+# silent via bare except: pass/continue. Operator can now see if a
+# significant fraction of records dropped silently.
+print()
+print("="*78)
+_total_errs = sum(_parse_errors.values())
+if _total_errs > 0:
+    print(f"PARSE ERRORS (records silently dropped): {_total_errs}")
+    for k, v in _parse_errors.items():
+        if v > 0:
+            print(f"  {k}: {v}")
+else:
+    print("Parse errors: 0 (clean)")
+print("="*78)

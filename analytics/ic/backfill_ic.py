@@ -157,6 +157,12 @@ def backfill_one(asset: str, days: int) -> int:
     with out.open("w", encoding="utf-8") as fh:
         for r in records:
             fh.write(json.dumps(r, default=str) + "\n")
+        # [P103 2026-04-27] P37 family: flush before close so SIGKILL
+        # mid-backfill doesn't truncate the JSONL. The `with` block does
+        # close cleanly, but explicit flush() inside the loop ensures
+        # OS buffers are emptied and downstream readers see complete
+        # lines, not half-written ones, even on partial-completion.
+        fh.flush()
     print(f"[{asset}] wrote {len(records)} records to {out}")
     return len(records)
 

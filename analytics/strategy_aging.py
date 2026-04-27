@@ -135,7 +135,7 @@ class StrategyEffectiveness:
     sufficient_data: bool = False
     
     # Metadata
-    last_evaluated: datetime = field(default_factory=datetime.utcnow)
+    last_evaluated: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     
     def to_dict(self) -> Dict:
         return {
@@ -165,7 +165,7 @@ class StrategyAgingReport:
     # Overall
     system_health: float = 0.5
     
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     
     def to_dict(self) -> Dict:
         return {

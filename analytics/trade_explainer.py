@@ -118,7 +118,7 @@ class Explanation:
     severity: AlertSeverity = AlertSeverity.INFO
     requires_review: bool = False
     key_factors: List[str] = field(default_factory=list)
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     
     def to_dict(self) -> Dict:
         return {

@@ -14,7 +14,7 @@ Usage in main.py 4H tick:
 import logging
 from dataclasses import dataclass, field
 from typing import Dict, Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +27,7 @@ class AlphaScore:
     direction_agreement: float = 0.0
     confidence_weighted: float = 0.0
     regime_alignment: float = 0.0
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class AlphaScoreAggregator:
