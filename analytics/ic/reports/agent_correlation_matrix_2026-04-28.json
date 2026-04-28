@@ -1,0 +1,82 @@
+{
+  "generated_at": "2026-04-28T18:51:55.111808",
+  "version": "P131 v3 1.4",
+  "scope": "fusion-agent direction correlation (NOT per-kraken_quant-strategy)",
+  "per_asset": {
+    "BTC": {
+      "n_agents": 5,
+      "agents": [
+        "drl",
+        "llm_sentiment",
+        "microstructure",
+        "sentiment",
+        "whale"
+      ],
+      "high_corr_pairs_threshold": 0.7,
+      "high_corr_pairs": [],
+      "effective_independent_sources": 3,
+      "eigenvalue_spectrum": [
+        0.0525,
+        0.6166,
+        1.1251,
+        1.3379,
+        1.8679
+      ]
+    },
+    "ETH": {
+      "n_agents": 7,
+      "agents": [
+        "cvd",
+        "drl",
+        "lead_lag",
+        "llm_sentiment",
+        "microstructure",
+        "sentiment",
+        "whale"
+      ],
+      "high_corr_pairs_threshold": 0.7,
+      "high_corr_pairs": [
+        {
+          "a": "cvd",
+          "b": "lead_lag",
+          "rho": 0.7529
+        },
+        {
+          "a": "llm_sentiment",
+          "b": "microstructure",
+          "rho": -0.7073
+        }
+      ],
+      "effective_independent_sources": 2,
+      "eigenvalue_spectrum": [
+        -0.0485,
+        0.2636,
+        0.4848,
+        0.8953,
+        0.9549,
+        1.7926,
+        2.6572
+      ]
+    },
+    "SOL": {
+      "n_agents": 5,
+      "agents": [
+        "cvd",
+        "drl",
+        "lead_lag",
+        "llm_sentiment",
+        "sentiment"
+      ],
+      "high_corr_pairs_threshold": 0.7,
+      "high_corr_pairs": [],
+      "effective_independent_sources": 2,
+      "eigenvalue_spectrum": [
+        0.1967,
+        0.296,
+        0.7345,
+        1.6127,
+        2.1602
+      ]
+    }
+  }
+}
