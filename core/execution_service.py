@@ -2169,15 +2169,24 @@ async def execute_intent_v2(
                         )
 
                 # [W10] Trade Attributor -record full exit
+                # [P129 v3 1.1 2026-04-28] Pass regime/strategy/mode so the
+                # orphan-exit branch can populate metadata if record_entry
+                # never ran for this position.
                 if ctx.trade_attributor:
                     try:
                         ctx.trade_attributor.record_exit(
                             asset=asset, price=exit_price, fee=_exit_fee_usd,
                             notional=pos_notional, gross_pnl=pnl_usd,
                             exit_type="FULL",
+                            regime=market_data.get("regime_state", "UNKNOWN") or "UNKNOWN",
+                            strategy=getattr(intent, 'quant_strategy_id', None) or "momentum",
+                            mode=getattr(intent, 'system_mode', 'NORMAL') or "NORMAL",
                         )
                     except Exception as _ta_err:
-                        logger.debug(f"[W10] TradeAttributor record_exit (full) failed: {_ta_err}")
+                        logger.warning(
+                            f"[W10] TradeAttributor record_exit (full) FAILED "
+                            f"({type(_ta_err).__name__}: {_ta_err}) asset={asset}"
+                        )
 
                 # [HIT-RATE] Update alpha gate performance factor from trade outcome
                 try:
@@ -2696,15 +2705,23 @@ async def execute_intent_v2(
                     )
 
             # [W10] Trade Attributor -record partial exit
+            # [P129 v3 1.1 2026-04-28] Pass regime/strategy/mode for orphan
+            # branch metadata population.
             if ctx.trade_attributor:
                 try:
                     ctx.trade_attributor.record_exit(
                         asset=asset, price=fill_price, fee=_partial_exit_fee_usd,
                         notional=closed_notional, gross_pnl=pnl_usd,
                         exit_type="PARTIAL",
+                        regime=market_data.get("regime_state", "UNKNOWN") or "UNKNOWN",
+                        strategy=getattr(intent, 'quant_strategy_id', None) or "momentum",
+                        mode=getattr(intent, 'system_mode', 'NORMAL') or "NORMAL",
                     )
                 except Exception as _ta_err:
-                    logger.debug(f"[W10] TradeAttributor record_exit (partial) failed: {_ta_err}")
+                    logger.warning(
+                        f"[W10] TradeAttributor record_exit (partial) FAILED "
+                        f"({type(_ta_err).__name__}: {_ta_err}) asset={asset}"
+                    )
 
             # [HIT-RATE] Update alpha gate performance factor from partial trade outcome
             try:
@@ -2950,15 +2967,23 @@ async def execute_intent_v2(
                                 f"{type(_f9_err).__name__}: {_f9_err}"
                             )
                     # [W10] Trade Attributor -record flip exit
+                    # [P129 v3 1.1 2026-04-28] Pass regime/strategy/mode for
+                    # orphan branch metadata population.
                     if ctx.trade_attributor:
                         try:
                             ctx.trade_attributor.record_exit(
                                 asset=asset, price=fill_price, fee=_flip_fee,  # [FIX-L1-01] was 0.0
                                 notional=_flip_notional, gross_pnl=_flip_pnl,
                                 exit_type="FLIP",
+                                regime=market_data.get("regime_state", "UNKNOWN") or "UNKNOWN",
+                                strategy=getattr(intent, 'quant_strategy_id', None) or "momentum",
+                                mode=getattr(intent, 'system_mode', 'NORMAL') or "NORMAL",
                             )
                         except Exception as _ta_err:
-                            logger.debug(f"[W10] TradeAttributor record_exit (flip) failed: {_ta_err}")
+                            logger.warning(
+                                f"[W10] TradeAttributor record_exit (flip) FAILED "
+                                f"({type(_ta_err).__name__}: {_ta_err}) asset={asset}"
+                            )
 
                     # [W11] Signal Quality -record outcome (flip exit)
                     if ctx.sq_tracker:
@@ -3160,18 +3185,44 @@ async def execute_intent_v2(
                     )
 
             # [W10] Trade Attributor -record entry
+            # [P129 v3 1.1 2026-04-28] Production audit: 90/90 historical
+            # trade_attribution.jsonl records have empty strategy/regime/mode
+            # despite this caller passing them. The records are ALL coming
+            # from the orphan branch at trade_attributor.py:225 — meaning
+            # record_entry() never runs, and record_exit() creates orphan
+            # records with empty metadata.
+            #
+            # Two changes:
+            #   1. Promote logger.debug -> logger.warning (P25/P64 family).
+            #      Silent swallow hid whatever exception was preventing the
+            #      call. Now any failure surfaces with type + key kwargs.
+            #   2. Add an INFO success log so we can verify the path IS
+            #      taken at all. If neither WARN nor INFO fires after a
+            #      live fill, BRANCH C is being skipped entirely (deeper
+            #      bug requiring trace).
             if ctx.trade_attributor:
                 try:
                     _ta_fee = _entry_fee_usd
+                    _ta_strategy = intent.quant_strategy_id or "momentum"
+                    _ta_regime = market_data.get("regime_state", "UNKNOWN") or "UNKNOWN"
+                    _ta_mode = getattr(intent, 'system_mode', 'NORMAL') or "NORMAL"
                     ctx.trade_attributor.record_entry(
                         asset=asset, price=fill_price, fee=_ta_fee,
                         notional=notional_usd, direction=direction_sign,
-                        strategy=intent.quant_strategy_id or "momentum",
-                        regime=market_data.get("regime_state", "UNKNOWN"),
-                        mode=getattr(intent, 'system_mode', 'NORMAL'),
+                        strategy=_ta_strategy,
+                        regime=_ta_regime,
+                        mode=_ta_mode,
+                    )
+                    logger.info(
+                        f"[W10] TradeAttributor record_entry OK asset={asset} "
+                        f"strategy={_ta_strategy} regime={_ta_regime} mode={_ta_mode}"
                     )
                 except Exception as _ta_err:
-                    logger.debug(f"[W10] TradeAttributor record_entry failed: {_ta_err}")
+                    logger.warning(
+                        f"[W10] TradeAttributor record_entry FAILED "
+                        f"({type(_ta_err).__name__}: {_ta_err}) "
+                        f"asset={asset} strategy={intent.quant_strategy_id!r}"
+                    )
 
             # [W11] Signal Quality -record entry signal
             if ctx.sq_tracker:

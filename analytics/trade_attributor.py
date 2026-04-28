@@ -213,18 +213,36 @@ class TradeAttributor:
         notional: float,
         gross_pnl: float,
         exit_type: str = "FULL",
+        # [P129 v3 1.1 2026-04-28] Optional regime/strategy/mode parameters
+        # so the orphan-exit branch can populate metadata when record_entry
+        # was never called. Production found 90/90 trades had empty
+        # metadata because record_entry() silently failed (logger.debug
+        # swallow at execution_service.py:3174) and record_exit() created
+        # orphans with default-empty fields. Caller now passes regime/
+        # strategy/mode from intent + market_data so even orphan records
+        # capture state. Old callers (no kwargs) unaffected — backward
+        # compatible.
+        regime: str = "",
+        strategy: str = "",
+        mode: str = "",
     ):
         """Record a position exit (full or partial)."""
         with self._lock:
             rec = self._open_trades.get(asset)
             if not rec:
-                # Create a minimal record for orphan exits
+                # Create a minimal record for orphan exits.
+                # [P129] Populate regime/strategy/mode from caller-supplied
+                # values so orphan records aren't metadata-empty.
                 logger.warning(
-                    f"[TradeAttributor] EXIT {asset} with no open trade - creating orphan record"
+                    f"[TradeAttributor] EXIT {asset} with no open trade - "
+                    f"creating orphan record (regime={regime!r} strategy={strategy!r} mode={mode!r})"
                 )
                 rec = TradeRecord(
                     trade_id=f"{asset}_orphan_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}",
                     asset=asset,
+                    regime_at_entry=regime,
+                    strategy=strategy,
+                    mode_at_entry=mode,
                 )
 
             rec.exit_time = datetime.now(timezone.utc).isoformat()
