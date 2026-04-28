@@ -17364,19 +17364,37 @@ class HMATSProductionRunner:
                 except Exception as _eq_err:
                     logger.debug(f"[EQUITY-LOG] {_eq_err}")
 
-                # [KQ-DIAG] Persist per-strategy firing stats for offline inspection
+                # [KQ-DIAG] Persist per-strategy firing stats for offline inspection.
+                # [P128 2026-04-28 v3 1.0] DUAL writer:
+                #   1. Snapshot file (mode='w') — current cumulative state, latest tick.
+                #      Used by: scripts/kq_strategy_diagnostic.py, dashboards, manual inspection.
+                #   2. Append-only JSONL audit log — one record per tick, survives restarts.
+                #      Used by: 7-day passive capture (P0-1) + longitudinal analysis.
+                # The snapshot file alone was insufficient because container restarts (~22 on
+                # 2026-04-25 alone) zero the in-memory _strategy_attempts/_strategy_fires
+                # Counters, AND the snapshot is overwritten each tick reflecting only the
+                # current session. Without the JSONL, a 7-day capture loses everything before
+                # any restart.
                 try:
                     if getattr(self, "_kraken_quant_agent", None) is not None:
                         from pathlib import Path as _PathKq
                         _kq_stats = self._kraken_quant_agent.get_firing_stats()
                         _kq_stats["ts"] = datetime.now(timezone.utc).isoformat()
                         _kq_stats["tick"] = self._live_round_count
-                        _kq_path = _PathKq("data/kq_firing_stats.json")
-                        _kq_path.parent.mkdir(parents=True, exist_ok=True)
-                        with open(_kq_path, "w") as _kqf:
+                        _kq_dir = _PathKq("data/kq_firing_stats.json").parent
+                        _kq_dir.mkdir(parents=True, exist_ok=True)
+                        # 1. Snapshot (current cumulative)
+                        _kq_snap_path = _kq_dir / "kq_firing_stats.json"
+                        with open(_kq_snap_path, "w") as _kqf:
                             json.dump(_kq_stats, _kqf, indent=2)
+                        # 2. Append-only JSONL audit log (one record per tick)
+                        _kq_jsonl_path = _kq_dir / "kq_firing_stats.jsonl"
+                        with open(_kq_jsonl_path, "a") as _kqj:
+                            _kqj.write(json.dumps(_kq_stats) + "\n")
                 except Exception as _kq_err:
-                    logger.debug(f"[KQ-DIAG] persist failed: {_kq_err}")
+                    logger.warning(
+                        f"[KQ-DIAG] persist failed ({type(_kq_err).__name__}: {_kq_err})"
+                    )
 
                 _wait_secs_live = self._seconds_until_next_4h_candle(offset_seconds=90)
                 logger.info(f"[LIVE] Next 4H candle in {_wait_secs_live:.0f}s")
