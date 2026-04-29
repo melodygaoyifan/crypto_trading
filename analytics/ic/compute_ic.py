@@ -71,7 +71,7 @@ def load_ic_logs(start_date: Optional[str] = None) -> pd.DataFrame:
     if not rows:
         raise FileNotFoundError(f"No IC records loaded from {IC_LOG_DIR}")
     df = pd.DataFrame(rows)
-    df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+    df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True, format="ISO8601")
     return df
 
 
@@ -86,10 +86,10 @@ def load_ohlcv(asset: str) -> pd.DataFrame:
         if c.exists():
             df = pd.read_parquet(c)
             if "timestamp" in df.columns:
-                df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+                df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True, format="ISO8601")
             elif df.index.name == "timestamp":
                 df = df.reset_index()
-                df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+                df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True, format="ISO8601")
             return df
     raise FileNotFoundError(f"No OHLCV parquet for {asset} (tried {[str(c) for c in candidates]})")
 

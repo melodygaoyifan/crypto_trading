@@ -22,9 +22,11 @@ Assets: BTC, ETH, SOL
 Authority: ADVISE (supplementary to main.py Best-of-N live quant core)
 """
 
+import json
 import numpy as np
 import time
-from typing import Any, Dict, List, Optional, Tuple, NamedTuple
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Set, Tuple, NamedTuple
 from dataclasses import dataclass, field
 from collections import deque
 from enum import Enum
@@ -2286,8 +2288,64 @@ class StrategyAllocator:
         from collections import Counter as _Counter
         self._strategy_attempts: _Counter = _Counter()
         self._strategy_fires: _Counter = _Counter()
+        self._strategy_archived_skips: _Counter = _Counter()
         self._regime_ticks: _Counter = _Counter()  # per-regime tick count
         self._diag_started_at = time.time()
+
+        # [v5.1 Phase 1] Load archive decisions. Fail-open: missing file = empty
+        # set = all strategies active (current behavior preserved). Iron Law 6
+        # enforced: count active strategies after archive set is applied.
+        self._archived_strategies: Set[str] = self._load_archive_decisions()
+        self._enforce_iron_law_6()
+
+    def _load_archive_decisions(self) -> Set[str]:
+        """[v5.1 Phase 1] Load archived-strategy names from
+        configs/strategy_v5_1_decisions.json. Fail-open: any error → empty set
+        (all strategies active, current behavior). Logged at WARNING per
+        Iron Law 4.
+        """
+        path = Path(__file__).resolve().parents[1] / "configs" / "strategy_v5_1_decisions.json"
+        archived: Set[str] = set()
+        if not path.exists():
+            logger.info(f"[KQ_ARCHIVE] decisions file absent ({path}) — all strategies active")
+            return archived
+        try:
+            with path.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+            for name, cfg in (data.get("strategies") or {}).items():
+                if cfg.get("archived", False):
+                    archived.add(name)
+            logger.info(f"[KQ_ARCHIVE] loaded {len(archived)} archived strategies: {sorted(archived)}")
+        except Exception as e:
+            logger.warning(
+                f"[KQ_ARCHIVE] failed to parse {path.name}: "
+                f"{type(e).__name__}: {e} — fail-open, all strategies active"
+            )
+        return archived
+
+    def _enforce_iron_law_6(self) -> None:
+        """[v5.1 Iron Law 6] After archive set is applied, ≥3 active strategies
+        must remain. If violated, log CRITICAL and reset _archived_strategies
+        to empty (fail-open: better to run all 12 than violate the law silently).
+        """
+        active_count = 0
+        for regime, strategies in self.strategies.items():
+            for s in strategies:
+                if s.name not in self._archived_strategies:
+                    active_count += 1
+        if active_count < 3:
+            logger.critical(
+                f"[KQ_ARCHIVE] Iron Law 6 violation: only {active_count} active "
+                f"strategies after archiving {sorted(self._archived_strategies)}. "
+                f"Resetting to all-active (fail-open). Operator: review "
+                f"configs/strategy_v5_1_decisions.json."
+            )
+            self._archived_strategies = set()
+        else:
+            logger.info(
+                f"[KQ_ARCHIVE] Iron Law 6 OK: {active_count} active strategies "
+                f"(min=3). Archived: {len(self._archived_strategies)}."
+            )
 
     def calculate_ir_weights(self, regime: Regime) -> np.ndarray:
         """
@@ -2389,6 +2447,13 @@ class StrategyAllocator:
         signals = []
         
         for i, strategy in enumerate(strategies):
+            # [v5.1 Phase 1] Archive gate: skip strategies marked archived
+            # in configs/strategy_v5_1_decisions.json. Equivalent to returning
+            # Signal.NEUTRAL — Iron Law 4 fail-closed (no signal = no vote).
+            if strategy.name in self._archived_strategies:
+                self._strategy_archived_skips[strategy.name] += 1
+                continue
+
             # [KQ-DIAG] count attempt (every regime-gated update call)
             self._strategy_attempts[strategy.name] += 1
             signal = strategy.update(market_data)

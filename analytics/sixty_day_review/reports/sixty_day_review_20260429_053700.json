@@ -1,0 +1,104 @@
+{
+  "generated_at": "2026-04-29T05:37:00.477038+00:00",
+  "window_days": 90,
+  "since": "2026-01-29T05:37:00.464366+00:00",
+  "overall_status": "FAIL",
+  "summary": {
+    "n_pass": 3,
+    "n_fail": 2,
+    "n_insufficient_data": 5,
+    "n_not_applicable": 1,
+    "n_total_checks": 11
+  },
+  "checks": [
+    {
+      "name": "net_sharpe",
+      "status": "FAIL",
+      "target": 1.5,
+      "observed": 0.82,
+      "detail": "computed over 9 daily closes"
+    },
+    {
+      "name": "max_drawdown",
+      "status": "PASS",
+      "target": "<0.25",
+      "observed": 0.1902,
+      "detail": "peak-to-trough over 9 days"
+    },
+    {
+      "name": "maker_fee_ratio",
+      "status": "PASS",
+      "target": ">=0.95",
+      "observed": 0.994,
+      "detail": "173/211 fills classified"
+    },
+    {
+      "name": "fee_alpha_ratio",
+      "status": "FAIL",
+      "target": "<0.05",
+      "observed": 2.0956,
+      "detail": ""
+    },
+    {
+      "name": "active_strategies_min_3",
+      "status": "PASS",
+      "target": ">=3",
+      "observed": 8,
+      "detail": "from configs/strategy_v5_1_decisions.json"
+    },
+    {
+      "name": "sleeve_sharpe_directional_short",
+      "status": "INSUFFICIENT_DATA",
+      "target": ">=0.8",
+      "observed": null,
+      "detail": "sleeve not yet in sleeve_pnl report (likely shadow only OR Phase 3/6 not yet shipped)"
+    },
+    {
+      "name": "sleeve_sharpe_microstructure",
+      "status": "INSUFFICIENT_DATA",
+      "target": ">=1.0",
+      "observed": null,
+      "detail": "sleeve not yet in sleeve_pnl report (likely shadow only OR Phase 3/6 not yet shipped)"
+    },
+    {
+      "name": "sleeve_sharpe_cascade",
+      "status": "INSUFFICIENT_DATA",
+      "target": ">=0.8",
+      "observed": null,
+      "detail": "sleeve not yet in sleeve_pnl report (likely shadow only OR Phase 3/6 not yet shipped)"
+    },
+    {
+      "name": "sleeve_sharpe_funding",
+      "status": "INSUFFICIENT_DATA",
+      "target": ">=1.5",
+      "observed": null,
+      "detail": "sleeve not yet in sleeve_pnl report (likely shadow only OR Phase 3/6 not yet shipped)"
+    },
+    {
+      "name": "sleeve_sharpe_ml_factor",
+      "status": "INSUFFICIENT_DATA",
+      "target": ">=1.0",
+      "observed": null,
+      "detail": "sleeve not yet in sleeve_pnl report (likely shadow only OR Phase 3/6 not yet shipped)"
+    },
+    {
+      "name": "coinbase_api_uptime",
+      "status": "NOT_APPLICABLE",
+      "target": ">=0.99",
+      "observed": "n/a",
+      "detail": "Phase 2 has not yet shipped \u2014 gated by [PARAMETER 3]"
+    }
+  ],
+  "inputs": {
+    "equity_history": "C:\\Users\\melod\\Downloads\\hmats\\data\\equity_history.jsonl",
+    "shadow_ledger_dir": "C:\\Users\\melod\\Downloads\\hmats\\data\\shadow_ledger",
+    "fill_quality_path": "data\\fill_quality.jsonl",
+    "sleeve_pnl_report": null,
+    "promotion_plan": null,
+    "n_fills_in_window": 211,
+    "n_market_orders": 1,
+    "n_classified_via_fill_quality": 173,
+    "n_equity_points": 131
+  },
+  "advisory_only": true
+}

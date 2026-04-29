@@ -1,0 +1,19 @@
+{
+  "generated_at": "2026-04-29T04:27:47.839398+00:00",
+  "window_days": 90,
+  "since": "2026-01-29T04:27:47.828185+00:00",
+  "n_total_fills": 211,
+  "n_unknown_sleeve_fills": 211,
+  "attribution_coverage": 0.0,
+  "initial_capital": 10000.0,
+  "sleeves": [
+    {
+      "name": "unknown",
+      "n_days": 32,
+      "total_net_pnl": -1731.8940799884328,
+      "annualized_vol": 0.15266003874015638,
+      "annualized_sharpe": -14.092614196596921,
+      "n_fills": 211
+    }
+  ]
+}
