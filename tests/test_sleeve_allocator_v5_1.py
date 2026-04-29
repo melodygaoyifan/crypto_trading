@@ -176,7 +176,7 @@ def test_advisory_record_shape():
     assert rec["max_portfolio_leverage"] == DEFAULT_MAX_PORTFOLIO_LEVERAGE
     assert rec["max_sleeve_weight"] == DEFAULT_MAX_SLEEVE_WEIGHT
     sleeve_names = {s["name"] for s in rec["sleeves"]}
-    assert sleeve_names == {"directional_short", "microstructure", "cascade", "funding"}
+    assert sleeve_names == {"directional_short", "microstructure", "cascade", "funding", "ml_factor"}
     for s in rec["sleeves"]:
         assert {"name", "weight", "current_vol", "sharpe_estimate", "is_live",
                 "quarter_kelly", "realized_vol_n"}.issubset(s.keys())
@@ -242,8 +242,8 @@ def test_allocator_does_not_import_unified_position_sizer():
 def test_phase7_builder_sleeve_set():
     a = build_phase7_sleeve_allocator()
     names = set(a._sleeves.keys())
-    # After Phase 3 ships, funding sleeve is registered
-    assert names == {"directional_short", "microstructure", "cascade", "funding"}
-    # ml_factor + cash_and_carry NOT registered (deferred)
-    assert "ml_factor" not in names
+    # After Phase 3 + 6 ship, funding + ml_factor sleeves registered
+    assert names == {"directional_short", "microstructure", "cascade", "funding", "ml_factor"}
+    # cash_and_carry + options NOT registered (deferred to v6)
     assert "cash_and_carry" not in names
+    assert "options" not in names

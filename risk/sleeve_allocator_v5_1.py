@@ -376,4 +376,5 @@ def build_phase7_sleeve_allocator() -> SleeveAllocator:
     a.register_sleeve("microstructure",    estimated_vol_pct=0.20, sharpe_estimate=1.0, is_live=False)
     a.register_sleeve("cascade",           estimated_vol_pct=0.30, sharpe_estimate=0.9, is_live=False)
     a.register_sleeve("funding",           estimated_vol_pct=0.15, sharpe_estimate=1.5, is_live=False)
+    a.register_sleeve("ml_factor",         estimated_vol_pct=0.20, sharpe_estimate=1.0, is_live=False)
     return a

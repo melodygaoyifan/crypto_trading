@@ -220,3 +220,21 @@ def build_funding_shadow_harness(
         log_dir=log_dir,
         log_prefix="funding",
     )
+
+
+def build_ml_factor_shadow_harness(
+    log_dir: Optional[Path] = None,
+) -> MicrostructureShadowHarness:
+    """[v5.1 Phase 6] ML factor fusion agent shadow harness.
+
+    Single MLFactorDispatcher conforms to the evaluate(asset, market_data)
+    interface; per-asset routing happens inside the dispatcher.
+
+    Output ledger: data/strategy_shadow/ml_factor_YYYYMMDD.jsonl
+    """
+    from agents.ml_factor_fusion_agent import MLFactorDispatcher
+    return MicrostructureShadowHarness(
+        strategies=[MLFactorDispatcher()],
+        log_dir=log_dir,
+        log_prefix="ml_factor",
+    )

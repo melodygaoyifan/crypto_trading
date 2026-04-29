@@ -4780,6 +4780,25 @@ class HMATSProductionRunner:
             )
 
         # =====================================================================
+        # [v5.1 Phase 6] ML factor fusion agent shadow harness (SHADOW)
+        # MLFactorDispatcher per-asset routes to MLFactorFusionAgent (BTC/ETH/SOL).
+        # Each agent loads a trained autoencoder from
+        #   models/factor_extraction/{ASSET}/factor_autoencoder.pt
+        # Fail-closed: missing model → every evaluate() returns NEUTRAL.
+        # Constitutional override per training/factor_extraction/__init__.py.
+        # =====================================================================
+        self._ml_factor_shadow = None
+        try:
+            from defense.strategy_shadow_v5_1 import build_ml_factor_shadow_harness
+            self._ml_factor_shadow = build_ml_factor_shadow_harness()
+            logger.info("  [v5.1 PHASE6] MLFactorShadowHarness: ACTIVE (3 assets, observation-only)")
+        except Exception as _mf_err:
+            logger.warning(
+                f"  [v5.1 PHASE6] MLFactorShadowHarness init failed: "
+                f"{type(_mf_err).__name__}: {_mf_err}"
+            )
+
+        # =====================================================================
         # [v5.1 Phase 7] Risk-parity sleeve allocator (ADVISORY)
         # 3 sleeves registered (directional_short live, microstructure+cascade
         # shadow). Per-tick advisory record written to
@@ -7337,6 +7356,17 @@ class HMATSProductionRunner:
                 self._funding_shadow.observe(asset, market_data)
             except Exception as _fs_err:
                 logger.debug(f"[v5.1 PHASE3] funding observe {asset} skipped: {_fs_err}")
+
+        # [v5.1 Phase 6] Shadow-mode ML factor agent observation. Iron-Law-7
+        # contract. Output ledger data/strategy_shadow/ml_factor_*.jsonl.
+        # Until autoencoders are trained + IC tables loaded, agent emits
+        # NEUTRAL on every tick (fail-closed). Agent uses ADVISE confidence
+        # cap (0.50) so even after promotion it cannot displace quant DECIDE.
+        if getattr(self, "_ml_factor_shadow", None) is not None and not p0_abort_tick:
+            try:
+                self._ml_factor_shadow.observe(asset, market_data)
+            except Exception as _mf_err:
+                logger.debug(f"[v5.1 PHASE6] ml_factor observe {asset} skipped: {_mf_err}")
 
         # [v5.1 Phase 7] Sleeve allocator advisory record. Iron Law 7: this
         # output is NOT consumed by UnifiedPositionSizer.calculate_position_size
