@@ -62,6 +62,7 @@ REPO = Path(__file__).resolve().parents[2]
 EQUITY_HISTORY_DEFAULT = REPO / "data" / "equity_history.jsonl"
 SHADOW_LEDGER_DEFAULT = REPO / "data" / "shadow_ledger"
 FILL_QUALITY_DEFAULT = REPO / "data" / "fill_quality.jsonl"
+DRL_PROMOTION_STATE_DEFAULT = REPO / "data" / "drl_promotion_state.json"
 SHADOW_IC_REPORT_DIR = REPO / "analytics" / "shadow_ic" / "reports"
 SLEEVE_PNL_REPORT_DIR = REPO / "analytics" / "sleeve_attribution" / "reports"
 PROMOTION_PLAN_DIR = REPO / "analytics" / "promotion_gate" / "plans"
@@ -75,6 +76,7 @@ TARGET_MAKER_FEE_RATIO = 0.95
 TARGET_FEE_ALPHA_RATIO = 0.05
 TARGET_MIN_ACTIVE_STRATEGIES = 3
 TARGET_API_UPTIME = 0.99
+TARGET_DRL_AUTHORITY = "ACTIVE"  # Iron Law 5: DRL floor must remain ACTIVE
 TARGET_PER_SLEEVE_SHARPE: Dict[str, float] = {
     "directional_short": 0.8,
     "microstructure":    1.0,
@@ -406,6 +408,39 @@ def extract_sleeve_sharpes(
 # Active-strategy + DRL state
 # ---------------------------------------------------------------------------
 
+def read_drl_authority_state(
+    state_path: Path = DRL_PROMOTION_STATE_DEFAULT,
+) -> Tuple[Optional[str], Optional[datetime], Optional[str]]:
+    """Read data/drl_promotion_state.json and return
+    (authority_level, updated_at, error_reason).
+
+    Returns (None, None, reason) on missing/malformed/empty file. Iron Law 5
+    enforces ACTIVE floor at runtime; this read is the review-time check.
+    """
+    if not state_path.exists():
+        return None, None, "file_missing"
+    try:
+        d = json.loads(state_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        logger.warning(
+            f"[60D_REVIEW] drl_promotion_state.json parse failed: "
+            f"{type(e).__name__}: {e}"
+        )
+        return None, None, f"parse_error_{type(e).__name__}"
+
+    level = d.get("authority_level")
+    updated_str = d.get("updated_at")
+    updated_at: Optional[datetime] = None
+    if updated_str:
+        try:
+            updated_at = datetime.fromisoformat(str(updated_str).replace("Z", "+00:00"))
+            if updated_at.tzinfo is None:
+                updated_at = updated_at.replace(tzinfo=timezone.utc)
+        except ValueError:
+            updated_at = None
+    return (str(level).upper() if level else None, updated_at, None)
+
+
 def count_active_strategies(decisions_path: Optional[Path] = None) -> int:
     """Read configs/strategy_v5_1_decisions.json and return active count.
 
@@ -458,6 +493,10 @@ def build_checks(
     active_strategies: int,
     coinbase_migration_done: bool,
     n_classified: int = -1,
+    drl_authority_level: Optional[str] = None,
+    drl_updated_at: Optional[datetime] = None,
+    drl_error_reason: Optional[str] = None,
+    drl_state_max_age_hours: int = 24,
 ) -> List[Check]:
     checks: List[Check] = []
 
@@ -557,6 +596,31 @@ def build_checks(
                 f">={target}", round(observed, 3),
             ))
 
+    # DRL authority level (Iron Law 5: ACTIVE floor)
+    if drl_error_reason or drl_authority_level is None:
+        checks.append(_check(
+            "drl_authority_active", CheckStatus.INSUFFICIENT_DATA,
+            TARGET_DRL_AUTHORITY, drl_authority_level,
+            detail=f"drl_promotion_state read: {drl_error_reason or 'no_authority_level'}"
+        ))
+    else:
+        # Stale state guard — production should write this on every demotion
+        # event. Memory says it can be stale for many days though, so 24h is
+        # a soft check (operator visibility) not a hard fail.
+        is_active = drl_authority_level == TARGET_DRL_AUTHORITY
+        stale_warn = ""
+        if drl_updated_at is not None:
+            age_h = (datetime.now(timezone.utc) - drl_updated_at).total_seconds() / 3600.0
+            if age_h > drl_state_max_age_hours:
+                stale_warn = (f"; state file is {age_h:.1f}h old "
+                              f"(>{drl_state_max_age_hours}h threshold) — verify against logs")
+        checks.append(_check(
+            "drl_authority_active",
+            CheckStatus.PASS if is_active else CheckStatus.FAIL,
+            TARGET_DRL_AUTHORITY, drl_authority_level,
+            detail=f"updated_at={drl_updated_at.isoformat() if drl_updated_at else 'unknown'}{stale_warn}"
+        ))
+
     # Coinbase migration stability — only checked if Phase 2 shipped
     if not coinbase_migration_done:
         checks.append(_check(
@@ -587,6 +651,7 @@ def build_review(
     fill_quality_path: Path = FILL_QUALITY_DEFAULT,
     sleeve_pnl_path: Optional[Path] = None,
     promotion_plan_path: Optional[Path] = None,
+    drl_state_path: Path = DRL_PROMOTION_STATE_DEFAULT,
     window_days: int = 60,
     coinbase_migration_done: bool = False,
 ) -> Dict[str, Any]:
@@ -618,6 +683,7 @@ def build_review(
         n_market = _shadow_n_market
 
     active_strategies = count_active_strategies()
+    drl_level, drl_updated, drl_err = read_drl_authority_state(drl_state_path)
 
     checks = build_checks(
         equity_curve=equity_curve,
@@ -628,6 +694,9 @@ def build_review(
         active_strategies=active_strategies,
         coinbase_migration_done=coinbase_migration_done,
         n_classified=n_classified,
+        drl_authority_level=drl_level,
+        drl_updated_at=drl_updated,
+        drl_error_reason=drl_err,
     )
 
     n_pass = sum(1 for c in checks if c.status is CheckStatus.PASS)
@@ -664,6 +733,7 @@ def build_review(
             "equity_history": str(equity_history_path),
             "shadow_ledger_dir": str(shadow_ledger_dir),
             "fill_quality_path": str(fill_quality_path),
+            "drl_state_path": str(drl_state_path),
             "sleeve_pnl_report": str(sleeve_pnl_path) if sleeve_pnl_path else None,
             "promotion_plan": str(promotion_plan_path) if promotion_plan_path else None,
             "n_fills_in_window": n_fills,
@@ -713,6 +783,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--shadow-ledger-dir", default=str(SHADOW_LEDGER_DEFAULT))
     p.add_argument("--fill-quality", default=str(FILL_QUALITY_DEFAULT),
                    help="Path to data/fill_quality.jsonl (canonical maker/taker source)")
+    p.add_argument("--drl-state", default=str(DRL_PROMOTION_STATE_DEFAULT),
+                   help="Path to data/drl_promotion_state.json (Iron Law 5 review-time check)")
     p.add_argument("--sleeve-pnl-report", default=None)
     p.add_argument("--promotion-plan", default=None)
     p.add_argument("--window-days", type=int, default=60)
@@ -725,6 +797,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         equity_history_path=Path(args.equity_history),
         shadow_ledger_dir=Path(args.shadow_ledger_dir),
         fill_quality_path=Path(args.fill_quality),
+        drl_state_path=Path(args.drl_state),
         sleeve_pnl_path=Path(args.sleeve_pnl_report) if args.sleeve_pnl_report else None,
         promotion_plan_path=Path(args.promotion_plan) if args.promotion_plan else None,
         window_days=args.window_days,

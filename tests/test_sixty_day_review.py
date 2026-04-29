@@ -14,6 +14,7 @@ import pytest
 
 from analytics.sixty_day_review.review_aggregator import (
     CheckStatus,
+    TARGET_DRL_AUTHORITY,
     TARGET_FEE_ALPHA_RATIO,
     TARGET_MAKER_FEE_RATIO,
     TARGET_MAX_DRAWDOWN,
@@ -28,6 +29,7 @@ from analytics.sixty_day_review.review_aggregator import (
     count_active_strategies,
     extract_sleeve_sharpes,
     load_equity_history,
+    read_drl_authority_state,
 )
 
 
@@ -325,6 +327,135 @@ def test_count_active_strategies_real_config():
 def test_count_active_strategies_missing_file(tmp_path: Path):
     n = count_active_strategies(tmp_path / "missing.json")
     assert n == -1
+
+
+# ---------- read_drl_authority_state --------------------------------------
+
+def test_read_drl_state_missing_file(tmp_path: Path):
+    level, updated, err = read_drl_authority_state(tmp_path / "missing.json")
+    assert level is None and updated is None and err == "file_missing"
+
+
+def test_read_drl_state_active(tmp_path: Path):
+    p = tmp_path / "drl.json"
+    p.write_text(json.dumps({
+        "authority_level": "ACTIVE",
+        "updated_at": "2026-04-29T01:00:00+00:00",
+    }), encoding="utf-8")
+    level, updated, err = read_drl_authority_state(p)
+    assert level == "ACTIVE"
+    assert updated is not None and updated.tzinfo is not None
+    assert err is None
+
+
+def test_read_drl_state_uppercases():
+    """Authority level should be normalized to upper-case."""
+    import tempfile
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as f:
+        json.dump({"authority_level": "shadow"}, f)
+        path = Path(f.name)
+    try:
+        level, _, _ = read_drl_authority_state(path)
+        assert level == "SHADOW"
+    finally:
+        path.unlink()
+
+
+def test_read_drl_state_naive_ts_recovered(tmp_path: Path):
+    """Naive timestamps recovered as UTC (P39/P40 family)."""
+    p = tmp_path / "drl.json"
+    p.write_text(json.dumps({
+        "authority_level": "ACTIVE",
+        "updated_at": "2026-04-29T01:00:00",  # no tz
+    }), encoding="utf-8")
+    level, updated, err = read_drl_authority_state(p)
+    assert err is None
+    assert updated is not None and updated.tzinfo is not None
+
+
+def test_read_drl_state_malformed(tmp_path: Path):
+    p = tmp_path / "drl.json"
+    p.write_text("{ malformed", encoding="utf-8")
+    level, updated, err = read_drl_authority_state(p)
+    assert level is None
+    assert err is not None and err.startswith("parse_error_")
+
+
+def test_read_drl_state_no_authority_key(tmp_path: Path):
+    p = tmp_path / "drl.json"
+    p.write_text(json.dumps({"trade_count": 3}), encoding="utf-8")
+    level, _, err = read_drl_authority_state(p)
+    assert level is None
+    assert err is None  # parsed fine, just no key
+
+
+def test_read_drl_state_invalid_ts_doesnt_break_parse(tmp_path: Path):
+    p = tmp_path / "drl.json"
+    p.write_text(json.dumps({
+        "authority_level": "ACTIVE",
+        "updated_at": "not-a-date",
+    }), encoding="utf-8")
+    level, updated, err = read_drl_authority_state(p)
+    assert level == "ACTIVE"
+    assert updated is None
+    assert err is None  # ts parse failure is silent; level still extracted
+
+
+# ---------- build_checks DRL branch ---------------------------------------
+
+def test_build_checks_drl_active_passes():
+    checks = build_checks(
+        equity_curve=[], sleeve_pnl_report=None,
+        maker_ratio=0.0, fee_alpha=float("inf"), n_fills=0,
+        active_strategies=8, coinbase_migration_done=False,
+        drl_authority_level="ACTIVE",
+        drl_updated_at=datetime.now(timezone.utc),
+        drl_error_reason=None,
+    )
+    s = {c.name: c.status for c in checks}
+    assert s["drl_authority_active"] is CheckStatus.PASS
+
+
+def test_build_checks_drl_demoted_fails():
+    checks = build_checks(
+        equity_curve=[], sleeve_pnl_report=None,
+        maker_ratio=0.0, fee_alpha=float("inf"), n_fills=0,
+        active_strategies=8, coinbase_migration_done=False,
+        drl_authority_level="SHADOW",
+        drl_updated_at=datetime.now(timezone.utc),
+        drl_error_reason=None,
+    )
+    s = {c.name: c.status for c in checks}
+    assert s["drl_authority_active"] is CheckStatus.FAIL
+
+
+def test_build_checks_drl_missing_state_insufficient():
+    checks = build_checks(
+        equity_curve=[], sleeve_pnl_report=None,
+        maker_ratio=0.0, fee_alpha=float("inf"), n_fills=0,
+        active_strategies=8, coinbase_migration_done=False,
+        drl_authority_level=None, drl_updated_at=None,
+        drl_error_reason="file_missing",
+    )
+    s = {c.name: c.status for c in checks}
+    assert s["drl_authority_active"] is CheckStatus.INSUFFICIENT_DATA
+
+
+def test_build_checks_drl_stale_state_warning_in_detail():
+    """Active but state file is 48h old → still PASS, but detail flags staleness."""
+    checks = build_checks(
+        equity_curve=[], sleeve_pnl_report=None,
+        maker_ratio=0.0, fee_alpha=float("inf"), n_fills=0,
+        active_strategies=8, coinbase_migration_done=False,
+        drl_authority_level="ACTIVE",
+        drl_updated_at=datetime.now(timezone.utc) - timedelta(hours=48),
+        drl_error_reason=None,
+        drl_state_max_age_hours=24,
+    )
+    drl_check = next(c for c in checks if c.name == "drl_authority_active")
+    assert drl_check.status is CheckStatus.PASS
+    assert "old" in drl_check.detail
+    assert "verify against logs" in drl_check.detail
 
 
 # ---------- build_checks ---------------------------------------------------
