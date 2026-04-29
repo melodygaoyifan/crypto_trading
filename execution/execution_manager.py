@@ -310,6 +310,7 @@ class ExecutionManager:
             "PREFLIGHT_BELOW_MIN_SIZE",
             "PREFLIGHT_WRONG_SIDE",
             "INSUFFICIENT_SPOT_BALANCE",
+            "PREFLIGHT_QUOTE_CONVERT_FAILED",  # [P134] auto-convert USD->USDT failed
         )):
             return ("PERMANENT",
                     "Pre-flight rejection from our own validation. The "
@@ -627,6 +628,170 @@ class ExecutionManager:
             self._entries_frozen_until = 0.0
             return False
         return True
+
+    def _ensure_quote_currency_available(
+        self,
+        symbol: str,
+        side,
+        size: float,
+        price: Optional[float],
+    ) -> Tuple[bool, str]:
+        """[P134 2026-04-29] Auto-convert USD -> quote-currency before BUY.
+
+        Triggered ONLY when:
+          - side == BUY (SELL doesn't need quote currency)
+          - quote currency is USDT (currently the only non-USD pair: SOL/USDT)
+          - free USDT balance < required notional
+          - HMATS_USDT_AUTO_CONVERT_ENABLED env var is "true" (default OFF)
+
+        Per-conversion cap via HMATS_USDT_AUTO_CONVERT_MAX_USD env (default $200).
+        Conversion fees ~21bps (1bps spread + 20bps Kraken USDT/USD taker).
+
+        Fail-CLOSED:
+          - Conversion fails for ANY reason -> return (False, error_msg) ->
+            caller REJECTS the SOL order. No silent fallback.
+          - Daily total cap not implemented (v1); operator monitors via
+            [QUOTE-CONVERT] CRITICAL log.
+
+        Returns: (ok, error_msg). On ok=True, caller proceeds to balance
+        clamp + order placement (which sees the new USDT balance).
+
+        Background: SOL/USDT switched 2026-04-29 (P133). Pre-P134, BUYs
+        capped at ~$30 USDT free balance (operator pre-funded). P134
+        unblocks SOL LONG entries by auto-converting from the $3,941 USD
+        free pool.
+        """
+        import os as _os
+
+        # Gate 1: opt-in env var
+        if _os.environ.get("HMATS_USDT_AUTO_CONVERT_ENABLED", "false").lower() != "true":
+            return True, ""  # Not enabled -> skip silently, defer to balance clamp
+
+        # Gate 2: only BUY needs quote currency
+        _side_str = side.value if hasattr(side, 'value') else str(side)
+        if _side_str.lower() != 'buy':
+            return True, ""
+
+        # Gate 3: only handle USDT-quoted pairs (current scope)
+        try:
+            base, quote = symbol.split('/')
+        except ValueError:
+            return True, ""  # Unrecognized symbol -> skip
+        if quote != 'USDT':
+            return True, ""
+
+        # Estimate required quote
+        _est_price = price
+        if _est_price is None or _est_price <= 0:
+            try:
+                _ticker = self.exchange.fetch_ticker(symbol)
+                _est_price = float(_ticker.get('last') or _ticker.get('ask') or 0)
+            except Exception as _e:  # noqa: silent-swallow
+                self.logger.warning(
+                    f"[QUOTE-CONVERT] {symbol}: ticker probe failed "
+                    f"({type(_e).__name__}: {_e}); skipping conversion"
+                )
+                return True, ""
+        if _est_price <= 0:
+            return True, ""
+
+        _required_quote = float(size) * float(_est_price) * 1.003  # +30bps buffer
+
+        # Probe balance
+        try:
+            _bal = self.exchange.fetch_balance()
+            _free = (_bal or {}).get('free', {}) or {}
+            _free_quote = float(_free.get(quote, 0.0) or 0.0)
+            _free_usd = float(_free.get('USD', 0.0) or 0.0)
+        except Exception as _e:  # noqa: silent-swallow
+            self.logger.warning(
+                f"[QUOTE-CONVERT] {symbol}: balance probe failed "
+                f"({type(_e).__name__}: {_e}); skipping"
+            )
+            return True, ""
+
+        if _free_quote >= _required_quote:
+            return True, ""  # Already have enough
+
+        _shortfall = _required_quote - _free_quote
+        _convert_amount_usd = _shortfall * 1.05  # +5% safety on conversion size
+
+        # Per-conversion cap
+        _max_per_convert = float(_os.environ.get("HMATS_USDT_AUTO_CONVERT_MAX_USD", "200"))
+        if _convert_amount_usd > _max_per_convert:
+            msg = (
+                f"conversion size ${_convert_amount_usd:.2f} exceeds "
+                f"per-order cap ${_max_per_convert:.2f}. Either raise "
+                f"HMATS_USDT_AUTO_CONVERT_MAX_USD or fund USDT manually."
+            )
+            self.logger.critical(f"[QUOTE-CONVERT] {symbol}: {msg}")
+            return False, f"USDT_CONVERT_EXCEEDS_CAP: {msg}"
+
+        # Check USD funding
+        if _free_usd < _convert_amount_usd:
+            msg = (
+                f"insufficient USD: need ${_convert_amount_usd:.2f} (USDT "
+                f"shortfall ${_shortfall:.2f} + 5% buffer), free USD "
+                f"${_free_usd:.2f}. Operator action: fund USD or USDT."
+            )
+            self.logger.critical(f"[QUOTE-CONVERT] {symbol}: {msg}")
+            return False, f"INSUFFICIENT_USD_FOR_CONVERSION: {msg}"
+
+        # Place USDT/USD market BUY: pay USD, receive USDT
+        try:
+            _usdt_ticker = self.exchange.fetch_ticker('USDT/USD')
+            _usdt_ask = float(_usdt_ticker.get('ask') or _usdt_ticker.get('last') or 1.0)
+            if _usdt_ask <= 0:
+                return False, "USDT_CONVERT_FAILED: invalid USDT/USD ask price"
+
+            _usdt_buy_amount = _convert_amount_usd / _usdt_ask  # how many USDT to buy
+
+            # Pre-flight min check (Kraken USDT/USD min is 5 USDT)
+            _usdt_market = self.exchange.market('USDT/USD')
+            _usdt_min = float(
+                ((_usdt_market or {}).get('limits') or {}).get('amount', {}).get('min') or 0.0
+            )
+            if _usdt_min > 0 and _usdt_buy_amount < _usdt_min:
+                msg = (
+                    f"USDT amount {_usdt_buy_amount:.2f} below Kraken min "
+                    f"{_usdt_min:.2f}. Increase order size or fund USDT manually."
+                )
+                self.logger.critical(f"[QUOTE-CONVERT] {symbol}: {msg}")
+                return False, f"USDT_CONVERT_BELOW_MIN: {msg}"
+
+            self.logger.critical(
+                f"[QUOTE-CONVERT] {symbol}: AUTO-CONVERTING USD->USDT — "
+                f"buying {_usdt_buy_amount:.4f} USDT @ ${_usdt_ask:.5f} "
+                f"(SOL trade needs ${_required_quote:.2f} USDT, "
+                f"free USDT={_free_quote:.2f}, shortfall=${_shortfall:.2f}, "
+                f"target USD spend=${_convert_amount_usd:.2f})"
+            )
+            _conv_order = self.exchange.create_market_order(
+                symbol='USDT/USD',
+                side='buy',
+                amount=_usdt_buy_amount,
+            )
+            if _conv_order is None:
+                return False, "USDT_CONVERT_FAILED: exchange returned None"
+
+            _filled = float(_conv_order.get('filled', 0) or 0)
+            if _filled < _usdt_buy_amount * 0.95:  # 5% tolerance
+                msg = f"only {_filled:.4f}/{_usdt_buy_amount:.4f} filled"
+                self.logger.critical(f"[QUOTE-CONVERT] {symbol}: PARTIAL — {msg}")
+                return False, f"USDT_CONVERT_PARTIAL: {msg}"
+
+            self.logger.critical(
+                f"[QUOTE-CONVERT] {symbol}: SUCCESS — converted "
+                f"{_filled:.4f} USDT (order_id={_conv_order.get('id', '?')})"
+            )
+            return True, ""
+
+        except Exception as _e:
+            msg = f"{type(_e).__name__}: {_e}"
+            self.logger.critical(
+                f"[QUOTE-CONVERT] {symbol}: USD->USDT conversion EXCEPTION: {msg}"
+            )
+            return False, f"USDT_CONVERT_FAILED: {msg}"
 
     def _clamp_size_to_balance_v2(
         self,
@@ -1104,6 +1269,20 @@ class ExecutionManager:
                 order_params['postOnly'] = True          # ccxt generic
                 order_params['oflags'] = 'post'          # Kraken-specific
             # --- end [v9-PATCH-3] ---
+
+            # [P134 2026-04-29] Auto-convert USD->USDT before BUY on USDT
+            # pairs. No-op when env disabled OR not USDT-quoted OR enough
+            # quote currency. Mirrors market-order branch.
+            _qcok, _qcerr = self._ensure_quote_currency_available(
+                symbol, side, size, price
+            )
+            if not _qcok:
+                return OrderResult(
+                    success=False, symbol=symbol, side=side.value,
+                    order_type=OrderType.LIMIT.value,
+                    status=OrderStatus.REJECTED,
+                    error_message=f"PREFLIGHT_QUOTE_CONVERT_FAILED: {_qcerr}",
+                )
 
             size = self._clamp_size_to_balance(symbol, side, size, price)
             if size <= 0:
@@ -1709,6 +1888,22 @@ class ExecutionManager:
         """Execute a market order."""
         try:
             order_params = extra_params or {}
+
+            # [P134 2026-04-29] Auto-convert USD->USDT before BUY on USDT
+            # pairs (currently SOL/USDT). No-op when env disabled OR not
+            # USDT-quoted OR already have enough quote currency. Fail-CLOSED
+            # if conversion fails.
+            _qcok, _qcerr = self._ensure_quote_currency_available(
+                symbol, side, size, price=None  # market order: ticker probe inside
+            )
+            if not _qcok:
+                return OrderResult(
+                    success=False, symbol=symbol, side=side.value,
+                    order_type=OrderType.MARKET.value,
+                    status=OrderStatus.REJECTED,
+                    error_message=f"PREFLIGHT_QUOTE_CONVERT_FAILED: {_qcerr}",
+                )
+
             size = self._clamp_size_to_balance(symbol, side, size)
             if size <= 0:
                 return OrderResult(
