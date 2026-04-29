@@ -1983,16 +1983,88 @@ class ExecutionManager:
             )
             
         except Exception as e:
-            self.logger.error(f"Market order error: {e}")
+            _err_str = str(e)
+            self.logger.error(f"Market order error: {_err_str}")
+
+            # [P136 2026-04-29] Kraken pair in post-only mode rejects ALL
+            # market orders ("EService:Market in post_only mode"). The pair
+            # is OPEN but only LIMIT orders are accepted (Kraken does this
+            # during volatile/illiquid windows). Production hit this on SOL
+            # 05:13 UTC right after P135 routed SOL to USDT.
+            #
+            # Fallback: convert to AGGRESSIVE LIMIT — limit at opposite-side
+            # best price (BUY at ask, SELL at bid). NOT postOnly. This fills
+            # like a market order but is allowed in post-only-mode markets.
+            # Same friction as a market order would have paid (taker fee).
+            if "post_only mode" in _err_str.lower() or "post-only mode" in _err_str.lower():
+                try:
+                    _ticker = self.exchange.fetch_ticker(symbol)
+                    _side_lower = side.value.lower()
+                    if _side_lower == 'buy':
+                        # BUY at the ask -> immediate fill
+                        _agg_price = float(_ticker.get('ask') or _ticker.get('last') or 0)
+                    else:
+                        # SELL at the bid -> immediate fill
+                        _agg_price = float(_ticker.get('bid') or _ticker.get('last') or 0)
+                    if _agg_price <= 0:
+                        raise RuntimeError(f"invalid aggressive-limit price: {_agg_price}")
+
+                    # Build params WITHOUT postOnly (taker-allowed limit)
+                    _agg_params = dict(order_params)
+                    _agg_params.pop('postOnly', None)
+                    _agg_params.pop('oflags', None)
+
+                    self.logger.warning(
+                        f"[POST_ONLY_FALLBACK] {symbol} {_side_lower}: market rejected "
+                        f"(pair in post_only mode); converting to aggressive LIMIT @ "
+                        f"${_agg_price:.4f} (no postOnly). Same taker friction as market."
+                    )
+                    _agg_order = self.exchange.create_limit_order(
+                        symbol=symbol,
+                        side=_side_lower,
+                        amount=size,
+                        price=_agg_price,
+                        params=_agg_params,
+                    )
+                    if _agg_order is None:
+                        raise RuntimeError("Exchange returned None for aggressive limit fallback")
+
+                    _agg_filled_price = float(
+                        _agg_order.get('average', _agg_order.get('price', _agg_price)) or _agg_price
+                    )
+                    return OrderResult(
+                        success=True,
+                        order_id=_agg_order.get('id'),
+                        symbol=symbol,
+                        side=side.value,
+                        order_type=OrderType.LIMIT.value,  # actually limit now
+                        requested_price=_agg_filled_price,
+                        filled_price=_agg_filled_price,
+                        requested_size=size,
+                        filled_size=float(_agg_order.get('filled', size) or 0),
+                        slippage=0,
+                        fee=float((_agg_order.get('fee') or {}).get('cost', 0) or 0),
+                        fee_currency=(_agg_order.get('fee') or {}).get('currency', ''),
+                        status=OrderStatus.FILLED,
+                        raw_response=_agg_order,
+                    )
+                except Exception as _agg_err:
+                    self.logger.error(
+                        f"[POST_ONLY_FALLBACK] {symbol}: aggressive-limit retry "
+                        f"FAILED ({type(_agg_err).__name__}: {_agg_err}); "
+                        f"original market error was: {_err_str}"
+                    )
+                    # Fall through to standard REJECTED return below
+
             return OrderResult(
                 success=False,
                 symbol=symbol,
                 side=side.value,
                 order_type=OrderType.MARKET.value,
                 status=OrderStatus.REJECTED,
-                error_message=str(e)
+                error_message=_err_str
             )
-    
+
     # [L3-02] Per-asset depth impact parameters (aligned with EnhancedMarketImpactModel)
     _IMPACT_PARAMS = {
         "BTC": {"base_bps": 3.0, "depth_coefficient": 0.5},
