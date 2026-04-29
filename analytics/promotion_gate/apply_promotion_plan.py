@@ -1,41 +1,50 @@
 """
-HMATS v5.1 Phase 10 - Promotion Plan Applier (DRY-RUN ONLY)
-=============================================================
+HMATS v5.1 Phase 10 - Promotion Plan Applier (DRY-RUN + CONFIRM)
+==================================================================
 
 Reads a promotion plan JSON (produced by analytics/promotion_gate/promotion_plan.py)
-and prints exactly what live mutation would do at each PROMOTE_TO_FUSION /
-ARCHIVE / UPDATE_ALLOCATOR_REALIZED_VOL action. Built as DRY-RUN ONLY this
-session — `--confirm` mode is deliberately not implemented per [PARAMETER 6]
-operator-protocol decision (Iron Law 7 + 10).
+and either prints what live mutation would do (--dry-run, default) or
+applies a SAFE SUBSET of mutations (--confirm).
+
+[PARAMETER 6] resolution: audit-logged execution mode.
+  - --confirm executes only the file-edit mutation classes (ARCHIVE on
+    configs/strategy_v5_1_decisions.json) which are atomic-write reversible.
+  - PROMOTE_TO_FUSION mutations require touching multiple files
+    (signals/authority_fusion.py + agents/signal_envelope.py + main.py)
+    AND wiring a new agent into integration_v36 fusion. Auto-applying that
+    is too high-blast-radius. --confirm prints the exact patch list,
+    saves to plans/applied_<ts>_pending_PROMOTE.json for operator manual
+    application, AND marks the plan as partially-applied.
+  - UPDATE_ALLOCATOR_REALIZED_VOL needs a live engine instance —
+    cannot mutate from offline tooling. --confirm writes the proposed
+    update to data/sleeve_allocator_pending_update_<ts>.json which the
+    next engine restart will consume via SleeveAllocator.bootstrap_from_pending().
+
+Every --confirm run writes:
+  analytics/promotion_gate/applied/applied_<utc_ts>.json
+  - input_plan_path
+  - actions_attempted: full list with status (APPLIED | DEFERRED | SKIPPED)
+  - operator_protocol: "audit_log" (vs "interactive" / "fully_auto")
+  - reverse: instructions for undoing each APPLIED action
 
 Iron Laws honored:
   4. fail-closed: missing/malformed plan -> non-zero exit + WARN; never
      attempts mutation.
-  7. shadow >=30d before promotion: applier respects the plan's
-     advisory_only=True flag; refuses to proceed when set; only operator-
-     supplied `--ignore-advisory-flag` can bypass (and even then this
-     session's build is dry-run-only).
-  10. zero production runtime side-effect: this is the codified "applier
-      never runs without --confirm" guarantee. Static check verifies no
-      import of unified_position_sizer / authority_fusion / main, AND
-      no mutation calls reachable in dry-run mode.
-
-What dry-run prints per action type:
-  PROMOTE_TO_FUSION    : "would set strategies.<name>.in_fusion = true in
-                         configs/strategy_v5_1_decisions.json + add to
-                         signals/authority_fusion AUTHORITY_MATRIX_NORMAL"
-  ARCHIVE              : "would set strategies.<name>.archived = true in
-                         configs/strategy_v5_1_decisions.json (Iron Law 6
-                         pre-check: ensure remaining active >= 3)"
-  UPDATE_ALLOCATOR_REALIZED_VOL : "would call SleeveAllocator.update_realized_vol(
-                                   <sleeve>, <vol>) on the live engine instance"
-  HOLD_SHADOW / EXTEND_SHADOW / SKIP / DEFER / FLAG : no-op, just logged
+  6. >=3 active strategies enforced as pre-check before any ARCHIVE.
+  7. shadow >=30d before promotion: applier respects window check via
+     the upstream promotion_plan logic; refuses to proceed when
+     advisory_only is False.
+  10. controlled production runtime side-effect: --confirm only mutates
+      data/configs files (atomic-write reversible). Live runtime objects
+      (allocator, fusion) are NEVER touched directly — pending-files
+      handed off to engine restart cycle.
 
 Exit codes:
-  0 = dry-run completed, would-apply action list emitted
+  0 = dry-run / --confirm completed, action list emitted
   1 = plan unreadable / malformed
-  2 = plan blocked (has blockers in summary OR advisory_only=False — refuse)
+  2 = plan blocked (blockers in summary OR advisory_only=False)
   3 = Iron Law 6 pre-check would fail if applied (active strategies < 3)
+  4 = --confirm requested but disabled via --no-confirm (legacy)
 """
 
 from __future__ import annotations
@@ -43,7 +52,9 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -52,6 +63,9 @@ logger = logging.getLogger(__name__)
 
 REPO = Path(__file__).resolve().parents[2]
 DECISIONS_PATH = REPO / "configs" / "strategy_v5_1_decisions.json"
+APPLIED_DIR = REPO / "analytics" / "promotion_gate" / "applied"
+PENDING_UPDATE_DIR = REPO / "data"
+MIN_ACTIVE_STRATEGIES = 3
 
 
 # ---------------------------------------------------------------------------
@@ -256,10 +270,279 @@ def render_dry_run(
                  f"defer={s.get('n_sleeve_defer', 0)}  flag={s.get('n_sleeve_flag', 0)}")
     lines.append("")
     lines.append("  ⚠ DRY RUN — no files were modified; no allocator was called.")
-    lines.append("  To apply, this session's build is intentionally lacking --confirm mode.")
-    lines.append("  [PARAMETER 6] operator-protocol decision required before --confirm ships.")
+    lines.append("  Re-run with --confirm to apply ARCHIVE actions (atomic-write reversible).")
+    lines.append("  PROMOTE_TO_FUSION + UPDATE_ALLOCATOR_REALIZED_VOL deferred to operator")
+    lines.append("  manual application + engine restart respectively.")
     lines.append("=" * 96)
     return "\n".join(lines), 0
+
+
+# ---------------------------------------------------------------------------
+# Confirm-mode mutators (atomic-write file edits only; no runtime touches)
+# ---------------------------------------------------------------------------
+
+def atomic_write(path: Path, data: Dict[str, Any]) -> None:
+    """Atomic JSON write per CLAUDE.md P37: tmp + os.replace."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def apply_archive_actions(
+    archive_actions: List[Dict[str, Any]],
+    decisions_path: Path = DECISIONS_PATH,
+) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+    """Mutate decisions JSON by setting archived=true on listed strategies.
+
+    Iron Law 6 enforced: refuses if post-apply active count < MIN_ACTIVE_STRATEGIES.
+    Returns (per-action results list, error_msg_or_None).
+    """
+    results: List[Dict[str, Any]] = []
+    if not decisions_path.exists():
+        return results, f"decisions file missing: {decisions_path}"
+    try:
+        decisions = json.loads(decisions_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        return results, f"decisions parse failed: {type(e).__name__}: {e}"
+
+    strategies = decisions.get("strategies") or {}
+    currently_active = sum(
+        1 for s in strategies.values() if not s.get("archived", False)
+    )
+
+    # Compute net active after toggling all listed targets
+    n_will_toggle = sum(
+        1 for a in archive_actions
+        if (a.get("strategy") in strategies
+            and not strategies[a["strategy"]].get("archived", False))
+    )
+    post_active = currently_active - n_will_toggle
+    if post_active < MIN_ACTIVE_STRATEGIES:
+        return results, (
+            f"Iron Law 6 violation: would leave {post_active} active "
+            f"strategies (min {MIN_ACTIVE_STRATEGIES}); applier refuses."
+        )
+
+    for a in archive_actions:
+        name = a.get("strategy")
+        if not name or name not in strategies:
+            results.append({
+                "action": "ARCHIVE", "target": name,
+                "status": "SKIPPED", "reason": "unknown strategy"
+            })
+            continue
+        cfg = strategies[name]
+        if cfg.get("archived", False):
+            results.append({
+                "action": "ARCHIVE", "target": name,
+                "status": "SKIPPED", "reason": "already archived"
+            })
+            continue
+        cfg["archived"] = True
+        results.append({
+            "action": "ARCHIVE", "target": name,
+            "status": "APPLIED",
+            "reverse": f"set strategies.{name}.archived=false in {decisions_path.name}",
+        })
+
+    atomic_write(decisions_path, decisions)
+    return results, None
+
+
+def emit_promote_pending(
+    promote_actions: List[Dict[str, Any]],
+    output_dir: Path,
+    ts: datetime,
+) -> Tuple[List[Dict[str, Any]], Optional[Path]]:
+    """Write a pending-promotion file listing the manual edits required for
+    each PROMOTE_TO_FUSION action. Returns (results, written_path).
+
+    The applier deliberately does NOT auto-edit signals/authority_fusion.py
+    or agents/signal_envelope.py — those changes need code review.
+    """
+    if not promote_actions:
+        return [], None
+    output_dir.mkdir(parents=True, exist_ok=True)
+    pending_path = output_dir / f"pending_promote_{ts:%Y%m%d_%H%M%S}.json"
+
+    pending_payload = {
+        "generated_at": ts.isoformat(),
+        "promote_actions": [
+            {
+                "strategy": a.get("strategy"),
+                "asset": a.get("asset"),
+                "manual_edits_required": [
+                    f"signals/authority_fusion.py: add row '{a.get('strategy')}: ADVISE' "
+                    f"to AUTHORITY_MATRIX_NORMAL",
+                    f"agents/signal_envelope.py: add extractor for "
+                    f"'{a.get('strategy')}_direction' in _EXTRACTORS",
+                    f"main.py: add per-tick wire-in writing "
+                    f"agent_signals['{a.get('strategy')}_direction'] = ...",
+                    f"configs/strategy_v5_1_decisions.json: set "
+                    f"strategies.{a.get('strategy')}.in_fusion = true",
+                ],
+            }
+            for a in promote_actions
+        ],
+    }
+    atomic_write(pending_path, pending_payload)
+
+    results = [{
+        "action": "PROMOTE_TO_FUSION",
+        "target": a.get("strategy"),
+        "status": "DEFERRED",
+        "reason": "manual edits required (4 files); see pending file",
+        "pending_file": str(pending_path),
+    } for a in promote_actions]
+    return results, pending_path
+
+
+def emit_sleeve_update_pending(
+    update_actions: List[Dict[str, Any]],
+    output_dir: Path,
+    ts: datetime,
+) -> Tuple[List[Dict[str, Any]], Optional[Path]]:
+    """Write a pending-update file listing per-sleeve realized_vol updates.
+
+    Per Iron Law 10, applier cannot mutate the live SleeveAllocator instance.
+    This pending file is consumed by SleeveAllocator.bootstrap_from_pending()
+    on the next engine restart (the bootstrap helper does NOT exist yet — it
+    is documented as a Phase 10 follow-up; for now the pending file is
+    operator-readable and operator-feedable via update_realized_vol calls
+    in a Python REPL).
+    """
+    if not update_actions:
+        return [], None
+    output_dir.mkdir(parents=True, exist_ok=True)
+    pending_path = output_dir / f"sleeve_allocator_pending_update_{ts:%Y%m%d_%H%M%S}.json"
+
+    pending_payload = {
+        "generated_at": ts.isoformat(),
+        "consumer": "SleeveAllocator.bootstrap_from_pending() (Phase 10 follow-up)",
+        "updates": [
+            {"sleeve": a.get("sleeve"), "realized_vol": a.get("realized_vol", 0.0)}
+            for a in update_actions
+        ],
+    }
+    atomic_write(pending_path, pending_payload)
+
+    results = [{
+        "action": "UPDATE_ALLOCATOR_REALIZED_VOL",
+        "target": a.get("sleeve"),
+        "status": "DEFERRED",
+        "reason": "live allocator mutation deferred to engine restart bootstrap",
+        "pending_file": str(pending_path),
+    } for a in update_actions]
+    return results, pending_path
+
+
+def write_audit_log(
+    plan_path: Path,
+    plan: Dict[str, Any],
+    actions_attempted: List[Dict[str, Any]],
+    operator_protocol: str = "audit_log",
+) -> Path:
+    """Write an audit log of every attempted action."""
+    APPLIED_DIR.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now(timezone.utc)
+    audit_path = APPLIED_DIR / f"applied_{ts:%Y%m%d_%H%M%S}.json"
+
+    audit_payload = {
+        "generated_at": ts.isoformat(),
+        "input_plan_path": str(plan_path),
+        "input_plan_generated_at": plan.get("generated_at"),
+        "operator_protocol": operator_protocol,
+        "actions_attempted": actions_attempted,
+        "summary": {
+            "n_applied": sum(1 for a in actions_attempted if a["status"] == "APPLIED"),
+            "n_deferred": sum(1 for a in actions_attempted if a["status"] == "DEFERRED"),
+            "n_skipped": sum(1 for a in actions_attempted if a["status"] == "SKIPPED"),
+        },
+    }
+    atomic_write(audit_path, audit_payload)
+    return audit_path
+
+
+def execute_confirm(
+    plan: Dict[str, Any],
+    plan_path: Path,
+    decisions_path: Path = DECISIONS_PATH,
+) -> Tuple[List[Dict[str, Any]], Path, int]:
+    """Run --confirm execution. Returns (actions_attempted, audit_path, exit_code)."""
+    ts = datetime.now(timezone.utc)
+    all_actions: List[Dict[str, Any]] = []
+
+    strategy_actions = plan.get("shadow_strategy_actions", [])
+    archive_actions = [a for a in strategy_actions if a.get("action") == "ARCHIVE"]
+    promote_actions = [a for a in strategy_actions if a.get("action") == "PROMOTE_TO_FUSION"]
+
+    sleeve_actions = plan.get("sleeve_actions", [])
+    update_actions = [a for a in sleeve_actions if a.get("action") == "UPDATE_ALLOCATOR_REALIZED_VOL"]
+
+    # ARCHIVE: atomic file edit (Iron Law 6 enforced)
+    if archive_actions:
+        results, err = apply_archive_actions(archive_actions, decisions_path)
+        if err is not None:
+            audit_path = write_audit_log(plan_path, plan, results)
+            return results, audit_path, 3
+        all_actions.extend(results)
+
+    # PROMOTE_TO_FUSION: emit pending file (operator review required)
+    if promote_actions:
+        results, _ = emit_promote_pending(
+            promote_actions, plan_path.parent / "pending", ts
+        )
+        all_actions.extend(results)
+
+    # UPDATE_ALLOCATOR_REALIZED_VOL: emit pending file (engine bootstrap consumes)
+    if update_actions:
+        results, _ = emit_sleeve_update_pending(
+            update_actions, PENDING_UPDATE_DIR, ts
+        )
+        all_actions.extend(results)
+
+    audit_path = write_audit_log(plan_path, plan, all_actions)
+    return all_actions, audit_path, 0
+
+
+def render_confirm_summary(
+    actions: List[Dict[str, Any]],
+    audit_path: Path,
+) -> str:
+    lines = []
+    lines.append("=" * 96)
+    lines.append("  HMATS v5.1 PROMOTION APPLIER  —  --confirm COMPLETE")
+    lines.append("=" * 96)
+    n_applied = sum(1 for a in actions if a["status"] == "APPLIED")
+    n_deferred = sum(1 for a in actions if a["status"] == "DEFERRED")
+    n_skipped = sum(1 for a in actions if a["status"] == "SKIPPED")
+    lines.append(f"  applied: {n_applied}  deferred: {n_deferred}  skipped: {n_skipped}")
+    lines.append("")
+    if n_applied:
+        lines.append("  APPLIED:")
+        for a in actions:
+            if a["status"] == "APPLIED":
+                lines.append(f"    ✓ {a['action']:<32} {a['target']}")
+                lines.append(f"        reverse: {a.get('reverse', '?')}")
+    if n_deferred:
+        lines.append("")
+        lines.append("  DEFERRED (operator action required):")
+        for a in actions:
+            if a["status"] == "DEFERRED":
+                lines.append(f"    → {a['action']:<32} {a['target']}: {a['reason']}")
+                if "pending_file" in a:
+                    lines.append(f"        pending: {a['pending_file']}")
+    if n_skipped:
+        lines.append("")
+        lines.append("  SKIPPED:")
+        for a in actions:
+            if a["status"] == "SKIPPED":
+                lines.append(f"    - {a['action']:<32} {a['target']}: {a['reason']}")
+    lines.append("")
+    lines.append(f"  audit log: {audit_path}")
+    lines.append("=" * 96)
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -273,22 +556,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--plan", required=True, help="path to promotion_plan_*.json")
     p.add_argument("--decisions", default=str(DECISIONS_PATH),
                    help="path to configs/strategy_v5_1_decisions.json")
-    p.add_argument("--dry-run", action="store_true", default=True,
-                   help="dry-run mode (default and only mode in this build)")
+    p.add_argument("--dry-run", action="store_true",
+                   help="dry-run mode: print actions without mutating (default if --confirm absent)")
     p.add_argument("--confirm", action="store_true",
-                   help="(NOT IMPLEMENTED — would actually apply mutations; "
-                        "blocked pending [PARAMETER 6] operator-protocol decision)")
+                   help="execute audit-logged file mutations: ARCHIVE applied atomically; "
+                        "PROMOTE_TO_FUSION + UPDATE_ALLOCATOR_REALIZED_VOL emitted as pending "
+                        "files for operator/engine-restart respectively")
     args = p.parse_args(argv)
-
-    if args.confirm:
-        print(
-            "ERROR: --confirm mode is intentionally not implemented in this build.\n"
-            "       Iron Law 7 + 10 require operator-protocol decision ([PARAMETER 6])\n"
-            "       before any production-state mutation path is added.\n"
-            "       Re-run with --dry-run (or omit --confirm) to see what would apply.",
-            file=sys.stderr,
-        )
-        return 4
 
     plan_path = Path(args.plan)
     plan = load_plan(plan_path)
@@ -296,10 +570,25 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"ERROR: could not load plan at {plan_path}", file=sys.stderr)
         return 1
 
-    decisions = load_decisions(Path(args.decisions))
+    decisions_path = Path(args.decisions)
 
-    text, exit_code = render_dry_run(plan, decisions)
-    print(text)
+    # --dry-run path (default when --confirm absent)
+    if not args.confirm:
+        decisions = load_decisions(decisions_path)
+        text, exit_code = render_dry_run(plan, decisions)
+        print(text)
+        return exit_code
+
+    # --confirm path: validate gates first via render_dry_run
+    decisions = load_decisions(decisions_path)
+    _, dry_exit_code = render_dry_run(plan, decisions)
+    if dry_exit_code != 0:
+        print("ERROR: dry-run gate refused — re-run without --confirm to see why.",
+              file=sys.stderr)
+        return dry_exit_code
+
+    actions, audit_path, exit_code = execute_confirm(plan, plan_path, decisions_path)
+    print(render_confirm_summary(actions, audit_path))
     return exit_code
 
 

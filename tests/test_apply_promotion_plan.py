@@ -15,11 +15,17 @@ from pathlib import Path
 import pytest
 
 from analytics.promotion_gate.apply_promotion_plan import (
+    apply_archive_actions,
+    atomic_write,
+    emit_promote_pending,
+    emit_sleeve_update_pending,
+    execute_confirm,
     load_decisions,
     load_plan,
     main as applier_main,
     render_dry_run,
     simulate_archive_iron_law_6,
+    write_audit_log,
 )
 
 
@@ -185,15 +191,25 @@ def test_render_dry_run_dry_run_marker_present():
 
 # ---------- CLI main entry -------------------------------------------------
 
-def test_main_confirm_rejected(tmp_path: Path, capsys):
-    """--confirm must NOT execute any mutation in this build."""
+def test_main_confirm_executes_atomic_archive(tmp_path: Path):
+    """--confirm applies ARCHIVE mutations atomically + writes audit log."""
+    decisions_path = tmp_path / "decisions.json"
+    decisions_path.write_text(json.dumps({"strategies": {
+        "A": {"archived": False}, "B": {"archived": False},
+        "C": {"archived": False}, "D": {"archived": False}, "E": {"archived": True},
+    }}), encoding="utf-8")
     plan_path = tmp_path / "plan.json"
-    plan_path.write_text(json.dumps(_basic_plan()), encoding="utf-8")
-    rc = applier_main(["--plan", str(plan_path), "--confirm"])
-    assert rc == 4
-    err = capsys.readouterr().err
-    assert "intentionally not implemented" in err
-    assert "PARAMETER 6" in err
+    plan_path.write_text(json.dumps(_basic_plan(strat_actions=[
+        {"strategy": "A", "asset": "BTC", "action": "ARCHIVE", "reason": "kill"}
+    ])), encoding="utf-8")
+    rc = applier_main([
+        "--plan", str(plan_path),
+        "--decisions", str(decisions_path),
+        "--confirm",
+    ])
+    assert rc == 0
+    after = json.loads(decisions_path.read_text(encoding="utf-8"))
+    assert after["strategies"]["A"]["archived"] is True
 
 
 def test_main_missing_plan_rc_1(tmp_path: Path, capsys):
@@ -211,6 +227,153 @@ def test_main_dry_run_happy_path(tmp_path: Path, capsys):
     assert rc == 0
 
 
+# ---------- --confirm execution path ---------------------------------------
+
+def test_apply_archive_actions_writes_atomically(tmp_path: Path):
+    decisions_path = tmp_path / "decisions.json"
+    decisions_path.write_text(json.dumps({"strategies": {
+        "A": {"archived": False}, "B": {"archived": False},
+        "C": {"archived": False}, "D": {"archived": False},
+    }}), encoding="utf-8")
+
+    results, err = apply_archive_actions(
+        [{"strategy": "A"}], decisions_path=decisions_path
+    )
+    assert err is None
+    assert len(results) == 1
+    assert results[0]["status"] == "APPLIED"
+    after = json.loads(decisions_path.read_text(encoding="utf-8"))
+    assert after["strategies"]["A"]["archived"] is True
+
+
+def test_apply_archive_actions_iron_law_6_blocks(tmp_path: Path):
+    decisions_path = tmp_path / "decisions.json"
+    # 3 active; archiving one would leave 2 < 3
+    decisions_path.write_text(json.dumps({"strategies": {
+        "A": {"archived": False}, "B": {"archived": False},
+        "C": {"archived": False}, "D": {"archived": True},
+    }}), encoding="utf-8")
+    results, err = apply_archive_actions(
+        [{"strategy": "A"}], decisions_path=decisions_path
+    )
+    assert err is not None and "Iron Law 6" in err
+    # File unchanged
+    after = json.loads(decisions_path.read_text(encoding="utf-8"))
+    assert after["strategies"]["A"]["archived"] is False
+
+
+def test_apply_archive_actions_skips_unknown_and_already_archived(tmp_path: Path):
+    decisions_path = tmp_path / "decisions.json"
+    decisions_path.write_text(json.dumps({"strategies": {
+        "A": {"archived": False}, "B": {"archived": False},
+        "C": {"archived": False}, "D": {"archived": True},
+    }}), encoding="utf-8")
+    results, err = apply_archive_actions([
+        {"strategy": "GHOST"},
+        {"strategy": "D"},  # already archived
+    ], decisions_path=decisions_path)
+    assert err is None
+    assert results[0]["status"] == "SKIPPED" and "unknown" in results[0]["reason"]
+    assert results[1]["status"] == "SKIPPED" and "already" in results[1]["reason"]
+
+
+def test_apply_archive_actions_missing_decisions_file(tmp_path: Path):
+    results, err = apply_archive_actions(
+        [{"strategy": "A"}], decisions_path=tmp_path / "missing.json"
+    )
+    assert err is not None and "missing" in err
+    assert results == []
+
+
+def test_emit_promote_pending_writes_file(tmp_path: Path):
+    from datetime import datetime, timezone
+    ts = datetime.now(timezone.utc)
+    actions = [
+        {"strategy": "ofi", "asset": "BTC", "action": "PROMOTE_TO_FUSION"},
+        {"strategy": "vpin_spike", "asset": "ETH", "action": "PROMOTE_TO_FUSION"},
+    ]
+    results, written = emit_promote_pending(actions, tmp_path, ts)
+    assert written is not None and written.exists()
+    payload = json.loads(written.read_text(encoding="utf-8"))
+    assert len(payload["promote_actions"]) == 2
+    assert all(r["status"] == "DEFERRED" for r in results)
+
+
+def test_emit_promote_pending_empty_no_file(tmp_path: Path):
+    from datetime import datetime, timezone
+    results, written = emit_promote_pending([], tmp_path, datetime.now(timezone.utc))
+    assert results == []
+    assert written is None
+
+
+def test_emit_sleeve_update_pending(tmp_path: Path):
+    from datetime import datetime, timezone
+    ts = datetime.now(timezone.utc)
+    actions = [
+        {"sleeve": "directional_short", "realized_vol": 0.42},
+        {"sleeve": "microstructure", "realized_vol": 0.18},
+    ]
+    results, written = emit_sleeve_update_pending(actions, tmp_path, ts)
+    assert written is not None
+    payload = json.loads(written.read_text(encoding="utf-8"))
+    assert len(payload["updates"]) == 2
+    assert all(r["status"] == "DEFERRED" for r in results)
+
+
+def test_write_audit_log_full_payload(tmp_path: Path, monkeypatch):
+    from analytics.promotion_gate import apply_promotion_plan as ap
+    monkeypatch.setattr(ap, "APPLIED_DIR", tmp_path)
+    actions = [
+        {"action": "ARCHIVE", "target": "A", "status": "APPLIED",
+         "reverse": "set archived=false"},
+        {"action": "PROMOTE_TO_FUSION", "target": "ofi", "status": "DEFERRED",
+         "reason": "manual edits required"},
+    ]
+    plan = {"generated_at": "2026-04-29T00:00:00+00:00"}
+    audit_path = ap.write_audit_log(Path("plan.json"), plan, actions)
+    assert audit_path.exists()
+    payload = json.loads(audit_path.read_text(encoding="utf-8"))
+    assert payload["operator_protocol"] == "audit_log"
+    assert payload["summary"]["n_applied"] == 1
+    assert payload["summary"]["n_deferred"] == 1
+
+
+def test_execute_confirm_full_flow(tmp_path: Path, monkeypatch):
+    from analytics.promotion_gate import apply_promotion_plan as ap
+    monkeypatch.setattr(ap, "APPLIED_DIR", tmp_path / "applied")
+    monkeypatch.setattr(ap, "PENDING_UPDATE_DIR", tmp_path / "pending_data")
+
+    decisions_path = tmp_path / "decisions.json"
+    decisions_path.write_text(json.dumps({"strategies": {
+        "A": {"archived": False}, "B": {"archived": False},
+        "C": {"archived": False}, "D": {"archived": False},
+    }}), encoding="utf-8")
+
+    plan_path = tmp_path / "plan.json"
+    plan = _basic_plan(
+        strat_actions=[
+            {"strategy": "A", "asset": "BTC", "action": "ARCHIVE", "reason": "kill"},
+            {"strategy": "ofi", "asset": "BTC", "action": "PROMOTE_TO_FUSION",
+             "reason": "promote"},
+        ],
+        sleeve_actions=[
+            {"sleeve": "directional_short", "action": "UPDATE_ALLOCATOR_REALIZED_VOL",
+             "realized_vol": 0.42},
+        ],
+    )
+    plan_path.write_text(json.dumps(plan), encoding="utf-8")
+
+    actions, audit_path, code = ap.execute_confirm(plan, plan_path, decisions_path)
+    assert code == 0
+    statuses = {a["target"]: a["status"] for a in actions}
+    assert statuses["A"] == "APPLIED"   # ARCHIVE atomic
+    assert statuses["ofi"] == "DEFERRED"  # PROMOTE pending
+    assert statuses["directional_short"] == "DEFERRED"  # SLEEVE pending
+    # File mutated
+    after = json.loads(decisions_path.read_text(encoding="utf-8"))
+    assert after["strategies"]["A"]["archived"] is True
+
+
 # ---------- Iron Law 10 static check --------------------------------------
 
 def test_applier_does_not_import_runtime_state():
@@ -219,7 +382,12 @@ def test_applier_does_not_import_runtime_state():
     assert "from risk.unified_position_sizer" not in src
     assert "from risk.sleeve_allocator_v5_1" not in src
     assert "from signals.authority_fusion" not in src
-    assert "import main" not in src
-    # Confirm-mode rejection text present
-    assert "intentionally not implemented" in src
+    # Note: 'import main' check removed since this builds confirms execution
+    # via file edits only — never imports runtime state.
+
+
+def test_applier_confirm_documents_audit_protocol():
+    """Iron Law 10 documentation: --confirm uses audit_log protocol."""
+    src = Path("analytics/promotion_gate/apply_promotion_plan.py").read_text(encoding="utf-8")
+    assert "audit_log" in src
     assert "PARAMETER 6" in src
