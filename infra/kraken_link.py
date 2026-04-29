@@ -70,7 +70,7 @@ KRAKEN_REST_BASE = "https://api.kraken.com"
 WATCHDOG_INTERVAL_MS = 1000  # Check every 1 second
 HIGH_VOL_SILENCE_THRESHOLD_MS = 5000  # 5 seconds for SOL
 NORMAL_SILENCE_THRESHOLD_MS = 15000  # 15 seconds for BTC/ETH
-HIGH_VOLATILITY_ASSETS = {'SOL', 'SOLUSD', 'SOL/USD', 'XSOLUSD'}
+HIGH_VOLATILITY_ASSETS = {'SOL', 'SOLUSD', 'SOLUSDT', 'SOL/USD', 'SOL/USDT', 'XSOLUSD'}
 
 # Checksum Configuration
 MAX_CHECKSUM_FAILURES = 3  # Trigger reset after 3 consecutive failures
@@ -479,7 +479,8 @@ class KrakenDefensiveLink:
     ):
         self.api_key = api_key
         self.api_secret = api_secret
-        self.symbols = symbols or ['BTC/USD', 'ETH/USD', 'SOL/USD']
+        # [P133 2026-04-29] SOL on USDT (USD pair dead on Kraken).
+        self.symbols = symbols or ['BTC/USD', 'ETH/USD', 'SOL/USDT']
         self.enable_checksum = enable_checksum
         self.enable_watchdog = enable_watchdog
         self.cancel_on_disconnect = cancel_on_disconnect
@@ -1298,7 +1299,7 @@ def get_kraken_link(
     global _kraken_link_instance
     if _kraken_link_instance is None:
         _kraken_link_instance = KrakenDefensiveLink(
-            symbols=symbols or ['BTC/USD', 'ETH/USD', 'SOL/USD'],
+            symbols=symbols or ['BTC/USD', 'ETH/USD', 'SOL/USDT'],  # [P133]
             **kwargs
         )
     return _kraken_link_instance

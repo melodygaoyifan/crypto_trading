@@ -2766,7 +2766,7 @@ class HMATSProductionRunner:
         if KRAKEN_LINK_AVAILABLE and self.config.mode in [RunMode.PAPER, RunMode.LIVE]:
             try:
                 self.kraken_link = KrakenLink(
-                    symbols=['SOL/USD', 'BTC/USD', 'ETH/USD'],
+                    symbols=['SOL/USDT', 'BTC/USD', 'ETH/USD'],  # [P133] SOL on USDT (USD pair dead)
                     cancel_on_disconnect=True,
                 )
                 
@@ -3384,7 +3384,7 @@ class HMATSProductionRunner:
         if DEFENSE_AVAILABLE and self.config.mode in [RunMode.PAPER, RunMode.LIVE]:
             try:
                 self.integrity_shield = KrakenIntegrityShield(
-                    symbols=['SOL/USD', 'BTC/USD', 'ETH/USD'],
+                    symbols=['SOL/USDT', 'BTC/USD', 'ETH/USD'],  # [P133] SOL on USDT (USD pair dead)
                     on_integrity_violation=lambda s, r: logger.warning(f"[INTEGRITY] {s}: {r}"),
                 )
                 logger.info("  KrakenIntegrityShield: ACTIVE (v6.2.3e P0 wiring)")
@@ -4662,7 +4662,8 @@ class HMATSProductionRunner:
                 _warmup_exchange = self._ccxt_exchange
 
             if _warmup_exchange:
-                _WU_SYMBOLS = {"BTC": "BTC/USD", "ETH": "ETH/USD", "SOL": "SOL/USD"}
+                # [P133 2026-04-29] SOL on USDT pair (USD pair dead on Kraken).
+                _WU_SYMBOLS = {"BTC": "BTC/USD", "ETH": "ETH/USD", "SOL": "SOL/USDT"}
                 for _wa, _ws in _WU_SYMBOLS.items():
                     try:
                         _ohlcv = _warmup_exchange.fetch_ohlcv(_ws, "4h", limit=50)
@@ -4745,7 +4746,7 @@ class HMATSProductionRunner:
         if INTEGRITY_SHIELD_AVAILABLE and _get_sf3().ENABLE_INTEGRITY_SHIELD:
             try:
                 self._integrity_shield = KrakenIntegrityShield(
-                    symbols=['XBT/USD', 'ETH/USD', 'SOL/USD'],
+                    symbols=['XBT/USD', 'ETH/USD', 'SOL/USDT'],  # [P133] SOL on USDT (USD pair dead)
                     on_integrity_violation=lambda sym, reason: logger.warning(
                         f"[SHIELD] Orderbook integrity violation: {sym} -{reason}"
                     ),

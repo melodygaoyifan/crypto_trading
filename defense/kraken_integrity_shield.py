@@ -304,7 +304,8 @@ class KrakenIntegrityShield:
         on_integrity_violation: Callable = None,
         on_recovery_complete: Callable = None
     ):
-        self.symbols = symbols or ['XBT/USD', 'ETH/USD', 'SOL/USD']
+        # [P133 2026-04-29] SOL routed to SOL/USDT (USD pair dead on Kraken).
+        self.symbols = symbols or ['XBT/USD', 'ETH/USD', 'SOL/USDT']
         self.on_integrity_violation = on_integrity_violation
         self.on_recovery_complete = on_recovery_complete
         

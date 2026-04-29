@@ -1555,7 +1555,16 @@ class MarketDataPipeline:
 
     async def _fetch_live_data(self, asset: str) -> Dict[str, Any]:
         """Fetch live market data from Kraken via CCXT/REST."""
-        symbol_map = {"SOL": "SOL/USD", "BTC": "BTC/USD", "ETH": "ETH/USD"}
+        # [P133 2026-04-29] SOL switched to USDT-quoted pair. Live probe
+        # 2026-04-28 showed Kraken Spot SOL/USD has 0 trades / 0 volume in
+        # 24h (effectively delisted), while SOL/USDT has $949K quote volume
+        # + 24/24 valid OHLCV bars. SOL/USD pair was returning ticker.last=
+        # None which (pre-P132) crashed the fetch. P132 hardened against
+        # the crash (synthetic fallback); P133 routes around the dead pair
+        # by switching to the live USDT pair.
+        # USDT ≈ USD (peg <0.5%); notional math unchanged for practical
+        # purposes. BTC/ETH stay on USD (still the deepest pairs).
+        symbol_map = {"SOL": "SOL/USDT", "BTC": "BTC/USD", "ETH": "ETH/USD"}
         symbol = symbol_map.get(asset, f"{asset}/USD")
         t0 = _time.monotonic()
         target_feature_bars = 1024

@@ -333,9 +333,12 @@ class AccountSyncManager:
             available = usd_free + usdt_free
 
             # Add USD value of crypto holdings (spot positions)
+            # [P133 2026-04-29] SOL switched to SOL/USDT for valuation —
+            # SOL/USD is dead on Kraken (0/1 bars, $0 volume in 24h).
+            # USDT ≈ USD peg (<0.5% deviation) so notional math unchanged.
             crypto_value_usd = 0.0
             crypto_assets = ('BTC', 'XBT', 'ETH', 'SOL')
-            kraken_symbol_map = {'BTC': 'BTC/USD', 'XBT': 'BTC/USD', 'ETH': 'ETH/USD', 'SOL': 'SOL/USD'}
+            kraken_symbol_map = {'BTC': 'BTC/USD', 'XBT': 'BTC/USD', 'ETH': 'ETH/USD', 'SOL': 'SOL/USDT'}
             for sym in crypto_assets:
                 _amt = float(balance.get('total', {}).get(sym, 0.0) or 0.0)
                 if _amt > 1e-8:

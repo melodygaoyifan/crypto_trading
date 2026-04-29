@@ -65,6 +65,12 @@ KRAKEN_PAIR_SPECS = {
     'BTC/USD': {'base': 'XBT', 'quote': 'USD', 'lot_decimals': 8, 'pair_decimals': 1, 'min_order': Decimal('0.0001')},
     'ETH/USD': {'base': 'ETH', 'quote': 'USD', 'lot_decimals': 8, 'pair_decimals': 2, 'min_order': Decimal('0.001')},
     'SOL/USD': {'base': 'SOL', 'quote': 'USD', 'lot_decimals': 8, 'pair_decimals': 4, 'min_order': Decimal('0.01')},
+    # [P133 2026-04-29] SOL/USDT added — primary spot pair for SOL going
+    # forward (USD pair dead on Kraken). Legacy SOL/USD kept for any
+    # in-flight positions opened on the old pair. min_order=0.02 per
+    # Kraken's market constraints (verified via exchange.market()).
+    'SOL/USDT': {'base': 'SOL', 'quote': 'USDT', 'lot_decimals': 8, 'pair_decimals': 4, 'min_order': Decimal('0.02')},
+    'SOLUSDT': {'base': 'SOL', 'quote': 'USDT', 'lot_decimals': 8, 'pair_decimals': 4, 'min_order': Decimal('0.02')},
 }
 
 # Dust thresholds (USD equivalent)

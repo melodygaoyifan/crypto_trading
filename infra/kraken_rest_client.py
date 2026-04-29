@@ -179,13 +179,18 @@ class KrakenRESTClient:
     """
     
     # Symbol mapping
+    # [P133 2026-04-29] SOL routed to SOL/USDT (USD pair dead on Kraken).
+    # SOLUSDT alias added for any code that constructs SOLUSDT-style names.
+    # Legacy SOLUSD alias kept pointing to USDT for backward compat with
+    # downstream callers that haven't been updated.
     SYMBOL_MAP = {
         "BTC": "BTC/USD",
-        "ETH": "ETH/USD", 
-        "SOL": "SOL/USD",
+        "ETH": "ETH/USD",
+        "SOL": "SOL/USDT",
         "XBTUSD": "BTC/USD",
         "ETHUSD": "ETH/USD",
-        "SOLUSD": "SOL/USD",
+        "SOLUSD": "SOL/USDT",
+        "SOLUSDT": "SOL/USDT",
     }
     
     def __init__(
