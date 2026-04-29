@@ -38,7 +38,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List
 
@@ -152,7 +152,7 @@ def report_per_asset(corr: pd.DataFrame, threshold: float = 0.7) -> Dict:
 
 def write_outputs(per_asset_corr: Dict[str, pd.DataFrame], reports: Dict, out_dir: Path):
     out_dir.mkdir(parents=True, exist_ok=True)
-    sync_date = datetime.now().strftime("%Y-%m-%d")
+    sync_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     # Per-asset CSV matrices
     for asset, corr in per_asset_corr.items():
@@ -161,7 +161,7 @@ def write_outputs(per_asset_corr: Dict[str, pd.DataFrame], reports: Dict, out_di
 
     # Summary JSON
     summary = {
-        "generated_at": datetime.now().isoformat(),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "version": "P131 v3 1.4",
         "scope": "fusion-agent direction correlation (NOT per-kraken_quant-strategy)",
         "per_asset": reports,
@@ -210,7 +210,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--sync-dir", type=Path,
-        default=Path(f"data/audit_sync/{datetime.now().strftime('%Y-%m-%d')}"),
+        default=Path(f"data/audit_sync/{datetime.now(timezone.utc).strftime('%Y-%m-%d')}"),
         help="Path to sync directory (output of scripts/sync_audit_data.sh)",
     )
     parser.add_argument(

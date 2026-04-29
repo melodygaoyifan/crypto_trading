@@ -1594,10 +1594,19 @@ class MarketDataPipeline:
             if isinstance(ticker_res, BaseException):
                 raise ticker_res
             ticker = ticker_res
-            current_price = float(ticker.get("last", 0))
-            volume_24h = float(ticker.get("quoteVolume", 0))
-            bid = float(ticker.get("bid", current_price))
-            ask = float(ticker.get("ask", current_price))
+            # [P132 2026-04-29] CCXT/Kraken can return ticker fields as
+            # explicit None (vs missing key). dict.get(k, default) only uses
+            # default when key is MISSING — present-but-None passes through,
+            # then float(None) raises TypeError. SOL was hitting this 100%
+            # of ticks on production since 23:24 today (~370 fetches all
+            # crashed -> synthetic fallback for all of SOL). Using
+            # _safe_float (line 290) treats None / NaN / non-numeric as
+            # default, matching the "_safe_float" pattern already used at
+            # lines 1821-1822 for trade fields.
+            current_price = self._safe_float(ticker.get("last"), 0.0)
+            volume_24h = self._safe_float(ticker.get("quoteVolume"), 0.0)
+            bid = self._safe_float(ticker.get("bid"), current_price)
+            ask = self._safe_float(ticker.get("ask"), current_price)
             spread_bps = ((ask - bid) / current_price * 10000) if current_price > 0 else 0.0
             exchange_ts = ticker.get("timestamp", None)
 
@@ -1608,9 +1617,17 @@ class MarketDataPipeline:
             prices = []
             volumes = []
             base_volumes = []
+            # [P132 2026-04-29] Same None-guard discipline for OHLCV bars.
+            # bar[4] (close) or bar[5] (volume) being None would crash the
+            # whole loop. Skip the malformed bar rather than failing the
+            # entire fetch.
             for bar in ohlcv:
-                _close = float(bar[4])
-                _base_volume = float(bar[5])
+                if bar is None or len(bar) < 6:
+                    continue  # noqa: silent-swallow — malformed bar, logging every one would spam
+                _close = self._safe_float(bar[4], 0.0)
+                _base_volume = self._safe_float(bar[5], 0.0)
+                if _close <= 0:
+                    continue  # noqa: silent-swallow — bar with no close, skip silently
                 _quote_volume = _base_volume * _close
                 ohlcv_raw.append([bar[0], bar[1], bar[2], bar[3], _close, _quote_volume])
                 prices.append(_close)
@@ -1907,8 +1924,28 @@ class MarketDataPipeline:
             self._global_fetch_success_count += 1
 
         except Exception as e:
-            logger.warning(f"[LIVE_DATA] {asset} fetch failed: {e}, using synthetic fallback")
-            self._orderbook_failure_streak[asset] = self._orderbook_failure_streak.get(asset, 0) + 1
+            # [P132 2026-04-29] Add type+streak count to the warning so the
+            # operator can quickly see whether the failure is persistent or
+            # intermittent. Pre-fix log only had `{e}` which on
+            # `TypeError: float() argument must be...` lost the call site
+            # entirely (no way to know WHICH float() call crashed). Now
+            # logger.exception below dumps the full traceback at WARNING
+            # level the FIRST time per asset only — subsequent failures
+            # rate-limit to the one-line summary to avoid log spam.
+            _streak = self._orderbook_failure_streak.get(asset, 0) + 1
+            self._orderbook_failure_streak[asset] = _streak
+            if _streak == 1 or _streak % 100 == 0:
+                # First failure (or every 100th) — full traceback for debugging
+                logger.warning(
+                    f"[LIVE_DATA] {asset} fetch failed (streak={_streak}, "
+                    f"{type(e).__name__}: {e}), using synthetic fallback",
+                    exc_info=True,
+                )
+            else:
+                logger.warning(
+                    f"[LIVE_DATA] {asset} fetch failed (streak={_streak}, "
+                    f"{type(e).__name__}: {e}), using synthetic fallback"
+                )
             # [2026-04-10] CCXT session auto-reset on consecutive failures
             self._global_fetch_failure_count += 1
             if self._global_fetch_failure_count >= self._CCXT_RESET_THRESHOLD:
