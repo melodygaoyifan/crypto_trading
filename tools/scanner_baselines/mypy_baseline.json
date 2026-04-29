@@ -6,6 +6,7 @@
     "call-arg": 8,
     "call-overload": 5,
     "dict-item": 28,
+    "float": 4,
     "has-type": 3,
     "index": 24,
     "int": 12,
@@ -23,5 +24,5 @@
     "valid-type": 8,
     "var-annotated": 51
   },
-  "total_count": 1036
+  "total_count": 1040
 }
