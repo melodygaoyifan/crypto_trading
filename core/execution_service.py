@@ -33,6 +33,35 @@ from core.constants import get_rule
 
 logger = logging.getLogger(__name__)
 
+
+# [P137 2026-04-29] Canonical spot-symbol resolver. Single source of truth
+# so future asset-pair migrations (P133-style) only touch this dict.
+#
+# Production cascade history:
+#   P133 (2026-04-28) — SOL spot SOL/USD -> SOL/USDT (USD pair dead).
+#                       Updated 7 files; missed 3.
+#   P135 (2026-04-29) — fixed integrity-shield + cancel-all symbol gaps.
+#   P137 (2026-04-29) — fixed THIS site (execute_order f-strings at
+#                       lines 1640+1668), the source of the persistent
+#                       OnMaintenance failure on SOL/USD post-P135.
+#
+# All execute_order callers in this file MUST use this helper.
+_CANONICAL_SPOT_SYMBOL = {
+    "BTC": "BTC/USD",
+    "ETH": "ETH/USD",
+    "SOL": "SOL/USDT",   # P133/P135/P137: USD pair dead on Kraken
+}
+
+
+def _canonical_spot_symbol(asset: str) -> str:
+    """Return the canonical Kraken spot symbol for an asset.
+
+    Defaults to <asset>/USD for unknown assets (preserving prior behavior
+    for any new symbol added without explicit mapping).
+    """
+    return _CANONICAL_SPOT_SYMBOL.get(asset.upper(), f"{asset.upper()}/USD")
+
+
 # Conditional imports matching main.py pattern
 try:
     from core.unit_system import exposure_to_quantity, validate_exposure_fraction
@@ -1356,7 +1385,7 @@ async def execute_intent_v2(
     # Orderbook execution recommendation (advisory log)
     if ctx.orderbook_analyzer:
         try:
-            _ob_sym = f"{asset}/USD"
+            _ob_sym = _canonical_spot_symbol(asset)  # [P137]
             _ob_side = "buy" if _execution_direction > 0 else "sell"
             _ob_size = abs(notional_usd)
             _ob_rec = ctx.orderbook_analyzer.get_execution_recommendation(
@@ -1561,7 +1590,7 @@ async def execute_intent_v2(
     # downstream check never trips for slicing reasons.
     try:
         if ctx.execution_manager and hasattr(ctx.execution_manager, 'exchange'):
-            _slicer_market = ctx.execution_manager.exchange.market(f"{asset}/USD")
+            _slicer_market = ctx.execution_manager.exchange.market(_canonical_spot_symbol(asset))  # [P137]
             _slicer_min = float(
                 ((_slicer_market or {}).get('limits') or {})
                 .get('amount', {}).get('min') or 0.0
@@ -1637,7 +1666,7 @@ async def execute_intent_v2(
                     logger.debug(f"[SLICER_DRIFT] {asset}: drift check skipped: {_h1_drift_err}")
 
             _h1_last_result = ctx.execution_manager.execute_order(
-                symbol=f"{asset}/USD",
+                symbol=_canonical_spot_symbol(asset),  # [P137] was f"{asset}/USD" — bypassed P133/P135 maps
                 side=side,
                 size=_h1_slice_size,
                 price=execution_price,
@@ -1665,7 +1694,7 @@ async def execute_intent_v2(
     else:
         # Paper mode or single slice: execute as one order
         result = ctx.execution_manager.execute_order(
-            symbol=f"{asset}/USD",
+            symbol=_canonical_spot_symbol(asset),  # [P137] was f"{asset}/USD" — bypassed P133/P135 maps
             side=side,
             size=base_quantity,
             price=execution_price,
@@ -1952,7 +1981,7 @@ async def execute_intent_v2(
             # [BUGFIX M5] Retry cancel once + elevate log on failure (orphaned stop risk)
             try:
                 from execution.execution_manager import OrderSide as _C7Side
-                _c7_symbol = f"{asset}/USD"
+                _c7_symbol = _canonical_spot_symbol(asset)  # [P137]
                 _m5_cancelled = ctx.execution_manager.cancel_stop_loss(_c7_symbol)
                 if not _m5_cancelled:
                     # [AUDIT C2] Non-blocking retry in async context (was time.sleep)
@@ -1966,7 +1995,7 @@ async def execute_intent_v2(
                     ctx.orphaned_stops.add(_c7_symbol)
             except Exception as _c7_err:
                 logger.warning(f"[AUDIT H3] {asset}: stop cancel FAILED: {_c7_err} -tracking as orphaned")
-                ctx.orphaned_stops.add(f"{asset}/USD")
+                ctx.orphaned_stops.add(_canonical_spot_symbol(asset))  # [P137]
 
             old_pos = ctx.paper_positions.pop(asset, None)
             # [FIX-TRANCHE-STALE] Clear stale tranche scheduler state when position is
@@ -3281,7 +3310,7 @@ async def execute_intent_v2(
             # [v3.3-C7] Two-tier authority-aware stops
             try:
                 from execution.execution_manager import OrderSide as _C7Side
-                _c7_symbol = f"{asset}/USD"
+                _c7_symbol = _canonical_spot_symbol(asset)  # [P137]
                 _c7_dir_str = "long" if intent.direction > 0 else "short"
                 _c7_stop_side = _C7Side.SELL if intent.direction > 0 else _C7Side.BUY
 

@@ -14147,7 +14147,7 @@ class HMATSProductionRunner:
                     account_equity = market_data.get('account_equity', self.config.initial_capital)
                     qty = reduce_qty * account_equity / current_price if current_price > 0 else 0
                     self.execution_manager.execute_order(
-                        symbol=f"{asset}/USD", side=side, size=qty,
+                        symbol=self._normalize_kraken_pair(asset), side=side, size=qty,  # [P137]
                         price=current_price, order_type="MARKET",
                     )
                     # Feedback: refresh baseline + cooldown for live mode too
@@ -14240,7 +14240,7 @@ class HMATSProductionRunner:
                         account_equity = self.config.initial_capital
                         qty = reduce_qty * account_equity / current_price
                         self.execution_manager.execute_order(
-                            symbol=f"{asset}/USD", side=side, size=qty,
+                            symbol=self._normalize_kraken_pair(asset), side=side, size=qty,  # [P137]
                             price=current_price, order_type="MARKET",
                         )
 
@@ -14373,7 +14373,7 @@ class HMATSProductionRunner:
                     continue
                 close_side = "sell" if direction > 0 else "buy"
                 try:
-                    pair = f"{asset}/USD"
+                    pair = self._normalize_kraken_pair(asset)  # [P137] was f"{asset}/USD"
                     result = self.execution_manager.execute_order(
                         symbol=pair,
                         side=close_side,
