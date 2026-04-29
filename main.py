@@ -4729,6 +4729,66 @@ class HMATSProductionRunner:
                 logger.warning(f"  [WIRE-MICRO] MicrostructureArbitrageAgent init failed: {e}")
 
         # =====================================================================
+        # [v5.1 Phase 4] Microstructure shadow harness (SHADOW, NEVER fusion)
+        # 3 strategies (OFI / VPIN spike / Kyle's lambda fade) consume existing
+        # market_data fields, write to data/strategy_shadow/microstructure_*.jsonl.
+        # Iron Law 7: signals are observation-only until Phase 10 promotion gate.
+        # =====================================================================
+        self._micro_shadow = None
+        try:
+            from defense.strategy_shadow_v5_1 import build_microstructure_shadow_harness
+            self._micro_shadow = build_microstructure_shadow_harness()
+            logger.info("  [v5.1 PHASE4] MicrostructureShadowHarness: ACTIVE (3 strategies, observation-only)")
+        except Exception as _ms_err:
+            logger.warning(
+                f"  [v5.1 PHASE4] MicrostructureShadowHarness init failed: "
+                f"{type(_ms_err).__name__}: {_ms_err}"
+            )
+
+        # =====================================================================
+        # [v5.1 Phase 8] Liquidation cascade shadow harness (SHADOW)
+        # 2 strategies (CascadeAnticipation / StopHuntDefense) consume existing
+        # liquidation_imbalance + price_change_*h fields. ledger prefix=cascade.
+        # Iron Law 7: signals stay observation-only until Phase 10 promotion.
+        # =====================================================================
+        self._cascade_shadow = None
+        try:
+            from defense.strategy_shadow_v5_1 import build_cascade_shadow_harness
+            self._cascade_shadow = build_cascade_shadow_harness()
+            logger.info("  [v5.1 PHASE8] CascadeShadowHarness: ACTIVE (2 strategies, observation-only)")
+        except Exception as _cs_err:
+            logger.warning(
+                f"  [v5.1 PHASE8] CascadeShadowHarness init failed: "
+                f"{type(_cs_err).__name__}: {_cs_err}"
+            )
+
+        # =====================================================================
+        # [v5.1 Phase 7] Risk-parity sleeve allocator (ADVISORY)
+        # 3 sleeves registered (directional_short live, microstructure+cascade
+        # shadow). Per-tick advisory record written to
+        # data/strategy_shadow/sleeve_allocations_*.jsonl.
+        # Iron Law 7: NOT wired into UnifiedPositionSizer until Phase 10.
+        # =====================================================================
+        self._sleeve_allocator = None
+        self._sleeve_advisory_sink = None
+        try:
+            from risk.sleeve_allocator_v5_1 import (
+                build_phase7_sleeve_allocator,
+                SleeveAdvisorySink,
+            )
+            self._sleeve_allocator = build_phase7_sleeve_allocator()
+            self._sleeve_advisory_sink = SleeveAdvisorySink()
+            logger.info(
+                "  [v5.1 PHASE7] SleeveAllocator: ADVISORY (3 sleeves; "
+                "directional_short live, microstructure+cascade shadow)"
+            )
+        except Exception as _sa_err:
+            logger.warning(
+                f"  [v5.1 PHASE7] SleeveAllocator init failed: "
+                f"{type(_sa_err).__name__}: {_sa_err}"
+            )
+
+        # =====================================================================
         # [WIRE-SOL-OC] Solana On-Chain Agent (ADVISE -DEX flow, whale activity)
         # =====================================================================
         self._sol_onchain_agent = None
@@ -7231,6 +7291,41 @@ class HMATSProductionRunner:
                         )
             except Exception as _micro_err:
                 logger.debug(f"[WIRE-MICRO] {asset} skipped: {_micro_err}")
+
+        # [v5.1 Phase 4] Shadow-mode microstructure observation. NEVER touches
+        # agent_signals or market_data — pure write to JSONL ledger for Phase
+        # Pre-6 IC compute. Iron Law 7 enforced by call signature: observe()
+        # has no return value and the harness has no fusion hook.
+        if getattr(self, "_micro_shadow", None) is not None and not p0_abort_tick:
+            try:
+                self._micro_shadow.observe(asset, market_data)
+            except Exception as _ms_err:
+                # Iron Law 4: shadow harness exception MUST NOT corrupt main tick.
+                # Already swallowed inside harness; double-guard here.
+                logger.debug(f"[v5.1 PHASE4] shadow observe {asset} skipped: {_ms_err}")
+
+        # [v5.1 Phase 8] Shadow-mode cascade observation. Same Iron-Law-7
+        # contract as Phase 4: zero fusion side-effect, observation-only.
+        # Distinct ledger (data/strategy_shadow/cascade_*.jsonl).
+        if getattr(self, "_cascade_shadow", None) is not None and not p0_abort_tick:
+            try:
+                self._cascade_shadow.observe(asset, market_data)
+            except Exception as _cs_err:
+                logger.debug(f"[v5.1 PHASE8] cascade observe {asset} skipped: {_cs_err}")
+
+        # [v5.1 Phase 7] Sleeve allocator advisory record. Iron Law 7: this
+        # output is NOT consumed by UnifiedPositionSizer.calculate_position_size
+        # in Phase 7 — Phase 10 promotion will wire it. Per-asset record so
+        # Pre-6 IC compute can attribute realized PnL slices to recommended
+        # weights at the same tick granularity as strategy shadows.
+        if (getattr(self, "_sleeve_allocator", None) is not None
+                and getattr(self, "_sleeve_advisory_sink", None) is not None
+                and not p0_abort_tick):
+            try:
+                _sleeve_rec = self._sleeve_allocator.advisory_record_for(asset)
+                self._sleeve_advisory_sink.write(_sleeve_rec)
+            except Exception as _sa_err:
+                logger.debug(f"[v5.1 PHASE7] sleeve advisory {asset} skipped: {_sa_err}")
 
         # [WIRE-SOL-OC] Solana On-Chain Agent -DEX flow, whale activity (SOL ADVISE)
         if self._sol_onchain_agent is not None and asset.upper() == "SOL" and not p0_abort_tick:
@@ -17561,23 +17656,31 @@ class HMATSProductionRunner:
     def _normalize_kraken_pair(asset: str) -> str:
         """
         Normalize asset to canonical Kraken pair format.
-        
+
         TASK B (P1): Ensures integrity shield uses correct symbol format.
-        
+
+        [P135 2026-04-29] HOTFIX — P133 missed this site.
+        Production abort: integrity_shield (P133-updated to monitor SOL/USDT)
+        couldn't find an orderbook for "SOL/USD" returned by this map -> P0
+        ABORT every SOL tick with "[INTEGRITY] Data integrity check failed -
+        stale or corrupt data". SOL routed to SOL/USDT to match the shield's
+        actual subscription (defense/kraken_integrity_shield.py:307).
+
         Args:
             asset: Asset symbol (e.g., "SOL", "BTC", "ETH")
-            
+
         Returns:
-            Canonical Kraken pair (e.g., "SOL/USD")
+            Canonical Kraken pair (e.g., "SOL/USDT" for SOL post-P133/P135)
         """
         # Canonical mapping
         KRAKEN_SYMBOL_MAP = {
-            "SOL": "SOL/USD",
+            "SOL": "SOL/USDT",      # [P135] was SOL/USD; integrity shield uses USDT
             "BTC": "BTC/USD",
             "ETH": "ETH/USD",
             "XBTUSD": "BTC/USD",
             "ETHUSD": "ETH/USD",
-            "SOLUSD": "SOL/USD",
+            "SOLUSD": "SOL/USDT",   # [P135] alias maps to USDT pair too
+            "SOLUSDT": "SOL/USDT",
         }
         
         # Normalize input

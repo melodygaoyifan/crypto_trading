@@ -647,8 +647,9 @@ class KrakenRESTClient:
             logger.warning("[KrakenREST] No API key for cancel")
             return False
         
+        # [P135 2026-04-29] SOL routed to USDT pair (P133 cascade fix).
         symbols_to_cancel = [self._normalize_symbol(symbol)] if symbol else [
-            "BTC/USD", "ETH/USD", "SOL/USD"
+            "BTC/USD", "ETH/USD", "SOL/USDT"
         ]
         
         with self._lock:
