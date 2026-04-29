@@ -4763,6 +4763,23 @@ class HMATSProductionRunner:
             )
 
         # =====================================================================
+        # [v5.1 Phase 3] Funding-rate shadow harness (SHADOW)
+        # 3 strategies (FundingRateExtreme / MeanReversion / PostETFRegime)
+        # consume existing market_data['funding_rate*'] from Kraken futures feed.
+        # Iron Law 7: signals stay observation-only until Phase 10 promotion.
+        # =====================================================================
+        self._funding_shadow = None
+        try:
+            from defense.strategy_shadow_v5_1 import build_funding_shadow_harness
+            self._funding_shadow = build_funding_shadow_harness()
+            logger.info("  [v5.1 PHASE3] FundingShadowHarness: ACTIVE (3 strategies, observation-only)")
+        except Exception as _fs_err:
+            logger.warning(
+                f"  [v5.1 PHASE3] FundingShadowHarness init failed: "
+                f"{type(_fs_err).__name__}: {_fs_err}"
+            )
+
+        # =====================================================================
         # [v5.1 Phase 7] Risk-parity sleeve allocator (ADVISORY)
         # 3 sleeves registered (directional_short live, microstructure+cascade
         # shadow). Per-tick advisory record written to
@@ -7312,6 +7329,14 @@ class HMATSProductionRunner:
                 self._cascade_shadow.observe(asset, market_data)
             except Exception as _cs_err:
                 logger.debug(f"[v5.1 PHASE8] cascade observe {asset} skipped: {_cs_err}")
+
+        # [v5.1 Phase 3] Shadow-mode funding observation. Same Iron-Law-7
+        # contract. Distinct ledger (data/strategy_shadow/funding_*.jsonl).
+        if getattr(self, "_funding_shadow", None) is not None and not p0_abort_tick:
+            try:
+                self._funding_shadow.observe(asset, market_data)
+            except Exception as _fs_err:
+                logger.debug(f"[v5.1 PHASE3] funding observe {asset} skipped: {_fs_err}")
 
         # [v5.1 Phase 7] Sleeve allocator advisory record. Iron Law 7: this
         # output is NOT consumed by UnifiedPositionSizer.calculate_position_size

@@ -352,11 +352,16 @@ class SleeveAdvisorySink:
 # ---------------------------------------------------------------------------
 
 def build_phase7_sleeve_allocator() -> SleeveAllocator:
-    """Construct the Phase 7 allocator with the 3 currently active sleeves.
+    """Construct the Phase 7 allocator with currently active sleeves.
+
+    Active sleeves (after Phase 3 funding registration):
+      - directional_short  (live)
+      - microstructure     (Phase 4 shadow)
+      - cascade            (Phase 8 shadow)
+      - funding            (Phase 3 shadow — Sharpe 1.5 estimate per BIS 2024)
 
     Sleeves NOT yet registered (deferred to their phases):
-      - funding         (Phase 3, post-Coinbase migration)
-      - ml_factor       (Phase 6, after Pre-6 backtest framework lands)
+      - ml_factor       (Phase 6, after operator constitutional override)
       - cash_and_carry  (deferred v6 per V5 BIS analysis at $10K AUM)
       - options         (deferred v6 per V13 Deribit access RED)
 
@@ -370,4 +375,5 @@ def build_phase7_sleeve_allocator() -> SleeveAllocator:
     a.register_sleeve("directional_short", estimated_vol_pct=0.45, sharpe_estimate=0.8, is_live=True)
     a.register_sleeve("microstructure",    estimated_vol_pct=0.20, sharpe_estimate=1.0, is_live=False)
     a.register_sleeve("cascade",           estimated_vol_pct=0.30, sharpe_estimate=0.9, is_live=False)
+    a.register_sleeve("funding",           estimated_vol_pct=0.15, sharpe_estimate=1.5, is_live=False)
     return a

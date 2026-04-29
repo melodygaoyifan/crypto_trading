@@ -203,3 +203,20 @@ def build_cascade_shadow_harness(
         log_dir=log_dir,
         log_prefix="cascade",
     )
+
+
+def build_funding_shadow_harness(
+    log_dir: Optional[Path] = None,
+) -> MicrostructureShadowHarness:
+    """[v5.1 Phase 3] Funding-prefix shadow harness.
+
+    3 strategies: FundingRateExtreme, FundingRateMeanReversion,
+    FundingRatePostETFRegime.
+    Output ledger: data/strategy_shadow/funding_YYYYMMDD.jsonl
+    """
+    from strategies.funding_rate_v5_1 import build_phase3_funding_strategies
+    return MicrostructureShadowHarness(
+        strategies=build_phase3_funding_strategies(),
+        log_dir=log_dir,
+        log_prefix="funding",
+    )
