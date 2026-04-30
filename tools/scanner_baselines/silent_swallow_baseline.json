@@ -1,9 +1,9 @@
 {
   "by_kind": {
     "debug": 145,
-    "no-log-early-exit": 142,
-    "pass": 144
+    "no-log-early-exit": 129,
+    "pass": 141
   },
-  "files_with_findings": 123,
-  "total_count": 431
+  "files_with_findings": 119,
+  "total_count": 415
 }

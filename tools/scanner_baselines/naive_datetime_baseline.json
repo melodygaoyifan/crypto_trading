@@ -1,9 +1,9 @@
 {
   "by_kind": {
     "default_factory_naive": 16,
-    "naive_now": 108,
+    "naive_now": 107,
     "utcnow_call": 0
   },
   "files_with_findings": 25,
-  "total_count": 124
+  "total_count": 123
 }
