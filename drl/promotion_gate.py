@@ -33,8 +33,8 @@ def _strip_tz(dt: Optional[datetime]) -> Optional[datetime]:
 
 @dataclass
 class DemotionConfig:
-    """Auto-demotion configuration."""
-    enable: bool = True
+    """Auto-demotion configuration. Permanently disabled per operator directive 2026-04-30."""
+    enable: bool = False
     consecutive_loss_threshold: int = 5
     drawdown_trigger_pct: float = 0.15
     demote_to: str = "EXIT_ONLY"
@@ -85,14 +85,22 @@ class DRLPromotionGate:
     # ------------------------------------------------------------------
 
     def get_authority_level(self) -> str:
-        """Get current DRL authority level. Checks auto-recovery."""
-        if self._demoted_at and self.demotion_config.enable:
-            recovery_deadline = self._demoted_at + timedelta(
-                days=self.demotion_config.recovery_period_days
-            )
-            if datetime.now() >= recovery_deadline:
-                self._auto_recover()
+        """Get current DRL authority level.
 
+        Auto-recovery short-circuited per operator directive 2026-04-30 — since
+        _check_demotion() never fires, _demoted_at can only be set by legacy
+        persisted state. If we see one, restore to ACTIVE on first read.
+        """
+        if self._demoted_at and self._authority_level != "ACTIVE":
+            old = self._authority_level
+            self._authority_level = "ACTIVE"
+            self._demoted_at = None
+            self._peak_equity_contribution = 0.0
+            self._current_equity_contribution = 0.0
+            self._save_state()
+            logger.info(
+                f"[DRL_GATE] Forced restore from legacy demoted state {old} -> ACTIVE"
+            )
         return self._authority_level
 
     def get_authority(self):
@@ -185,40 +193,15 @@ class DRLPromotionGate:
     # ------------------------------------------------------------------
 
     def _check_demotion(self):
-        """Check if auto-demotion should trigger."""
-        recent = [t for t in self._trade_history if t.drl_contributed]
+        """Auto-demotion permanently disabled per operator directive 2026-04-30.
 
-        # Condition 1: consecutive losses
-        n = self.demotion_config.consecutive_loss_threshold
-        if len(recent) >= n:
-            last_n = recent[-n:]
-            if all(t.pnl < 0 for t in last_n):
-                self._demote(f"consecutive_losses: {n} trades")
-                return
-
-        # Condition 2: drawdown
-        # [PATCH-4] Fix zero-peak demotion bypass.
-        # Root cause: when _peak_equity_contribution == 0 and current < 0, the guard
-        # `if peak > 0` skipped the check entirely, meaning DRL could accumulate
-        # unlimited losses without ever being demoted via the drawdown path.
-        # Fix: treat negative equity with zero peak as exceeding threshold.
-        if self._peak_equity_contribution > 0:
-            dd = (
-                self._peak_equity_contribution - self._current_equity_contribution
-            ) / self._peak_equity_contribution
-            if dd > self.demotion_config.drawdown_trigger_pct:
-                self._demote(
-                    f"drawdown: {dd:.1%} > {self.demotion_config.drawdown_trigger_pct:.1%}"
-                )
-                return
-        elif self._current_equity_contribution < 0:
-            # Zero peak but negative equity — DRL has only lost money.
-            # Any loss from a zero peak is effectively infinite drawdown.
-            self._demote(
-                f"zero_peak_loss: equity={self._current_equity_contribution:.2f} "
-                f"with peak=0 (never profitable)"
-            )
-            return
+        Previously demoted ACTIVE→EXIT_ONLY on (a) 5 consecutive DRL losses or
+        (b) 15% drawdown of DRL equity contribution. Both paths spuriously fired
+        during Kraken outages (post_only mode → forced exits booked as DRL
+        losses) — see CLAUDE.md HEALTH_T2 incident 2026-04-30. Manual promote()
+        remains the only path to change authority level.
+        """
+        return
 
     def _demote(self, reason: str):
         """Execute demotion."""

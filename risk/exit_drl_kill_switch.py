@@ -224,47 +224,14 @@ class ExitDRLKillSwitch:
     # Trip evaluation
     # ------------------------------------------------------------------
     def should_demote(self, asset: str) -> Optional[str]:
-        """Return a reason string if any trip condition fires, else None."""
-        st = self._states.get(asset)
-        if st is None or st.promoted_at is None:
-            return None  # not promoted → not subject to demotion
-        now = time.time()
-        # 1. Consecutive losses
-        if st.consecutive_losses >= self.consecutive_losses_limit:
-            return f"CONSECUTIVE_LOSSES: {st.consecutive_losses} >= {self.consecutive_losses_limit}"
-        # 2. Rolling PnL (only meaningful after the window has had time to fill)
-        days_since_promotion = (now - st.promoted_at) / 86400.0
-        if days_since_promotion >= self.rolling_pnl_window_days:
-            self._prune_pnl_history(st, now)
-            window_pnl = sum(r["pnl_bps"] for r in st.pnl_history)
-            if window_pnl < self.rolling_pnl_min_bps:
-                return (
-                    f"ROLLING_PNL_NEGATIVE: {self.rolling_pnl_window_days:.1f}d window "
-                    f"sum={window_pnl:+.1f}bps < {self.rolling_pnl_min_bps:+.1f}bps"
-                )
-        # 3. HOLD ratio drift (only if window is full)
-        if len(st.recent_step_actions) >= self.hold_ratio_window:
-            hold_n = sum(1 for a in st.recent_step_actions if a == "HOLD")
-            hold_ratio = hold_n / len(st.recent_step_actions)
-            if hold_ratio < self.hold_ratio_min:
-                return (
-                    f"HOLD_RATIO_LOW: {hold_ratio:.2%} < {self.hold_ratio_min:.0%} "
-                    f"over last {len(st.recent_step_actions)} ticks (over-active)"
-                )
-            if hold_ratio > self.hold_ratio_max:
-                return (
-                    f"HOLD_RATIO_HIGH: {hold_ratio:.2%} > {self.hold_ratio_max:.0%} "
-                    f"over last {len(st.recent_step_actions)} ticks (asleep)"
-                )
-        # 4. EXIT_ALL ratio (closes only)
-        if len(st.recent_close_actions) >= self.exit_all_window:
-            exit_n = sum(1 for a in st.recent_close_actions if a == "EXIT_ALL")
-            exit_ratio = exit_n / len(st.recent_close_actions)
-            if exit_ratio > self.exit_all_ratio_max:
-                return (
-                    f"EXIT_ALL_HIGH: {exit_ratio:.2%} > {self.exit_all_ratio_max:.0%} "
-                    f"over last {len(st.recent_close_actions)} closes (panic-exiting)"
-                )
+        """Permanently disabled per operator directive 2026-04-30.
+
+        All four trip conditions (CONSECUTIVE_LOSSES / ROLLING_PNL_NEGATIVE /
+        HOLD_RATIO_DRIFT / EXIT_ALL_HIGH) spuriously fire during Kraken outages
+        (post_only mode forces exits booked as DRL-driven losses, ticker drops
+        produce HOLD/EXIT_ALL bursts). Tracking still happens via record_close
+        / record_step_action for diagnostics, but no auto-demote is recommended.
+        """
         return None
 
     # ------------------------------------------------------------------

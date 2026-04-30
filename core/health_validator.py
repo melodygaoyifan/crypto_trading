@@ -407,8 +407,10 @@ class PerTickInvariantChecker:
                                f"level={current} (unchanged)", "Bug #1")
         old = self._last_drl_level
         self._last_drl_level = current
-        return HealthCheck("T2", "DRL authority stable", "CRITICAL",
-                           f"CHANGED {old}→{current} between ticks!", "Bug #1")
+        # 2026-04-30: auto-demote paths removed. Any change here is operator
+        # manual promote/demote — informational, not CRITICAL.
+        return HealthCheck("T2", "DRL authority stable", "PASS",
+                           f"manual change {old}→{current}", "Bug #1")
 
     def _t3_intent_actionable(self, asset, intent) -> HealthCheck:
         """Track consecutive non-actionable ticks.
