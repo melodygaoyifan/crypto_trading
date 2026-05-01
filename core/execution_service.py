@@ -1655,6 +1655,20 @@ async def execute_intent_v2(
                             break
                         if _h1_drift_bps > 10:
                             _h1_remaining_qty = base_quantity - _h1_total_filled
+                            # 2026-04-30: prior fills can exceed target (rounding,
+                            # over-fill on a partial-then-full sequence), making
+                            # remaining_qty <= 0. Without this guard the slicer
+                            # submits negative-size orders that bypass the SELL-branch
+                            # short-circuit in execute_order's clamp and produce blank
+                            # REJECT logs.
+                            if _h1_remaining_qty <= 0:
+                                logger.info(
+                                    f"[SLICER_DRIFT] {asset}: drift={_h1_drift_bps:.0f}bps but "
+                                    f"target already met (filled={_h1_total_filled:.6f} >= "
+                                    f"target={base_quantity:.6f}) -- stopping remaining "
+                                    f"{_num_slices - _h1_i}/{_num_slices} slices"
+                                )
+                                break
                             _h1_remaining_slices = _num_slices - _h1_i
                             _h1_slice_size = _h1_remaining_qty / _h1_remaining_slices if _h1_remaining_slices > 0 else _h1_remaining_qty
                             execution_price = _h1_cur_price

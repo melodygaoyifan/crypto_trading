@@ -842,6 +842,16 @@ class ExecutionManager:
         return (size, "") — allow the order through; downstream will
         either succeed or surface a real error via P79's classifier.
         """
+        # 2026-04-30: defend against caller passing negative size. Direction
+        # belongs on `side`, not on `size`. A negative size short-circuits
+        # the SELL-branch `size <= _max_reservable` check and returns
+        # (negative, "") with no diagnostic, producing blank REJECT logs.
+        if size <= 0:
+            return 0.0, (
+                f"caller passed size={size:.8f} <= 0 — direction must live "
+                f"on `side`, not on `size`. Upstream sizing produced an "
+                f"unsigned-magnitude bug; check slice/scaling pipeline."
+            )
         try:
             _bal = self.exchange.fetch_balance()
         except Exception as _e:  # noqa: silent-swallow
@@ -1091,16 +1101,26 @@ class ExecutionManager:
             symbol, side, size, price, order_type
         )
         if size <= 0:
+            # 2026-04-30: REJECT msg was empty when upstream passed size<=0
+            # (clamp returns (size, "") via the size <= max_reservable
+            # short-circuit), producing the blank "REJECTED — ." log seen
+            # in production. Always emit caller-side context so the line is
+            # actionable even when the clamp had no diagnostic of its own.
+            _why = _balance_msg or (
+                f"caller passed size={_orig_size:.8f} (already <=0 before clamp); "
+                f"upstream sizing produced 0 — likely position-size config × tier "
+                f"budget × confidence dampening rounded to 0."
+            )
             self.logger.critical(
                 f"[ORDER-BALANCE] {symbol} {side.value}: REJECTED — "
-                f"{_balance_msg}. Operator action: replenish spot balance OR "
+                f"{_why} Operator action: replenish spot balance OR "
                 f"reduce position-size config to match available capital."
             )
             return OrderResult(
                 success=False, symbol=symbol,
                 side=side.value, order_type=order_type.value,
                 status=OrderStatus.REJECTED,
-                error_message=f"INSUFFICIENT_SPOT_BALANCE: {_balance_msg}",
+                error_message=f"INSUFFICIENT_SPOT_BALANCE: {_why}",
                 userref=userref,
             )
         if abs(size - _orig_size) > 1e-9 and _balance_msg:
