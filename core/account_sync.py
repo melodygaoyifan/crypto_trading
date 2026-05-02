@@ -30,8 +30,16 @@ logger = logging.getLogger(__name__)
 # CONSTANTS
 # =============================================================================
 
-# Maximum age for cached equity before it's considered stale
-MAX_EQUITY_AGE_SECONDS = 60.0  # Must refresh at least every minute
+# Maximum age for cached equity before it's considered stale.
+# 2026-05-02: bumped 60s → 120s. Symptom: production saw "Status=VALID,
+# Age=66.3s, Equity=9562.39" FAIL-CLOSED rejections — equity was known
+# and recently fetched, but refresh + downstream work between refresh
+# and get_equity() can routinely consume 30-50s during Kraken
+# congestion (each fetch_balance/fetch_ticker has a 15s timeout, and
+# crypto valuation iterates per non-zero balance asset). 60s left no
+# headroom; 120s gives a 2× safety margin while still being tighter
+# than the 4H tick cycle.
+MAX_EQUITY_AGE_SECONDS = 120.0
 
 # Kraken-only validation
 ALLOWED_EXCHANGES = {"kraken"}
@@ -442,7 +450,18 @@ class AccountSyncManager:
                 f"FAIL-CLOSED: Account equity unavailable. "
                 f"Status={status}, Age={age:.1f}s, Equity={self._state.equity}"
             )
-        
+        # Soft-staleness signal: log when equity is between 75% and 100% of
+        # MAX_EQUITY_AGE_SECONDS so operator sees the gap before it FAIL-CLOSES.
+        # If this WARN appears regularly, the refresh→get_equity work is
+        # consuming too much wall time and either MAX_EQUITY_AGE should be
+        # raised again or the path between them needs trimming.
+        _age = self._state.age_seconds()
+        if _age > MAX_EQUITY_AGE_SECONDS * 0.75:
+            logger.warning(
+                f"[ACCOUNT_SYNC] equity age {_age:.1f}s approaching staleness "
+                f"limit {MAX_EQUITY_AGE_SECONDS:.0f}s; refresh→get_equity path "
+                f"is slow."
+            )
         return self._state.equity
     
     def get_equity_safe(self) -> Tuple[float, bool]:
