@@ -1630,6 +1630,40 @@ async def execute_intent_v2(
         except Exception as _seg_err:
             logger.debug(f"[P2-FIX] SOL guard skipped: {_seg_err}")
 
+    # 2026-05-02: re-cap _num_slices AFTER SOL guard (above) may have
+    # clipped base_quantity downward. Symptom: SOL/USDT slice 0.014052
+    # below Kraken's 0.020 min — initial cap at line ~1601 used the
+    # PRE-clip base_quantity, so a later guard-driven shrink left the
+    # per-slice value below min. Same min-size formula as the earlier
+    # cap; safe to repeat (idempotent if base_quantity unchanged).
+    try:
+        if (
+            _num_slices > 1
+            and ctx.execution_manager
+            and hasattr(ctx.execution_manager, 'exchange')
+        ):
+            _slicer_market2 = ctx.execution_manager.exchange.market(
+                _canonical_spot_symbol(asset)
+            )
+            _slicer_min2 = float(
+                ((_slicer_market2 or {}).get('limits') or {})
+                .get('amount', {}).get('min') or 0.0
+            )
+            if _slicer_min2 > 0:
+                _max_slices_after = max(1, int(base_quantity / (_slicer_min2 * 1.05)))
+                if _num_slices > _max_slices_after:
+                    logger.warning(
+                        f"[DYN_SLICER_MINSIZE] {asset}: post-guard re-cap "
+                        f"{_num_slices} -> {_max_slices_after} "
+                        f"(base_qty after guards={base_quantity:.6f}, "
+                        f"min={_slicer_min2:.6f})"
+                    )
+                    _num_slices = _max_slices_after
+    except Exception as _sl_err2:
+        logger.debug(
+            f"[DYN_SLICER_MINSIZE] {asset}: post-guard re-cap skipped: {_sl_err2}"
+        )
+
     # [BUGFIX H1] Pass _num_slices to execution -slice large orders
     _h1_slice_size = base_quantity / _num_slices if _num_slices > 1 else base_quantity
     if _num_slices > 1 and ctx.config.mode != RunMode.PAPER:
