@@ -852,6 +852,19 @@ class ExecutionManager:
                 f"on `side`, not on `size`. Upstream sizing produced an "
                 f"unsigned-magnitude bug; check slice/scaling pipeline."
             )
+        # 2026-05-03: lookup exchange minimum once so dust-clamp can reject
+        # below-min results instead of returning sub-minimum sizes that are
+        # guaranteed to fail at the order layer (and waste 2 reprice rounds
+        # + a market fallback). Failure mode: lookup fails -> _exch_min=0,
+        # downstream behavior unchanged.
+        _exch_min = 0.0
+        try:
+            _mkt = self.exchange.market(symbol)
+            _exch_min = float(
+                ((_mkt or {}).get('limits') or {}).get('amount', {}).get('min') or 0.0
+            )
+        except Exception:  # noqa: silent-swallow
+            _exch_min = 0.0
         try:
             _bal = self.exchange.fetch_balance()
         except Exception as _e:  # noqa: silent-swallow
@@ -911,6 +924,15 @@ class ExecutionManager:
                 f"derivatives/staking, OR position-size config exceeds spot "
                 f"capital."
             )
+            # 2026-05-03: if dust quote balance produces a clamped size below
+            # the exchange minimum, reject outright. Otherwise reprice + market
+            # fallback both fail with EGeneral:volume minimum not met, plus
+            # MARKET-MINSIZE pre-flight CRITICAL — full waste cycle.
+            if _exch_min > 0 and _max_size < _exch_min:
+                return 0.0, _msg + (
+                    f" Clamped {_max_size:.6f} < exchange min {_exch_min:.6f}; "
+                    f"REJECT instead of submitting dust order."
+                )
             return _max_size, _msg
 
         if _side_lower == 'sell':
@@ -927,6 +949,12 @@ class ExecutionManager:
                 f"this tick already reserved {_base}, OR post-fee balance shortfall, "
                 f"OR position size mismatches spot holding."
             )
+            # 2026-05-03: same dust-rejection as the BUY branch above.
+            if _exch_min > 0 and _max_reservable < _exch_min:
+                return 0.0, _msg + (
+                    f" Clamped {_max_reservable:.6f} < exchange min {_exch_min:.6f}; "
+                    f"REJECT instead of submitting dust order."
+                )
             return _max_reservable, _msg
 
         return size, ""  # unknown side — pass through
