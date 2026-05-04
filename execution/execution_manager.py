@@ -2641,10 +2641,21 @@ class ExecutionManager:
         return result
     
     def cancel_stop_loss(self, symbol: str) -> bool:
-        """Cancel active stop loss for a symbol."""
+        """Cancel active stop loss for a symbol.
+
+        2026-05-04: tolerate "already-gone" cancellations the same way
+        cancel_all_open_orders does (P98b 2026-04-27). Local active_stops
+        can hold a stale id when the stop filled mid-tick or was
+        cancelled out-of-band; Kraken responds EOrder:Unknown order which
+        is SEMANTICALLY a success — the desired end state (no stop at
+        the exchange) already holds. Previous behavior logged ERROR +
+        returned False, triggering the retry-then-track-orphan path in
+        execution_service.py and producing operator noise on a benign
+        condition.
+        """
         if symbol not in self.active_stops:
             return True
-        
+
         order_id = self.active_stops[symbol]
         
         if self.dry_run:
@@ -2656,6 +2667,19 @@ class ExecutionManager:
             del self.active_stops[symbol]
             return True
         except Exception as e:
+            _err = str(e) or ""
+            if (
+                "EOrder:Unknown order" in _err
+                or "Order not found" in _err
+                or "OrderNotFound" in type(e).__name__
+            ):
+                self.active_stops.pop(symbol, None)
+                self.logger.info(
+                    f"[STOP-CANCEL] {symbol}: order {order_id} already gone at "
+                    f"Kraken (filled or cancelled out-of-band); cleared local "
+                    f"state. Treated as success."
+                )
+                return True
             self.logger.error(f"Failed to cancel stop loss: {e}")
             return False
     
