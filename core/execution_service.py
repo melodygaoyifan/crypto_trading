@@ -1664,6 +1664,50 @@ async def execute_intent_v2(
             f"[DYN_SLICER_MINSIZE] {asset}: post-guard re-cap skipped: {_sl_err2}"
         )
 
+    # 2026-05-05: pre-execution free-quote check for BUYs. The position
+    # sizer uses total equity (which includes capital sitting in BTC/ETH/SOL
+    # spot positions); placing a BUY for SOL/USDT needs FREE USDT, not
+    # equity. Without this gate, every BUY where free quote is depleted
+    # produces a CRITICAL [ORDER-BALANCE] reject + the dust-clamp recovery
+    # path (correctly handled by execute_order, but operator-visible noise
+    # every tick). Skip up front with INFO when the order is structurally
+    # unfundable. Same gate applies regardless of slice count.
+    _is_buy = str(getattr(side, 'value', side)).lower() == 'buy'
+    if (
+        _is_buy
+        and ctx.config.mode != RunMode.PAPER
+        and ctx.execution_manager
+        and hasattr(ctx.execution_manager, 'exchange')
+    ):
+        try:
+            _exec_symbol = _canonical_spot_symbol(asset)
+            _quote = _exec_symbol.split('/')[1]
+            _bal = ctx.execution_manager.exchange.fetch_balance()
+            _free_quote = float(((_bal or {}).get('free') or {}).get(_quote, 0.0) or 0.0)
+            _required_usd = base_quantity * float(execution_price or 0.0)
+            # 0.5% buffer for fees/slippage; only block when truly unfundable
+            if (
+                _required_usd > 0
+                and _free_quote < _required_usd * 0.5
+            ):
+                logger.info(
+                    f"[EXEC-PREGATE] {asset} BUY: skipped — need ~${_required_usd:.2f} {_quote} "
+                    f"but free={_free_quote:.2f}. Sizing uses total equity "
+                    f"(${getattr(ctx, 'account_equity', 0):.0f}) but BUY needs "
+                    f"spendable {_quote}. Position state UNCHANGED. "
+                    f"Operator action: deploy fewer concurrent positions OR "
+                    f"sell some crypto holdings to free up {_quote}."
+                )
+                return {
+                    "status": "REJECTED",
+                    "reason": (
+                        f"PREGATE_INSUFFICIENT_QUOTE: need ${_required_usd:.2f} "
+                        f"{_quote}, free=${_free_quote:.2f}"
+                    ),
+                }
+        except Exception as _pg_err:  # noqa: silent-swallow
+            logger.debug(f"[EXEC-PREGATE] {asset}: balance probe failed: {_pg_err}")
+
     # [BUGFIX H1] Pass _num_slices to execution -slice large orders
     _h1_slice_size = base_quantity / _num_slices if _num_slices > 1 else base_quantity
     if _num_slices > 1 and ctx.config.mode != RunMode.PAPER:
