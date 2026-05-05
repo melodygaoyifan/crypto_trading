@@ -2547,34 +2547,49 @@ class ExecutionManager:
                 _market_price = 0.0
             if _market_price > 0:
                 _side_lower = side.value.lower()
+                # 2026-05-05: market may have already moved past the
+                # intended stop level by the time we place it (slow fills,
+                # delayed retries, stale entry_price feeding upstream
+                # calc). Previously REJECTED PERMANENTLY which left the
+                # position WITHOUT exchange-native stop protection.
+                # Better: snap the stop just past market with a 50bps
+                # buffer so the position keeps protection. Tighter than
+                # the calc wanted, but better than nothing.
+                _STALE_STOP_BUFFER = 0.005  # 50 bps past market
                 if _side_lower == 'buy' and _norm_price <= _market_price:
-                    msg = (
-                        f"stop-loss BUY (close-short) price ${_norm_price:,.4f} "
-                        f"is NOT above current market ${_market_price:,.4f} — "
-                        f"would trigger immediately. Kraken rejects this. "
-                        f"Likely cause: position moved against us between entry "
-                        f"and stop placement, OR upstream stop calc used a "
-                        f"stale entry price. Skipping API call."
+                    _adj_price = _market_price * (1 + _STALE_STOP_BUFFER)
+                    self.logger.warning(
+                        f"[STOP-PREFLIGHT] {symbol}: BUY (close-short) "
+                        f"intended ${_norm_price:,.4f} <= market "
+                        f"${_market_price:,.4f}; market moved past "
+                        f"planned stop. Adjusting to "
+                        f"${_adj_price:,.4f} (+{_STALE_STOP_BUFFER*1e4:.0f}bps "
+                        f"buffer) so position keeps protection. Likely "
+                        f"cause: stale entry_price, slow slice fill, or "
+                        f"delayed retry."
                     )
-                    self.logger.error(f"[STOP-PREFLIGHT] {symbol}: {msg}")
-                    return OrderResult(
-                        success=False, symbol=symbol, order_type='stop-loss',
-                        status=OrderStatus.REJECTED,
-                        error_message=f"PREFLIGHT_WRONG_SIDE: {msg}",
+                    _norm_price = _adj_price
+                    try:
+                        _norm_price_str = self.exchange.price_to_precision(symbol, _norm_price)
+                        _norm_price = float(_norm_price_str)
+                    except Exception:  # noqa: silent-swallow
+                        _norm_price_str = str(_norm_price)
+                elif _side_lower == 'sell' and _norm_price >= _market_price:
+                    _adj_price = _market_price * (1 - _STALE_STOP_BUFFER)
+                    self.logger.warning(
+                        f"[STOP-PREFLIGHT] {symbol}: SELL (close-long) "
+                        f"intended ${_norm_price:,.4f} >= market "
+                        f"${_market_price:,.4f}; market moved past "
+                        f"planned stop. Adjusting to "
+                        f"${_adj_price:,.4f} (-{_STALE_STOP_BUFFER*1e4:.0f}bps "
+                        f"buffer) so position keeps protection."
                     )
-                if _side_lower == 'sell' and _norm_price >= _market_price:
-                    msg = (
-                        f"stop-loss SELL (close-long) price ${_norm_price:,.4f} "
-                        f"is NOT below current market ${_market_price:,.4f} — "
-                        f"would trigger immediately. Kraken rejects this. "
-                        f"Skipping API call."
-                    )
-                    self.logger.error(f"[STOP-PREFLIGHT] {symbol}: {msg}")
-                    return OrderResult(
-                        success=False, symbol=symbol, order_type='stop-loss',
-                        status=OrderStatus.REJECTED,
-                        error_message=f"PREFLIGHT_WRONG_SIDE: {msg}",
-                    )
+                    _norm_price = _adj_price
+                    try:
+                        _norm_price_str = self.exchange.price_to_precision(symbol, _norm_price)
+                        _norm_price = float(_norm_price_str)
+                    except Exception:  # noqa: silent-swallow
+                        _norm_price_str = str(_norm_price)
 
             self.logger.info(
                 f"[STOP-WIRE] {symbol} {side.value.lower()}: sending "
