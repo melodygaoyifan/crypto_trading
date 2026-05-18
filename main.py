@@ -14195,20 +14195,68 @@ class HMATSProductionRunner:
                     f"[FastRiskTick][PAPER] {asset}: exposure {cur_exposure:.4f} ->{new_exposure:.4f}"
                 )
             else:
-                # Live mode: submit market order to flatten/reduce
+                # Live mode: cancel existing stop-loss, then submit market exit.
+                # [P110] Without the stop cancel, the spot is reserved by the
+                # active stop-loss and the MARKET SELL gets balance-clamped
+                # to dust, REJECTING via the P87 chain. With EXIT_ONLY
+                # bypassing FastRiskTick's cooldown, the watchdog then
+                # re-fires every 30s with no progress until either the stop
+                # itself fills or the 4H tick rebalances. Cancel first so
+                # the spot is free, then exit. If the cancel fails we still
+                # attempt the exit (best-effort), and if the exit itself
+                # REJECTs we tell FastRiskTick to suppress further attempts
+                # until the next 4H anchor.
                 current_price = market_data.get('current_price', 0)
                 if current_price > 0 and self.execution_manager:
+                    kraken_sym = self._normalize_kraken_pair(asset)  # [P137]
+                    try:
+                        _stop_cancelled = self.execution_manager.cancel_stop_loss(kraken_sym)
+                        if _stop_cancelled:
+                            logger.info(
+                                f"[FastRiskTick] {asset}: cancelled active "
+                                f"stop-loss before emergency exit (P110)"
+                            )
+                    except Exception as _cancel_err:
+                        logger.warning(
+                            f"[FastRiskTick] {asset}: stop-loss cancel "
+                            f"failed before exit ({type(_cancel_err).__name__}: "
+                            f"{_cancel_err}); proceeding with flatten anyway"
+                        )
+
                     side = "SELL" if direction > 0 else "BUY"
                     account_equity = market_data.get('account_equity', self.config.initial_capital)
                     qty = reduce_qty * account_equity / current_price if current_price > 0 else 0
-                    self.execution_manager.execute_order(
-                        symbol=self._normalize_kraken_pair(asset), side=side, size=qty,  # [P137]
+                    _exec_result = self.execution_manager.execute_order(
+                        symbol=kraken_sym, side=side, size=qty,
                         price=current_price, order_type="MARKET",
                     )
-                    # Feedback: refresh baseline + cooldown for live mode too
+                    # [P110] Detect REJECTED and back off so we don't re-fire
+                    # every 30s on an unfixable condition.
+                    _rejected = False
+                    if _exec_result is not None:
+                        _success = getattr(_exec_result, 'success', True)
+                        _status = getattr(_exec_result, 'status', None)
+                        _status_val = getattr(_status, 'value', _status)
+                        if not _success or str(_status_val) == 'REJECTED':
+                            _rejected = True
+
                     if self.fast_risk_tick:
-                        _frt_depth = market_data.get('orderbook_depth_1pct_usd', 0.0)
-                        self.fast_risk_tick.on_reduce_executed(asset, new_depth=_frt_depth)
+                        if _rejected:
+                            _err_msg = getattr(_exec_result, 'error_message', '') or ''
+                            logger.error(
+                                f"[FastRiskTick] {asset}: emergency exit "
+                                f"REJECTED ({_err_msg}); EXIT_ONLY will be "
+                                f"suppressed until next 4H anchor or "
+                                f"backoff expires"
+                            )
+                            _on_exit_failed = getattr(
+                                self.fast_risk_tick, 'on_exit_failed', None
+                            )
+                            if _on_exit_failed is not None:
+                                _on_exit_failed(asset, reason=_err_msg)
+                        else:
+                            _frt_depth = market_data.get('orderbook_depth_1pct_usd', 0.0)
+                            self.fast_risk_tick.on_reduce_executed(asset, new_depth=_frt_depth)
         except Exception as e:
             logger.error(f"[FastRiskTick] {asset}: action execution failed: {e}")
 

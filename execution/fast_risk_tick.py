@@ -44,6 +44,11 @@ class FastRiskTick:
     DEPTH_DROP_CONFIRM_STREAK = 3  # 3 consecutive checks ~90s (was 2/60s)
     MIN_VALID_DEPTH_USD = 100_000.0
     REDUCE_COOLDOWN_SEC = 3600.0   # 1h cooldown (was 300s; prevents cascade halving within 4H tick)
+    # [P110] After a REJECTED emergency exit (e.g. spot locked by stop-loss
+    # that can't be cancelled), suppress further EXIT_ONLY firings for
+    # EXIT_FAILED_BACKOFF_SEC. set_4h_anchor() clears the backoff so the
+    # next 4H tick gets a fresh attempt.
+    EXIT_FAILED_BACKOFF_SEC = 1800.0  # 30 min
 
     def __init__(self, shadow_mode: bool = True):
         self.shadow_mode = shadow_mode
@@ -52,6 +57,9 @@ class FastRiskTick:
         self._baseline_depth: Dict[str, float] = {}
         self._depth_drop_streak: Dict[str, int] = {}
         self._last_reduce_time: Dict[str, float] = {}  # cooldown tracking
+        self._exit_failed_at: Dict[str, float] = {}    # [P110] last REJECTED exit ts
+        self._exit_failed_reason: Dict[str, str] = {}  # [P110] last REJECTED exit msg
+        self._exit_suppress_log_at: Dict[str, float] = {}  # [P110] rate-limit suppression log
         self._trigger_count = 0
         self._shadow_log: list = []
         logger.info(f"[FastRiskTick] Initialized (shadow={shadow_mode})")
@@ -65,6 +73,16 @@ class FastRiskTick:
         if depth > 0:
             self._baseline_depth[asset] = depth
         self._depth_drop_streak[asset] = 0
+        # [P110] 4H rebalance clears any failed-exit backoff so the next
+        # decision boundary gets a fresh attempt with a new anchor.
+        if asset in self._exit_failed_at:
+            self._exit_failed_at.pop(asset, None)
+            self._exit_failed_reason.pop(asset, None)
+            self._exit_suppress_log_at.pop(asset, None)
+            logger.info(
+                f"[FastRiskTick] {asset}: cleared EXIT_ONLY suppression on "
+                f"4H anchor refresh (P110)"
+            )
 
     def on_reduce_executed(self, asset: str, new_depth: float = 0.0):
         """Called after a REDUCE/EXIT action is executed. Refreshes baseline and applies cooldown."""
@@ -75,6 +93,25 @@ class FastRiskTick:
         if new_depth > 0:
             self._baseline_depth[asset] = new_depth
             logger.info(f"[FastRiskTick] {asset}: baseline depth refreshed to ${new_depth:,.0f} after REDUCE")
+
+    def on_exit_failed(self, asset: str, reason: str = ""):
+        """[P110] Called when an emergency EXIT/REDUCE returns REJECTED.
+
+        Records a backoff timestamp so subsequent evaluate() calls suppress
+        EXIT_ONLY (the only action that bypasses the normal cooldown). The
+        backoff is cleared by set_4h_anchor() OR after EXIT_FAILED_BACKOFF_SEC,
+        whichever comes first. Other triggers (vol spike, depth drop) still
+        compose REDUCE_50 normally — only the price_move EXIT_ONLY trigger
+        is suppressed.
+        """
+        now = time.time()
+        self._exit_failed_at[asset] = now
+        self._exit_failed_reason[asset] = reason
+        logger.critical(
+            f"[FastRiskTick] {asset}: EXIT_ONLY backoff engaged for "
+            f"{self.EXIT_FAILED_BACKOFF_SEC/60:.0f} min after REJECTED "
+            f"emergency exit. Reason: {reason or '(no message)'}"
+        )
 
     def evaluate(self, asset: str, market_data: Dict[str, Any]) -> FastRiskResult:
         """Evaluate whether emergency action is needed."""
@@ -108,7 +145,25 @@ class FastRiskTick:
         action = FastRiskAction.HOLD
 
         # Trigger 1: Price move > 3% (EXIT_ONLY bypasses cooldown)
-        if price_move_pct > self.PRICE_MOVE_THRESHOLD:
+        # [P110] Suppress EXIT_ONLY if a prior emergency exit was REJECTED
+        # within EXIT_FAILED_BACKOFF_SEC. Cleared by set_4h_anchor().
+        _price_move_triggered = price_move_pct > self.PRICE_MOVE_THRESHOLD
+        _exit_suppressed = False
+        if _price_move_triggered:
+            _failed_ts = self._exit_failed_at.get(asset, 0.0)
+            if _failed_ts > 0 and (now - _failed_ts) < self.EXIT_FAILED_BACKOFF_SEC:
+                _exit_suppressed = True
+                _last_log = self._exit_suppress_log_at.get(asset, 0.0)
+                if (now - _last_log) > 60.0:
+                    self._exit_suppress_log_at[asset] = now
+                    _remaining = self.EXIT_FAILED_BACKOFF_SEC - (now - _failed_ts)
+                    logger.warning(
+                        f"[FastRiskTick] {asset}: EXIT_ONLY suppressed "
+                        f"(price_move={price_move_pct:.1%}, prior exit "
+                        f"REJECTED, backoff {_remaining/60:.1f}min remaining: "
+                        f"{self._exit_failed_reason.get(asset, '')})"
+                    )
+        if _price_move_triggered and not _exit_suppressed:
             action = FastRiskAction.EXIT_ONLY
             reason = f"price_move={price_move_pct:.1%}"
 
