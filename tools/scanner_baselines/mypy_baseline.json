@@ -1,4 +1,28 @@
 {
-  "by_code": {},
-  "total_count": 0
+  "by_code": {
+    "arg-type": 78,
+    "assignment": 453,
+    "attr-defined": 70,
+    "call-arg": 8,
+    "call-overload": 5,
+    "dict-item": 28,
+    "float": 6,
+    "has-type": 3,
+    "index": 24,
+    "int": 12,
+    "list-item": 1,
+    "misc": 64,
+    "name-defined": 2,
+    "no-redef": 7,
+    "operator": 42,
+    "return": 1,
+    "return-value": 17,
+    "str": 32,
+    "truthy-function": 4,
+    "type-var": 1,
+    "union-attr": 127,
+    "valid-type": 8,
+    "var-annotated": 51
+  },
+  "total_count": 1044
 }
