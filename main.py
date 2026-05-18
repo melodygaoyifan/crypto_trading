@@ -14342,10 +14342,46 @@ class HMATSProductionRunner:
                         reduce_qty = cur_exposure - new_exposure
                         account_equity = self.config.initial_capital
                         qty = reduce_qty * account_equity / current_price
-                        self.execution_manager.execute_order(
-                            symbol=self._normalize_kraken_pair(asset), side=side, size=qty,  # [P137]
+                        kraken_sym = self._normalize_kraken_pair(asset)  # [P137]
+                        # [P110-followup] Cancel active stop-loss before
+                        # MARKET reduce. Even a 25% partial reduce can fail
+                        # if the stop reserves the full position size at
+                        # Kraken (used_by_other_orders == position) — the
+                        # MARKET SELL then balance-clamps to dust and
+                        # REJECTs via P87. Cancel first; the next 4H tick
+                        # will replace the stop on the reduced position.
+                        try:
+                            if self.execution_manager.cancel_stop_loss(kraken_sym):
+                                logger.info(
+                                    f"[CORR-0] {asset}: cancelled stop-loss "
+                                    f"before {_label} reduction (P110-followup)"
+                                )
+                        except Exception as _cancel_err:
+                            logger.warning(
+                                f"[CORR-0] {asset}: stop-loss cancel failed "
+                                f"({type(_cancel_err).__name__}: "
+                                f"{_cancel_err}); proceeding with reduction"
+                            )
+                        _exec_result = self.execution_manager.execute_order(
+                            symbol=kraken_sym, side=side, size=qty,
                             price=current_price, order_type="MARKET",
                         )
+                        # [P110-followup] Surface REJECTED so operator sees
+                        # the gap between intent and execution. CORR-0 is
+                        # tick-driven (4H) so no backoff needed — next
+                        # crisis evaluation will retry naturally.
+                        if _exec_result is not None:
+                            _success = getattr(_exec_result, 'success', True)
+                            _status = getattr(_exec_result, 'status', None)
+                            _status_val = getattr(_status, 'value', _status)
+                            if not _success or str(_status_val) == 'REJECTED':
+                                _err_msg = getattr(_exec_result, 'error_message', '') or ''
+                                logger.error(
+                                    f"[CORR-0] {asset}: {_label} reduction "
+                                    f"REJECTED ({_err_msg}); position "
+                                    f"remains at {cur_exposure:.4f} "
+                                    f"(target was {new_exposure:.4f})"
+                                )
 
                 _any_reduced = True
 
