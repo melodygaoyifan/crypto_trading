@@ -14226,9 +14226,17 @@ class HMATSProductionRunner:
                     side = "SELL" if direction > 0 else "BUY"
                     account_equity = market_data.get('account_equity', self.config.initial_capital)
                     qty = reduce_qty * account_equity / current_price if current_price > 0 else 0
+                    # [P138 2026-06-09] Read leverage from the position so we close
+                    # the same instrument we opened. Without this, a margin short
+                    # gets a spot BUY (opens a new spot long, leaves the short
+                    # open) and the spot balance clamp rejects on USDT shortfall
+                    # even though margin collateral is what was actually used.
+                    _pos_leverage = pos.get("regime_leverage", 1.0)
+                    _close_leverage = int(round(_pos_leverage)) if _pos_leverage > 1.0 else None
                     _exec_result = self.execution_manager.execute_order(
                         symbol=kraken_sym, side=side, size=qty,
                         price=current_price, order_type="MARKET",
+                        leverage=_close_leverage,
                     )
                     # [P110] Detect REJECTED and back off so we don't re-fire
                     # every 30s on an unfixable condition.
@@ -14362,9 +14370,17 @@ class HMATSProductionRunner:
                                 f"({type(_cancel_err).__name__}: "
                                 f"{_cancel_err}); proceeding with reduction"
                             )
+                        # [P138 2026-06-09] Same leverage plumbing as
+                        # _handle_fast_risk_action — close path must match the
+                        # leverage at entry, otherwise a margin short gets a
+                        # spot reduce that opens a new spot long without
+                        # netting the short.
+                        _pos_leverage = pos.get("regime_leverage", 1.0)
+                        _close_leverage = int(round(_pos_leverage)) if _pos_leverage > 1.0 else None
                         _exec_result = self.execution_manager.execute_order(
                             symbol=kraken_sym, side=side, size=qty,
                             price=current_price, order_type="MARKET",
+                            leverage=_close_leverage,
                         )
                         # [P110-followup] Surface REJECTED so operator sees
                         # the gap between intent and execution. CORR-0 is
@@ -14513,12 +14529,18 @@ class HMATSProductionRunner:
                 close_side = "sell" if direction > 0 else "buy"
                 try:
                     pair = self._normalize_kraken_pair(asset)  # [P137] was f"{asset}/USD"
+                    # [P138 2026-06-09] Plumb leverage so margin shorts
+                    # actually close via the margin path. See FastRiskTick
+                    # + CORR-0 sister fix.
+                    _pos_leverage = pos.get("regime_leverage", 1.0)
+                    _close_leverage = int(round(_pos_leverage)) if _pos_leverage > 1.0 else None
                     result = self.execution_manager.execute_order(
                         symbol=pair,
                         side=close_side,
                         size=size,
                         order_type="market",
                         tick_id="EMERGENCY_FLAT",
+                        leverage=_close_leverage,
                     )
                     logger.critical(
                         f"[EMERGENCY_FLAT] {asset}: sent {close_side} {size} "

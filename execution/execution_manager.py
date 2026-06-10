@@ -800,6 +800,7 @@ class ExecutionManager:
         size: float,
         price: Optional[float],
         order_type,
+        leverage: Optional[int] = None,
     ) -> Tuple[float, str]:
         """P87 2026-04-26: dynamic balance check before placing an order.
 
@@ -852,6 +853,15 @@ class ExecutionManager:
                 f"on `side`, not on `size`. Upstream sizing produced an "
                 f"unsigned-magnitude bug; check slice/scaling pipeline."
             )
+        # 2026-06-09: margin orders (leverage > 1) must NOT use spot balance.
+        # Opening a margin short never touches spot base; closing one releases
+        # margin collateral, it doesn't spend full notional in spot quote.
+        # Checking spot here would reject legitimate margin closes when the
+        # spot wallet is small (the production incident pattern). Kraken
+        # validates margin server-side; if collateral is insufficient, P79
+        # classifier surfaces `EOrder:Insufficient margin` as PERMANENT.
+        if leverage is not None and leverage > 1:
+            return size, ""
         # 2026-05-03: lookup exchange minimum once so dust-clamp can reject
         # below-min results instead of returning sub-minimum sizes that are
         # guaranteed to fail at the order layer (and waste 2 reprice rounds
@@ -1126,7 +1136,7 @@ class ExecutionManager:
         # If clamped to 0, REJECT with explicit guidance.
         _orig_size = size
         size, _balance_msg = self._clamp_size_to_balance_v2(
-            symbol, side, size, price, order_type
+            symbol, side, size, price, order_type, leverage=leverage
         )
         if size <= 0:
             # 2026-04-30: REJECT msg was empty when upstream passed size<=0

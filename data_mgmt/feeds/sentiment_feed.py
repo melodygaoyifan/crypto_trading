@@ -28,7 +28,7 @@ import aiohttp
 from data_mgmt.feeds._http import create_session, fetch_with_retry
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any, Callable
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 import random
 
@@ -366,11 +366,11 @@ class SentimentFeed:
                                 "sentiment_score": (coin_data.get("sentiment", 50) - 50) / 50,
                                 "volume": coin_data.get("social_volume", 0),
                                 "change_24h": coin_data.get("sentiment_change_24h", 0) / 100,
-                                "timestamp": datetime.now().isoformat()
+                                "timestamp": datetime.now(timezone.utc).isoformat()
                             })
-                
+
                 return {
-                    "fear_greed": {"value": 50, "label": "neutral", "timestamp": datetime.now().isoformat()},
+                    "fear_greed": {"value": 50, "label": "neutral", "timestamp": datetime.now(timezone.utc).isoformat()},
                     "social_sentiments": social_sentiments,
                     "news_sentiments": [],
                     "funding_rates": [],
@@ -392,7 +392,7 @@ class SentimentFeed:
         """
         await asyncio.sleep(0.1)
 
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
 
         # Neutral Fear & Greed = 50 (neither fear nor greed)
         fg_value = 50
@@ -440,7 +440,7 @@ class SentimentFeed:
     
     def _parse_raw_data(self, raw: Dict[str, Any]) -> SentimentTick:
         """解析原始数据为标准格式"""
-        timestamp = datetime.fromisoformat(raw.get("timestamp", datetime.now().isoformat()))
+        timestamp = datetime.fromisoformat(raw.get("timestamp", datetime.now(timezone.utc).isoformat()))
         
         # 解析 Fear & Greed
         fear_greed = None

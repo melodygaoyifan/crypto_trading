@@ -215,5 +215,168 @@ class TestChaosRestartCascade:
         )
 
 
+# =====================================================================
+# Scenario 8: Margin-position close paths must plumb leverage (P138)
+# =====================================================================
+
+class TestChaosMarginClosePathLeverage:
+    """P138: spot/margin instrument mismatch in close paths.
+
+    A SHORT position can only exist on Kraken via margin. The entry path
+    stores `regime_leverage` on `_paper_positions[asset]` and passes
+    `leverage=` to `execute_order`. The three OFF-BAND watchdog close
+    paths (FastRiskTick exit, CORR-0 reduction, EMERGENCY_FLAT) used to
+    omit leverage entirely, routing margin closes as spot orders that
+    (a) couldn't actually net the margin position and (b) failed the
+    spot-balance clamp when free quote was low.
+
+    These assertions pin the plumbing in place so a future refactor
+    can't silently strip it again.
+    """
+
+    def _runner_source(self):
+        """Read main.py once; close paths all live here."""
+        from pathlib import Path
+        p = Path(__file__).resolve().parents[2] / "main.py"
+        if not p.exists():
+            pytest.skip("main.py not at expected location")
+        # main.py has a BOM; use utf-8-sig
+        return p.read_text(encoding="utf-8-sig")
+
+    def _exec_mgr_source(self):
+        import inspect
+        try:
+            from execution import execution_manager
+        except ImportError:
+            pytest.skip("execution_manager not importable")
+        return inspect.getsource(execution_manager)
+
+    def test_fast_risk_tick_close_reads_regime_leverage(self):
+        """_handle_fast_risk_action must read regime_leverage from pos
+        and pass it to execute_order. Otherwise margin shorts get spot
+        BUY-to-close which leaves the short open."""
+        src = self._runner_source()
+        # Find the FastRiskTick handler block
+        idx = src.find("def _handle_fast_risk_action")
+        assert idx >= 0, "_handle_fast_risk_action not found in main.py"
+        # Search forward to the next def to bound the method body
+        body_end = src.find("\n    async def ", idx + 1)
+        if body_end < 0:
+            body_end = src.find("\n    def ", idx + 1)
+        body = src[idx:body_end if body_end > 0 else idx + 8000]
+
+        assert 'pos.get("regime_leverage"' in body or "pos.get('regime_leverage'" in body, (
+            "P138 plumbing missing: _handle_fast_risk_action does not read "
+            "regime_leverage from the position. Margin shorts will close as "
+            "spot orders and the watchdog will alert-storm until P110 backoff."
+        )
+        assert "leverage=" in body, (
+            "P138 plumbing missing: _handle_fast_risk_action does not pass "
+            "leverage= to execute_order."
+        )
+
+    def test_crisis_reduction_close_reads_regime_leverage(self):
+        """_crisis_position_reduction (CORR-0) must plumb leverage the
+        same way as FastRiskTick. Same bug shape, same fix."""
+        src = self._runner_source()
+        idx = src.find("def _crisis_position_reduction")
+        assert idx >= 0, "_crisis_position_reduction not found in main.py"
+        body_end = src.find("\n    async def ", idx + 1)
+        if body_end < 0:
+            body_end = src.find("\n    def ", idx + 1)
+        body = src[idx:body_end if body_end > 0 else idx + 8000]
+
+        assert 'pos.get("regime_leverage"' in body or "pos.get('regime_leverage'" in body, (
+            "P138 plumbing missing: _crisis_position_reduction does not read "
+            "regime_leverage from the position."
+        )
+        assert "leverage=" in body, (
+            "P138 plumbing missing: _crisis_position_reduction does not pass "
+            "leverage= to execute_order."
+        )
+
+    def test_emergency_flatten_close_reads_regime_leverage(self):
+        """_emergency_flatten / trigger_emergency_flatten DEAD_MAN_SWITCH
+        path must also plumb leverage. If the dead-man fires on a margin
+        portfolio, spot-only flatten orders would leave shorts open."""
+        src = self._runner_source()
+        # The actual close block is in _emergency_flatten / trigger_emergency_flatten
+        # — search for the EMERGENCY_FLAT tick_id marker (unique).
+        idx = src.find('tick_id="EMERGENCY_FLAT"')
+        assert idx >= 0, "EMERGENCY_FLAT close block not found in main.py"
+        # Pull a window around it to inspect
+        body = src[max(0, idx - 1500):idx + 500]
+
+        assert 'pos.get("regime_leverage"' in body or "pos.get('regime_leverage'" in body, (
+            "P138 plumbing missing: _emergency_flatten does not read "
+            "regime_leverage from the position. DEAD_MAN_SWITCH on a margin "
+            "portfolio will issue spot close orders that don't net the shorts."
+        )
+        assert "leverage=" in body, (
+            "P138 plumbing missing: _emergency_flatten does not pass "
+            "leverage= to execute_order."
+        )
+
+    def test_clamp_skips_when_leverage_gt_1(self):
+        """_clamp_size_to_balance_v2 must short-circuit (return size, '')
+        when leverage > 1. Spot balance is the wrong constraint for a
+        margin order — Kraken validates collateral server-side."""
+        from unittest.mock import MagicMock
+        from execution.execution_manager import ExecutionManager
+
+        em = ExecutionManager.__new__(ExecutionManager)
+        em.exchange = MagicMock()
+        em.exchange.market.return_value = {"limits": {"amount": {"min": 0.02}}}
+        # Mimic the production incident: $0.12 USDT free, trying to BUY 12 SOL
+        em.exchange.fetch_balance.return_value = {
+            "free": {"USDT": 0.12}, "used": {"USDT": 0.0}
+        }
+        em.logger = MagicMock()
+
+        class _BuySide:
+            value = "BUY"
+
+        # leverage > 1 → skip clamp, pass full size through
+        size, msg = em._clamp_size_to_balance_v2(
+            "SOL/USDT", _BuySide(), 12.0, 63.0, MagicMock(), leverage=2
+        )
+        assert size == 12.0, (
+            f"P138 regression: clamp returned {size} for leverage=2 instead "
+            f"of original 12.0. Margin closes will be wrongly clamped to dust."
+        )
+        assert msg == "", (
+            f"P138 regression: clamp emitted message {msg!r} for leverage>1. "
+            f"Should be empty (no clamp applied)."
+        )
+
+        # leverage=None (spot) → still rejects on $0.12 USDT
+        size_spot, msg_spot = em._clamp_size_to_balance_v2(
+            "SOL/USDT", _BuySide(), 12.0, 63.0, MagicMock(), leverage=None
+        )
+        assert size_spot == 0.0, (
+            "P138 contract violated: spot path (leverage=None) must still "
+            "reject when free quote is below dust threshold."
+        )
+        assert "USDT" in msg_spot, (
+            f"Spot rejection message missing USDT context: {msg_spot!r}"
+        )
+
+    def test_execute_order_forwards_leverage_to_clamp(self):
+        """execute_order must call _clamp_size_to_balance_v2 with leverage=
+        kwarg. Otherwise the clamp can't tell margin from spot and the
+        skip-path is dead code."""
+        src = self._exec_mgr_source()
+        # The call to the clamp from execute_order
+        idx = src.find("self._clamp_size_to_balance_v2(")
+        assert idx >= 0, "_clamp_size_to_balance_v2 call site not found"
+        # Read ~6 lines after to inspect kwargs
+        snippet = src[idx:idx + 200]
+        assert "leverage=leverage" in snippet, (
+            "P138 plumbing missing: execute_order does not pass leverage to "
+            "_clamp_size_to_balance_v2. Without this, the skip-when-margin "
+            "logic is unreachable."
+        )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "-s"])
