@@ -414,7 +414,11 @@ class ShadowLedgerWriter:
                             continue
                         try:
                             obj = json.loads(line)
-                        except json.JSONDecodeError:
+                        except json.JSONDecodeError:  # noqa: silent-swallow
+                            # JSONL may have a truncated last line from a
+                            # SIGKILL on the prior process. Skip and continue
+                            # the replay rather than abort — partial replay
+                            # is better than no replay.
                             continue
                         entry_type = obj.get("entry_type")
                         data = obj.get("data") or {}

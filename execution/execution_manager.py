@@ -2492,7 +2492,7 @@ class ExecutionManager:
                         )
                         _stop_size_for_kraken = _max_affordable_size
                         _balance_probe_used = True
-            except _SkipSpotBalance:
+            except _SkipSpotBalance:  # noqa: silent-swallow
                 # [P138-followup] Margin order — intentional bypass.
                 # _stop_size_for_kraken stays at the requested `size`,
                 # _balance_probe_used stays False. Kraken will validate
