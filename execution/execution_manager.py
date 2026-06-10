@@ -149,6 +149,14 @@ class OrderResult:
         return d
 
 
+class _SkipSpotBalance(Exception):
+    """[P138-followup 2026-06-09] Internal sentinel raised inside
+    place_stop_loss to bail out of the spot balance check when the
+    stop protects a margin position. Caught one block down as a
+    no-op so the rest of place_stop_loss runs unchanged.
+    """
+
+
 class ExecutionManager:
     """
     Professional-grade order execution manager.
@@ -2225,13 +2233,21 @@ class ExecutionManager:
                        symbol: str,
                        side: OrderSide,
                        size: float,
-                       stop_price: float) -> OrderResult:
+                       stop_price: float,
+                       leverage: Optional[int] = None) -> OrderResult:
         """
         Place exchange-native stop loss order with retry + idempotency.
 
         [P0-02] Retries with exponential backoff on failure. Uses a
         deterministic userref so retries never create duplicate orders.
         On final failure, applies stop_order_failure_policy.
+
+        [P138-followup 2026-06-09] `leverage` must match the position
+        being protected. A stop on a margin short opened at 2x must
+        carry leverage=2 so the trigger order closes the margin
+        position; otherwise Kraken treats it as a spot trigger that
+        OPENS a new spot long when fired, leaving the margin short
+        un-protected. Same shape as P138 on the watchdog close paths.
         """
         if not self.config.use_exchange_stops:
             return OrderResult(
@@ -2375,6 +2391,18 @@ class ExecutionManager:
             _stop_size_for_kraken = size
             _balance_probe_used = False
             try:
+                # [P138-followup 2026-06-09] Margin stops validated by
+                # Kraken against margin collateral, not spot. Bail out
+                # of the spot balance check entirely. _SkipSpotBalance
+                # is a private sentinel caught one block down to keep
+                # the existing 90-line balance-check body unchanged.
+                if leverage is not None and leverage > 1:
+                    self.logger.info(
+                        f"[STOP-MARGIN] {symbol} {side.value.lower()}: "
+                        f"leverage={leverage}x — skipping spot balance clamp; "
+                        f"Kraken validates margin collateral server-side."
+                    )
+                    raise _SkipSpotBalance()
                 _bal = self.exchange.fetch_balance()
                 _free = (_bal or {}).get('free', {}) or {}
                 _base, _quote = symbol.split('/')
@@ -2445,6 +2473,12 @@ class ExecutionManager:
                         )
                         _stop_size_for_kraken = _max_affordable_size
                         _balance_probe_used = True
+            except _SkipSpotBalance:
+                # [P138-followup] Margin order — intentional bypass.
+                # _stop_size_for_kraken stays at the requested `size`,
+                # _balance_probe_used stays False. Kraken will validate
+                # margin collateral when the trigger order is built.
+                pass
             except Exception as _bal_e:  # noqa: silent-swallow
                 # fetch_balance failed — fall back to P84 blanket buffer.
                 self.logger.warning(
@@ -2627,6 +2661,17 @@ class ExecutionManager:
             # Confirmed pattern from issue ccxt#19920 and issue ccxt#20814
             # comments. Working recipe: type='market' + side + amount +
             # NO positional price + params['stopLossPrice'].
+            # [P138-followup 2026-06-09] Inject leverage so this trigger
+            # order targets the same margin position as the entry.
+            # Without this the stop is a SPOT trigger — when fired it
+            # opens a NEW spot position instead of closing the margin
+            # one, leaving the actual exposure un-protected.
+            _stop_params = {
+                'userref': userref,
+                'stopLossPrice': _norm_price_str,
+            }
+            if leverage is not None and leverage > 1:
+                _stop_params['leverage'] = leverage
             order = self.exchange.create_order(
                 symbol=symbol,
                 type='market',                          # parent order type
@@ -2635,10 +2680,7 @@ class ExecutionManager:
                 price=None,                             # MUST be None — let ccxt
                                                         # use stopLossPrice from
                                                         # params as the trigger
-                params={
-                    'userref': userref,
-                    'stopLossPrice': _norm_price_str,   # ccxt unified trigger
-                },
+                params=_stop_params,
             )
             order_id = order.get('id')
             self.active_stops[symbol] = order_id

@@ -165,5 +165,143 @@ class TestChaosPositionDesyncAlert:
         )
 
 
+# =====================================================================
+# Scenario 12: Stop-loss must carry leverage on margin positions (P138-followup)
+# =====================================================================
+
+class TestChaosStopLossMarginLeverage:
+    """P138-followup (2026-06-09): place_stop_loss historically built
+    a spot trigger order (no leverage in params). For a margin short
+    opened at 2x, that trigger BUYS spot SOL when fired — opens a new
+    spot long, does NOT close the margin short. The margin position
+    stays uncapped.
+
+    Verify: signature accepts leverage; spot balance check is bypassed
+    when leverage > 1; leverage is injected into the create_order
+    params; both callers in execution_service.py pass it through.
+    """
+
+    def test_place_stop_loss_accepts_leverage_param(self):
+        import inspect
+        from execution.execution_manager import ExecutionManager
+        sig = inspect.signature(ExecutionManager.place_stop_loss)
+        assert "leverage" in sig.parameters, (
+            "place_stop_loss missing leverage param. Margin shorts can't "
+            "be protected — stop trigger fires as spot, doesn't close the "
+            "margin position."
+        )
+        assert sig.parameters["leverage"].default is None, (
+            "leverage default must be None (spot) to preserve back-compat."
+        )
+
+    def test_place_stop_loss_skips_spot_balance_for_margin(self):
+        """Margin path must bypass _SkipSpotBalance and inject leverage
+        into the create_order params dict."""
+        from unittest.mock import MagicMock
+        from execution.execution_manager import ExecutionManager, OrderSide
+
+        em = ExecutionManager.__new__(ExecutionManager)
+        em.exchange = MagicMock()
+        em.exchange.market.return_value = {"limits": {"amount": {"min": 0.02}}}
+        # Spot wallet near-zero — would clamp to dust on spot path
+        em.exchange.fetch_balance.return_value = {"free": {"USDT": 0.12}, "used": {"USDT": 0.0}}
+        em.exchange.price_to_precision.side_effect = lambda s, p: str(p)
+        em.exchange.amount_to_precision.side_effect = lambda s, a: str(a)
+        em.exchange.fetch_ticker.return_value = {"last": 63.0}
+        em.exchange.fetch_open_orders.return_value = []
+        em.exchange.create_order.return_value = {"id": "STOP-MARGIN-OK"}
+        em.logger = MagicMock()
+        em.config = MagicMock()
+        em.config.use_exchange_stops = True
+        em.dry_run = False
+        em.active_stops = {}
+        em._userref_history = {}
+        em._with_stop_retries = lambda fn, **kw: fn()
+        em._generate_stop_userref = lambda *a, **k: "SL-test"
+
+        result = em.place_stop_loss(
+            symbol="SOL/USDT", side=OrderSide.BUY, size=12.0,
+            stop_price=80.0, leverage=2,
+        )
+        assert result.success, (
+            f"P138-followup: margin stop must succeed despite empty spot "
+            f"wallet. Error: {result.error_message}"
+        )
+        sent_params = em.exchange.create_order.call_args.kwargs["params"]
+        assert sent_params.get("leverage") == 2, (
+            f"P138-followup: leverage=2 missing from create_order params. "
+            f"Sent: {sent_params}. Without this, the stop is a spot trigger "
+            f"and won't close the margin position."
+        )
+
+    def test_place_stop_loss_spot_path_preserves_no_leverage(self):
+        """Spot path (leverage=None or 1) must NOT inject leverage into
+        params — Kraken rejects spot orders that carry leverage."""
+        from unittest.mock import MagicMock
+        from execution.execution_manager import ExecutionManager, OrderSide
+
+        em = ExecutionManager.__new__(ExecutionManager)
+        em.exchange = MagicMock()
+        em.exchange.market.return_value = {"limits": {"amount": {"min": 0.001}}}
+        em.exchange.fetch_balance.return_value = {"free": {"SOL": 100.0, "USDT": 10000.0}, "used": {}}
+        em.exchange.price_to_precision.side_effect = lambda s, p: str(p)
+        em.exchange.amount_to_precision.side_effect = lambda s, a: str(a)
+        em.exchange.fetch_ticker.return_value = {"last": 63.0}
+        em.exchange.fetch_open_orders.return_value = []
+        em.exchange.create_order.return_value = {"id": "STOP-SPOT-OK"}
+        em.logger = MagicMock()
+        em.config = MagicMock()
+        em.config.use_exchange_stops = True
+        em.dry_run = False
+        em.active_stops = {}
+        em._userref_history = {}
+        em._with_stop_retries = lambda fn, **kw: fn()
+        em._generate_stop_userref = lambda *a, **k: "SL-spot"
+
+        result = em.place_stop_loss(
+            symbol="SOL/USDT", side=OrderSide.SELL, size=1.0,
+            stop_price=60.0, leverage=None,
+        )
+        assert result.success
+        sent_params = em.exchange.create_order.call_args.kwargs["params"]
+        assert "leverage" not in sent_params, (
+            "P138-followup: spot path leaked leverage into params. "
+            f"Kraken would reject. Sent: {sent_params}"
+        )
+
+    def test_execution_service_callers_pass_leverage(self):
+        """Both place_stop_loss call sites in execution_service.py must
+        pass leverage=. Source-level guard so future refactors can't
+        silently strip it."""
+        from pathlib import Path
+        p = Path(__file__).resolve().parents[2] / "core" / "execution_service.py"
+        if not p.exists():
+            pytest.skip("execution_service.py not at expected location")
+        src = p.read_text(encoding="utf-8")
+        # Count place_stop_loss(...) call blocks; each must have leverage= within ~250 chars
+        i = 0
+        sites_seen = 0
+        sites_with_leverage = 0
+        while True:
+            idx = src.find("place_stop_loss(", i)
+            if idx < 0:
+                break
+            sites_seen += 1
+            block = src[idx:idx + 400]
+            if "leverage=" in block:
+                sites_with_leverage += 1
+            i = idx + 1
+        assert sites_seen >= 2, (
+            f"Expected 2+ place_stop_loss call sites in execution_service.py, "
+            f"found {sites_seen}. Audit may be stale."
+        )
+        assert sites_seen == sites_with_leverage, (
+            f"P138-followup: {sites_seen - sites_with_leverage} of "
+            f"{sites_seen} place_stop_loss call sites in execution_service.py "
+            f"are missing leverage=. Margin stops will be placed as spot "
+            f"trigger orders that don't close the margin position."
+        )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "-s"])

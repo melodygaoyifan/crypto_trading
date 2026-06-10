@@ -3454,10 +3454,17 @@ async def execute_intent_v2(
 
                     # Always place HARD stop on exchange
                     if _stop_dec.hard_stop_active and _stop_dec.hard_stop_price:
+                        # [P138-followup 2026-06-09] Pass leverage so the
+                        # stop targets the same margin position as the
+                        # entry. Without this, a stop on a margin short
+                        # is a spot trigger order that doesn't close the
+                        # short when it fires.
+                        _c7_leverage = int(round(regime_leverage)) if regime_leverage > 1.0 else None
                         _c7_result = ctx.execution_manager.place_stop_loss(
                             symbol=_c7_symbol, side=_c7_stop_side,
                             size=base_quantity,
                             stop_price=round(_stop_dec.hard_stop_price, 2),
+                            leverage=_c7_leverage,
                         )
                         _soft_status = "ACTIVE" if _stop_dec.soft_stop_active else f"SUSPENDED({_stop_dec.soft_suspension_reason})"
                         if _c7_result.success:
@@ -3475,9 +3482,14 @@ async def execute_intent_v2(
                         _c7_stop_price = fill_price * (1 - _c7_stop_pct)
                     else:
                         _c7_stop_price = fill_price * (1 + _c7_stop_pct)
+                    # [P138-followup 2026-06-09] Same leverage plumbing
+                    # as the StopAuthority branch above — fallback path
+                    # must also target the margin position.
+                    _c7_leverage = int(round(regime_leverage)) if regime_leverage > 1.0 else None
                     _c7_result = ctx.execution_manager.place_stop_loss(
                         symbol=_c7_symbol, side=_c7_stop_side,
                         size=base_quantity, stop_price=round(_c7_stop_price, 2),
+                        leverage=_c7_leverage,
                     )
                     if _c7_result.success:
                         logger.info(f"[STOP] {asset}: placed at ${_c7_stop_price:,.2f} (fallback {_c7_stop_pct:.0%})")
