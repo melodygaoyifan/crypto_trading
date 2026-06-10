@@ -198,11 +198,24 @@ class LatentSpaceDriftDetector:
                 self.reference_means = np.mean(data, axis=0)
                 self.reference_stds = np.std(data, axis=0)
                 
-                # Compute covariance (for Mahalanobis distance)
+                # Compute covariance (for Mahalanobis distance).
+                # [P89-1 follow-up 2026-06-09] Promote silent fall-back to
+                # WARN. Falling back to identity quietly turns Mahalanobis
+                # distance into plain Euclidean — drift detection still
+                # runs but with degraded sensitivity to feature-axis
+                # variance structure. Operator needs to see the gap so
+                # the underlying numpy/data issue can be addressed.
                 try:
                     self.reference_covariance = np.cov(data.T)
-                except Exception:
+                except Exception as _cov_e:
                     self.reference_covariance = np.eye(self.latent_dim)
+                    logger.warning(
+                        f"[DRIFT_DETECTOR] np.cov failed "
+                        f"({type(_cov_e).__name__}: {_cov_e}); reference_covariance "
+                        f"degraded to identity matrix — Mahalanobis collapses to "
+                        f"Euclidean. Drift severity may under-report. data.shape="
+                        f"{data.shape}, latent_dim={self.latent_dim}."
+                    )
     
     def check_drift(self) -> Tuple[bool, float, DriftSeverity]:
         """
