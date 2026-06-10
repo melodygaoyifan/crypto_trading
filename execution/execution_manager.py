@@ -119,6 +119,14 @@ class OrderResult:
     maker_reprice_attempts: int = 0
     maker_reprice_cancel_count: int = 0
     time_to_fill_seconds: float = 0.0
+    # [P139 2026-06-10] Flag set TRUE when execute_order returns a CACHED
+    # idempotency result rather than executing a fresh order at Kraken.
+    # Caller MUST check this and skip record_fill / _paper_positions
+    # mutation when True — otherwise the same Kraken order_id is recorded
+    # as a phantom fill every tick the intent shape stays the same,
+    # inflating paper_positions over weeks (root cause of the 245-SOL-
+    # phantom-vs-8.6-actual divergence found 2026-06-10).
+    is_cached_idempotent: bool = False
 
     def to_dict(self) -> Dict:
         d = {
@@ -137,6 +145,10 @@ class OrderResult:
             "error_message": self.error_message,
             "timestamp": self.timestamp.isoformat(),
             "userref": self.userref,
+            # [P139 2026-06-10] Always serialize so downstream callers (e.g.
+            # core/execution_service.py:execute_intent_v2) can short-circuit
+            # post-execution bookkeeping on idempotent-cache returns.
+            "is_cached_idempotent": self.is_cached_idempotent,
         }
         if self.maker_reprice_attempts > 0:
             d["maker_reprice_attempts"] = self.maker_reprice_attempts
@@ -1194,6 +1206,13 @@ class ExecutionManager:
                     status=OrderStatus.FILLED,
                     userref=userref,
                     raw_response=existing,
+                    # [P139 2026-06-10] Mark this as a CACHED return so the
+                    # caller skips post-execution bookkeeping. The order
+                    # already filled (recorded the first time we got here);
+                    # rerunning record_fill / _paper_positions writes here
+                    # would inflate the position by counting the same
+                    # Kraken execution as a fresh fill.
+                    is_cached_idempotent=True,
                 )
 
         # Build Kraken margin params if leveraged

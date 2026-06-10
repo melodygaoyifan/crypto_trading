@@ -114,7 +114,18 @@ class ShadowLedgerWriter:
         # not-yet-replayed window.
         self.frozen_allocations: Set[str] = set()
         self._frozen_allocations_replayed: bool = False
-        
+
+        # [P139 belt-and-suspenders — 2026-06-10] Set of order_ids that
+        # already have a recorded FILL. Defense-in-depth against the
+        # idempotency-cache phantom-fill bug: even if a caller in
+        # execute_intent_v2 forgets to check is_cached_idempotent, the
+        # second record_fill() with the same order_id is rejected here
+        # with a one-shot WARN per order_id. Replay from JSONL on
+        # startup so a fresh process doesn't accept duplicates that
+        # were already recorded by the prior process.
+        self._recorded_fill_order_ids: Set[str] = set()
+        self._duplicate_fill_warned: Set[str] = set()
+
         # Current file handle
         self._current_date: Optional[str] = None
         self._file_handle = None
@@ -291,8 +302,36 @@ class ShadowLedgerWriter:
         fee_currency: str = "USD",
         realized_pnl: float = 0.0,
         extra: Dict = None,
-    ):
-        """Record order fill with optional realized PnL."""
+    ) -> bool:
+        """Record order fill with optional realized PnL.
+
+        Returns True if recorded, False if rejected as duplicate (P139).
+        """
+        # [P139 belt-and-suspenders — 2026-06-10] Refuse to record a
+        # duplicate FILL for an order_id we've already seen. Without
+        # this guard, the idempotency-cache phantom-fill bug (see
+        # CLAUDE.md P139 + execution_manager.execute_order:1180) would
+        # silently inflate paper_positions every tick. WARN once per
+        # order_id so repeated dups don't spam, but the first one is
+        # visible. Falsy order_ids skip the dedup (paper-mode synthetic
+        # ids that legitimately can collide).
+        _oid_str = str(order_id) if order_id else ""
+        if _oid_str:
+            with self._lock:
+                if _oid_str in self._recorded_fill_order_ids:
+                    if _oid_str not in self._duplicate_fill_warned:
+                        self._duplicate_fill_warned.add(_oid_str)
+                        logger.warning(
+                            f"[ShadowLedger] record_fill duplicate REJECTED: "
+                            f"order_id={_oid_str!r} already has a FILL record "
+                            f"(asset={asset}, side={side}, size={size}). "
+                            f"Likely cause: execute_order's idempotency-cache "
+                            f"path returned the cached order_id and the caller "
+                            f"did not check is_cached_idempotent. See P139."
+                        )
+                    return False
+                self._recorded_fill_order_ids.add(_oid_str)
+
         # [P85 architectural] Order is filled — release the tracking slot
         # so it's not counted as outstanding by future reconciler runs.
         # Partial fills: this releases on FIRST fill. Acceptable trade-off
@@ -317,6 +356,7 @@ class ShadowLedgerWriter:
                 **(extra or {}),
             }
         )
+        return True
 
     def release_order(self, order_id: str) -> bool:
         """[P85 architectural] Explicitly release an order_id from the
@@ -355,6 +395,12 @@ class ShadowLedgerWriter:
         from datetime import timedelta
         now = datetime.now(timezone.utc)
         seeded: Set[str] = set()
+        # [P139 belt-and-suspenders] Seed the FILL-dedup set in the same
+        # JSONL pass — every order_id that ever had a FILL record goes
+        # into _recorded_fill_order_ids. A fresh process restart then
+        # rejects re-recording any of those, even if the caller's P139
+        # layer-1 short-circuit is missing or buggy.
+        seen_fill_oids: Set[str] = set()
         for d in range(days_back, -1, -1):  # oldest -> newest
             day = (now - timedelta(days=d)).strftime("%Y%m%d")
             path = self.output_dir / f"ledger_{day}.jsonl"
@@ -379,6 +425,7 @@ class ShadowLedgerWriter:
                             seeded.add(str(oid))
                         elif entry_type == LedgerEntryType.FILL.value:
                             seeded.discard(str(oid))
+                            seen_fill_oids.add(str(oid))
             except Exception as e:
                 logger.warning(
                     f"[ShadowLedgerWriter] replay_frozen_allocations: "
@@ -389,12 +436,15 @@ class ShadowLedgerWriter:
             # Union with anything already tracked in-process (don't clobber
             # orders submitted between __init__ and replay).
             self.frozen_allocations |= seeded
+            self._recorded_fill_order_ids |= seen_fill_oids
             self._frozen_allocations_replayed = True
             count = len(self.frozen_allocations)
+            fill_count = len(self._recorded_fill_order_ids)
         logger.info(
             f"[ShadowLedgerWriter] replay_frozen_allocations: seeded "
-            f"{count} outstanding order(s) from last {days_back+1} day(s) "
-            f"of JSONL."
+            f"{count} outstanding order(s) + {fill_count} already-filled "
+            f"order_id(s) for FILL-dedup (P139) from last {days_back+1} "
+            f"day(s) of JSONL."
         )
         return count
     

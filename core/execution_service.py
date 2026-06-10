@@ -1898,6 +1898,30 @@ async def execute_intent_v2(
             pass
         return exec_result
 
+    # [P139 2026-06-10] Idempotency-cache short-circuit. execute_order's
+    # check_userref_executed path returns success=True with the previously
+    # cached order_id when the same userref is reused. If we run the rest
+    # of execute_intent_v2 in that case, we re-record the SAME Kraken
+    # execution as a fresh fill — paper_positions inflate, shadow_ledger
+    # gets a duplicate FILL entry, anti_churn / thesis_budget / existence
+    # _fuse all double-count. Over weeks, the cumulative drift produces
+    # the 245-SOL-phantom-vs-8.6-actual divergence found 2026-06-10.
+    #
+    # Bookkeeping for the original (first-time) fill already happened on
+    # the tick that placed the order. Skip everything below — the order
+    # is in the past tense from our perspective.
+    if exec_result.get("is_cached_idempotent"):
+        logger.warning(
+            f"[P139 IDEMPOTENT-CACHE] {asset}: execute_order returned "
+            f"cached result (userref already executed, order_id="
+            f"{exec_result.get('order_id')!r}); SKIPPING post-execution "
+            f"bookkeeping (record_fill, _paper_positions update, tranche, "
+            f"anti_churn, thesis_budget, existence_fuse) to avoid phantom "
+            f"position inflation. See CLAUDE.md P139."
+        )
+        exec_result["p0_details"]["p139_cache_skip"] = True
+        return exec_result
+
     # =====================================================================
     # Phase 1.9b: Update paper position tracker
     # Three-branch logic: FULL EXIT / PARTIAL EXIT / ENTRY+SCALE-IN

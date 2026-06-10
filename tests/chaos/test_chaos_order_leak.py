@@ -303,5 +303,199 @@ class TestChaosStopLossMarginLeverage:
         )
 
 
+# =====================================================================
+# Scenario 13: Idempotency-cache phantom-fill inflation (P139)
+# =====================================================================
+
+class TestChaosIdempotencyCachePhantomFill:
+    """P139 (2026-06-10): execute_order's idempotency cache silently
+    returned success=True with the cached order_id when the same userref
+    was re-used. The caller treated each cache hit as a fresh fill —
+    paper_positions inflated, shadow_ledger gained duplicate FILL
+    entries every tick. Over 6 weeks, this produced 245 SOL of phantom
+    long exposure vs 8.6 actual on Kraken. CLAUDE.md P139.
+
+    Two layers of defense, both pinned here:
+      L1: OrderResult.is_cached_idempotent flag; caller short-circuits
+      L2: ShadowLedgerWriter.record_fill dedupes by order_id
+    """
+
+    # -- Layer 1 --------------------------------------------------------
+
+    def test_orderresult_has_is_cached_idempotent_flag(self):
+        """The flag must exist on OrderResult and default False, so
+        legitimate fresh fills aren't accidentally skipped."""
+        from execution.execution_manager import OrderResult
+        r = OrderResult(success=True)
+        assert hasattr(r, "is_cached_idempotent"), (
+            "P139 layer-1: OrderResult.is_cached_idempotent missing. "
+            "execute_intent_v2 cannot short-circuit on cache hits → "
+            "phantom inflation returns."
+        )
+        assert r.is_cached_idempotent is False, (
+            "Default must be False — otherwise every fresh fill is "
+            "treated as a cache hit and skipped."
+        )
+
+    def test_orderresult_dict_serializes_flag(self):
+        """to_dict must serialize the flag — execution_service reads
+        exec_result.get('is_cached_idempotent') which is the dict form."""
+        from execution.execution_manager import OrderResult
+        r = OrderResult(success=True, is_cached_idempotent=True)
+        d = r.to_dict()
+        assert d.get("is_cached_idempotent") is True, (
+            f"P139 layer-1: to_dict() must serialize is_cached_idempotent. "
+            f"Got: {d}"
+        )
+
+    def test_execute_order_cache_hit_sets_flag(self):
+        """Sniff execute_order source: the cache-hit return path must
+        set is_cached_idempotent=True. Otherwise L1 is bypassed."""
+        import inspect
+        from execution.execution_manager import ExecutionManager
+        src = inspect.getsource(ExecutionManager.execute_order)
+        # The cache-hit block lives between check_userref_executed and
+        # the next return. Find that block.
+        idx = src.find("check_userref_executed")
+        assert idx >= 0, "execute_order no longer calls check_userref_executed?"
+        block = src[idx:idx + 2000]
+        assert "is_cached_idempotent=True" in block or "is_cached_idempotent = True" in block, (
+            "P139 layer-1: execute_order's cache-hit OrderResult must set "
+            "is_cached_idempotent=True. Without it, the caller can't tell "
+            "this is a cached return."
+        )
+
+    def test_execute_intent_v2_short_circuits_on_cache_hit(self):
+        """The execution_service.py post-execution block must early-return
+        when is_cached_idempotent is True. Otherwise record_fill and the
+        paper_positions mutation re-run, re-introducing inflation."""
+        from pathlib import Path
+        p = Path(__file__).resolve().parents[2] / "core" / "execution_service.py"
+        src = p.read_text(encoding="utf-8")
+        # Find the is_cached_idempotent guard
+        idx = src.find('exec_result.get("is_cached_idempotent")')
+        if idx < 0:
+            idx = src.find("exec_result.get('is_cached_idempotent')")
+        assert idx >= 0, (
+            "P139 layer-1: execute_intent_v2 does not check "
+            "is_cached_idempotent. Cache-hit returns will re-trigger "
+            "record_fill / _paper_positions update / anti_churn / "
+            "thesis_budget / existence_fuse — phantom inflation returns."
+        )
+        # Confirm an early-return shape follows (within ~600 chars)
+        following = src[idx:idx + 600]
+        assert "return exec_result" in following, (
+            "P139 layer-1: is_cached_idempotent check present but no "
+            "subsequent `return exec_result`. The guard does nothing."
+        )
+
+    # -- Layer 2 --------------------------------------------------------
+
+    def test_shadow_ledger_rejects_duplicate_fill(self):
+        """First record_fill with a given order_id succeeds; second one
+        is rejected returning False. The defense-in-depth catches L1
+        bugs and any future caller that forgets to check the flag."""
+        import tempfile, shutil
+        from defense.shadow_ledger_jsonl import ShadowLedgerWriter
+
+        tmp = tempfile.mkdtemp()
+        try:
+            sl = ShadowLedgerWriter(output_dir=tmp, auto_flush=False)
+            ok1 = sl.record_fill(
+                asset="SOL", order_id="OVRJNB-ME53X-64MQWH",
+                fill_id="F-1", side="SELL", size=8.0, price=84.88,
+            )
+            assert ok1 is True, "first record_fill must succeed"
+
+            # Same order_id, different size/price/side — must reject
+            ok2 = sl.record_fill(
+                asset="SOL", order_id="OVRJNB-ME53X-64MQWH",
+                fill_id="F-2", side="SELL", size=7.5, price=85.0,
+            )
+            assert ok2 is False, (
+                "P139 layer-2: duplicate order_id must be rejected. "
+                "Without this, the idempotency-cache phantom-fill bug "
+                "returns silently."
+            )
+            sl.close()
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_shadow_ledger_falsy_order_id_does_not_dedup(self):
+        """Paper-mode synthetic flows may emit None/'' order_ids. Those
+        must NOT participate in dedup (otherwise the first None blocks
+        every subsequent None fill, breaking paper flows)."""
+        import tempfile, shutil
+        from defense.shadow_ledger_jsonl import ShadowLedgerWriter
+
+        tmp = tempfile.mkdtemp()
+        try:
+            sl = ShadowLedgerWriter(output_dir=tmp, auto_flush=False)
+            assert sl.record_fill(asset="SOL", order_id=None, fill_id="F-a",
+                                  side="SELL", size=1.0, price=1.0) is True
+            assert sl.record_fill(asset="SOL", order_id=None, fill_id="F-b",
+                                  side="SELL", size=2.0, price=2.0) is True
+            assert sl.record_fill(asset="SOL", order_id="", fill_id="F-c",
+                                  side="SELL", size=3.0, price=3.0) is True
+            sl.close()
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_shadow_ledger_dedup_survives_restart_via_replay(self):
+        """A fresh process restart must NOT accept a duplicate fill that
+        was already recorded by the prior process. Replay rebuilds the
+        dedup set from JSONL history."""
+        import tempfile, shutil
+        from defense.shadow_ledger_jsonl import ShadowLedgerWriter
+
+        tmp = tempfile.mkdtemp()
+        try:
+            sl1 = ShadowLedgerWriter(output_dir=tmp, auto_flush=False)
+            sl1.record_fill(
+                asset="BTC", order_id="OYLWMT-VOSEM-XRQ4JP",
+                fill_id="F-1", side="SELL", size=0.0103, price=77520.9,
+            )
+            sl1.flush()
+            sl1.close()
+
+            sl2 = ShadowLedgerWriter(output_dir=tmp, auto_flush=False)
+            assert sl2._recorded_fill_order_ids == set(), (
+                "fresh process must start empty"
+            )
+            sl2.replay_frozen_allocations_from_jsonl(days_back=0)
+            assert "OYLWMT-VOSEM-XRQ4JP" in sl2._recorded_fill_order_ids, (
+                "P139 layer-2: replay must seed _recorded_fill_order_ids "
+                "from prior JSONL history. Without this, a restart "
+                "accepts duplicates the prior process already recorded."
+            )
+
+            # Post-replay: same order_id must be rejected
+            ok = sl2.record_fill(
+                asset="BTC", order_id="OYLWMT-VOSEM-XRQ4JP",
+                fill_id="F-2", side="SELL", size=0.0103, price=77520.9,
+            )
+            assert ok is False, "post-replay duplicate must be rejected"
+            sl2.close()
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_p139_replay_log_mentions_fill_dedup(self):
+        """The replay log line must surface the FILL-dedup seed count
+        so operators can verify the seeding worked at startup."""
+        import inspect
+        from defense.shadow_ledger_jsonl import ShadowLedgerWriter
+        src = inspect.getsource(
+            ShadowLedgerWriter.replay_frozen_allocations_from_jsonl
+        )
+        assert "_recorded_fill_order_ids" in src, (
+            "P139 layer-2: replay does not seed _recorded_fill_order_ids. "
+            "Without seeding, a restart accepts duplicates."
+        )
+        assert "P139" in src, (
+            "P139 layer-2: replay log should reference P139 so operator "
+            "can correlate startup line with the documented fix."
+        )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "-s"])
