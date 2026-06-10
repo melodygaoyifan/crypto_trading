@@ -202,14 +202,34 @@ class TestStopOrderRetryPolicy:
         assert mgr.is_entries_frozen() is False
 
     def test_userref_deterministic(self):
-        """Same inputs must produce the same userref (idempotency guarantee)."""
+        """Same inputs must produce the same userref (idempotency guarantee).
+
+        [TEST-UPDATE 2026-06-09] Per CLAUDE.md P95, _generate_stop_userref
+        was deliberately changed to drop stop_price from the hash —
+        userref now keyed on (symbol, side, suffix) only. The "different
+        price → different userref" assertion was the BUG P95 fixed:
+        recomputing trigger prices each tick produced a new userref each
+        tick, stacking orphan stops at Kraken. The test now asserts the
+        new contract: userref is STABLE across price drift for the same
+        (symbol, side, suffix) triple.
+        """
         ref1 = ExecutionManager._generate_stop_userref("BTC/USD", "SELL", 40000.0, "SL")
         ref2 = ExecutionManager._generate_stop_userref("BTC/USD", "SELL", 40000.0, "SL")
         assert ref1 == ref2
 
-        # Different price -> different userref
+        # [P95] Different price MUST still produce the SAME userref so the
+        # ground-truth dedup at fetch_open_orders catches the prior stop.
         ref3 = ExecutionManager._generate_stop_userref("BTC/USD", "SELL", 39999.0, "SL")
-        assert ref3 != ref1
+        assert ref3 == ref1, (
+            "P95 contract violated: userref drifts with stop_price. This "
+            "regresses the SOL/BTC stop-orphan cascade fix."
+        )
+
+        # Different (symbol, side, suffix) must still differ.
+        ref4 = ExecutionManager._generate_stop_userref("ETH/USD", "SELL", 40000.0, "SL")
+        assert ref4 != ref1
+        ref5 = ExecutionManager._generate_stop_userref("BTC/USD", "BUY", 40000.0, "SL")
+        assert ref5 != ref1
 
     def test_dry_run_skips_retries(self):
         """In dry_run mode, place_stop_loss succeeds immediately without retries."""

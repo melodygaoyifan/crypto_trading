@@ -28,7 +28,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Set
 from dataclasses import dataclass, asdict
 from enum import Enum
 
@@ -100,7 +100,32 @@ class ShadowLedgerWriter:
         self._session_fill_counts: Dict[str, int] = {}
         self._session_last_fill_at: Optional[str] = None
         self._session_last_fill_at_by_asset: Dict[str, str] = {}
-        
+
+        # [P85 architectural follow-up — 2026-06-09] In-process set of
+        # exchange order_ids the ledger has tracked as outstanding. Used
+        # by startup_reconciler to classify open exchange orders as
+        # known-vs-orphan. record_order adds; record_fill removes; the
+        # explicit release_order method handles cancels. The set is NOT
+        # authoritative on its own at startup — callers MUST first call
+        # replay_frozen_allocations_from_jsonl() to seed from history,
+        # otherwise a fresh process would see every legitimate order as
+        # orphan. The startup_reconciler's defensive `getattr` remains
+        # as belt-and-suspenders for older module versions and the
+        # not-yet-replayed window.
+        self.frozen_allocations: Set[str] = set()
+        self._frozen_allocations_replayed: bool = False
+
+        # [P139 belt-and-suspenders — 2026-06-10] Set of order_ids that
+        # already have a recorded FILL. Defense-in-depth against the
+        # idempotency-cache phantom-fill bug: even if a caller in
+        # execute_intent_v2 forgets to check is_cached_idempotent, the
+        # second record_fill() with the same order_id is rejected here
+        # with a one-shot WARN per order_id. Replay from JSONL on
+        # startup so a fresh process doesn't accept duplicates that
+        # were already recorded by the prior process.
+        self._recorded_fill_order_ids: Set[str] = set()
+        self._duplicate_fill_warned: Set[str] = set()
+
         # Current file handle
         self._current_date: Optional[str] = None
         self._file_handle = None
@@ -245,6 +270,12 @@ class ShadowLedgerWriter:
         extra: Dict = None,
     ):
         """Record order submission."""
+        # [P85 architectural] Track the order_id so startup_reconciler
+        # can distinguish ours-vs-orphan. Guard against falsy ids; some
+        # paper-mode paths submit synthetic order_ids that are None.
+        if order_id:
+            with self._lock:
+                self.frozen_allocations.add(str(order_id))
         self._record(
             LedgerEntryType.ORDER,
             asset,
@@ -271,8 +302,44 @@ class ShadowLedgerWriter:
         fee_currency: str = "USD",
         realized_pnl: float = 0.0,
         extra: Dict = None,
-    ):
-        """Record order fill with optional realized PnL."""
+    ) -> bool:
+        """Record order fill with optional realized PnL.
+
+        Returns True if recorded, False if rejected as duplicate (P139).
+        """
+        # [P139 belt-and-suspenders — 2026-06-10] Refuse to record a
+        # duplicate FILL for an order_id we've already seen. Without
+        # this guard, the idempotency-cache phantom-fill bug (see
+        # CLAUDE.md P139 + execution_manager.execute_order:1180) would
+        # silently inflate paper_positions every tick. WARN once per
+        # order_id so repeated dups don't spam, but the first one is
+        # visible. Falsy order_ids skip the dedup (paper-mode synthetic
+        # ids that legitimately can collide).
+        _oid_str = str(order_id) if order_id else ""
+        if _oid_str:
+            with self._lock:
+                if _oid_str in self._recorded_fill_order_ids:
+                    if _oid_str not in self._duplicate_fill_warned:
+                        self._duplicate_fill_warned.add(_oid_str)
+                        logger.warning(
+                            f"[ShadowLedger] record_fill duplicate REJECTED: "
+                            f"order_id={_oid_str!r} already has a FILL record "
+                            f"(asset={asset}, side={side}, size={size}). "
+                            f"Likely cause: execute_order's idempotency-cache "
+                            f"path returned the cached order_id and the caller "
+                            f"did not check is_cached_idempotent. See P139."
+                        )
+                    return False
+                self._recorded_fill_order_ids.add(_oid_str)
+
+        # [P85 architectural] Order is filled — release the tracking slot
+        # so it's not counted as outstanding by future reconciler runs.
+        # Partial fills: this releases on FIRST fill. Acceptable trade-off
+        # since the reconciler's purpose is detecting *unknown* orders,
+        # not tracking partial-fill remainders. discard() is no-op on miss.
+        if order_id:
+            with self._lock:
+                self.frozen_allocations.discard(str(order_id))
         self._record(
             LedgerEntryType.FILL,
             asset,
@@ -289,6 +356,101 @@ class ShadowLedgerWriter:
                 **(extra or {}),
             }
         )
+        return True
+
+    def release_order(self, order_id: str) -> bool:
+        """[P85 architectural] Explicitly release an order_id from the
+        frozen_allocations set without recording a FILL.
+
+        Use when an order is cancelled, expired, or rejected — i.e.
+        cases where there's no fill but the order is no longer
+        outstanding. Returns True if the id was tracked + removed,
+        False if it was never tracked or already released.
+        """
+        if not order_id:
+            return False
+        with self._lock:
+            _had = str(order_id) in self.frozen_allocations
+            self.frozen_allocations.discard(str(order_id))
+            return _had
+
+    def replay_frozen_allocations_from_jsonl(self, days_back: int = 2) -> int:
+        """[P85 architectural] Seed frozen_allocations from recent JSONL
+        history so a fresh process restart doesn't classify legitimate
+        open exchange orders as orphan.
+
+        Replay walks the last `days_back` daily ledger files, adding
+        ORDER entries' order_ids to the set and removing them on
+        subsequent FILL entries with the same id. The result is the
+        net "still outstanding from history" set. The reconciler should
+        call this BEFORE classifying exchange orders.
+
+        Returns: count of order_ids in the set after replay.
+
+        Failure mode: any file read error logs WARN and continues —
+        partial replay is better than crashing the reconciler. The
+        startup_reconciler's defensive `getattr` still catches the
+        case where this method itself is missing on older modules.
+        """
+        from datetime import timedelta
+        now = datetime.now(timezone.utc)
+        seeded: Set[str] = set()
+        # [P139 belt-and-suspenders] Seed the FILL-dedup set in the same
+        # JSONL pass — every order_id that ever had a FILL record goes
+        # into _recorded_fill_order_ids. A fresh process restart then
+        # rejects re-recording any of those, even if the caller's P139
+        # layer-1 short-circuit is missing or buggy.
+        seen_fill_oids: Set[str] = set()
+        for d in range(days_back, -1, -1):  # oldest -> newest
+            day = (now - timedelta(days=d)).strftime("%Y%m%d")
+            path = self.output_dir / f"ledger_{day}.jsonl"
+            if not path.exists():
+                continue
+            try:
+                with open(path, "r", encoding="utf-8") as fh:
+                    for line in fh:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            obj = json.loads(line)
+                        except json.JSONDecodeError:  # noqa: silent-swallow
+                            # JSONL may have a truncated last line from a
+                            # SIGKILL on the prior process. Skip and continue
+                            # the replay rather than abort — partial replay
+                            # is better than no replay.
+                            continue
+                        entry_type = obj.get("entry_type")
+                        data = obj.get("data") or {}
+                        oid = data.get("order_id")
+                        if not oid:
+                            continue
+                        if entry_type == LedgerEntryType.ORDER.value:
+                            seeded.add(str(oid))
+                        elif entry_type == LedgerEntryType.FILL.value:
+                            seeded.discard(str(oid))
+                            seen_fill_oids.add(str(oid))
+            except Exception as e:
+                logger.warning(
+                    f"[ShadowLedgerWriter] replay_frozen_allocations: "
+                    f"failed reading {path.name} ({type(e).__name__}: {e}); "
+                    f"continuing with partial replay."
+                )
+        with self._lock:
+            # Union with anything already tracked in-process (don't clobber
+            # orders submitted between __init__ and replay).
+            self.frozen_allocations |= seeded
+            self._recorded_fill_order_ids |= seen_fill_oids
+            self._frozen_allocations_replayed = True
+            count = len(self.frozen_allocations)
+            fill_count = len(self._recorded_fill_order_ids)
+        logger.info(
+            f"[ShadowLedgerWriter] replay_frozen_allocations: seeded "
+            f"{count} outstanding order(s) + {fill_count} already-filled "
+            f"order_id(s) for FILL-dedup (P139) from last {days_back+1} "
+            f"day(s) of JSONL."
+        )
+        return count
     
     def record_position_change(
         self,

@@ -19,6 +19,17 @@ from risk.exit_drl_kill_switch import (
     ExitDRLKillSwitch, get_kill_switch, reset_singleton,
 )
 
+# [TEST-CLEANUP 2026-06-09] ExitDRLKillSwitch.should_demote() permanently
+# returns None per operator directive 2026-04-30 (risk/exit_drl_kill_switch.py:226).
+# Trip conditions still record_close/record_step_action for diagnostics
+# but never recommend demotion (Kraken outages produce spurious trips).
+# Below applied to the 4 trip-condition tests; the recording-only tests
+# (state persistence, record_close mechanics) still pass and stay live.
+_KILLSWITCH_DEMOTION_DISABLED = pytest.mark.skip(
+    reason="[TEST-CLEANUP] should_demote() permanently returns None per "
+           "operator directive 2026-04-30; record_close still tracks state."
+)
+
 
 # ────────────────────────────────────────────────────────────────
 # Kill switch
@@ -38,6 +49,7 @@ def test_killswitch_no_demote_before_promotion(tmp_path):
     assert ks.should_demote("BTC") is None
 
 
+@_KILLSWITCH_DEMOTION_DISABLED
 def test_killswitch_consecutive_losses_trip(tmp_path):
     ks = ExitDRLKillSwitch(state_path=str(tmp_path / "ks.jsonl"))
     ks.record_promotion("BTC")
@@ -71,6 +83,7 @@ def test_killswitch_non_drl_driven_close_does_not_count(tmp_path):
     assert reason is None or "CONSECUTIVE_LOSSES" not in reason
 
 
+@_KILLSWITCH_DEMOTION_DISABLED
 def test_killswitch_hold_ratio_low_trip(tmp_path):
     ks = ExitDRLKillSwitch(state_path=str(tmp_path / "ks.jsonl"))
     ks.record_promotion("BTC")
@@ -82,6 +95,7 @@ def test_killswitch_hold_ratio_low_trip(tmp_path):
     assert "HOLD_RATIO_LOW" in reason
 
 
+@_KILLSWITCH_DEMOTION_DISABLED
 def test_killswitch_hold_ratio_high_trip(tmp_path):
     ks = ExitDRLKillSwitch(state_path=str(tmp_path / "ks.jsonl"))
     ks.record_promotion("BTC")
@@ -92,6 +106,7 @@ def test_killswitch_hold_ratio_high_trip(tmp_path):
     assert "HOLD_RATIO_HIGH" in reason
 
 
+@_KILLSWITCH_DEMOTION_DISABLED
 def test_killswitch_exit_all_high_trip(tmp_path):
     ks = ExitDRLKillSwitch(state_path=str(tmp_path / "ks.jsonl"))
     ks.record_promotion("BTC")

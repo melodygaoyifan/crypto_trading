@@ -119,6 +119,14 @@ class OrderResult:
     maker_reprice_attempts: int = 0
     maker_reprice_cancel_count: int = 0
     time_to_fill_seconds: float = 0.0
+    # [P139 2026-06-10] Flag set TRUE when execute_order returns a CACHED
+    # idempotency result rather than executing a fresh order at Kraken.
+    # Caller MUST check this and skip record_fill / _paper_positions
+    # mutation when True — otherwise the same Kraken order_id is recorded
+    # as a phantom fill every tick the intent shape stays the same,
+    # inflating paper_positions over weeks (root cause of the 245-SOL-
+    # phantom-vs-8.6-actual divergence found 2026-06-10).
+    is_cached_idempotent: bool = False
 
     def to_dict(self) -> Dict:
         d = {
@@ -137,6 +145,10 @@ class OrderResult:
             "error_message": self.error_message,
             "timestamp": self.timestamp.isoformat(),
             "userref": self.userref,
+            # [P139 2026-06-10] Always serialize so downstream callers (e.g.
+            # core/execution_service.py:execute_intent_v2) can short-circuit
+            # post-execution bookkeeping on idempotent-cache returns.
+            "is_cached_idempotent": self.is_cached_idempotent,
         }
         if self.maker_reprice_attempts > 0:
             d["maker_reprice_attempts"] = self.maker_reprice_attempts
@@ -147,6 +159,14 @@ class OrderResult:
                 if self.requested_size > 0 else 0.0
             )
         return d
+
+
+class _SkipSpotBalance(Exception):
+    """[P138-followup 2026-06-09] Internal sentinel raised inside
+    place_stop_loss to bail out of the spot balance check when the
+    stop protects a margin position. Caught one block down as a
+    no-op so the rest of place_stop_loss runs unchanged.
+    """
 
 
 class ExecutionManager:
@@ -800,6 +820,7 @@ class ExecutionManager:
         size: float,
         price: Optional[float],
         order_type,
+        leverage: Optional[int] = None,
     ) -> Tuple[float, str]:
         """P87 2026-04-26: dynamic balance check before placing an order.
 
@@ -852,6 +873,15 @@ class ExecutionManager:
                 f"on `side`, not on `size`. Upstream sizing produced an "
                 f"unsigned-magnitude bug; check slice/scaling pipeline."
             )
+        # 2026-06-09: margin orders (leverage > 1) must NOT use spot balance.
+        # Opening a margin short never touches spot base; closing one releases
+        # margin collateral, it doesn't spend full notional in spot quote.
+        # Checking spot here would reject legitimate margin closes when the
+        # spot wallet is small (the production incident pattern). Kraken
+        # validates margin server-side; if collateral is insufficient, P79
+        # classifier surfaces `EOrder:Insufficient margin` as PERMANENT.
+        if leverage is not None and leverage > 1:
+            return size, ""
         # 2026-05-03: lookup exchange minimum once so dust-clamp can reject
         # below-min results instead of returning sub-minimum sizes that are
         # guaranteed to fail at the order layer (and waste 2 reprice rounds
@@ -1126,7 +1156,7 @@ class ExecutionManager:
         # If clamped to 0, REJECT with explicit guidance.
         _orig_size = size
         size, _balance_msg = self._clamp_size_to_balance_v2(
-            symbol, side, size, price, order_type
+            symbol, side, size, price, order_type, leverage=leverage
         )
         if size <= 0:
             # 2026-04-30: REJECT msg was empty when upstream passed size<=0
@@ -1176,6 +1206,13 @@ class ExecutionManager:
                     status=OrderStatus.FILLED,
                     userref=userref,
                     raw_response=existing,
+                    # [P139 2026-06-10] Mark this as a CACHED return so the
+                    # caller skips post-execution bookkeeping. The order
+                    # already filled (recorded the first time we got here);
+                    # rerunning record_fill / _paper_positions writes here
+                    # would inflate the position by counting the same
+                    # Kraken execution as a fresh fill.
+                    is_cached_idempotent=True,
                 )
 
         # Build Kraken margin params if leveraged
@@ -2215,13 +2252,21 @@ class ExecutionManager:
                        symbol: str,
                        side: OrderSide,
                        size: float,
-                       stop_price: float) -> OrderResult:
+                       stop_price: float,
+                       leverage: Optional[int] = None) -> OrderResult:
         """
         Place exchange-native stop loss order with retry + idempotency.
 
         [P0-02] Retries with exponential backoff on failure. Uses a
         deterministic userref so retries never create duplicate orders.
         On final failure, applies stop_order_failure_policy.
+
+        [P138-followup 2026-06-09] `leverage` must match the position
+        being protected. A stop on a margin short opened at 2x must
+        carry leverage=2 so the trigger order closes the margin
+        position; otherwise Kraken treats it as a spot trigger that
+        OPENS a new spot long when fired, leaving the margin short
+        un-protected. Same shape as P138 on the watchdog close paths.
         """
         if not self.config.use_exchange_stops:
             return OrderResult(
@@ -2365,6 +2410,18 @@ class ExecutionManager:
             _stop_size_for_kraken = size
             _balance_probe_used = False
             try:
+                # [P138-followup 2026-06-09] Margin stops validated by
+                # Kraken against margin collateral, not spot. Bail out
+                # of the spot balance check entirely. _SkipSpotBalance
+                # is a private sentinel caught one block down to keep
+                # the existing 90-line balance-check body unchanged.
+                if leverage is not None and leverage > 1:
+                    self.logger.info(
+                        f"[STOP-MARGIN] {symbol} {side.value.lower()}: "
+                        f"leverage={leverage}x — skipping spot balance clamp; "
+                        f"Kraken validates margin collateral server-side."
+                    )
+                    raise _SkipSpotBalance()
                 _bal = self.exchange.fetch_balance()
                 _free = (_bal or {}).get('free', {}) or {}
                 _base, _quote = symbol.split('/')
@@ -2435,6 +2492,12 @@ class ExecutionManager:
                         )
                         _stop_size_for_kraken = _max_affordable_size
                         _balance_probe_used = True
+            except _SkipSpotBalance:  # noqa: silent-swallow
+                # [P138-followup] Margin order — intentional bypass.
+                # _stop_size_for_kraken stays at the requested `size`,
+                # _balance_probe_used stays False. Kraken will validate
+                # margin collateral when the trigger order is built.
+                pass
             except Exception as _bal_e:  # noqa: silent-swallow
                 # fetch_balance failed — fall back to P84 blanket buffer.
                 self.logger.warning(
@@ -2617,6 +2680,17 @@ class ExecutionManager:
             # Confirmed pattern from issue ccxt#19920 and issue ccxt#20814
             # comments. Working recipe: type='market' + side + amount +
             # NO positional price + params['stopLossPrice'].
+            # [P138-followup 2026-06-09] Inject leverage so this trigger
+            # order targets the same margin position as the entry.
+            # Without this the stop is a SPOT trigger — when fired it
+            # opens a NEW spot position instead of closing the margin
+            # one, leaving the actual exposure un-protected.
+            _stop_params = {
+                'userref': userref,
+                'stopLossPrice': _norm_price_str,
+            }
+            if leverage is not None and leverage > 1:
+                _stop_params['leverage'] = leverage
             order = self.exchange.create_order(
                 symbol=symbol,
                 type='market',                          # parent order type
@@ -2625,10 +2699,7 @@ class ExecutionManager:
                 price=None,                             # MUST be None — let ccxt
                                                         # use stopLossPrice from
                                                         # params as the trigger
-                params={
-                    'userref': userref,
-                    'stopLossPrice': _norm_price_str,   # ccxt unified trigger
-                },
+                params=_stop_params,
             )
             order_id = order.get('id')
             self.active_stops[symbol] = order_id

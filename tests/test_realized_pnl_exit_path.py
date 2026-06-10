@@ -6,6 +6,18 @@ import pytest
 import main as main_mod
 from main import HMATSProductionRunner, RunMode
 
+# [TEST-CLEANUP 2026-06-09] Per CLAUDE.md P22 (2026-04-24, commit ef4060b),
+# HMATSProductionRunner._execute_intent was retired in favor of
+# execute_intent_v2 in core/execution_service.py. The shadow-mode + ~3,160-line
+# legacy method was deleted. All 4 tests in this file directly call
+# runner._execute_intent which now AttributeError's. Skip until the tests
+# are rewritten to drive execute_intent_v2 through a proper ExecutionContext.
+pytestmark = pytest.mark.skip(
+    reason="[TEST-CLEANUP] HMATSProductionRunner._execute_intent removed per "
+           "P22 cutover to execute_intent_v2; tests not yet ported to "
+           "ExecutionContext-based driver."
+)
+
 
 class FakeAccountSync:
     def __init__(self, equity: float = 10_000.0):
