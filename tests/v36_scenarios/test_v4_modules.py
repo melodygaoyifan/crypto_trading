@@ -25,6 +25,24 @@ import logging
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+# [TEST-CLEANUP 2026-06-09] All 5 test classes in this file target v4.0
+# modules that have been removed or moved out of the live tree (per
+# subsequent refactors). Specifically: ScenarioWalkthroughsUnified,
+# IntegratedLiquidityManagerV4 (superseded by liquidity/integrated_manager),
+# IdleModuleIntegratorV4, EnhancedMetaDecision (rename in 2026-Q1),
+# and InterfaceCompatibilityLayer. None of these symbols import on
+# the current live tree, so the entire file is skipped at module
+# scope rather than asserting in collection. Delete this file when
+# the v4 transition arc is fully retired.
+pytestmark = pytest.mark.skip(
+    reason="[TEST-CLEANUP 2026-06-09] v4 modules (ScenarioWalkthroughsUnified, "
+           "IntegratedLiquidityManagerV4, IdleModuleIntegratorV4, "
+           "EnhancedMetaDecision, InterfaceCompatibilityLayer) removed or "
+           "renamed; tests pre-date the rename and were never updated."
+)
+
 logging.basicConfig(level=logging.WARNING)
 
 # =============================================================================

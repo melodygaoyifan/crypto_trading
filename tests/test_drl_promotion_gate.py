@@ -46,6 +46,12 @@ class TestInitialization:
     def test_defaults_to_disabled(self, gate):
         assert gate.get_authority_level() == "DISABLED"
 
+    @pytest.mark.skip(
+        reason="[TEST-CLEANUP 2026-06-09] Per drl/promotion_gate.py:36, "
+               "DemotionConfig.enable was permanently set to False per operator "
+               "directive 2026-04-30 (HEALTH_T2 incident). Auto-demotion is "
+               "structurally disabled; test pre-dates the directive."
+    )
     def test_demotion_enabled_by_default(self, gate):
         assert gate.demotion_config.enable is True
 
@@ -170,6 +176,17 @@ class TestTradeRecording:
 # Auto-demotion: consecutive losses
 # =============================================================================
 
+_AUTO_DEMOTION_DISABLED = pytest.mark.skip(
+    reason="[TEST-CLEANUP 2026-06-09] Auto-demotion permanently disabled per "
+           "operator directive 2026-04-30 (drl/promotion_gate.py:36 + :196 + "
+           "auto-recovery short-circuit at :90). All demotion/recovery tests "
+           "in this file assert behavior that no longer fires. Promote() and "
+           "level inspection still tested in TestManualPromote + "
+           "TestStatePersistence (save/restore round-trip)."
+)
+
+
+@_AUTO_DEMOTION_DISABLED
 class TestConsecutiveLossDemotion:
     """Note: tests must build up positive equity FIRST (peak > 0), otherwise
     the zero-peak-loss demotion path (P-PATCH-4) fires on trade 1 and
@@ -224,6 +241,7 @@ class TestConsecutiveLossDemotion:
 # Auto-demotion: drawdown
 # =============================================================================
 
+@_AUTO_DEMOTION_DISABLED
 class TestDrawdownDemotion:
     def test_15pct_drawdown_demotes(self, gate):
         gate.promote("ACTIVE")
@@ -256,6 +274,7 @@ class TestDrawdownDemotion:
 # Auto-recovery
 # =============================================================================
 
+@_AUTO_DEMOTION_DISABLED
 class TestAutoRecovery:
     def test_recovery_after_cooldown(self, gate):
         gate.promote("ACTIVE")
@@ -299,6 +318,7 @@ class TestAutoRecovery:
 # Max demotions → DISABLED
 # =============================================================================
 
+@_AUTO_DEMOTION_DISABLED
 class TestMaxDemotionsDisable:
     def test_3_demotions_in_14d_disables(self, gate):
         """After 3 demotions in 14-day window, next demotion sets DISABLED
@@ -348,6 +368,7 @@ class TestStatePersistence:
         assert g2._peak_equity_contribution == 50.0
         assert g2._current_equity_contribution == pytest.approx(48.0)
 
+    @_AUTO_DEMOTION_DISABLED
     def test_demotion_history_persisted(self, tmp_path):
         state_file = tmp_path / "history.json"
         g1 = DRLPromotionGate(state_file=str(state_file))

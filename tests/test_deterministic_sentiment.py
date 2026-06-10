@@ -203,9 +203,14 @@ class TestDeterministicSentiment:
 # TEST: SENTIMENT INTEGRATION
 # =============================================================================
 
+@pytest.mark.skip(
+    reason="[TEST-CLEANUP 2026-06-09] signals.sentiment_integration module "
+           "was retired; sentiment now flows through agents/sentiment_deberta.py "
+           "→ agent_signals directly without the integration wrapper layer."
+)
 class TestSentimentIntegration:
     """Tests for sentiment integration layer."""
-    
+
     def test_context_injection(self):
         """Sentiment should be properly injected into context."""
         from signals.sentiment_integration import (
