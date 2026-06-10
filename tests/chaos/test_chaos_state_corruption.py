@@ -216,6 +216,180 @@ class TestChaosRestartCascade:
 
 
 # =====================================================================
+# Scenario 7b: P85 architectural follow-up — frozen_allocations + replay
+# =====================================================================
+
+class TestP85ArchitecturalFrozenAllocations:
+    """P85 architectural (2026-06-09): the proper fix for the original
+    P85 cascade — ShadowLedgerWriter now exposes frozen_allocations as
+    a Set[str] populated by record_order, emptied by record_fill /
+    release_order, and seedable from JSONL history via
+    replay_frozen_allocations_from_jsonl().
+
+    The defensive getattr in startup_reconciler stays as belt-and-
+    suspenders (older module versions, replay failures) but the
+    architectural contract is now satisfied: a fresh process can
+    actually classify orphan exchange orders correctly after a
+    one-call replay.
+    """
+
+    def _fresh_writer(self):
+        import tempfile
+        from defense.shadow_ledger_jsonl import ShadowLedgerWriter
+        tmp = tempfile.mkdtemp()
+        sl = ShadowLedgerWriter(output_dir=tmp, auto_flush=False)
+        return sl, tmp
+
+    def test_frozen_allocations_attribute_exists(self):
+        """The architectural goal — attribute is present and is a Set."""
+        sl, tmp = self._fresh_writer()
+        try:
+            assert hasattr(sl, 'frozen_allocations'), (
+                "P85 architectural follow-up reverted: ShadowLedgerWriter "
+                "no longer exposes frozen_allocations. The defensive "
+                "getattr in startup_reconciler degrades to skip-orphan-"
+                "cancel which is safe but loses the orphan-detection "
+                "feature."
+            )
+            assert isinstance(sl.frozen_allocations, set), (
+                f"frozen_allocations must be a Set, got {type(sl.frozen_allocations)}"
+            )
+            assert hasattr(sl, '_frozen_allocations_replayed'), (
+                "replay flag missing — reconciler can't tell whether the "
+                "set is authoritative or unseeded."
+            )
+            assert sl._frozen_allocations_replayed is False, (
+                "fresh process must NOT claim replay-complete by default; "
+                "otherwise reconciler treats an empty set as authoritative "
+                "and cancels every legitimate order."
+            )
+        finally:
+            sl.close()
+            import shutil; shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_record_order_populates_set(self):
+        sl, tmp = self._fresh_writer()
+        try:
+            sl.record_order(asset='SOL', order_id='ORD-1', side='BUY',
+                            size=1.0, order_type='LIMIT')
+            sl.record_order(asset='BTC', order_id='ORD-2', side='SELL',
+                            size=0.01, order_type='MARKET')
+            assert sl.frozen_allocations == {'ORD-1', 'ORD-2'}, (
+                f"record_order should add to frozen_allocations; "
+                f"got {sl.frozen_allocations}"
+            )
+        finally:
+            sl.close()
+            import shutil; shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_record_fill_removes_from_set(self):
+        sl, tmp = self._fresh_writer()
+        try:
+            sl.record_order(asset='SOL', order_id='ORD-1', side='BUY',
+                            size=1.0, order_type='LIMIT')
+            sl.record_fill(asset='SOL', order_id='ORD-1', fill_id='F-1',
+                           side='BUY', size=1.0, price=63.0)
+            assert 'ORD-1' not in sl.frozen_allocations, (
+                "record_fill must release the order_id; otherwise the "
+                "reconciler counts filled orders as outstanding."
+            )
+        finally:
+            sl.close()
+            import shutil; shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_release_order_explicit_cancel(self):
+        sl, tmp = self._fresh_writer()
+        try:
+            sl.record_order(asset='SOL', order_id='ORD-1', side='BUY',
+                            size=1.0, order_type='LIMIT')
+            assert sl.release_order('ORD-1') is True, "should report tracked"
+            assert sl.frozen_allocations == set()
+            assert sl.release_order('ORD-1') is False, "idempotent release"
+            assert sl.release_order('') is False, "empty id is no-op"
+            assert sl.release_order(None) is False, "None id is no-op"
+        finally:
+            sl.close()
+            import shutil; shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_falsy_order_id_does_not_pollute_set(self):
+        """Paper-mode synthetic flows may emit None/'' order_ids. Tracking
+        them would corrupt the set (every None collapses to one entry)
+        and confuse the reconciler."""
+        sl, tmp = self._fresh_writer()
+        try:
+            sl.record_order(asset='SOL', order_id=None, side='BUY',
+                            size=1.0, order_type='LIMIT')
+            sl.record_order(asset='SOL', order_id='', side='BUY',
+                            size=1.0, order_type='LIMIT')
+            assert sl.frozen_allocations == set(), (
+                "falsy order_id leaked into frozen_allocations"
+            )
+        finally:
+            sl.close()
+            import shutil; shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_replay_seeds_from_jsonl(self):
+        """The replay closes the original P85 cascade gap: a fresh
+        process can rebuild outstanding-order state from JSONL history."""
+        from defense.shadow_ledger_jsonl import ShadowLedgerWriter
+        import tempfile, shutil
+
+        tmp = tempfile.mkdtemp()
+        try:
+            # Process 1: open + fill some orders
+            sl1 = ShadowLedgerWriter(output_dir=tmp, auto_flush=False)
+            sl1.record_order(asset='SOL', order_id='ORD-A', side='BUY',
+                             size=1.0, order_type='LIMIT')
+            sl1.record_order(asset='BTC', order_id='ORD-B', side='SELL',
+                             size=0.01, order_type='MARKET')
+            sl1.record_fill(asset='BTC', order_id='ORD-B', fill_id='F-B',
+                            side='SELL', size=0.01, price=77000.0)
+            sl1.flush()
+            sl1.close()
+
+            # Process 2: fresh init — empty by default, replay seeds
+            sl2 = ShadowLedgerWriter(output_dir=tmp, auto_flush=False)
+            assert sl2.frozen_allocations == set(), "fresh start must be empty"
+            assert sl2._frozen_allocations_replayed is False
+
+            n = sl2.replay_frozen_allocations_from_jsonl(days_back=1)
+            assert sl2._frozen_allocations_replayed is True, (
+                "replay must flip the seeded flag — reconciler depends on it"
+            )
+            assert 'ORD-A' in sl2.frozen_allocations, (
+                f"unfilled ORD-A should be replayed as outstanding: "
+                f"{sl2.frozen_allocations}"
+            )
+            assert 'ORD-B' not in sl2.frozen_allocations, (
+                f"filled ORD-B should NOT be replayed: {sl2.frozen_allocations}"
+            )
+            assert n == 1
+            sl2.close()
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_reconciler_uses_replay_before_orphan_classification(self):
+        """Source-level assertion: startup_reconciler must call
+        replay_frozen_allocations_from_jsonl AND must gate orphan
+        cancellation on _frozen_allocations_replayed. Otherwise a
+        fresh process classifies every legitimate exchange order as
+        orphan and cancels them all — worse than P85."""
+        import inspect
+        from defense import startup_reconciler
+        src = inspect.getsource(startup_reconciler)
+        assert 'replay_frozen_allocations_from_jsonl' in src, (
+            "P85-arch: startup_reconciler does not call replay before "
+            "classifying orphans. A fresh process would cancel every "
+            "legitimate open order at startup."
+        )
+        assert '_frozen_allocations_replayed' in src, (
+            "P85-arch: reconciler must check the replayed flag. Without "
+            "it, an empty (unseeded) set looks the same as 'no outstanding "
+            "orders' — every exchange order looks orphan."
+        )
+
+
+# =====================================================================
 # Scenario 8: Margin-position close paths must plumb leverage (P138)
 # =====================================================================
 

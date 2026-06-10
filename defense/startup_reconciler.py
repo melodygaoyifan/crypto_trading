@@ -620,45 +620,55 @@ class StartupReconciler:
             
             logger.info(f"[StartupReconcile] Found {len(exchange_orders)} open orders")
             
-            # P85 2026-04-26 EMERGENCY: defensive guard for the
-            # `frozen_allocations` attribute which doesn't exist on
-            # ShadowLedgerWriter. Reader/writer mismatch (P15-shape):
-            # this code reads `self.shadow_ledger.frozen_allocations`
-            # but ShadowLedgerWriter (defense/shadow_ledger_jsonl.py:64)
-            # never declares or sets that attribute. Pre-P85 this
-            # AttributeError'd in `_reconcile_orders`, the reconciler
-            # marked ORDER_CHECK as FAILED, and main.py REFUSED to
-            # start LIVE trading per the strict reconciler contract.
+            # P85 2026-04-26 EMERGENCY (defensive guard) + P85-arch
+            # 2026-06-09 (architectural follow-up):
             #
-            # Behavior change: if frozen_allocations is missing, treat
-            # the orphan check as inconclusive (NOT zero orphans, NOT
-            # all orphans). Skip cancellation. Log WARNING so operator
-            # sees the gap. The reconciler still completes successfully,
-            # unblocking live trading. The proper fix (add the attr to
-            # ShadowLedgerWriter with the right semantics) is a separate
-            # architectural change.
-            frozen = getattr(self.shadow_ledger, 'frozen_allocations', None) \
-                if self.shadow_ledger else None
+            # ShadowLedgerWriter now declares `frozen_allocations: Set[str]`
+            # populated by record_order + emptied by record_fill /
+            # release_order. To survive process restarts, the reconciler
+            # MUST seed the set from JSONL history before classifying
+            # orphan orders (otherwise legitimate orders from the prior
+            # process look like orphans and get cancelled).
+            #
+            # We still keep the defensive `getattr` so this reconciler
+            # composes with older shadow_ledger module versions (no attr
+            # / no replay method) — same shape as P85's original safe
+            # degrade pattern.
+            frozen = None
+            _replayed = False
+            if self.shadow_ledger:
+                _replay = getattr(self.shadow_ledger, 'replay_frozen_allocations_from_jsonl', None)
+                if callable(_replay):
+                    try:
+                        _replay()
+                    except Exception as _re:
+                        logger.warning(
+                            f"[StartupReconcile] frozen_allocations replay "
+                            f"failed ({type(_re).__name__}: {_re}); "
+                            f"falling back to skip-orphan-cancel for safety."
+                        )
+                _replayed = bool(getattr(self.shadow_ledger, '_frozen_allocations_replayed', False))
+                frozen = getattr(self.shadow_ledger, 'frozen_allocations', None)
+
             orphan_orders = []
-            if frozen is None:
+            if frozen is None or not _replayed:
                 if exchange_orders:
                     logger.warning(
                         f"[StartupReconcile] shadow_ledger.frozen_allocations "
-                        f"attribute missing; cannot classify {len(exchange_orders)} "
-                        f"open exchange orders as orphan vs known. SKIPPING orphan "
-                        f"cancellation to avoid destroying legitimate orders. "
-                        f"Add frozen_allocations to ShadowLedgerWriter to enable "
-                        f"this safety check."
+                        f"not seeded ({'attr missing' if frozen is None else 'replay skipped'}); "
+                        f"cannot classify {len(exchange_orders)} open exchange orders "
+                        f"as orphan vs known. SKIPPING orphan cancellation to avoid "
+                        f"destroying legitimate orders."
                     )
                 else:
                     logger.info(
-                        "[StartupReconcile] shadow_ledger.frozen_allocations attr "
-                        "missing; 0 open exchange orders so skip is harmless."
+                        "[StartupReconcile] frozen_allocations not seeded but 0 "
+                        "open exchange orders so skip is harmless."
                     )
             else:
                 for order in exchange_orders:
                     order_id = order.get('id') or order.get('order_id')
-                    if order_id and order_id not in frozen:
+                    if order_id and str(order_id) not in frozen:
                         orphan_orders.append(order)
             
             # Cancel orphan orders
