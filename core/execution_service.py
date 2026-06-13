@@ -238,18 +238,6 @@ def _coinbase_routed(ctx, asset: str) -> bool:
         return False
 
 
-def _execute_coinbase_intent_noop(asset) -> Dict[str, Any]:
-    """Coinbase-routed assets are NOT traded through the Kraken intent path.
-    This no-op just skips the Kraken execution below; the actual Coinbase
-    position is driven separately, every tick, by the management step
-    (runner._coinbase_manage_positions -> sleeve.manage_to_signal), which
-    opens/flips AND flattens-on-hold. That single-driver design is what closes
-    the exit gap (engine never generated exits for Coinbase positions because
-    it decides from Kraken-shaped _paper_positions). No order placed here."""
-    return {"status": "SKIPPED", "venue": "coinbase", "asset": asset,
-            "reason": "coinbase_routed_managed_per_tick"}
-
-
 async def execute_intent_v2(
     ctx,
     asset: str,
@@ -278,11 +266,14 @@ async def execute_intent_v2(
     if current_price <= 0:
         return {"status": "REJECTED", "reason": "Invalid price"}
 
-    # [Coinbase Phase B] isolated venue fork — Coinbase-routed assets skip the
-    # Kraken path here and are driven separately by the per-tick management step
-    # (sleeve.manage_to_signal). INERT by default (PRE_PHASE_2 -> always False).
-    if _coinbase_routed(ctx, asset):
-        return _execute_coinbase_intent_noop(asset)
+    # [Coinbase Phase 2 — TWO-SLEEVE] Kraken is the SPOT sleeve and trades ALL
+    # assets here normally (B1-protected: longs ok, spot-shorts blocked). The
+    # Coinbase DERIVATIVES sleeve runs IN PARALLEL via the per-tick management
+    # step (main.py heartbeat -> sleeve.manage_to_signal) on its own perp book.
+    # The two sleeves are independent (a spot AND a perp position can coexist
+    # per asset -> enables basis/carry). So there is NO venue fork here anymore;
+    # Coinbase-membership only governs whether the parallel derivatives sleeve
+    # manages that asset. See docs/COINBASE_ENGINE_INTEGRATION_PLAN.md.
 
     _existing_position = ctx.paper_positions.get(asset, {})
     _has_active_position = ctx.fn_is_active_paper_position(_existing_position)
