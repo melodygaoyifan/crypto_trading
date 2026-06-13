@@ -153,6 +153,16 @@ def test_manage_to_signal_flattens_held_position_on_hold():
     assert a.placed[0].side == "SELL"
 
 
+def test_manage_skips_on_stale_reconcile():
+    import asyncio
+    a = FakeAdapterFull()
+    a._client._fail = True  # venue reconcile times out
+    s = CoinbaseSleeve(a)
+    r = asyncio.run(s.manage_to_signal("ETH", 0.5))
+    assert r["status"] == "SKIPPED_STALE"
+    assert len(a.placed) == 0  # never trades on a stale snapshot
+
+
 def test_manage_to_signal_noop_when_already_aligned():
     import asyncio
     a = FakeAdapterFull([{"product_id": "SLP-20DEC30-CDE", "side": "LONG",

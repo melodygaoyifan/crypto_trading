@@ -58,6 +58,10 @@ class CoinbaseSleeve:
                 pass
         self._last_positions: Dict[str, Dict[str, Any]] = {}
         self._last_buying_power_usd: float = 0.0
+        # True only after a SUCCESSFUL venue reconcile this call. Autonomous
+        # management refuses to act when this is False (don't trade on a stale
+        # snapshot after an API timeout). See manage_to_signal.
+        self._reconcile_ok: bool = False
         # --- isolated sleeve risk guard (the Kraken existence-fuse equivalent,
         # scoped to Coinbase ONLY; never touches the global fuse) ---
         self._max_sleeve_drawdown_pct = float(max_sleeve_drawdown_pct)
@@ -103,8 +107,10 @@ class CoinbaseSleeve:
                     "venue": "coinbase",
                 }
             self._last_positions = out
+            self._reconcile_ok = True
             return out
         except Exception as e:
+            self._reconcile_ok = False
             logger.warning(f"[COINBASE_SLEEVE] reconcile failed: {type(e).__name__}: {e}; "
                            f"returning last snapshot")
             return dict(self._last_positions)
@@ -198,7 +204,17 @@ class CoinbaseSleeve:
         """Per-tick driver: move `asset` to the contract target implied by the
         fused direction (incl. flatten on hold). The SOLE Coinbase order path —
         called every tick for routed assets so positions are actively managed
-        (opened, flipped, AND closed), closing the exit gap."""
+        (opened, flipped, AND closed), closing the exit gap.
+
+        Resilience: refuses to act on a STALE snapshot. A fresh reconcile must
+        succeed this call, else SKIP (don't trade off last-known state after an
+        API timeout)."""
+        self.reconcile_positions()
+        if not self._reconcile_ok:
+            logger.warning(f"[COINBASE_SLEEVE] manage_to_signal {asset}: skip "
+                           f"(reconcile failed; not acting on stale snapshot)")
+            return {"status": "SKIPPED_STALE", "asset": asset,
+                    "reason": "reconcile_failed"}
         target = self.target_for_signal(direction, threshold)
         return await self.execute_target(asset, target)
 
