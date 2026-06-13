@@ -254,10 +254,19 @@ class CoinbaseAdapter(ExchangeAdapter):
             rate = _attr(fpd, "funding_rate")
             if rate is None:
                 raise RuntimeError(f"no funding_rate in product {symbol}")
-            period = float(_attr(fpd, "funding_interval_hours", 1.0) or 1.0)
+            # CDE exposes the interval as a duration string, e.g. "3600s".
+            # (Confirmed via live probe 2026-06-13.)
+            period = 1.0
+            interval = _attr(fpd, "funding_interval")
+            if interval is not None:
+                try:
+                    period = float(str(interval).strip().rstrip("s")) / 3600.0
+                except (TypeError, ValueError):
+                    period = float(_attr(fpd, "funding_interval_hours", 1.0) or 1.0)
             rate = float(rate)
             return FundingRateData(
-                symbol=symbol, funding_rate=rate, funding_period_hours=period,
+                symbol=symbol, funding_rate=rate,
+                funding_period_hours=period or 1.0,
                 funding_rate_8h=rate * (8.0 / period if period else 1.0),
                 next_funding_ts=_attr(fpd, "funding_time"), venue="coinbase",
             )

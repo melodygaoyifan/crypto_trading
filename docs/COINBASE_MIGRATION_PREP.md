@@ -61,6 +61,24 @@ The remaining gate is **account eligibility + the exact product set**, not "does
   (The `20DEC30` tag is the current perpetual-style contract; re-probe if Coinbase rolls it.)
 - ✅ **CDP credentials** — read-only key provided + working (probe authenticated). Recommend rotating it (it was pasted in chat). A trade-enabled key is needed later for live orders.
 
+## SHADOW run results (read-only, 2026-06-13)
+
+`scripts/coinbase_shadow_compare.py` — live read-only parity, Coinbase CDE perp vs Kraken spot. No orders.
+
+| Asset | CB product | basis vs KR | CB spread | KR spread | CB funding/8h |
+|---|---|---|---|---|---|
+| BTC | BIP-20DEC30-CDE | +0.5 bps | 3.9 bps | 0.02 bps | 0.000016 |
+| ETH | ETP-20DEC30-CDE | -0.4 bps | 9.0 bps | 0.06 bps | 0.000032 |
+| SOL | SLP-20DEC30-CDE | -2.2 bps | 9.0 bps | 1.5 bps | 0.000008 |
+
+**Live-verified findings (these are why SHADOW exists):**
+- ✅ Price tracks Kraken within ±2.2 bps — the CDE perp follows spot tightly.
+- ✅ `fetch_orderbook` + `fetch_funding_rate` adapter methods work against live responses.
+- 🔧 **Funding field is `future_product_details.funding_interval` ("3600s" duration string), not `funding_interval_hours`** — adapter fixed + unit-tested.
+- ⚠️ **CDE spreads are 4–9 bps vs Kraken spot 0.02–1.5 bps** (nano-perp venue is younger/thinner). Maker-first is essential; 0 bps maker fee offsets, but taker crossing is materially more expensive than Kraken spot.
+- ⚠️ **Nano contracts: `contract_size` = 0.01 BTC / (per-asset).** Orders are sized in **contracts**, not base units — the execution layer must convert HMATS base-asset exposure → contract count when wiring live. Not yet handled.
+- ✅ `region_enabled.US = true`, `intraday_margin_rate ≈ 0.10` → ~10x available, funding hourly, 24/7.
+
 ## REMAINING gates (operational — code side is done)
 
 1. **USDC funding — diagnosed, ops step remains.** Probe shows `futures_buying_power = 4000 USD` on the **FCM (CDE) side** but `cfm_usd_balance = 0` / `available_margin = 0`, and only a **Default** portfolio exists. The 4000 is recognized as US-futures buying power but is not yet settled as usable margin in the CFM futures wallet; the operator was likely trying to fund **"Perpetuals" (INTX, US-restricted)** which a US account cannot. **Action:** fund/confirm via the **"Futures" (CDE)** surface, not "Perpetuals"; reconcile the buying_power(4000) vs available_margin(0) gap before live orders (Coinbase Futures UI or a tiny SHADOW->DUAL test order).

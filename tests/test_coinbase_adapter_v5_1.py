@@ -7,6 +7,8 @@ calls and returns canned Advanced-Trade-shaped responses.
 """
 import asyncio
 
+import pytest
+
 from exchange.adapter import OrderRequest
 from exchange.coinbase_adapter import CoinbaseAdapter
 
@@ -47,6 +49,13 @@ class FakeClient:
     def get_product_book(self, product_id, limit=None, **kw):
         return {"pricebook": {"bids": [{"price": "100", "size": "1"}],
                               "asks": [{"price": "101", "size": "2"}]}}
+
+    def get_product(self, product_id, **kw):
+        # mirrors the live CDE shape (funding_interval is a "3600s" string)
+        return {"product_id": product_id, "mid_market_price": "63580",
+                "future_product_details": {"funding_rate": "0.000002",
+                                           "funding_interval": "3600s",
+                                           "funding_time": "2026-06-13T04:00:00Z"}}
 
 
 def _adapter(ok=True):
@@ -120,6 +129,14 @@ def test_cancel_order_parses_result():
 def test_fetch_orderbook_parses_levels():
     ob = asyncio.run(_adapter().fetch_orderbook("BTC-PERP", depth=5))
     assert ob["bids"] == [[100.0, 1.0]] and ob["asks"] == [[101.0, 2.0]]
+
+
+def test_fetch_funding_parses_cde_interval_string():
+    # funding_rate 0.000002/hr (funding_interval "3600s") -> 8h = 0.000016
+    fr = asyncio.run(_adapter().fetch_funding_rate("BIP-20DEC30-CDE"))
+    assert fr.venue == "coinbase"
+    assert fr.funding_period_hours == 1.0
+    assert fr.funding_rate_8h == pytest.approx(0.000016)
 
 
 def test_open_orders_filters_by_symbol():
