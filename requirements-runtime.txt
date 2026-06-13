@@ -46,3 +46,6 @@ pytz>=2023.0
 
 # Development/Debug (optional in production)
 # rich>=13.0.0,<14.0.0
+
+# Coinbase US Perpetual-Style Futures (Phase 2 derivatives venue)
+coinbase-advanced-py==1.8.3
