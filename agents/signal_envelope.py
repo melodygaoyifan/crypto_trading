@@ -113,6 +113,14 @@ def _extract_model_alpha(raw: Dict) -> Dict[str, Any]:
     }
 
 
+def _extract_v5_1_strats(raw: Dict) -> Dict[str, Any]:
+    return {
+        "direction": float(raw.get("v5_1_strats_direction", 0.0)),
+        "confidence": float(raw.get("v5_1_strats_confidence", 0.0)),
+        "reasoning": "v5.1 ensemble (micro/cascade/funding/ml_factor)",
+    }
+
+
 def _extract_kraken_quant(raw: Dict) -> Dict[str, Any]:
     return {
         "direction": float(raw.get("kq_direction", 0.0)),
@@ -216,6 +224,7 @@ _EXTRACTORS = {
     "vol_alpha": _extract_vol_alpha,
     "micro": _extract_micro,
     "model_alpha": _extract_model_alpha,
+    "v5_1_strats": _extract_v5_1_strats,
     "kraken_quant": _extract_kraken_quant,
     # [FIX 2026-04-22] 8 new direction-producing agents
     "drl": _extract_drl,

@@ -2411,6 +2411,19 @@ class HMATSv36Engine:
                 confidence=min(_ma_weight, 1.0),
             )
 
+        # 3b. [v5.1 PROMOTED 2026-06-13] Ensemble of the 4 v5.1 strategy families
+        # (microstructure/cascade/funding/ml_factor). Operator-promoted with ZERO
+        # shadow validation (override of Iron Law 7 — see CLAUDE.md). ADVISE
+        # authority -> nudges exposure only, cannot override quant/DRL deciders.
+        # Reversible: set v5_1_strategies_live=false in the live JSON.
+        _v51_dir = agent_signals.get("v5_1_strats_direction", 0.0)
+        _v51_conf = agent_signals.get("v5_1_strats_confidence", 0.0)
+        if abs(_v51_dir) > 0.01 and _v51_conf > 0.05:
+            signals["v5_1_strats"] = AgentSignal(
+                direction=_v51_dir,
+                confidence=min(_v51_conf, 1.0),
+            )
+
         # 4. On-Chain Graph Alpha: whale/cluster detection (ADVISE — SOL only)
         _og_dir = agent_signals.get("onchain_graph_direction", 0.0)
         _og_conf = agent_signals.get("onchain_graph_confidence", 0.0)

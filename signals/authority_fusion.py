@@ -186,6 +186,7 @@ AUTHORITY_MATRIX_NORMAL = {
     "kraken_quant": Authority.DECIDE,
     "microstructure": Authority.ADVISE, # OB imbalance + taker flow
     "model_alpha": Authority.ADVISE,    # LSTM/GRU ensemble
+    "v5_1_strats": Authority.ADVISE,    # [v5.1 PROMOTED 2026-06-13] 4-strategy ensemble (Iron Law 7 override; ADVISE-bounded)
     "onchain_graph": Authority.ADVISE,  # Whale/cluster on-chain
     "options": Authority.ADVISE,        # Put/call + max pain
     "vol_alpha": Authority.ADVISE,      # Vol compression/expansion
@@ -221,6 +222,7 @@ AUTHORITY_MATRIX_OPPORTUNITY = {
     "kraken_quant": Authority.DECIDE,
     "microstructure": Authority.ADVISE, # OB imbalance + taker flow
     "model_alpha": Authority.ADVISE,    # LSTM/GRU ensemble
+    "v5_1_strats": Authority.ADVISE,    # [v5.1 PROMOTED 2026-06-13] 4-strategy ensemble (Iron Law 7 override; ADVISE-bounded)
     "onchain_graph": Authority.ADVISE,  # Whale/cluster on-chain
     "options": Authority.ADVISE,        # Put/call + max pain
     "vol_alpha": Authority.ADVISE,      # Vol compression/expansion
@@ -284,6 +286,7 @@ AUTHORITY_MATRIX_HIGH_VOL = {
     "kraken_quant": Authority.ADVISE,
     "microstructure": Authority.ADVISE,
     "model_alpha": Authority.ADVISE,
+    "v5_1_strats": Authority.ADVISE,    # [v5.1 PROMOTED 2026-06-13] 4-strategy ensemble (Iron Law 7 override; ADVISE-bounded)
     "onchain_graph": Authority.ADVISE,
     "options": Authority.ADVISE,
     "vol_alpha": Authority.ADVISE,

@@ -1532,6 +1532,11 @@ class ProductionConfig:
     # Kraken until RoutingPolicy is advanced past SHADOW (separate gated step).
     # See docs/COINBASE_ENGINE_INTEGRATION_PLAN.md.
     coinbase_routing_enabled: bool = False
+    # [v5.1 PROMOTED 2026-06-13] Operator override of Iron Law 7 (shadow >=30d):
+    # blend the 4 v5.1 shadow strategy families into a live ADVISE fusion agent
+    # with ZERO validation. Default OFF; set true in the live JSON. ADVISE-bounded
+    # (nudges exposure, cannot override quant/DRL deciders). Reversible.
+    v5_1_strategies_live: bool = False
     regime_leverage_map: Dict[str, float] = field(default_factory=lambda: {
         "VOLATILE_CHOP": 3.0,           # Best regime (71% WR) ->max 3x
         "MOMENTUM_RALLY": 2.0,          # Clear direction
@@ -1769,6 +1774,8 @@ class ProductionConfig:
             flip_persist_ticks=int(data.get("flip_persist_ticks", 2)),
             # [Coinbase Phase 2] read-only shadow routing switch (default OFF)
             coinbase_routing_enabled=data.get("coinbase_routing_enabled", False),
+            # [v5.1 PROMOTED 2026-06-13] live ADVISE promotion of shadow strategies
+            v5_1_strategies_live=data.get("v5_1_strategies_live", False),
             # P1-02: Thesis budget parameters (overlay-aware)
             thesis_budget_loss_pct_nav=data.get("thesis_budget", {}).get(
                 "loss_budget_pct_nav", THESIS_BUDGET_LOSS_PCT_NAV),  # [CFG-3]
@@ -7394,6 +7401,42 @@ class HMATSProductionRunner:
                 self._funding_shadow.observe(asset, market_data)
             except Exception as _fs_err:
                 logger.debug(f"[v5.1 PHASE3] funding observe {asset} skipped: {_fs_err}")
+
+        # [v5.1 PROMOTED 2026-06-13] Operator override of Iron Law 7: blend the 4
+        # shadow strategy families into ONE ADVISE fusion signal (ZERO validation).
+        # ADVISE-bounded (nudges exposure, cannot override quant/DRL deciders);
+        # flag-gated (v5_1_strategies_live, default OFF); reversible; fail-soft.
+        if getattr(self.config, "v5_1_strategies_live", False) and not p0_abort_tick:
+            try:
+                _v51_num = 0.0
+                _v51_den = 0.0
+                for _v51_h in (getattr(self, "_micro_shadow", None),
+                               getattr(self, "_cascade_shadow", None),
+                               getattr(self, "_funding_shadow", None),
+                               getattr(self, "_ml_factor_shadow", None)):
+                    if _v51_h is None:
+                        continue
+                    for _v51_st in getattr(_v51_h, "_strategies", []):
+                        try:
+                            _v51_sig = _v51_st.evaluate(asset, market_data)
+                            _v51_d = float(getattr(_v51_sig, "direction", 0.0) or 0.0)
+                            _v51_c = float(getattr(_v51_sig, "confidence", 0.0) or 0.0)
+                            if _v51_d != 0.0 and _v51_c > 0.0:
+                                _v51_num += _v51_d * _v51_c
+                                _v51_den += _v51_c
+                        except Exception:
+                            continue
+                _v51_dir = (_v51_num / _v51_den) if _v51_den > 0 else 0.0
+                _v51_conf = min(0.5, _v51_den / 4.0) if _v51_den > 0 else 0.0
+                agent_signals['v5_1_strats_direction'] = _v51_dir
+                agent_signals['v5_1_strats_confidence'] = _v51_conf
+                if abs(_v51_dir) > 0.1:
+                    logger.info(
+                        f"[V5_1_PROMOTED] {asset}: dir={_v51_dir:+.2f} "
+                        f"conf={_v51_conf:.2f} (ADVISE, n_active={_v51_den:.1f})"
+                    )
+            except Exception as _v51_err:
+                logger.debug(f"[V5_1_PROMOTED] {asset} skipped: {_v51_err}")
 
         # [v5.1 Phase 6] Shadow-mode ML factor agent observation. Iron-Law-7
         # contract. Output ledger data/strategy_shadow/ml_factor_*.jsonl.
