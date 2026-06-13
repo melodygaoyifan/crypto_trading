@@ -75,3 +75,7 @@ Thumbs.db
 
 # Build artifacts
 pytorch_build/
+
+# Coinbase CDP key (never commit secrets)
+.coinbase_key.json
+COINBASE_*.json

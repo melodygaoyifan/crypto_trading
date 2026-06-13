@@ -39,14 +39,27 @@ def main() -> int:
               "  pip install coinbase-advanced-py")
         return 2
 
-    key = os.environ.get("COINBASE_API_KEY")
-    secret = os.environ.get("COINBASE_API_SECRET")
-    if not key or not secret:
-        print("[coinbase_probe] set COINBASE_API_KEY + COINBASE_API_SECRET "
-              "(CDP key name + PEM secret). A READ-ONLY key is enough.")
-        return 2
+    # Preferred: a downloaded CDP key JSON file (no secret handling in shell).
+    # Default location is gitignored. Override with COINBASE_KEY_FILE.
+    key_file = os.environ.get("COINBASE_KEY_FILE")
+    default_kf = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                              ".coinbase_key.json")
+    if not key_file and os.path.exists(default_kf):
+        key_file = default_kf
 
-    client = RESTClient(api_key=key, api_secret=secret)
+    if key_file and os.path.exists(key_file):
+        client = RESTClient(key_file=key_file)
+    else:
+        key = os.environ.get("COINBASE_API_KEY")
+        secret = os.environ.get("COINBASE_API_SECRET")
+        if not key or not secret:
+            print("[coinbase_probe] No credentials found. Provide EITHER:\n"
+                  "  (a) a downloaded CDP key JSON at .coinbase_key.json "
+                  "(or set COINBASE_KEY_FILE=path), OR\n"
+                  "  (b) COINBASE_API_KEY + COINBASE_API_SECRET env vars.\n"
+                  "  A READ-ONLY key is sufficient.")
+            return 2
+        client = RESTClient(api_key=key, api_secret=secret)
 
     # --- 1/2: list perpetual futures products ---------------------------------
     print("=== Perpetual futures products (product_type=FUTURE) ===")
