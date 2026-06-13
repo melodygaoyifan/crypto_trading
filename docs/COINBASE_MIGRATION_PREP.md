@@ -26,7 +26,7 @@ The remaining gate is **account eligibility + the exact product set**, not "does
 |---|---|---|
 | `exchange/adapter.py` | `ExchangeAdapter` ABC + `OrderRequest`/`OrderResult`/`FundingRateData` | complete |
 | `exchange/kraken_adapter.py` | wraps ccxt Kraken; `place_order` returns `DELEGATED` (live still flows through `execution_manager` during dual-venue) | complete |
-| `exchange/coinbase_adapter.py` | Coinbase skeleton; fail-closed `NOT_CONFIGURED` until client wired | skeleton |
+| `exchange/coinbase_adapter.py` | Coinbase US perps adapter — **real, SDK-backed** (`coinbase-advanced-py` RESTClient, CDP auth). place/cancel/balance/positions/orderbook/funding implemented; fail-closed without creds. Pending: confirmed `product_id`s + creds + SHADOW validation of leverage/reduce_only/funding-field placement | implemented |
 | `exchange/symbol_mapping.py` | `SYMBOL_MAP` kraken/coinbase × perp/spot | complete (perp symbols assume International-style `BTC-PERP`) |
 | `exchange/routing.py` | `RoutingPolicy` + `CutoverPhase` state machine, Iron-Law-8 phase gating | complete |
 | `tests/test_exchange_adapter_v5_1.py` | adapter + routing + symbol tests | complete |
@@ -66,9 +66,9 @@ The remaining gate is **account eligibility + the exact product set**, not "does
 
 ## What is intentionally NOT done (until unblocked)
 
-- No real Coinbase HTTP/WS client (adapter stays skeleton). Wiring an unverified API would likely be wrong and can't be tested without access + creds.
-- No `coinbase_funding_feed` live calls (scaffold disabled by default).
-- No changes to `execution_manager` / `main.py` / live config. The `SINGLE_EXCHANGE_GATE` (kraken-only) in `execution_manager.py` remains in force.
+- **Not wired into the live path.** `execution_manager` / `main.py` / live config unchanged; the `SINGLE_EXCHANGE_GATE` (kraken-only) remains in force. The adapter is built and unit-tested but no order path calls it yet.
+- **No live API call made** — no credentials exist, so the adapter's real behavior (exact funding field names, leverage/reduce_only placement on the perp order body, positions response shape) is unverified against live responses. These are confirmed in the SHADOW phase.
+- `coinbase_funding_feed` left as the fail-closed fallback scaffold; the adapter's `fetch_funding_rate` is the primary path once creds land.
 
 ## Iron-law compliance
 
