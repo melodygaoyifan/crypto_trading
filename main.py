@@ -17674,6 +17674,25 @@ class HMATSProductionRunner:
                                             f"[COINBASE-SHADOW] {_cb_a}: CB={_cb_mark:.2f} "
                                             f"KR={_cb_kr:.2f} basis={_cb_basis:+.1f}bps funding={_cb_fr}"
                                         )
+                                    # [COINBASE-SLEEVE] read-only Coinbase position +
+                                    # buying-power, reconciled from the venue (anti-P139).
+                                    # Makes Coinbase state VISIBLE in the engine before
+                                    # any order routing. Still read-only; fail-soft.
+                                    try:
+                                        if getattr(self, "_coinbase_sleeve", None) is None:
+                                            from exchange.coinbase_sleeve import CoinbaseSleeve
+                                            self._coinbase_sleeve = CoinbaseSleeve(_cb, assets=self.config.assets)
+                                        _cb_snap = self._coinbase_sleeve.snapshot()
+                                        _cb_pos = _cb_snap.get("positions") or {}
+                                        _cb_pos_str = ", ".join(
+                                            f"{_a}={_p.get('signed_contracts')}" for _a, _p in _cb_pos.items()
+                                        ) or "FLAT"
+                                        logger.info(
+                                            f"[COINBASE-SLEEVE] buying_power="
+                                            f"${_cb_snap.get('buying_power_usd', 0):,.2f} positions={_cb_pos_str}"
+                                        )
+                                    except Exception as _cb_sl_err:
+                                        logger.debug(f"[COINBASE-SLEEVE] skipped: {_cb_sl_err}")
                                 else:
                                     logger.debug("[COINBASE-SHADOW] adapter not connected (no creds on host)")
                             except Exception as _cb_err:
