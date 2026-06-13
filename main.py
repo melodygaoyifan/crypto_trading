@@ -1519,6 +1519,12 @@ class ProductionConfig:
     # (-25% equity). See docs/LIVE_ROOT_CAUSE_2026-06-12.md. Reversible:
     # set "block_short_entry_on_spot": false in the live JSON profile.
     block_short_entry_on_spot: bool = True
+    # [Coinbase Phase 2] Master switch for Coinbase US perp routing. Default OFF
+    # -> engine is byte-identical to today (Kraken-only). When ON, Phase A logs
+    # read-only Coinbase-vs-Kraken parity in the heartbeat; order routing stays
+    # Kraken until RoutingPolicy is advanced past SHADOW (separate gated step).
+    # See docs/COINBASE_ENGINE_INTEGRATION_PLAN.md.
+    coinbase_routing_enabled: bool = False
     regime_leverage_map: Dict[str, float] = field(default_factory=lambda: {
         "VOLATILE_CHOP": 3.0,           # Best regime (71% WR) ->max 3x
         "MOMENTUM_RALLY": 2.0,          # Clear direction
@@ -1751,6 +1757,8 @@ class ProductionConfig:
             },
             # [B1 2026-06-12] spot-short entry guard (default ON; JSON can disable)
             block_short_entry_on_spot=data.get("block_short_entry_on_spot", True),
+            # [Coinbase Phase 2] read-only shadow routing switch (default OFF)
+            coinbase_routing_enabled=data.get("coinbase_routing_enabled", False),
             # P1-02: Thesis budget parameters (overlay-aware)
             thesis_budget_loss_pct_nav=data.get("thesis_budget", {}).get(
                 "loss_budget_pct_nav", THESIS_BUDGET_LOSS_PCT_NAV),  # [CFG-3]
@@ -17641,6 +17649,35 @@ class HMATSProductionRunner:
                             f"positions={len(_hb_positions)} | "
                             + " || ".join(_hb_lines).replace("**", "")
                         )
+                        # [COINBASE-SHADOW] Phase A: read-only venue parity.
+                        # Flag-gated (default OFF) + fail-soft -> NEVER affects the
+                        # Kraken trading path. No Coinbase orders. See
+                        # docs/COINBASE_ENGINE_INTEGRATION_PLAN.md.
+                        if getattr(self.config, "coinbase_routing_enabled", False):
+                            try:
+                                if getattr(self, "_coinbase_adapter", None) is None:
+                                    from exchange.coinbase_adapter import CoinbaseAdapter
+                                    self._coinbase_adapter = CoinbaseAdapter()
+                                from exchange.symbol_mapping import to_venue_symbol
+                                _cb = self._coinbase_adapter
+                                if _cb.is_connected():
+                                    _cbg = lambda o, k: (o.get(k) if isinstance(o, dict) else getattr(o, k, None))
+                                    for _cb_a in self.config.assets:
+                                        _cb_pid = to_venue_symbol(_cb_a, "coinbase", "perp")
+                                        _cb_p = _cb._client.get_product(product_id=_cb_pid)
+                                        _cb_mark = float(_cbg(_cb_p, "mid_market_price") or _cbg(_cb_p, "price") or 0)
+                                        _cb_fpd = _cbg(_cb_p, "future_product_details") or {}
+                                        _cb_fr = _cbg(_cb_fpd, "funding_rate")
+                                        _cb_kr = float(_live_prices.get(_cb_a, 0) or 0)
+                                        _cb_basis = ((_cb_mark - _cb_kr) / _cb_kr * 1e4) if _cb_kr else 0.0
+                                        logger.info(
+                                            f"[COINBASE-SHADOW] {_cb_a}: CB={_cb_mark:.2f} "
+                                            f"KR={_cb_kr:.2f} basis={_cb_basis:+.1f}bps funding={_cb_fr}"
+                                        )
+                                else:
+                                    logger.debug("[COINBASE-SHADOW] adapter not connected (no creds on host)")
+                            except Exception as _cb_err:
+                                logger.debug(f"[COINBASE-SHADOW] skipped: {_cb_err}")
                 except Exception as _hb_err:
                     logger.debug(f"[HEARTBEAT] Discord push failed: {_hb_err}")
 
