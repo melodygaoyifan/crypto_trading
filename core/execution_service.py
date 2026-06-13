@@ -238,26 +238,16 @@ def _coinbase_routed(ctx, asset: str) -> bool:
         return False
 
 
-async def _execute_coinbase_intent(ctx, asset, intent, market_data) -> Dict[str, Any]:
-    """Isolated Coinbase execution path (separate sleeve). Never touches the
-    Kraken state machine. First cut: +-1 contract in the signal direction
-    (sleeve contract-cap bounds size); target_exposure/direction 0 = exit."""
-    s = _coinbase_get_sleeve()
-    if s is None or not s.is_ready():
-        return {"status": "REJECTED", "reason": "coinbase_sleeve_unavailable",
-                "venue": "coinbase"}
-    try:
-        s.update_risk()
-        if getattr(intent, "target_exposure", 0) == 0 or getattr(intent, "direction", 0) == 0:
-            target = 0
-        else:
-            target = 1 if intent.direction > 0 else -1
-        res = await s.execute_target(asset, target)
-        return {"status": res.get("status"), "venue": "coinbase",
-                "asset": asset, "coinbase": res}
-    except Exception as e:
-        return {"status": "ERROR", "venue": "coinbase", "asset": asset,
-                "reason": f"{type(e).__name__}: {e}"}
+def _execute_coinbase_intent_noop(asset) -> Dict[str, Any]:
+    """Coinbase-routed assets are NOT traded through the Kraken intent path.
+    This no-op just skips the Kraken execution below; the actual Coinbase
+    position is driven separately, every tick, by the management step
+    (runner._coinbase_manage_positions -> sleeve.manage_to_signal), which
+    opens/flips AND flattens-on-hold. That single-driver design is what closes
+    the exit gap (engine never generated exits for Coinbase positions because
+    it decides from Kraken-shaped _paper_positions). No order placed here."""
+    return {"status": "SKIPPED", "venue": "coinbase", "asset": asset,
+            "reason": "coinbase_routed_managed_per_tick"}
 
 
 async def execute_intent_v2(
@@ -288,11 +278,11 @@ async def execute_intent_v2(
     if current_price <= 0:
         return {"status": "REJECTED", "reason": "Invalid price"}
 
-    # [Coinbase Phase B] isolated venue fork — divert Coinbase-routed assets to
-    # the separate sleeve path and RETURN; the Kraken path below is untouched.
-    # INERT by default (RoutingPolicy PRE_PHASE_2 -> always False).
+    # [Coinbase Phase B] isolated venue fork — Coinbase-routed assets skip the
+    # Kraken path here and are driven separately by the per-tick management step
+    # (sleeve.manage_to_signal). INERT by default (PRE_PHASE_2 -> always False).
     if _coinbase_routed(ctx, asset):
-        return await _execute_coinbase_intent(ctx, asset, intent, market_data)
+        return _execute_coinbase_intent_noop(asset)
 
     _existing_position = ctx.paper_positions.get(asset, {})
     _has_active_position = ctx.fn_is_active_paper_position(_existing_position)

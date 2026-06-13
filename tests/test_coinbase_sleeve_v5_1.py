@@ -21,6 +21,33 @@ class FakeClient:
     def get_futures_balance_summary(self):
         return {"balance_summary": {"futures_buying_power": {"value": self._bp}}}
 
+    def get_product(self, product_id, **kw):
+        return {"product_id": product_id, "mid_market_price": "100",
+                "future_product_details": {"contract_size": "1"}}
+
+
+class FakeAdapterFull:
+    """Richer adapter mock that supports execute_target/manage_to_signal."""
+    def __init__(self, positions=None):
+        self._client = FakeClient(positions)
+        self.placed = []
+
+    def is_connected(self):
+        return True
+
+    def to_venue_symbol(self, asset, market="perp"):
+        from exchange.symbol_mapping import to_venue_symbol
+        return to_venue_symbol(asset, "coinbase", market)
+
+    def _contract_size(self, pid):
+        return {"SLP-20DEC30-CDE": 5.0, "ETP-20DEC30-CDE": 0.1,
+                "BIP-20DEC30-CDE": 0.01}.get(pid, 1.0)
+
+    async def place_order(self, req):
+        from exchange.adapter import OrderResult
+        self.placed.append(req)
+        return OrderResult(success=True, venue="coinbase", order_id="X", status="SUBMITTED")
+
 
 class FakeAdapter:
     def __init__(self, client, connected=True):
@@ -103,6 +130,38 @@ def test_drawdown_halts_and_blocks_then_manual_reset():
     assert s.can_trade("BTC", 1)[0] is False            # halt blocks trades
     s.reset_halt()
     assert s.can_trade("BTC", 1)[0] is True             # manual recovery clears
+
+
+def test_target_for_signal_flattens_below_threshold():
+    f = CoinbaseSleeve.target_for_signal
+    assert f(0.5) == 1
+    assert f(-0.5) == -1
+    assert f(0.15) == 1           # at threshold
+    assert f(0.10) == 0           # below threshold -> FLATTEN (the exit fix)
+    assert f(-0.05) == 0
+    assert f(0.0) == 0
+
+
+def test_manage_to_signal_flattens_held_position_on_hold():
+    import asyncio
+    a = FakeAdapterFull([{"product_id": "SLP-20DEC30-CDE", "side": "LONG",
+                          "number_of_contracts": "1"}])
+    s = CoinbaseSleeve(a)
+    # held LONG 1, signal goes neutral (0.05 < 0.15) -> target 0 -> places a SELL
+    asyncio.run(s.manage_to_signal("SOL", 0.05))
+    assert len(a.placed) == 1
+    assert a.placed[0].side == "SELL"
+
+
+def test_manage_to_signal_noop_when_already_aligned():
+    import asyncio
+    a = FakeAdapterFull([{"product_id": "SLP-20DEC30-CDE", "side": "LONG",
+                          "number_of_contracts": "1"}])
+    s = CoinbaseSleeve(a)
+    # held LONG 1, strong long signal -> target +1 == current -> NOOP, no order
+    r = asyncio.run(s.manage_to_signal("SOL", 0.6))
+    assert r["status"] == "NOOP"
+    assert len(a.placed) == 0
 
 
 def test_snapshot_shape():

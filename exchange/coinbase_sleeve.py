@@ -181,6 +181,27 @@ class CoinbaseSleeve:
         self._halt_reason = ""
         logger.warning("[COINBASE_SLEEVE] halt manually reset")
 
+    @staticmethod
+    def target_for_signal(direction: float, threshold: float = 0.15) -> int:
+        """Map a fused per-asset direction to a target signed contract count.
+        |direction| below the threshold -> 0 (FLATTEN). This is what makes the
+        sleeve EXIT on hold/neutral, not just open."""
+        d = float(direction or 0.0)
+        if d >= threshold:
+            return 1
+        if d <= -threshold:
+            return -1
+        return 0
+
+    async def manage_to_signal(self, asset: str, direction: float,
+                               threshold: float = 0.15) -> Dict[str, Any]:
+        """Per-tick driver: move `asset` to the contract target implied by the
+        fused direction (incl. flatten on hold). The SOLE Coinbase order path —
+        called every tick for routed assets so positions are actively managed
+        (opened, flipped, AND closed), closing the exit gap."""
+        target = self.target_for_signal(direction, threshold)
+        return await self.execute_target(asset, target)
+
     async def execute_target(self, asset: str, target_signed_contracts: int,
                              order_type: str = "LIMIT") -> Dict[str, Any]:
         """Move `asset` to a target signed contract count (e.g. +1 long, -1

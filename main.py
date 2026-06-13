@@ -11575,21 +11575,37 @@ class HMATSProductionRunner:
         # A spot account (effective leverage <= 1) cannot hold a short. A short
         # decision at spot leverage degenerates into selling held coin; over
         # weeks this silently accumulated real spot LONGS while the tracker
-        # recorded phantom SHORTS (-25% equity). Block NEW short ENTRIES only
-        # (asset currently flat) -- never reduces/exits, which also carry
-        # direction<0 and MUST remain executable. See
+        # recorded phantom SHORTS (-25% equity). Block any short intent that
+        # OPENS or ADDS to a short on spot -- never reduces/exits a LONG, which
+        # also carry direction<0 and MUST remain executable. See
         # docs/LIVE_ROOT_CAUSE_2026-06-12.md. Reversible via JSON flag.
+        #
+        # [B1-EXT 2026-06-13] Broadened beyond the original flat-only check. A
+        # short ADD on an already-short position at spot leverage is the same
+        # structural bug (free base = 0 -> dust-reject churn) and the flat-only
+        # guard missed it. The safety carve-out is unchanged: a SELL that
+        # REDUCES a real LONG sells held coin and must pass. So the block fires
+        # whenever we are NOT reducing an existing long (i.e. flat OR already
+        # short). 0 live occurrences post-flatten (B1+B2) -- preventive
+        # hardening for spot-leverage regimes (EXTREME_VOLATILITY=1.0x, or the
+        # DD-adaptive reducer forcing 1x).
         # =================================================================
         if (getattr(self.config, "block_short_entry_on_spot", True)
                 and intent.is_actionable and not intent.veto_active
                 and intent.direction < 0):
             _b1_lev = float(getattr(intent, "regime_leverage", 1.0) or 1.0)
-            _b1_flat = abs(self._paper_positions.get(asset, {}).get("exposure", 0.0)) < 1e-9
-            if _b1_lev <= 1.0 and _b1_flat:
+            _b1_pos = self._paper_positions.get(asset, {}) or {}
+            _b1_cur_dir = float(_b1_pos.get("direction", 0.0) or 0.0)
+            _b1_cur_exp = abs(float(_b1_pos.get("exposure", 0.0) or 0.0))
+            # Reducing a real long is the ONLY direction<0 case expressible on
+            # spot (it sells held coin) -> must stay executable.
+            _b1_reducing_long = (_b1_cur_dir > 0.0 and _b1_cur_exp > 1e-9)
+            if _b1_lev <= 1.0 and not _b1_reducing_long:
                 logger.warning(
-                    f"[B1] {asset}: blocking NEW short entry on spot "
+                    f"[B1] {asset}: blocking short OPEN/ADD on spot "
                     f"(regime_leverage={_b1_lev:.2f}x<=1 -> spot cannot hold a "
                     f"short); holding instead. dir={intent.direction:.2f} "
+                    f"cur_dir={_b1_cur_dir:+.0f} cur_exp={_b1_cur_exp:.4f} "
                     f"regime={agent_signals.get('regime_state','?')}"
                 )
                 intent.direction = 0.0
@@ -17693,6 +17709,32 @@ class HMATSProductionRunner:
                                         )
                                     except Exception as _cb_sl_err:
                                         logger.debug(f"[COINBASE-SLEEVE] skipped: {_cb_sl_err}")
+                                    # [COINBASE-MANAGE] per-tick position management:
+                                    # drive each ROUTED asset to the target implied by
+                                    # its fused direction (opens/flips AND flattens on
+                                    # hold) — the sole Coinbase order path, closing the
+                                    # exit gap. INERT unless RoutingPolicy is advanced
+                                    # past SHADOW (default PRE_PHASE_2 -> no routed
+                                    # assets -> no-op). fail-soft.
+                                    try:
+                                        import core.execution_service as _es
+                                        _rp = _es._coinbase_get_routing()
+                                        _flag = getattr(self.config, "coinbase_routing_enabled", False)
+                                        _sl = getattr(self, "_coinbase_sleeve", None)
+                                        if _flag and _rp is not None and _sl is not None:
+                                            for _m_a in self.config.assets:
+                                                if _rp.venue_for(_m_a) != "coinbase":
+                                                    continue
+                                                _m_dir = float(self._last_quant_directions.get(_m_a, 0.0) or 0.0)
+                                                _m_res = await _sl.manage_to_signal(_m_a, _m_dir)
+                                                if _m_res.get("status") not in ("NOOP", "NOT_READY"):
+                                                    logger.info(
+                                                        f"[COINBASE-MANAGE] {_m_a}: dir={_m_dir:+.2f} -> "
+                                                        f"{_m_res.get('status')} pos="
+                                                        f"{_sl.signed_contracts(_m_a)}ct"
+                                                    )
+                                    except Exception as _cb_mg_err:
+                                        logger.debug(f"[COINBASE-MANAGE] skipped: {_cb_mg_err}")
                                 else:
                                     logger.debug("[COINBASE-SHADOW] adapter not connected (no creds on host)")
                             except Exception as _cb_err:
