@@ -1512,6 +1512,13 @@ class ProductionConfig:
 
     # Regime-Conditional Leverage (Kraken isolated margin)
     regime_leverage_enabled: bool = True
+    # [B1 2026-06-12] Do not open NEW shorts when effective leverage<=1 (spot).
+    # A spot account cannot hold a short; a short decision at spot leverage
+    # degenerates into selling held coin -> over weeks this silently
+    # accumulated real spot longs while the tracker recorded phantom shorts
+    # (-25% equity). See docs/LIVE_ROOT_CAUSE_2026-06-12.md. Reversible:
+    # set "block_short_entry_on_spot": false in the live JSON profile.
+    block_short_entry_on_spot: bool = True
     regime_leverage_map: Dict[str, float] = field(default_factory=lambda: {
         "VOLATILE_CHOP": 3.0,           # Best regime (71% WR) ->max 3x
         "MOMENTUM_RALLY": 2.0,          # Clear direction
@@ -1742,6 +1749,8 @@ class ProductionConfig:
                 **cls.__dataclass_fields__["regime_leverage_map"].default_factory(),
                 **data.get("regime_leverage", {}),
             },
+            # [B1 2026-06-12] spot-short entry guard (default ON; JSON can disable)
+            block_short_entry_on_spot=data.get("block_short_entry_on_spot", True),
             # P1-02: Thesis budget parameters (overlay-aware)
             thesis_budget_loss_pct_nav=data.get("thesis_budget", {}).get(
                 "loss_budget_pct_nav", THESIS_BUDGET_LOSS_PCT_NAV),  # [CFG-3]
@@ -11552,6 +11561,37 @@ class HMATSProductionRunner:
                 logger.error(f"[REGIME_LEVERAGE] Error: {e} ->defaulting 1x")
         else:
             intent.regime_leverage = 1.0
+
+        # =================================================================
+        # [B1 2026-06-12] SPOT-SHORT ENTRY GUARD
+        # A spot account (effective leverage <= 1) cannot hold a short. A short
+        # decision at spot leverage degenerates into selling held coin; over
+        # weeks this silently accumulated real spot LONGS while the tracker
+        # recorded phantom SHORTS (-25% equity). Block NEW short ENTRIES only
+        # (asset currently flat) -- never reduces/exits, which also carry
+        # direction<0 and MUST remain executable. See
+        # docs/LIVE_ROOT_CAUSE_2026-06-12.md. Reversible via JSON flag.
+        # =================================================================
+        if (getattr(self.config, "block_short_entry_on_spot", True)
+                and intent.is_actionable and not intent.veto_active
+                and intent.direction < 0):
+            _b1_lev = float(getattr(intent, "regime_leverage", 1.0) or 1.0)
+            _b1_flat = abs(self._paper_positions.get(asset, {}).get("exposure", 0.0)) < 1e-9
+            if _b1_lev <= 1.0 and _b1_flat:
+                logger.warning(
+                    f"[B1] {asset}: blocking NEW short entry on spot "
+                    f"(regime_leverage={_b1_lev:.2f}x<=1 -> spot cannot hold a "
+                    f"short); holding instead. dir={intent.direction:.2f} "
+                    f"regime={agent_signals.get('regime_state','?')}"
+                )
+                intent.direction = 0.0
+                intent.target_exposure = 0.0
+                intent.is_actionable = False
+                intent.veto_active = True
+                intent.veto_reason = (
+                    (str(intent.veto_reason) + " | " if intent.veto_reason else "")
+                    + "B1_SPOT_SHORT_BLOCK"
+                )
 
         # =================================================================
         # V6.7 STEP B3: TQC UNCERTAINTY DISCOUNT
