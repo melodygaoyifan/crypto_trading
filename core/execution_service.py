@@ -181,6 +181,85 @@ except ImportError:
         return 0.0
 
 
+# =====================================================================
+# [Coinbase Phase B] Isolated venue routing. Default INERT: RoutingPolicy
+# starts PRE_PHASE_2 -> venue_for() returns "kraken" for everything, so
+# _coinbase_routed() is always False and the Kraken path below is unchanged.
+# Coinbase trading only engages when data/coinbase_routing_state.json advances
+# the phase (a separate, explicit, operator-gated step). All fail-closed to
+# Kraken. See docs/COINBASE_ENGINE_INTEGRATION_PLAN.md.
+# =====================================================================
+_CB_SLEEVE = None
+_CB_ROUTING = None
+
+
+def _coinbase_get_sleeve():
+    global _CB_SLEEVE
+    if _CB_SLEEVE is None:
+        try:
+            from exchange.coinbase_adapter import CoinbaseAdapter
+            from exchange.coinbase_sleeve import CoinbaseSleeve
+            _CB_SLEEVE = CoinbaseSleeve(CoinbaseAdapter())
+        except Exception:
+            _CB_SLEEVE = None
+    return _CB_SLEEVE
+
+
+def _coinbase_get_routing():
+    global _CB_ROUTING
+    if _CB_ROUTING is None:
+        try:
+            import json
+            import os
+            from exchange.routing import RoutingPolicy, CutoverPhase
+            _CB_ROUTING = RoutingPolicy()
+            sf = "data/coinbase_routing_state.json"
+            if os.path.exists(sf):
+                d = json.load(open(sf))
+                _CB_ROUTING.phase = CutoverPhase(d.get("phase", "PRE_PHASE_2"))
+                if d.get("coinbase_assets"):
+                    _CB_ROUTING.coinbase_assets = d["coinbase_assets"]
+        except Exception:
+            _CB_ROUTING = None
+    return _CB_ROUTING
+
+
+def _coinbase_routed(ctx, asset: str) -> bool:
+    """True only when the flag is on AND RoutingPolicy routes this asset to
+    Coinbase. Fail-closed to Kraken on any error."""
+    try:
+        if not getattr(ctx.config, "coinbase_routing_enabled", False):
+            return False
+        rp = _coinbase_get_routing()
+        if rp is None:
+            return False
+        return rp.venue_for(asset) == "coinbase"
+    except Exception:
+        return False
+
+
+async def _execute_coinbase_intent(ctx, asset, intent, market_data) -> Dict[str, Any]:
+    """Isolated Coinbase execution path (separate sleeve). Never touches the
+    Kraken state machine. First cut: +-1 contract in the signal direction
+    (sleeve contract-cap bounds size); target_exposure/direction 0 = exit."""
+    s = _coinbase_get_sleeve()
+    if s is None or not s.is_ready():
+        return {"status": "REJECTED", "reason": "coinbase_sleeve_unavailable",
+                "venue": "coinbase"}
+    try:
+        s.update_risk()
+        if getattr(intent, "target_exposure", 0) == 0 or getattr(intent, "direction", 0) == 0:
+            target = 0
+        else:
+            target = 1 if intent.direction > 0 else -1
+        res = await s.execute_target(asset, target)
+        return {"status": res.get("status"), "venue": "coinbase",
+                "asset": asset, "coinbase": res}
+    except Exception as e:
+        return {"status": "ERROR", "venue": "coinbase", "asset": asset,
+                "reason": f"{type(e).__name__}: {e}"}
+
+
 async def execute_intent_v2(
     ctx,
     asset: str,
@@ -208,6 +287,12 @@ async def execute_intent_v2(
     current_price = market_data.get("current_price", 0.0)
     if current_price <= 0:
         return {"status": "REJECTED", "reason": "Invalid price"}
+
+    # [Coinbase Phase B] isolated venue fork — divert Coinbase-routed assets to
+    # the separate sleeve path and RETURN; the Kraken path below is untouched.
+    # INERT by default (RoutingPolicy PRE_PHASE_2 -> always False).
+    if _coinbase_routed(ctx, asset):
+        return await _execute_coinbase_intent(ctx, asset, intent, market_data)
 
     _existing_position = ctx.paper_positions.get(asset, {})
     _has_active_position = ctx.fn_is_active_paper_position(_existing_position)
