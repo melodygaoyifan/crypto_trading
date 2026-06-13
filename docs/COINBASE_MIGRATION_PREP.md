@@ -79,6 +79,16 @@ The remaining gate is **account eligibility + the exact product set**, not "does
 - ⚠️ **Nano contracts: `contract_size` = 0.01 BTC / (per-asset).** Orders are sized in **contracts**, not base units — the execution layer must convert HMATS base-asset exposure → contract count when wiring live. Not yet handled.
 - ✅ `region_enabled.US = true`, `intraday_margin_rate ≈ 0.10` → ~10x available, funding hourly, 24/7.
 
+## Live order test (2026-06-13) — order path VALIDATED
+
+`scripts/coinbase_test_order.py --execute` ran one real 1-contract ETH round trip. Account left flat (0 positions). It validated the path and caught 3 real-API issues mocks could not (all fixed in `exchange/coinbase_adapter.py`):
+- ✅ open: LIMIT BUY 1 contract accepted + filled; position returned LONG 1 contract; sizing + tick-rounding + fill-parse all work.
+- 🔧 **price must round to product tick** (BTC 5 / ETH 0.5 / SOL 0.01) — first attempt rejected `INVALID_PRICE_PRECISION`; adapter now rounds limit prices.
+- 🔧 **CDE rejects `reduce_only`** ("unknown field") — removed; a close is a plain opposite-side order (futures net).
+- 🔧 **positions via `list_futures_positions`** (CDE), not `list_perps_positions` (INTX/portfolio_uuid) — reordered futures-first.
+
+The adapter is now **live-validated and order-ready**. Remaining is the engine integration (below).
+
 ## REMAINING gates
 
 - ✅ **USDC margin — trade-ready (confirmed 2026-06-13).** Account is enabled to trade derivatives; collateral is **USDC**. The earlier puzzle is explained: USD-denominated fields (`cfm_usd_balance`, `available_margin`) read 0 because the balance is **USDC**, while `futures_buying_power = 4000` reflects that USDC. Fund/trade via the **Futures (CDE)** surface, not INTX Perpetuals.
