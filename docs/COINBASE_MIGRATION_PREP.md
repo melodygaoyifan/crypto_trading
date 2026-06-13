@@ -8,11 +8,15 @@
 
 ## TL;DR
 
-The Phase-2 abstraction is **substantially built and tested** (adapter ABC, Kraken/Coinbase adapters, symbol map, routing state machine, cutover invariants, funding scaffold — 60 tests green). It is **inert** (no live wiring). Advancing past prep is **blocked on a venue/product access question**, not on code:
+The Phase-2 abstraction is **substantially built and tested** (adapter ABC, Kraken/Coinbase adapters, symbol map, routing state machine, cutover invariants, funding scaffold — 60 tests green). It is **inert** (no live wiring).
 
-> **ccxt perps for Coinbase exist only via `coinbaseinternational` (US-restricted). The US-accessible `coinbaseadvanced` has `swap=False` (no perps). Neither exposes funding via ccxt's unified method. "US Perpetual-Style Futures" are a different product (CFTC, 5yr-dated) with their own API.**
+**Goal (operator, 2026-06-13):** Coinbase is for **futures/derivatives** — real perpetuals so the short-biased strategy can express shorts cleanly (the absence of which caused P140) and unlock funding-rate strategies (Phase 3). Spot + Kraken 2x margin (B2) is a stopgap.
 
-This is the same shape as v5.1's **V13 (Deribit US-restricted → deferred)**. The operator must confirm which Coinbase perp product their account can trade *via API* before any real adapter wiring or cutover.
+**Updated viability (web-verified 2026-06-13): Coinbase IS a viable derivatives venue via the Advanced Trade REST API.** The earlier ccxt-only pessimism was misleading:
+
+> The **Coinbase Advanced Trade REST API** supports perpetual futures programmatically — `product_type="future"`, `contract_expiry_type="perpetual"`, **up to 10x leverage**, Market + Limit, **0.00% maker / 0.03% taker** (confirms V14), **USDC** margin in a perpetuals portfolio, **10 USDC min notional**. ccxt's `coinbaseadvanced.has.swap=False` is an incomplete unified-flag — use the **raw Advanced Trade / CDP-authenticated endpoints**, not ccxt unified swap.
+
+The remaining gate is **account eligibility + the exact product set**, not "does the API exist" (so it is *less* blocked than V13/Deribit). See blockers below.
 
 ---
 
@@ -41,15 +45,16 @@ This is the same shape as v5.1's **V13 (Deribit US-restricted → deferred)**. T
 
 ## BLOCKERS — operator must resolve before real wiring/cutover
 
-1. **🚩 Product/access verification (highest priority).** Which Coinbase perp can the account trade *via API*?
-   - `coinbaseinternational` (ccxt `swap=True`) — **US-restricted**. If the operator is US-based, likely unavailable.
-   - `coinbaseadvanced` (ccxt `swap=False`) — US-accessible but **no perps via ccxt**.
-   - **US Perpetual-Style Futures** (Coinbase Financial Markets/Derivatives, CFTC, 5yr-dated, funding accrues hourly/settles twice daily) — different symbols + API, **no confirmed ccxt unified support**. If this is the operator's path, the `BTC-PERP` symbol map and the funding feed both need reworking for that product.
-2. **PARAMETER 3 — cutover mode:** hot-swap / dual-venue / phased. `RoutingPolicy` defaults to the dual-venue 4-week schedule; confirm or override.
-3. **Credentials + auth scheme:** `COINBASE_API_KEY` / `COINBASE_API_SECRET` (+ CDP key vs legacy HMAC vs passphrase — depends on product).
-4. **Funding via raw endpoint:** ccxt unified `fetchFundingRate` is unavailable on the perp class; the feed's `_raw_funding()` must call the confirmed product's raw endpoint.
-5. **SOL-PERP listing:** the map lists `SOL-PERP`, but the v5.1 V14 note said "SOL pending list verify". Confirm SOL perp exists on the chosen product.
-6. **Fee confirmation:** V14 GREEN said 0bps maker / 3bps taker promotional — confirm still current and which product it applies to.
+1. **🚩 Account eligibility + product set (highest priority).** The API exists (Advanced Trade perps); what's unconfirmed is the *account*:
+   - Is the operator's account enabled for perpetual futures (region-eligible + onboarded to a perpetuals portfolio)? US accounts trade **US Perpetual-Style Futures** (nano contracts: 0.01 BTC, 0.10 ETH); non-US retail trade International perps. Both surface through the Advanced Trade order model but differ in exact `product_id`s and eligibility.
+   - **Exact perp `product_id` format** (e.g. `BTC-PERP-INTX` vs the US nano product codes) — the current symbol map's `BTC-PERP` is a placeholder and must be set from the live `GET /products?product_type=FUTURE` listing for the operator's account.
+2. **🚩 SOL perp availability.** Confirmed perp products are **BTC, ETH, LTC, XRP** — **SOL is not confirmed listed**. HMATS is BTC/ETH/**SOL**. If SOL has no Coinbase perp, the migration is BTC/ETH-perp + SOL stays Kraken (dual-venue by necessity), or SOL waits.
+3. **USDC margin funding.** Perps require **USDC** collateral in a perpetuals portfolio (10 USDC min notional). The account currently holds **USD** (~$7,178) — needs USD→USDC conversion + transfer into the perps portfolio before any perp order.
+4. **PARAMETER 3 — cutover mode:** hot-swap / dual-venue / phased. `RoutingPolicy` defaults to the dual-venue 4-week schedule; confirm or override.
+5. **Credentials + auth:** CDP API key (Advanced Trade uses CDP ECDSA/JWT auth, not legacy HMAC) → env `COINBASE_API_KEY` / `COINBASE_API_SECRET`. The adapter's client init must use the CDP scheme.
+6. **Funding via raw endpoint:** ccxt unified `fetchFundingRate` is False on the Coinbase classes; `coinbase_funding_feed._raw_funding()` must call the Advanced Trade funding endpoint directly.
+
+**Net:** less blocked than V13/Deribit (the API supports perps). The hard gates are now (1) account perp-eligibility, (2) SOL listing, (3) USDC funding — all account/ops items, plus the exact product_ids to finalize the symbol map.
 
 ## What is intentionally NOT done (until unblocked)
 
