@@ -91,7 +91,8 @@ def test_place_market_order_maps_args():
     assert res.success and res.order_id == "CB-MKT-1"
     kind, kw = a._client.calls[0]
     assert kind == "market" and kw["base_size"] == "0.1" and kw["leverage"] == "3"
-    assert kw.get("reduce_only") is True
+    # CDE rejects reduce_only -> adapter must NOT forward it (close = net order)
+    assert "reduce_only" not in kw
 
 
 def test_leverage_omitted_when_spot_like():
@@ -143,6 +144,18 @@ def test_base_exposure_converts_to_integer_contracts():
     assert res.success
     _, kw = a._client.calls[0]
     assert kw["base_size"] == "5"
+
+
+def test_limit_price_rounded_to_tick():
+    # ETP tick = 0.5 (fallback): 1666.33 -> 1666.5; 0.1 ETH -> 1 contract
+    a = CoinbaseAdapter(rest_client=FakeClient())
+    req = OrderRequest(symbol="ETP-20DEC30-CDE", side="BUY", size=0.1,
+                       order_type="LIMIT", price=1666.33)
+    res = asyncio.run(a.place_order(req))
+    assert res.success
+    _, kw = a._client.calls[0]
+    assert kw["limit_price"] == "1666.5"
+    assert kw["base_size"] == "1"
 
 
 def test_sub_contract_size_rejected():

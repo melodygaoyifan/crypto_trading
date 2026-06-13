@@ -77,8 +77,9 @@ async def run(execute: bool):
     csym = cb._client.get_product(product_id=pid)
     cmid = float(g(csym, "mid_market_price") or g(csym, "price"))
     sell_px = round(cmid * 0.998, 2)
+    # CDE has no reduce_only; an opposite-side order nets the position flat.
     creq = OrderRequest(symbol=pid, side="SELL", size=BASE_SIZE, order_type="LIMIT",
-                        price=sell_px, post_only=False, reduce_only=True)
+                        price=sell_px, post_only=False)
     cres = await cb.place_order(creq)
     print(f"\n[CLOSE] success={cres.success} status={cres.status} id={cres.order_id} "
           f"err={cres.error_code or ''} {cres.error_message or ''}")

@@ -71,6 +71,7 @@ class CoinbaseAdapter(ExchangeAdapter):
         self._paper = paper
         self._init_failed: Optional[str] = None
         self._contract_size_cache: Dict[str, float] = {}
+        self._price_increment_cache: Dict[str, float] = {}
 
     # CDE nano contract sizes (probe 2026-06-13); fallback if get_product fails.
     _CONTRACT_SIZE_FALLBACK = {
@@ -78,6 +79,36 @@ class CoinbaseAdapter(ExchangeAdapter):
         "ETP-20DEC30-CDE": 0.1,    # ETH
         "SLP-20DEC30-CDE": 5.0,    # SOL
     }
+    # CDE price tick size (probe 2026-06-13); limit prices must be a multiple.
+    _PRICE_INCREMENT_FALLBACK = {
+        "BIP-20DEC30-CDE": 5.0,    # BTC
+        "ETP-20DEC30-CDE": 0.5,    # ETH
+        "SLP-20DEC30-CDE": 0.01,   # SOL
+    }
+
+    def _price_increment(self, product_id: str) -> Optional[float]:
+        """Tick size for limit prices. Cached; fallback table if fetch fails."""
+        if product_id in self._price_increment_cache:
+            return self._price_increment_cache[product_id]
+        inc = None
+        try:
+            p = self._client.get_product(product_id=product_id)
+            raw = _attr(p, "price_increment")
+            if raw is not None:
+                inc = float(raw)
+        except Exception:
+            pass
+        if not inc or inc <= 0:
+            inc = self._PRICE_INCREMENT_FALLBACK.get(product_id)
+        if inc:
+            self._price_increment_cache[product_id] = inc
+        return inc
+
+    def _round_to_tick(self, product_id: str, price: float) -> float:
+        inc = self._price_increment(product_id)
+        if not inc or inc <= 0:
+            return price
+        return round(round(price / inc) * inc, 8)
 
     def _contract_size(self, product_id: str) -> Optional[float]:
         """Base-asset units per contract for a CDE futures product (e.g. BTC
@@ -172,28 +203,27 @@ class CoinbaseAdapter(ExchangeAdapter):
                     error_message=(f"size {request.size} on {product_id} rounds to "
                                    f"0 contracts (1 contract = {cs} base units)"))
             size_str = str(contracts)
-        # `reduce_only` is not a named SDK param; both order helpers accept
-        # **kwargs and forward it. Only send it when True so we never push a
-        # null into the request body. Its live effect must be confirmed during
-        # the SHADOW phase.
-        extra: Dict[str, Any] = {}
-        if request.reduce_only:
-            extra["reduce_only"] = True
+        # NOTE: CDE rejects `reduce_only` ("unknown field" — confirmed via live
+        # test 2026-06-13). Futures positions net naturally, so a close is just
+        # an opposite-side order of the position size; reduce_only is not sent.
         try:
             if request.order_type.upper() == "MARKET":
                 resp = self._client.market_order(
                     client_order_id=coid, product_id=product_id, side=side,
-                    base_size=size_str, leverage=lev, **extra,
+                    base_size=size_str, leverage=lev,
                 )
             else:  # LIMIT / POST — maker-first
                 if request.price is None:
                     return OrderResult(success=False, venue="coinbase",
                                        error_code="NO_PRICE",
                                        error_message="LIMIT order requires price")
+                # round to the product tick (CDE rejects off-tick prices).
+                # Returns the value unchanged when no tick is known.
+                px = self._round_to_tick(product_id, request.price)
                 resp = self._client.limit_order_gtc(
                     client_order_id=coid, product_id=product_id, side=side,
-                    base_size=size_str, limit_price=str(request.price),
-                    post_only=bool(request.post_only), leverage=lev, **extra,
+                    base_size=size_str, limit_price=str(px),
+                    post_only=bool(request.post_only), leverage=lev,
                 )
             return self._parse_order_response(resp, coid)
         except Exception as e:
@@ -272,7 +302,9 @@ class CoinbaseAdapter(ExchangeAdapter):
     async def fetch_positions(self) -> List[Dict[str, Any]]:
         if not self._ensure_client():
             return []
-        for method in ("list_perps_positions", "list_futures_positions"):
+        # CDE (US FCM) uses list_futures_positions; list_perps_positions (INTX)
+        # needs a portfolio_uuid and fails for CDE — try futures first.
+        for method in ("list_futures_positions", "list_perps_positions"):
             fn = getattr(self._client, method, None)
             if fn is None:
                 continue
