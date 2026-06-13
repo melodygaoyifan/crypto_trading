@@ -19,6 +19,7 @@ CRITICAL: These checks run INSIDE v3.6 runtime, not delegated to caller.
 """
 
 import logging
+import os
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple, Any
 from datetime import datetime, timezone, timedelta
@@ -1071,6 +1072,10 @@ class AlphaThresholdCalculator:
     def __init__(self):
         self._rolling_hit_rate = 0.5
         self.FRICTION = FrictionComponents()
+        # [ALPHA-FEEDBACK 2026-06-13] Connect the realized-alpha feedback loop to
+        # the override path (see check_alpha_gate). Default ON; disable with
+        # HMATS_ALPHA_FEEDBACK=0 in .env + restart. Reversible escape hatch.
+        self._alpha_feedback_enabled = os.environ.get("HMATS_ALPHA_FEEDBACK", "1") != "0"
     
     def check_alpha_gate(
         self,
@@ -1186,6 +1191,27 @@ class AlphaThresholdCalculator:
         # produced different values. The override is calibrated against paper run data.
         if estimated_alpha_override is not None and estimated_alpha_override > 0:
             estimated_alpha = estimated_alpha_override
+            # [ALPHA-FEEDBACK 2026-06-13] Close the realized-alpha feedback loop on
+            # the override path. The override (signal_edge_bps = |quant_dir|*65) is
+            # driven by the quant signal, which live-IC analysis showed is NOISE
+            # (IC -0.018); the 65x was calibrated once from stale paper data and
+            # never re-checked against realized. The system ALREADY tracks realized
+            # wins via update_hit_rate() -> _rolling_hit_rate, but only the fallback
+            # path consumed it (the override path threw it away). Apply the same
+            # performance_factor here so the estimate self-corrects toward realized:
+            # factor in [0.5, 1.0] — 1.0 when winning, shrinks toward 0.5 when the
+            # signal stops working -> gate tightens on no-edge regimes. Floor 0.5
+            # prevents over-tightening to zero (won't starve trading). The system's
+            # measured live alpha is negative (-62%/yr), so a haircut here is the
+            # correct direction. Reversible: HMATS_ALPHA_FEEDBACK=0.
+            if getattr(self, "_alpha_feedback_enabled", True):
+                _perf_factor = 0.5 + (self._rolling_hit_rate * 0.5)
+                _alpha_pre = estimated_alpha
+                estimated_alpha = estimated_alpha * _perf_factor
+                logger.info(
+                    f"[ALPHA-FEEDBACK] est {_alpha_pre:.1f}->{estimated_alpha:.1f}bps "
+                    f"(perf_factor={_perf_factor:.2f}, hit_rate={self._rolling_hit_rate:.2f})"
+                )
         else:
             # Fallback: internal calculation (kept for backward compatibility)
             effective_confidence = 0.7 * quant_confidence + 0.3 * regime_confidence
