@@ -17709,6 +17709,34 @@ class HMATSProductionRunner:
                                         )
                                     except Exception as _cb_sl_err:
                                         logger.debug(f"[COINBASE-SLEEVE] skipped: {_cb_sl_err}")
+                                    # [COINBASE-FUNDING] Phase 3 SHADOW: run the 3
+                                    # funding-rate strategies on live perp funding and
+                                    # LOG the combined signal. Observe-only — does NOT
+                                    # drive trades yet (the Coinbase sleeve's eventual
+                                    # independent alpha). fail-soft.
+                                    try:
+                                        if getattr(self, "_funding_strategies", None) is None:
+                                            from strategies.funding_rate_v5_1 import build_phase3_funding_strategies
+                                            self._funding_strategies = build_phase3_funding_strategies()
+                                        for _f_a in self.config.assets:
+                                            _f_pid = to_venue_symbol(_f_a, "coinbase", "perp")
+                                            _f_p = _cb._client.get_product(product_id=_f_pid)
+                                            _f_fpd = _cbg(_f_p, "future_product_details") or {}
+                                            _f_raw = _cbg(_f_fpd, "funding_rate")
+                                            if _f_raw is None:
+                                                continue
+                                            _f_md = {"funding_rate_8h": float(_f_raw) * 8.0}
+                                            _f_active = [st.evaluate(_f_a, _f_md) for st in self._funding_strategies]
+                                            _f_active = [s for s in _f_active if s.direction != 0.0]
+                                            if _f_active:
+                                                _f_best = max(_f_active, key=lambda s: s.confidence)
+                                                logger.info(
+                                                    f"[COINBASE-FUNDING] {_f_a}: {_f_best.strategy_name} "
+                                                    f"dir={_f_best.direction:+.0f} conf={_f_best.confidence:.2f} "
+                                                    f"({_f_best.reason})"
+                                                )
+                                    except Exception as _cb_fd_err:
+                                        logger.debug(f"[COINBASE-FUNDING] skipped: {_cb_fd_err}")
                                     # [COINBASE-MANAGE] per-tick position management:
                                     # drive each ROUTED asset to the target implied by
                                     # its fused direction (opens/flips AND flattens on
