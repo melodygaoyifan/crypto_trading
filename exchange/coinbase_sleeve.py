@@ -181,6 +181,54 @@ class CoinbaseSleeve:
         self._halt_reason = ""
         logger.warning("[COINBASE_SLEEVE] halt manually reset")
 
+    async def execute_target(self, asset: str, target_signed_contracts: int,
+                             order_type: str = "LIMIT") -> Dict[str, Any]:
+        """Move `asset` to a target signed contract count (e.g. +1 long, -1
+        short, 0 flat) via a single marketable order. Risk-gated by can_trade.
+        This is the isolated Coinbase execution primitive the engine fork calls.
+
+        Returns a dict {status, ...}. fail-closed: never raises.
+        """
+        try:
+            from exchange.adapter import OrderRequest
+        except Exception as e:
+            return {"status": "ERROR", "reason": f"import: {e}"}
+        if not self.is_ready():
+            return {"status": "NOT_READY", "asset": asset}
+        self.reconcile_positions()
+        cur = self.signed_contracts(asset)
+        delta = int(round(target_signed_contracts - cur))
+        if delta == 0:
+            return {"status": "NOOP", "asset": asset, "contracts": cur}
+        ok, reason = self.can_trade(asset, delta)
+        if not ok:
+            logger.warning(f"[COINBASE_SLEEVE] execute_target {asset} blocked: {reason}")
+            return {"status": "BLOCKED", "asset": asset, "reason": reason}
+        side = "BUY" if delta > 0 else "SELL"
+        n_contracts = abs(delta)
+        try:
+            pid = self._adapter.to_venue_symbol(asset, "perp")
+            cs = self._adapter._contract_size(pid) or 1.0
+            base_size = n_contracts * cs  # adapter converts base->contracts
+            # marketable limit: cross slightly so it fills; adapter rounds to tick
+            prod = self._adapter._client.get_product(product_id=pid)
+            mid = _f(_g(prod, "mid_market_price") or _g(prod, "price"))
+            px = mid * (1.002 if side == "BUY" else 0.998)
+            req = OrderRequest(symbol=pid, side=side, size=base_size,
+                               order_type=order_type, price=px, post_only=False)
+            res = await self._adapter.place_order(req)
+            self.reconcile_positions()
+            logger.info(f"[COINBASE_SLEEVE] execute_target {asset} {side} "
+                        f"{n_contracts}ct -> success={res.success} "
+                        f"now={self.signed_contracts(asset)}ct")
+            return {"status": "OK" if res.success else "FAILED", "asset": asset,
+                    "side": side, "contracts": n_contracts, "order": res,
+                    "position_after": self.signed_contracts(asset)}
+        except Exception as e:
+            logger.error(f"[COINBASE_SLEEVE] execute_target {asset} error: "
+                         f"{type(e).__name__}: {e}")
+            return {"status": "ERROR", "asset": asset, "reason": str(e)}
+
     def snapshot(self) -> Dict[str, Any]:
         """Combined read for reporting/heartbeat: positions + buying power + risk."""
         positions = self.reconcile_positions()
