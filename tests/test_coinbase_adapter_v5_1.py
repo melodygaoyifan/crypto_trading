@@ -14,9 +14,10 @@ from exchange.coinbase_adapter import CoinbaseAdapter
 
 
 class FakeClient:
-    def __init__(self, order_ok=True):
+    def __init__(self, order_ok=True, contract_size=None):
         self.calls = []
         self._order_ok = order_ok
+        self._cs = contract_size
 
     def limit_order_gtc(self, **kw):
         self.calls.append(("limit", kw))
@@ -52,10 +53,12 @@ class FakeClient:
 
     def get_product(self, product_id, **kw):
         # mirrors the live CDE shape (funding_interval is a "3600s" string)
+        fpd = {"funding_rate": "0.000002", "funding_interval": "3600s",
+               "funding_time": "2026-06-13T04:00:00Z"}
+        if self._cs is not None:
+            fpd["contract_size"] = str(self._cs)
         return {"product_id": product_id, "mid_market_price": "63580",
-                "future_product_details": {"funding_rate": "0.000002",
-                                           "funding_interval": "3600s",
-                                           "funding_time": "2026-06-13T04:00:00Z"}}
+                "future_product_details": fpd}
 
 
 def _adapter(ok=True):
@@ -129,6 +132,27 @@ def test_cancel_order_parses_result():
 def test_fetch_orderbook_parses_levels():
     ob = asyncio.run(_adapter().fetch_orderbook("BTC-PERP", depth=5))
     assert ob["bids"] == [[100.0, 1.0]] and ob["asks"] == [[101.0, 2.0]]
+
+
+def test_base_exposure_converts_to_integer_contracts():
+    # contract_size 0.01 BTC: 0.05 BTC exposure -> 5 contracts
+    a = CoinbaseAdapter(rest_client=FakeClient(contract_size=0.01))
+    req = OrderRequest(symbol="BIP-20DEC30-CDE", side="BUY", size=0.05,
+                       order_type="LIMIT", price=63000)
+    res = asyncio.run(a.place_order(req))
+    assert res.success
+    _, kw = a._client.calls[0]
+    assert kw["base_size"] == "5"
+
+
+def test_sub_contract_size_rejected():
+    # 0.005 BTC < 1 contract (0.01) -> BELOW_MIN_CONTRACT, no SDK call
+    a = CoinbaseAdapter(rest_client=FakeClient(contract_size=0.01))
+    req = OrderRequest(symbol="BIP-20DEC30-CDE", side="BUY", size=0.005,
+                       order_type="MARKET")
+    res = asyncio.run(a.place_order(req))
+    assert res.success is False and res.error_code == "BELOW_MIN_CONTRACT"
+    assert a._client.calls == []  # rejected before any order call
 
 
 def test_fetch_funding_parses_cde_interval_string():

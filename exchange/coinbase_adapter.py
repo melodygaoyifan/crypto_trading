@@ -70,6 +70,35 @@ class CoinbaseAdapter(ExchangeAdapter):
         self._api_secret = api_secret or os.environ.get("COINBASE_API_SECRET")
         self._paper = paper
         self._init_failed: Optional[str] = None
+        self._contract_size_cache: Dict[str, float] = {}
+
+    # CDE nano contract sizes (probe 2026-06-13); fallback if get_product fails.
+    _CONTRACT_SIZE_FALLBACK = {
+        "BIP-20DEC30-CDE": 0.01,   # BTC
+        "ETP-20DEC30-CDE": 0.1,    # ETH
+        "SLP-20DEC30-CDE": 5.0,    # SOL
+    }
+
+    def _contract_size(self, product_id: str) -> Optional[float]:
+        """Base-asset units per contract for a CDE futures product (e.g. BTC
+        0.01). Cached. Returns None for non-contract products (spot)."""
+        if product_id in self._contract_size_cache:
+            return self._contract_size_cache[product_id]
+        cs = None
+        try:
+            p = self._client.get_product(product_id=product_id)
+            fpd = _attr(p, "future_product_details") or {}
+            raw = _attr(fpd, "contract_size")
+            if raw is not None:
+                cs = float(raw)
+        except Exception as e:
+            logger.warning(f"[COINBASE] contract_size fetch failed for "
+                           f"{product_id}: {type(e).__name__}: {e}")
+        if not cs or cs <= 0:
+            cs = self._CONTRACT_SIZE_FALLBACK.get(product_id)
+        if cs:
+            self._contract_size_cache[product_id] = cs
+        return cs
 
     @property
     def venue(self) -> str:
@@ -129,6 +158,20 @@ class CoinbaseAdapter(ExchangeAdapter):
         side = request.side.upper()
         product_id = request.symbol
         lev = str(int(request.leverage)) if request.leverage and request.leverage > 1 else None
+        # CDE futures trade in WHOLE contracts (base_increment=1), each worth
+        # `contract_size` base units (BTC 0.01 / ETH 0.1 / SOL 5.0). Convert the
+        # HMATS base-asset exposure -> integer contract count.
+        size_str = str(request.size)
+        cs = self._contract_size(product_id)
+        if cs and cs > 0:
+            contracts = int(round(request.size / cs))
+            if contracts < 1:
+                return OrderResult(
+                    success=False, venue="coinbase", client_order_id=coid,
+                    error_code="BELOW_MIN_CONTRACT",
+                    error_message=(f"size {request.size} on {product_id} rounds to "
+                                   f"0 contracts (1 contract = {cs} base units)"))
+            size_str = str(contracts)
         # `reduce_only` is not a named SDK param; both order helpers accept
         # **kwargs and forward it. Only send it when True so we never push a
         # null into the request body. Its live effect must be confirmed during
@@ -140,7 +183,7 @@ class CoinbaseAdapter(ExchangeAdapter):
             if request.order_type.upper() == "MARKET":
                 resp = self._client.market_order(
                     client_order_id=coid, product_id=product_id, side=side,
-                    base_size=str(request.size), leverage=lev, **extra,
+                    base_size=size_str, leverage=lev, **extra,
                 )
             else:  # LIMIT / POST — maker-first
                 if request.price is None:
@@ -149,7 +192,7 @@ class CoinbaseAdapter(ExchangeAdapter):
                                        error_message="LIMIT order requires price")
                 resp = self._client.limit_order_gtc(
                     client_order_id=coid, product_id=product_id, side=side,
-                    base_size=str(request.size), limit_price=str(request.price),
+                    base_size=size_str, limit_price=str(request.price),
                     post_only=bool(request.post_only), leverage=lev, **extra,
                 )
             return self._parse_order_response(resp, coid)

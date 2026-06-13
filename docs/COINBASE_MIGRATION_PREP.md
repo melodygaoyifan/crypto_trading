@@ -79,13 +79,14 @@ The remaining gate is **account eligibility + the exact product set**, not "does
 - ⚠️ **Nano contracts: `contract_size` = 0.01 BTC / (per-asset).** Orders are sized in **contracts**, not base units — the execution layer must convert HMATS base-asset exposure → contract count when wiring live. Not yet handled.
 - ✅ `region_enabled.US = true`, `intraday_margin_rate ≈ 0.10` → ~10x available, funding hourly, 24/7.
 
-## REMAINING gates (operational — code side is done)
+## REMAINING gates
 
-1. **USDC funding — diagnosed, ops step remains.** Probe shows `futures_buying_power = 4000 USD` on the **FCM (CDE) side** but `cfm_usd_balance = 0` / `available_margin = 0`, and only a **Default** portfolio exists. The 4000 is recognized as US-futures buying power but is not yet settled as usable margin in the CFM futures wallet; the operator was likely trying to fund **"Perpetuals" (INTX, US-restricted)** which a US account cannot. **Action:** fund/confirm via the **"Futures" (CDE)** surface, not "Perpetuals"; reconcile the buying_power(4000) vs available_margin(0) gap before live orders (Coinbase Futures UI or a tiny SHADOW->DUAL test order).
-2. **Trade-enabled CDP key.** The current key is read-only (correct for the probe); live orders need a trade-scoped key. Also rotate the read-only key (it was pasted in chat).
-3. **SHADOW validation (read-only):** parity-compare Coinbase CDE vs Kraken funding/spread/depth and confirm live response shapes (funding fields on `get_product`, positions, leverage/reduce_only on orders) before DUAL_VENUE.
+- ✅ **USDC margin — trade-ready (confirmed 2026-06-13).** Account is enabled to trade derivatives; collateral is **USDC**. The earlier puzzle is explained: USD-denominated fields (`cfm_usd_balance`, `available_margin`) read 0 because the balance is **USDC**, while `futures_buying_power = 4000` reflects that USDC. Fund/trade via the **Futures (CDE)** surface, not INTX Perpetuals.
+- ✅ **Nano-contract sizing — implemented + tested.** Orders trade in **whole contracts** (base_increment=1): BTC `contract_size`=0.01 (~$635/contract), ETH=0.1 (~$166), SOL=5.0 (~$333). `CoinbaseAdapter.place_order` now converts HMATS base-asset exposure → integer contracts (cached `contract_size`, fallback table), rejecting sub-1-contract orders (`BELOW_MIN_CONTRACT`). **Implication:** min position is coarse ($166–$635) — the position sizer must respect this on a ~$11K account.
 
-**Net:** product_ids done, read-only creds working, cutover mode decided, all 3 assets present, adapter implemented + tested. Remaining is operational: settle/confirm the USDC margin on the CDE side, mint a trade-scoped key, then run SHADOW.
+Still open before live orders:
+1. **Trade-enabled CDP key.** Current key is read-only (correct for probe + SHADOW). Live orders need a trade-scoped key. Rotate the read-only key (pasted in chat).
+2. **Wire DUAL_VENUE into the execution path.** The adapter is order-ready but **not yet called by `execution_manager`/`main.py`** (SINGLE_EXCHANGE kraken-only gate still in force). This is the remaining integration: route per `RoutingPolicy`, gated by `cutover.assert_safe_to_advance`, starting at SHADOW.
 
 ## What is intentionally NOT done (until unblocked)
 
