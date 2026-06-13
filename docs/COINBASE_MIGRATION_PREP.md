@@ -43,18 +43,26 @@ The remaining gate is **account eligibility + the exact product set**, not "does
 
 ---
 
-## BLOCKERS — operator must resolve before real wiring/cutover
+## Target product (CONFIRMED 2026-06-13)
 
-1. **🚩 Account eligibility + product set (highest priority).** The API exists (Advanced Trade perps); what's unconfirmed is the *account*:
-   - Is the operator's account enabled for perpetual futures (region-eligible + onboarded to a perpetuals portfolio)? US accounts trade **US Perpetual-Style Futures** (nano contracts: 0.01 BTC, 0.10 ETH); non-US retail trade International perps. Both surface through the Advanced Trade order model but differ in exact `product_id`s and eligibility.
-   - **Exact perp `product_id` format** (e.g. `BTC-PERP-INTX` vs the US nano product codes) — the current symbol map's `BTC-PERP` is a placeholder and must be set from the live `GET /products?product_type=FUTURE` listing for the operator's account.
-2. **🚩 SOL perp availability.** Confirmed perp products are **BTC, ETH, LTC, XRP** — **SOL is not confirmed listed**. HMATS is BTC/ETH/**SOL**. If SOL has no Coinbase perp, the migration is BTC/ETH-perp + SOL stays Kraken (dual-venue by necessity), or SOL waits.
-3. **USDC margin funding.** Perps require **USDC** collateral in a perpetuals portfolio (10 USDC min notional). The account currently holds **USD** (~$7,178) — needs USD→USDC conversion + transfer into the perps portfolio before any perp order.
-4. **PARAMETER 3 — cutover mode:** hot-swap / dual-venue / phased. `RoutingPolicy` defaults to the dual-venue 4-week schedule; confirm or override.
-5. **Credentials + auth:** CDP API key (Advanced Trade uses CDP ECDSA/JWT auth, not legacy HMAC) → env `COINBASE_API_KEY` / `COINBASE_API_SECRET`. The adapter's client init must use the CDP scheme.
-6. **Funding via raw endpoint:** ccxt unified `fetchFundingRate` is False on the Coinbase classes; `coinbase_funding_feed._raw_funding()` must call the Advanced Trade funding endpoint directly.
+**Coinbase US Perpetual-Style Futures** (CFTC-regulated, Coinbase Derivatives) — operator's account is perp-enabled for this product. Long-dated (5yr) contracts with a funding mechanism, 24/7, accessed via the Advanced Trade API (`product_type=FUTURE`, `contract_expiry_type=PERPETUAL`), CDP auth.
 
-**Net:** less blocked than V13/Deribit (the API supports perps). The hard gates are now (1) account perp-eligibility, (2) SOL listing, (3) USDC funding — all account/ops items, plus the exact product_ids to finalize the symbol map.
+**Asset coverage — all 3 HMATS assets available:** US Perpetual-Style Futures now list **BTC, ETH, XRP, SOL** (SOL added post-launch). So BTC/ETH/SOL can all migrate to Coinbase perps — no forced split with Kraken. (Leverage: BTC/ETH up to 10x nano, others up to ~5x — confirm per product.)
+
+## RESOLVED gates
+
+- ✅ **Account perp-eligibility** — confirmed (US Perpetual-Style Futures enabled).
+- ✅ **SOL availability** — confirmed listed (BTC/ETH/XRP/SOL).
+
+## REMAINING gates (mechanical — read-only probe resolves most)
+
+1. **Exact `product_id`s.** The symbol map's `BTC-PERP` is a placeholder. Run `scripts/coinbase_probe.py` (read-only, no orders) with a CDP key → lists the live perp `product_id`s + confirms the API surface (Advanced Trade vs Derivatives-FCM). Paste results → finalize `exchange/symbol_mapping.py` `coinbase/perp`.
+2. **USDC margin funding.** Perps need **USDC** collateral in a perpetuals portfolio (10 USDC min notional). Account holds ~$7,178 **USD** → convert USD→USDC + move into the perps portfolio before any perp order.
+3. **CDP credentials.** Advanced Trade uses CDP API keys (ES256 JWT, not legacy HMAC). Read-only key for the probe; a trade-enabled key later for the adapter. → env `COINBASE_API_KEY` (CDP key name) + `COINBASE_API_SECRET` (PEM).
+4. **PARAMETER 3 — cutover mode:** hot-swap / dual-venue / phased. `RoutingPolicy` defaults to the dual-venue 4-week schedule.
+5. **Funding endpoint:** `coinbase_funding_feed._raw_funding()` calls the Advanced Trade funding endpoint (ccxt unified `fetchFundingRate` is unavailable) — wire once product_ids known.
+
+**Net:** viable and largely de-risked. Gates 1+3 are resolved in one read-only probe run; gate 2 is an ops step (USD→USDC); gates 4+5 are wiring once product_ids are known.
 
 ## What is intentionally NOT done (until unblocked)
 
