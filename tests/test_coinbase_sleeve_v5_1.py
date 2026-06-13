@@ -78,6 +78,33 @@ def test_fail_soft_returns_last_snapshot():
     assert s.reconcile_positions()["ETH"]["signed_contracts"] == 1.0
 
 
+def test_can_trade_contract_cap():
+    s = _sleeve()  # default max_contracts_per_asset=1
+    s.reconcile_positions()
+    assert s.can_trade("BTC", 1)[0] is True    # 0 + 1 = 1 OK
+    assert s.can_trade("BTC", 2)[0] is False   # 0 + 2 = 2 > 1
+
+
+def test_can_trade_with_existing_position_allows_close():
+    s = _sleeve([{"product_id": "BIP-20DEC30-CDE", "side": "LONG",
+                  "number_of_contracts": "1"}])
+    s.reconcile_positions()
+    assert s.can_trade("BTC", 1)[0] is False   # 1 + 1 = 2 > cap
+    assert s.can_trade("BTC", -1)[0] is True   # 1 - 1 = 0 (closing) OK
+
+
+def test_drawdown_halts_and_blocks_then_manual_reset():
+    client = FakeClient(bp="4000")
+    s = CoinbaseSleeve(FakeAdapter(client), max_sleeve_drawdown_pct=0.15)
+    assert s.update_risk()["halted"] is False          # baseline 4000
+    client._bp = "3000"                                 # -25% drawdown
+    r = s.update_risk()
+    assert r["halted"] is True and r["drawdown_pct"] == 0.25
+    assert s.can_trade("BTC", 1)[0] is False            # halt blocks trades
+    s.reset_halt()
+    assert s.can_trade("BTC", 1)[0] is True             # manual recovery clears
+
+
 def test_snapshot_shape():
     s = _sleeve([{"product_id": "BIP-20DEC30-CDE", "side": "LONG",
                   "number_of_contracts": "1"}])

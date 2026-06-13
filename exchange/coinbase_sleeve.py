@@ -44,7 +44,9 @@ class CoinbaseSleeve:
         assets: HMATS-canonical assets this sleeve covers.
     """
 
-    def __init__(self, adapter, assets=("BTC", "ETH", "SOL")) -> None:
+    def __init__(self, adapter, assets=("BTC", "ETH", "SOL"),
+                 max_sleeve_drawdown_pct: float = 0.15,
+                 max_contracts_per_asset: int = 1) -> None:
         self._adapter = adapter
         self._assets = tuple(assets)
         # product_id -> HMATS asset, for mapping venue positions back
@@ -56,6 +58,13 @@ class CoinbaseSleeve:
                 pass
         self._last_positions: Dict[str, Dict[str, Any]] = {}
         self._last_buying_power_usd: float = 0.0
+        # --- isolated sleeve risk guard (the Kraken existence-fuse equivalent,
+        # scoped to Coinbase ONLY; never touches the global fuse) ---
+        self._max_sleeve_drawdown_pct = float(max_sleeve_drawdown_pct)
+        self._max_contracts_per_asset = int(max_contracts_per_asset)
+        self._sleeve_start_equity: Optional[float] = None
+        self._halted: bool = False
+        self._halt_reason: str = ""
 
     def is_ready(self) -> bool:
         return bool(self._adapter and self._adapter.is_connected())
@@ -124,10 +133,60 @@ class CoinbaseSleeve:
             logger.warning(f"[COINBASE_SLEEVE] buying_power failed: {type(e).__name__}: {e}")
             return self._last_buying_power_usd
 
+    def sleeve_equity_usd(self) -> float:
+        """Approximate Coinbase sleeve equity = buying power + unrealized PnL of
+        open positions. Used ONLY for the sleeve's own risk guard + reporting —
+        never fed into the Kraken existence-fuse/drawdown."""
+        bp = self.buying_power_usd()
+        upnl = sum(_f(p.get("unrealized_pnl")) for p in self._last_positions.values())
+        return bp + upnl
+
+    # ----- isolated sleeve risk guard -------------------------------------
+
+    def update_risk(self) -> Dict[str, Any]:
+        """Refresh sleeve drawdown + halt state. Call each tick. Sets the
+        baseline on first call. HALT is sticky until manually reset (mirrors the
+        existence-fuse 'manual recovery only' rule), scoped to Coinbase only."""
+        eq = self.sleeve_equity_usd()
+        if self._sleeve_start_equity is None and eq > 0:
+            self._sleeve_start_equity = eq
+            logger.info(f"[COINBASE_SLEEVE] risk baseline set: ${eq:,.2f}")
+        dd = 0.0
+        if self._sleeve_start_equity and self._sleeve_start_equity > 0:
+            dd = (self._sleeve_start_equity - eq) / self._sleeve_start_equity
+        if dd >= self._max_sleeve_drawdown_pct and not self._halted:
+            self._halted = True
+            self._halt_reason = (f"sleeve drawdown {dd:.1%} >= "
+                                 f"{self._max_sleeve_drawdown_pct:.0%}")
+            logger.error(f"[COINBASE_SLEEVE] HALTED: {self._halt_reason}")
+        return {"equity_usd": eq, "drawdown_pct": dd,
+                "halted": self._halted, "halt_reason": self._halt_reason}
+
+    def can_trade(self, asset: str, intended_signed_contracts: float) -> tuple:
+        """(allowed, reason). Gate consulted by the order-routing branch BEFORE
+        any Coinbase order. Isolated to Coinbase — never blocks Kraken."""
+        if self._halted:
+            return False, f"coinbase_sleeve_halted: {self._halt_reason}"
+        # resulting position size after this order (current + intended)
+        cur = self.signed_contracts(asset)
+        resulting = abs(cur + intended_signed_contracts)
+        if resulting > self._max_contracts_per_asset:
+            return False, (f"coinbase_contract_cap: {resulting:.0f} > "
+                           f"{self._max_contracts_per_asset} for {asset}")
+        return True, "ok"
+
+    def reset_halt(self) -> None:
+        """Manual recovery (operator action), Coinbase-sleeve only."""
+        self._halted = False
+        self._halt_reason = ""
+        logger.warning("[COINBASE_SLEEVE] halt manually reset")
+
     def snapshot(self) -> Dict[str, Any]:
-        """Combined read for reporting/heartbeat: positions + buying power."""
+        """Combined read for reporting/heartbeat: positions + buying power + risk."""
+        positions = self.reconcile_positions()
         return {
             "venue": "coinbase",
-            "positions": self.reconcile_positions(),
+            "positions": positions,
             "buying_power_usd": self.buying_power_usd(),
+            "risk": self.update_risk(),
         }
