@@ -34,10 +34,17 @@ SYMBOL_MAP: Dict[str, Dict[str, Dict[str, str]]] = {
         },
     },
     "coinbase": {
+        # US Perpetual-Style Futures (Coinbase Derivatives Exchange / CFTC FCM).
+        # Confirmed via live account probe 2026-06-13 — display names "BTC/ETH/SOL
+        # PERP", 5yr-dated (20DEC30) perpetual-style contracts on the -CDE venue.
+        # WARNING: the -PERP-INTX products (BTC-PERP-INTX, ...) are Coinbase
+        # International = US-RESTRICTED; do NOT use them for a US account.
+        # The 20DEC30 expiry tag is the current perpetual-style contract; re-run
+        # scripts/coinbase_probe.py if Coinbase rolls it.
         "perp": {
-            "BTC": "BTC-PERP",
-            "ETH": "ETH-PERP",
-            "SOL": "SOL-PERP",
+            "BTC": "BIP-20DEC30-CDE",
+            "ETH": "ETP-20DEC30-CDE",
+            "SOL": "SLP-20DEC30-CDE",
         },
         "spot": {
             "BTC": "BTC-USD",

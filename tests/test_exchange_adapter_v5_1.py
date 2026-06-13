@@ -34,9 +34,9 @@ from exchange.symbol_mapping import (
     ("BTC", "kraken", "perp", "PF_XBTUSD"),
     ("ETH", "kraken", "perp", "PF_ETHUSD"),
     ("SOL", "kraken", "perp", "PF_SOLUSD"),
-    ("BTC", "coinbase", "perp", "BTC-PERP"),
-    ("ETH", "coinbase", "perp", "ETH-PERP"),
-    ("SOL", "coinbase", "perp", "SOL-PERP"),
+    ("BTC", "coinbase", "perp", "BIP-20DEC30-CDE"),
+    ("ETH", "coinbase", "perp", "ETP-20DEC30-CDE"),
+    ("SOL", "coinbase", "perp", "SLP-20DEC30-CDE"),
     ("BTC", "coinbase", "spot", "BTC-USD"),
     ("BTC", "kraken", "spot", "BTC/USDT"),
     ("btc", "KRAKEN", "PERP", "PF_XBTUSD"),  # case-insensitive
@@ -62,7 +62,7 @@ def test_to_venue_symbol_unknown_market_raises():
 
 @pytest.mark.parametrize("venue,market,vsym,expected", [
     ("kraken", "perp", "PF_XBTUSD", "BTC"),
-    ("coinbase", "perp", "ETH-PERP", "ETH"),
+    ("coinbase", "perp", "ETP-20DEC30-CDE", "ETH"),
     ("coinbase", "spot", "SOL-USD", "SOL"),
 ])
 def test_from_venue_symbol_inverse(venue, market, vsym, expected):
@@ -122,33 +122,43 @@ def test_coinbase_adapter_venue():
     assert a.venue == "coinbase"
 
 
-def test_coinbase_adapter_skeleton_returns_failure():
-    """Skeleton returns NOT_CONFIGURED on place_order until operator wires."""
+@pytest.fixture
+def unconfigured_adapter(monkeypatch):
+    """A CoinbaseAdapter guaranteed to have NO credentials, regardless of any
+    ambient .coinbase_key.json or COINBASE_* env on the dev/CI machine. This
+    keeps the fail-closed contract tests hermetic AND prevents them from ever
+    issuing a live API call."""
+    import exchange.coinbase_adapter as cba
+    monkeypatch.delenv("COINBASE_API_KEY", raising=False)
+    monkeypatch.delenv("COINBASE_API_SECRET", raising=False)
+    monkeypatch.delenv("COINBASE_KEY_FILE", raising=False)
+    monkeypatch.setattr(cba, "_DEFAULT_KEY_FILE", "/nonexistent/.coinbase_key.json")
+    return cba.CoinbaseAdapter()
+
+
+def test_coinbase_adapter_returns_not_configured(unconfigured_adapter):
+    """place_order fails closed with NOT_CONFIGURED when no creds present."""
     import asyncio
-    a = CoinbaseAdapter()
     req = OrderRequest(symbol="BTC-PERP", side="BUY", size=0.001)
-    res = asyncio.run(a.place_order(req))
+    res = asyncio.run(unconfigured_adapter.place_order(req))
     assert res.success is False
     assert res.error_code == "NOT_CONFIGURED"
 
 
-def test_coinbase_adapter_balance_empty_when_unconfigured():
+def test_coinbase_adapter_balance_empty_when_unconfigured(unconfigured_adapter):
     import asyncio
-    a = CoinbaseAdapter()
-    bal = asyncio.run(a.fetch_balance())
-    assert bal == {}
+    assert asyncio.run(unconfigured_adapter.fetch_balance()) == {}
 
 
-def test_coinbase_adapter_fetch_funding_raises_when_unconfigured():
+def test_coinbase_adapter_fetch_funding_raises_when_unconfigured(unconfigured_adapter):
     import asyncio
-    a = CoinbaseAdapter()
     with pytest.raises(RuntimeError, match="not_configured"):
-        asyncio.run(a.fetch_funding_rate("BTC-PERP"))
+        asyncio.run(unconfigured_adapter.fetch_funding_rate("BTC-PERP"))
 
 
 def test_coinbase_adapter_to_venue_symbol():
     a = CoinbaseAdapter()
-    assert a.to_venue_symbol("BTC", "perp") == "BTC-PERP"
+    assert a.to_venue_symbol("BTC", "perp") == "BIP-20DEC30-CDE"
     assert a.to_venue_symbol("BTC", "spot") == "BTC-USD"
 
 

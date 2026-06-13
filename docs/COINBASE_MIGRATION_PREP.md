@@ -27,7 +27,7 @@ The remaining gate is **account eligibility + the exact product set**, not "does
 | `exchange/adapter.py` | `ExchangeAdapter` ABC + `OrderRequest`/`OrderResult`/`FundingRateData` | complete |
 | `exchange/kraken_adapter.py` | wraps ccxt Kraken; `place_order` returns `DELEGATED` (live still flows through `execution_manager` during dual-venue) | complete |
 | `exchange/coinbase_adapter.py` | Coinbase US perps adapter — **real, SDK-backed** (`coinbase-advanced-py` RESTClient, CDP auth). place/cancel/balance/positions/orderbook/funding implemented; fail-closed without creds. Pending: confirmed `product_id`s + creds + SHADOW validation of leverage/reduce_only/funding-field placement | implemented |
-| `exchange/symbol_mapping.py` | `SYMBOL_MAP` kraken/coinbase × perp/spot | complete (perp symbols assume International-style `BTC-PERP`) |
+| `exchange/symbol_mapping.py` | `SYMBOL_MAP` kraken/coinbase × perp/spot | complete (coinbase perp = real US CDE ids `BIP/ETP/SLP-20DEC30-CDE`, confirmed via probe) |
 | `exchange/routing.py` | `RoutingPolicy` + `CutoverPhase` state machine, Iron-Law-8 phase gating | complete |
 | `tests/test_exchange_adapter_v5_1.py` | adapter + routing + symbol tests | complete |
 
@@ -54,20 +54,25 @@ The remaining gate is **account eligibility + the exact product set**, not "does
 - ✅ **Account perp-eligibility** — confirmed (US Perpetual-Style Futures enabled).
 - ✅ **SOL availability** — confirmed listed (BTC/ETH/XRP/SOL).
 - ✅ **PARAMETER 3 — cutover mode = DUAL-VENUE** (decided 2026-06-13). Rationale: account just recovered from the P140 incident (−25%), the Coinbase integration is new with live field names unverified, and Iron Law 8 requires DRL ACTIVE throughout — so phase in (SHADOW read-only → 50/50 → 100%, rollback always permitted) rather than hot-swap the whole account onto an unproven path. `RoutingPolicy` already defaults to this progression; `cutover.assert_safe_to_advance` gates every step.
+- ✅ **Product IDs — resolved via live read-only probe 2026-06-13.** The account trades **Coinbase Derivatives Exchange (-CDE, US FCM)**, NOT International (`-PERP-INTX` is visible but **US-restricted** — do not use). The perpetual-style (5yr-dated) products, now in `exchange/symbol_mapping.py`:
+  - BTC → `BIP-20DEC30-CDE` (disp "BTC PERP")
+  - ETH → `ETP-20DEC30-CDE` (disp "ETH PERP")
+  - SOL → `SLP-20DEC30-CDE` (disp "SOL PERP")
+  (The `20DEC30` tag is the current perpetual-style contract; re-probe if Coinbase rolls it.)
+- ✅ **CDP credentials** — read-only key provided + working (probe authenticated). Recommend rotating it (it was pasted in chat). A trade-enabled key is needed later for live orders.
 
-## REMAINING gates (mechanical — read-only probe resolves most)
+## REMAINING gates (operational — code side is done)
 
-1. **Exact `product_id`s.** The symbol map's `BTC-PERP` is a placeholder. Run `scripts/coinbase_probe.py` (read-only, no orders) with a CDP key → lists the live perp `product_id`s + confirms the API surface (Advanced Trade vs Derivatives-FCM). Paste results → finalize `exchange/symbol_mapping.py` `coinbase/perp`.
-2. **🚩 USDC margin funding (operator is blocked here, 2026-06-13).** Operator holds **4000 USDC** but cannot load it into the derivatives account. Margin USDC must live in the **derivatives/perps portfolio**, not the default/spot portfolio. Funding paths: perp market → *Manage funds → Transfer funds for perpetuals* (Default → Perpetuals), or *Deposit → Receive crypto → USDC → destination = Perpetuals*, or the `move_portfolio_funds` API. **Likely cause of the block:** a product/portfolio mismatch — the "Perpetuals portfolio" is **INTX (International, US-restricted)**, whereas **US Perpetual-Style Futures** fund a **Coinbase Derivatives (FCM) futures wallet** via a different flow (and may require completing the futures-account onboarding + have settlement-window cutoffs). The probe now dumps `get_portfolios` + `get_futures_balance_summary` + `get_perps_portfolio_summary` to show exactly which surface exists and where the USDC is.
-3. **CDP credentials.** Advanced Trade uses CDP API keys (ES256 JWT, not legacy HMAC). Read-only key for the probe; a trade-enabled key later for the adapter. → `.coinbase_key.json` (downloaded CDP key file, gitignored) or env `COINBASE_API_KEY`/`COINBASE_API_SECRET`.
-4. **Funding endpoint:** `coinbase_funding_feed._raw_funding()` (or the adapter's `fetch_funding_rate` via `get_product`) — confirm the live funding field names during SHADOW once product_ids known.
+1. **USDC funding — diagnosed, ops step remains.** Probe shows `futures_buying_power = 4000 USD` on the **FCM (CDE) side** but `cfm_usd_balance = 0` / `available_margin = 0`, and only a **Default** portfolio exists. The 4000 is recognized as US-futures buying power but is not yet settled as usable margin in the CFM futures wallet; the operator was likely trying to fund **"Perpetuals" (INTX, US-restricted)** which a US account cannot. **Action:** fund/confirm via the **"Futures" (CDE)** surface, not "Perpetuals"; reconcile the buying_power(4000) vs available_margin(0) gap before live orders (Coinbase Futures UI or a tiny SHADOW->DUAL test order).
+2. **Trade-enabled CDP key.** The current key is read-only (correct for the probe); live orders need a trade-scoped key. Also rotate the read-only key (it was pasted in chat).
+3. **SHADOW validation (read-only):** parity-compare Coinbase CDE vs Kraken funding/spread/depth and confirm live response shapes (funding fields on `get_product`, positions, leverage/reduce_only on orders) before DUAL_VENUE.
 
-**Net:** viable and largely de-risked. Gates 1+3 are resolved in one read-only probe run; gate 2 is an ops step (USD→USDC); gates 4+5 are wiring once product_ids are known.
+**Net:** product_ids done, read-only creds working, cutover mode decided, all 3 assets present, adapter implemented + tested. Remaining is operational: settle/confirm the USDC margin on the CDE side, mint a trade-scoped key, then run SHADOW.
 
 ## What is intentionally NOT done (until unblocked)
 
 - **Not wired into the live path.** `execution_manager` / `main.py` / live config unchanged; the `SINGLE_EXCHANGE_GATE` (kraken-only) remains in force. The adapter is built and unit-tested but no order path calls it yet.
-- **No live API call made** — no credentials exist, so the adapter's real behavior (exact funding field names, leverage/reduce_only placement on the perp order body, positions response shape) is unverified against live responses. These are confirmed in the SHADOW phase.
+- **No live ORDER/trade call made.** Read-only probe calls (list products, accounts, balances) ran 2026-06-13. The adapter's order-path behavior (exact funding field names, leverage/reduce_only placement on the perp order body, positions response shape) is still unverified against live responses — confirmed in the SHADOW phase.
 - `coinbase_funding_feed` left as the fail-closed fallback scaffold; the adapter's `fetch_funding_rate` is the primary path once creds land.
 
 ## Iron-law compliance
