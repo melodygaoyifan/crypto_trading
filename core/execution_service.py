@@ -234,7 +234,7 @@ def _coinbase_routed(ctx, asset: str) -> bool:
         if rp is None:
             return False
         return rp.venue_for(asset) == "coinbase"
-    except Exception:
+    except Exception:  # noqa: silent-swallow — intentional fail-closed to Kraken (default venue) on any routing error
         return False
 
 

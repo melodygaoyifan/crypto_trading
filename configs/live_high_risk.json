@@ -5,6 +5,9 @@
   "risk_profile": "HIGH_RISK",
   "_coinbase_note": "Phase A only: read-only Coinbase-vs-Kraken parity logging in the heartbeat. Order routing stays Kraken until RoutingPolicy advances past SHADOW (separate gated step). See docs/COINBASE_ENGINE_INTEGRATION_PLAN.md.",
   "coinbase_routing_enabled": true,
+  "_l2_churn_note": "L2-CHURN 2026-06-13: flip-persistence whipsaw guard. Require an opposing direction signal to persist N consecutive 4H ticks before committing a flip. Set flip_persistence_enabled=false to disable. AC thresholds (min-hold/global/daily) tightened in main.py:~2105 literals.",
+  "flip_persistence_enabled": true,
+  "flip_persist_ticks": 2,
   "assets": ["SOL", "BTC", "ETH"],
   "primary_asset": "SOL",
   "exchange": {

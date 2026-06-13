@@ -1519,6 +1519,13 @@ class ProductionConfig:
     # (-25% equity). See docs/LIVE_ROOT_CAUSE_2026-06-12.md. Reversible:
     # set "block_short_entry_on_spot": false in the live JSON profile.
     block_short_entry_on_spot: bool = True
+    # [L2-CHURN 2026-06-13] Flip-persistence guard: require an opposing direction
+    # signal to persist N consecutive ticks before committing a direction flip.
+    # Whipsaw killed correct theses (e.g. flipped at local tops then ETH fell to
+    # target). Independent of the (unreliable) alpha estimate the FLIP_GATE trusts.
+    # Sim: persist=2 cut historical flips ~59%. Reversible via the live JSON.
+    flip_persistence_enabled: bool = True
+    flip_persist_ticks: int = 2
     # [Coinbase Phase 2] Master switch for Coinbase US perp routing. Default OFF
     # -> engine is byte-identical to today (Kraken-only). When ON, Phase A logs
     # read-only Coinbase-vs-Kraken parity in the heartbeat; order routing stays
@@ -1757,6 +1764,9 @@ class ProductionConfig:
             },
             # [B1 2026-06-12] spot-short entry guard (default ON; JSON can disable)
             block_short_entry_on_spot=data.get("block_short_entry_on_spot", True),
+            # [L2-CHURN 2026-06-13] flip-persistence whipsaw guard (default ON)
+            flip_persistence_enabled=data.get("flip_persistence_enabled", True),
+            flip_persist_ticks=int(data.get("flip_persist_ticks", 2)),
             # [Coinbase Phase 2] read-only shadow routing switch (default OFF)
             coinbase_routing_enabled=data.get("coinbase_routing_enabled", False),
             # P1-02: Thesis budget parameters (overlay-aware)
@@ -2096,12 +2106,23 @@ class HMATSProductionRunner:
         self._ac0_restored_assets: set[str] = set()
 
         # [Phase 4B] Anti-churn manager (AC-1 min hold + AC-2 rate limit + AC-5 budget)
+        # [L2-CHURN 2026-06-13] Tightened from churn forensic: live anti-churn was
+        # looser than the class defaults (ac1=1=4h, global=6, daily=8), which
+        # enabled the over-trading that was ~75% of the Apr-Jun -25% loss (median
+        # 12h holds, 45 flips/asset). Raise min-hold to >= the 4H decision horizon,
+        # halve concurrency + daily budget. Revert these 3 literals to restore old
+        # behavior. (Composes with the FLIP-PERSIST guard below.)
+        # [L2-CHURN 2026-06-13] per-asset flip-persistence tracker (whipsaw guard).
+        # {asset: {"dir": last_signed_signal, "consec": consecutive_tick_count}}.
+        # In-memory: resets on restart, which is conservative (a fresh flip must
+        # re-accumulate persistence before it can fire).
+        self._flip_persist: Dict[str, Dict[str, int]] = {}
         self._anti_churn = AntiChurnManager(
-            ac1_min_hold_ticks=1,
+            ac1_min_hold_ticks=3,        # [L2-CHURN] 1 -> 3 (4h -> 12h min hold)
             ac2_max_per_asset=2,
-            ac2_max_global=6,
+            ac2_max_global=3,            # [L2-CHURN] 6 -> 3 (fewer concurrent entries)
             ac2_window_ticks=6,
-            ac5_max_per_day=8,
+            ac5_max_per_day=4,           # [L2-CHURN] 8 -> 4 (cap fee drag / over-trading)
         )
         # Backward compat aliases for direct attribute access elsewhere
         self._AC1_MIN_HOLD_TICKS = self._anti_churn.ac1_min_hold_ticks
@@ -11616,6 +11637,59 @@ class HMATSProductionRunner:
                     (str(intent.veto_reason) + " | " if intent.veto_reason else "")
                     + "B1_SPOT_SHORT_BLOCK"
                 )
+
+        # =================================================================
+        # [L2-CHURN 2026-06-13] FLIP-PERSISTENCE WHIPSAW GUARD
+        # Churn was ~75% of the Apr-Jun loss: the system flipped direction ~45x
+        # per asset on a 4H clock, repeatedly reversing into noise (buying local
+        # tops, then the original thesis paid off after it had flipped out). The
+        # existing FLIP_GATE only checks the alpha ESTIMATE, which proved
+        # unreliable (read 40-66bps while realized was negative). This guard is
+        # estimate-independent: a direction FLIP (opening the opposite side of an
+        # existing position) is suppressed until the opposing signal has persisted
+        # >= flip_persist_ticks CONSECUTIVE ticks. Single-tick reversals just hold
+        # the current position (no close, no reverse) -> noise is ignored, real
+        # regime changes still flip after confirmation (max 1 extra tick of lag).
+        # Never blocks same-direction adds, reduces, exits, or safety paths (those
+        # are not flips). Sim on live history: persist=2 cut flips ~59%.
+        # Reversible: "flip_persistence_enabled": false in the live JSON.
+        # =================================================================
+        if (getattr(self.config, "flip_persistence_enabled", True)
+                and intent.is_actionable and not intent.veto_active):
+            try:
+                _fp_newdir = 1 if intent.direction > 0 else (-1 if intent.direction < 0 else 0)
+                _fp_pos = self._paper_positions.get(asset, {}) or {}
+                _fp_curdir = float(_fp_pos.get("direction", 0.0) or 0.0)
+                _fp_curexp = abs(float(_fp_pos.get("exposure", 0.0) or 0.0))
+                # update the per-asset consecutive-direction counter every tick
+                _fp_state = self._flip_persist.setdefault(asset, {"dir": 0, "consec": 0})
+                if _fp_newdir != 0:
+                    if _fp_newdir == _fp_state["dir"]:
+                        _fp_state["consec"] += 1
+                    else:
+                        _fp_state["dir"] = _fp_newdir
+                        _fp_state["consec"] = 1
+                # a FLIP = new signal opposes a live position
+                _fp_is_flip = (_fp_newdir != 0 and _fp_curdir != 0
+                               and _fp_newdir * _fp_curdir < 0 and _fp_curexp > 1e-9)
+                _fp_need = max(1, int(getattr(self.config, "flip_persist_ticks", 2)))
+                if _fp_is_flip and _fp_state["consec"] < _fp_need:
+                    logger.info(
+                        f"[FLIP-PERSIST] {asset}: holding position — opposing "
+                        f"dir={_fp_newdir:+d} persisted {_fp_state['consec']}/{_fp_need} "
+                        f"ticks; suppressing flip (cur_dir={_fp_curdir:+.0f})"
+                    )
+                    # hold the existing position this tick: do nothing (no flip,
+                    # no close). is_actionable=False halts execution for this asset.
+                    intent.is_actionable = False
+                    intent.veto_active = True
+                    intent.veto_reason = (
+                        (str(intent.veto_reason) + " | " if intent.veto_reason else "")
+                        + "FLIP_PERSIST_HOLD"
+                    )
+            except Exception as _fp_err:
+                logger.warning(f"[FLIP-PERSIST] {asset}: guard error, allowing intent: "
+                               f"{type(_fp_err).__name__}: {_fp_err}")
 
         # =================================================================
         # V6.7 STEP B3: TQC UNCERTAINTY DISCOUNT

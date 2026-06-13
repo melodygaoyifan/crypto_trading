@@ -1,7 +1,7 @@
 {
   "by_code": {
-    "arg-type": 78,
-    "assignment": 453,
+    "arg-type": 81,
+    "assignment": 461,
     "attr-defined": 70,
     "call-arg": 8,
     "call-overload": 5,
@@ -9,20 +9,20 @@
     "float": 6,
     "has-type": 3,
     "index": 24,
-    "int": 12,
+    "int": 14,
     "list-item": 1,
-    "misc": 64,
+    "misc": 70,
     "name-defined": 2,
     "no-redef": 7,
     "operator": 42,
     "return": 1,
     "return-value": 17,
-    "str": 32,
+    "str": 33,
     "truthy-function": 4,
     "type-var": 1,
-    "union-attr": 127,
+    "union-attr": 139,
     "valid-type": 8,
-    "var-annotated": 51
+    "var-annotated": 53
   },
-  "total_count": 1044
+  "total_count": 1078
 }
