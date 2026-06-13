@@ -3,6 +3,8 @@
   "_created": "2026-03-08",
   "mode": "LIVE",
   "risk_profile": "HIGH_RISK",
+  "_coinbase_note": "Phase A only: read-only Coinbase-vs-Kraken parity logging in the heartbeat. Order routing stays Kraken until RoutingPolicy advances past SHADOW (separate gated step). See docs/COINBASE_ENGINE_INTEGRATION_PLAN.md.",
+  "coinbase_routing_enabled": true,
   "assets": ["SOL", "BTC", "ETH"],
   "primary_asset": "SOL",
   "exchange": {
