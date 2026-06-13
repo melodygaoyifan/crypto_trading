@@ -102,9 +102,62 @@ def main() -> int:
     except Exception as e:
         print(f"  [ERROR] get_accounts failed: {type(e).__name__}: {e}")
 
-    print("\nDone. Paste the product_id mapping back to finalize "
-          "exchange/symbol_mapping.py (coinbase/perp).")
+    # --- 4: portfolios + derivatives balances (diagnoses USDC funding) -------
+    print("\n=== Portfolios (where is the USDC? which derivatives surface?) ===")
+    try:
+        pf = client.get_portfolios()
+        rows = getattr(pf, "portfolios", None) or pf.get("portfolios", [])
+        for p in rows:
+            name = _g(p, "name"); ptype = _g(p, "type"); uuid_ = _g(p, "uuid")
+            print(f"  portfolio: name={name!r} type={ptype} uuid={uuid_}")
+    except Exception as e:
+        print(f"  [info] get_portfolios: {type(e).__name__}: {e}")
+
+    print("\n=== Futures (US Perp-Style / FCM) balance summary ===")
+    try:
+        fb = client.get_futures_balance_summary()
+        bs = _g(fb, "balance_summary") or fb
+        print("  futures balance_summary:", json.dumps(_to_plain(bs))[:400])
+    except Exception as e:
+        print(f"  [info] get_futures_balance_summary: {type(e).__name__}: {e}")
+
+    print("\n=== Perps (INTX) portfolio summary ===")
+    try:
+        ps = client.get_perps_portfolio_summary()
+        print("  perps summary:", json.dumps(_to_plain(ps))[:400])
+    except Exception as e:
+        print(f"  [info] get_perps_portfolio_summary: {type(e).__name__}: {e}")
+
+    print("\nDone. Paste this output back: I'll (a) finalize exchange/"
+          "symbol_mapping.py product_ids and (b) tell you exactly which "
+          "portfolio/wallet to move the 4000 USDC into.")
     return 0
+
+
+def _g(obj, key, default=None):
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
+
+
+def _to_plain(obj):
+    """Best-effort convert an SDK response object to JSON-able structure."""
+    if isinstance(obj, (str, int, float, bool)) or obj is None:
+        return obj
+    if isinstance(obj, dict):
+        return {k: _to_plain(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_to_plain(v) for v in obj]
+    for attr in ("to_dict", "__dict__"):
+        d = getattr(obj, attr, None)
+        if callable(d):
+            try:
+                return _to_plain(d())
+            except Exception:
+                pass
+        elif isinstance(d, dict):
+            return _to_plain(d)
+    return str(obj)
 
 
 if __name__ == "__main__":

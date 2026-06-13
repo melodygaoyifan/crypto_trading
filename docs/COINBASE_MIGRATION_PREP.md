@@ -53,14 +53,14 @@ The remaining gate is **account eligibility + the exact product set**, not "does
 
 - ✅ **Account perp-eligibility** — confirmed (US Perpetual-Style Futures enabled).
 - ✅ **SOL availability** — confirmed listed (BTC/ETH/XRP/SOL).
+- ✅ **PARAMETER 3 — cutover mode = DUAL-VENUE** (decided 2026-06-13). Rationale: account just recovered from the P140 incident (−25%), the Coinbase integration is new with live field names unverified, and Iron Law 8 requires DRL ACTIVE throughout — so phase in (SHADOW read-only → 50/50 → 100%, rollback always permitted) rather than hot-swap the whole account onto an unproven path. `RoutingPolicy` already defaults to this progression; `cutover.assert_safe_to_advance` gates every step.
 
 ## REMAINING gates (mechanical — read-only probe resolves most)
 
 1. **Exact `product_id`s.** The symbol map's `BTC-PERP` is a placeholder. Run `scripts/coinbase_probe.py` (read-only, no orders) with a CDP key → lists the live perp `product_id`s + confirms the API surface (Advanced Trade vs Derivatives-FCM). Paste results → finalize `exchange/symbol_mapping.py` `coinbase/perp`.
-2. **USDC margin funding.** Perps need **USDC** collateral in a perpetuals portfolio (10 USDC min notional). Account holds ~$7,178 **USD** → convert USD→USDC + move into the perps portfolio before any perp order.
-3. **CDP credentials.** Advanced Trade uses CDP API keys (ES256 JWT, not legacy HMAC). Read-only key for the probe; a trade-enabled key later for the adapter. → env `COINBASE_API_KEY` (CDP key name) + `COINBASE_API_SECRET` (PEM).
-4. **PARAMETER 3 — cutover mode:** hot-swap / dual-venue / phased. `RoutingPolicy` defaults to the dual-venue 4-week schedule.
-5. **Funding endpoint:** `coinbase_funding_feed._raw_funding()` calls the Advanced Trade funding endpoint (ccxt unified `fetchFundingRate` is unavailable) — wire once product_ids known.
+2. **🚩 USDC margin funding (operator is blocked here, 2026-06-13).** Operator holds **4000 USDC** but cannot load it into the derivatives account. Margin USDC must live in the **derivatives/perps portfolio**, not the default/spot portfolio. Funding paths: perp market → *Manage funds → Transfer funds for perpetuals* (Default → Perpetuals), or *Deposit → Receive crypto → USDC → destination = Perpetuals*, or the `move_portfolio_funds` API. **Likely cause of the block:** a product/portfolio mismatch — the "Perpetuals portfolio" is **INTX (International, US-restricted)**, whereas **US Perpetual-Style Futures** fund a **Coinbase Derivatives (FCM) futures wallet** via a different flow (and may require completing the futures-account onboarding + have settlement-window cutoffs). The probe now dumps `get_portfolios` + `get_futures_balance_summary` + `get_perps_portfolio_summary` to show exactly which surface exists and where the USDC is.
+3. **CDP credentials.** Advanced Trade uses CDP API keys (ES256 JWT, not legacy HMAC). Read-only key for the probe; a trade-enabled key later for the adapter. → `.coinbase_key.json` (downloaded CDP key file, gitignored) or env `COINBASE_API_KEY`/`COINBASE_API_SECRET`.
+4. **Funding endpoint:** `coinbase_funding_feed._raw_funding()` (or the adapter's `fetch_funding_rate` via `get_product`) — confirm the live funding field names during SHADOW once product_ids known.
 
 **Net:** viable and largely de-risked. Gates 1+3 are resolved in one read-only probe run; gate 2 is an ops step (USD→USDC); gates 4+5 are wiring once product_ids are known.
 
