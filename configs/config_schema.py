@@ -167,6 +167,7 @@ def validate_config_consistency(
                 "kill_switch_drawdown": cc.KILL_SWITCH_DRAWDOWN,
                 "max_leverage": cc.MAX_LEVERAGE,
                 "max_gross_exposure": cc.MAX_GROSS_EXPOSURE,
+                "max_net_exposure": 0.50,  # [NET-CAP 2026-06-14] net signed directional budget (null=OFF)
                 "correlation_crisis": cc.CORRELATION_CRISIS,
                 "initial_capital": cc.INITIAL_CAPITAL,
                 "thesis_budget_loss_pct_nav": cc.THESIS_BUDGET_LOSS_PCT_NAV,
