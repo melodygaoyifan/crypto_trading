@@ -7447,7 +7447,12 @@ class HMATSProductionRunner:
             # _extract_features resolves. Shadow-only.
             try:
                 _ta_c = self._ta_cache.get(asset) if getattr(self, "_ta_cache", None) else None
-                _fdf = (_ta_c.get("drl_df") if _ta_c else None) or (_ta_c.get("df") if _ta_c else None)
+                # NB: must NOT use `df_a or df_b` — bool(DataFrame) raises
+                # "truth value ambiguous", which the except below would swallow
+                # (the original P147-c bug: ml_factor stuck at missing_features).
+                _fdf = _ta_c.get("drl_df") if _ta_c else None
+                if _fdf is None and _ta_c is not None:
+                    _fdf = _ta_c.get("df")
                 if _fdf is not None and len(_fdf):
                     _last = _fdf.iloc[-1]
                     for _col in _fdf.columns:
