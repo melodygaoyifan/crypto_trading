@@ -55,10 +55,12 @@ Kraken-authoritative −25% = −$2,314 trading + −$125 fees. Decomposition: *
 - **Method (R5):** generalize to Garleanu-Pedersen **partial adjustment toward an aim portfolio** (trade a fraction toward target, fraction ↓ as cost ↑) + **no-trade bands** (Constantinides) + **turnover-adjusted IR** for go/no-go.
 - **Code.** Mostly shipped; this is the principled generalization.
 
-### Layer 6 — Quiet-regime coverage gap **(OPEN — R&D, not a known fix)**
-- **Problem:** specialized strategies dormant in QUIET_ACCUMULATION (60% of activity) → system trades on noise there.
-- **Method:** research returned NO validated answer. **Candidates to TEST under Layer 3's harness** (do not assume): funding-carry/basis, microstructure (OFI/queue imbalance), properly-built mean-reversion. Original experimentation required.
-- **Design/R&D.**
+### Layer 6 — ROOT-CAUSE STRATEGY PIVOT **(VALIDATED 2026-06-14)**
+- **Root cause (the real one):** the system's strategy CLASS — directional-ensemble single-asset 4H timing — has no edge (live Sharpe −2.62, PSR 21%). Patching its signals/fusion can't fix a strategy class that doesn't work. The fix is to REPLACE the decision layer.
+- **The replacement, BUILT + VALIDATED:** `strategies/trend_following.py` — vol-targeted time-series trend-following (textbook params, NOT tuned). Backtest on 5.3y BTC/ETH/SOL 4H, 15bps cost, no lookahead: per-asset Sharpe 0.26/0.33/0.73; **equal-risk 3-asset portfolio Sharpe 0.53, PSR 89%, maxDD −13.6%, +5.4%/yr.** Module reproduces it (0.52/88%). Tests: `tests/test_trend_following.py`. **vs the current engine's Sharpe −2.62 / PSR 21%** — a real, modest, positive, regime-robust edge (it goes SHORT in downtrends — the regime that crushed the net-long engine).
+- **Honest bounds:** Sharpe ~0.5 is modest (consistent with the research's ~1.0 realistic ceiling), PSR 89% is positive-leaning not iron-clad (<95%), crypto trend edge concentrates in big-trend years and is flat/negative in chop. This is a *first-pass* validation (textbook params avoid in-sample tuning, but no purged-CV yet). It is FAR better than the current negative-edge engine, not a guaranteed winner.
+- **Rollout (gated, NOT shipped live):** (1) wire trend-following as a SHADOW strategy — log its target_position vs the live engine each tick; (2) confirm on FORWARD data + purged-CV via the Layer-3 harness; (3) promote it to the decision layer, composed with the net cap (P144) + carry sleeve (regime-gated, currently off). Coordinate with the operator (main.py + Coinbase actively edited). Do NOT flip the live decision layer without forward confirmation — that would repeat the backtest-vs-live trap.
+- **Companion (regime-gated carry):** funding carry is the second leg but currently evaporated (live funding ~0); add it as an opportunistic delta-neutral sleeve that activates only when funding clears costs.
 
 ---
 
