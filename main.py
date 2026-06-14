@@ -7704,6 +7704,16 @@ class HMATSProductionRunner:
                 from core.trend_decision_layer import get_trend_decision_layer
                 get_trend_decision_layer(self.config.trend_following_mode).process(
                     asset, _ohlcv_df, agent_signals, market_data)
+                # [P149 2026-06-14] Bridge to the Coinbase perp sleeve: it's driven
+                # by _last_quant_directions (captured at ~6379 BEFORE this inject),
+                # so in enforce it was seeing the stale Best-of-N "hold", not trend.
+                # Refresh it with the enforced direction so trend's SHORTS route to
+                # Coinbase perps (the venue that can hold them) — shorts can't execute
+                # on Kraken spot. Only in enforce; off/shadow leave it untouched.
+                if self.config.trend_following_mode == "enforce":
+                    _tqd = market_data.get("quant_direction", None)
+                    if _tqd is not None:
+                        self._last_quant_directions[asset] = float(_tqd)
             except Exception as _tl_e:
                 logger.warning(f"[TREND-LAYER] {asset} process skip: {type(_tl_e).__name__}: {_tl_e}")
         _gmm_probs = market_data.get("_gmm_probs", [])
