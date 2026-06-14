@@ -7668,11 +7668,21 @@ class HMATSProductionRunner:
         if getattr(self, "_ml_factor_shadow", None) is not None and not p0_abort_tick:
             try:
                 _ml_md = dict(_shadow_md)
-                if _ohlcv_df is not None and len(_ohlcv_df):
-                    _ml_last = _ohlcv_df.iloc[-1]
-                    for _col in _ohlcv_df.columns:
-                        if _col not in _ml_md:
-                            _ml_md[_col] = _ml_last[_col]
+                # _ohlcv_df is RAW OHLCV (~11 cols); the 122 named features are
+                # COMPUTED on the fly by the obs builder's FeatureEngineer (see
+                # drl/runtime_obs_builder.build_obs). Compute them the same way so
+                # ml_factor's _extract_features resolves the manifest schema. The
+                # denoised/external/regime features come from market_data (already
+                # in _shadow_md). Shadow-only; never touches fusion.
+                _ob = getattr(self, "_obs_builder", None)
+                _fe = getattr(_ob, "_feature_engineer", None) if _ob is not None else None
+                if _fe is not None and _ohlcv_df is not None and len(_ohlcv_df):
+                    _computed = _fe.compute_features(_ohlcv_df)
+                    if _computed is not None and len(_computed):
+                        _crow = _computed.iloc[-1]
+                        for _col in _computed.columns:
+                            if _col not in _ml_md:
+                                _ml_md[_col] = _crow[_col]
                 self._ml_factor_shadow.observe(asset, _ml_md)
             except Exception as _mf_err:
                 logger.debug(f"[v5.1 PHASE6] ml_factor observe {asset} skipped: {_mf_err}")
