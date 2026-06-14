@@ -17977,6 +17977,19 @@ class HMATSProductionRunner:
                                             f"[COINBASE-SLEEVE] buying_power="
                                             f"${_cb_snap.get('buying_power_usd', 0):,.2f} positions={_cb_pos_str}"
                                         )
+                                        # [P150] record a forward-PnL point so the
+                                        # sleeve's live edge is judged on real data
+                                        # (the "real test"), and surface PnL + DD +
+                                        # halt in the heartbeat stream.
+                                        _cb_pnl = self._coinbase_sleeve.log_pnl_point()
+                                        _cb_risk = _cb_snap.get("risk") or {}
+                                        logger.info(
+                                            f"[COINBASE-PNL] equity=${_cb_pnl.get('equity_usd', 0):,.2f} "
+                                            f"pnl=${_cb_pnl.get('pnl_usd', 0):+,.2f} "
+                                            f"({_cb_pnl.get('pnl_pct', 0) * 100:+.2f}%) "
+                                            f"dd={_cb_risk.get('drawdown_pct', 0) * 100:.1f}% "
+                                            f"halted={_cb_risk.get('halted', False)}"
+                                        )
                                     except Exception as _cb_sl_err:
                                         logger.debug(f"[COINBASE-SLEEVE] skipped: {_cb_sl_err}")
                                     # [COINBASE-FUNDING] Phase 3 SHADOW: run the 3

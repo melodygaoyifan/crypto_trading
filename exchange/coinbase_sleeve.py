@@ -17,7 +17,10 @@ Sync (reuses the adapter's RESTClient); fail-soft (never raises to the caller).
 
 from __future__ import annotations
 
+import json
 import logging
+import os
+import time
 from typing import Any, Dict, Optional
 
 from exchange.symbol_mapping import from_venue_symbol, to_venue_symbol
@@ -69,6 +72,12 @@ class CoinbaseSleeve:
         self._sleeve_start_equity: Optional[float] = None
         self._halted: bool = False
         self._halt_reason: str = ""
+        # [P150] persist the risk baseline + halt across restarts. Without this
+        # the 15% drawdown halt re-anchors to current (lower) equity on every
+        # container restart — same in-memory-baseline-resets-on-restart class as
+        # P148 (DRL buffer) and P140/B2 (_peak_equity). The "loss is capped"
+        # guarantee is only real if the baseline survives a restart.
+        self._restore_state()
 
     def is_ready(self) -> bool:
         return bool(self._adapter and self._adapter.is_connected())
@@ -157,6 +166,7 @@ class CoinbaseSleeve:
         if self._sleeve_start_equity is None and eq > 0:
             self._sleeve_start_equity = eq
             logger.info(f"[COINBASE_SLEEVE] risk baseline set: ${eq:,.2f}")
+            self._persist_state()  # [P150] anchor survives restart
         dd = 0.0
         if self._sleeve_start_equity and self._sleeve_start_equity > 0:
             dd = (self._sleeve_start_equity - eq) / self._sleeve_start_equity
@@ -165,6 +175,7 @@ class CoinbaseSleeve:
             self._halt_reason = (f"sleeve drawdown {dd:.1%} >= "
                                  f"{self._max_sleeve_drawdown_pct:.0%}")
             logger.error(f"[COINBASE_SLEEVE] HALTED: {self._halt_reason}")
+            self._persist_state()  # [P150] sticky halt survives restart
         return {"equity_usd": eq, "drawdown_pct": dd,
                 "halted": self._halted, "halt_reason": self._halt_reason}
 
@@ -185,7 +196,86 @@ class CoinbaseSleeve:
         """Manual recovery (operator action), Coinbase-sleeve only."""
         self._halted = False
         self._halt_reason = ""
+        self._persist_state()  # [P150] clear the persisted halt too
         logger.warning("[COINBASE_SLEEVE] halt manually reset")
+
+    # ----- [P150] persistence: baseline survives restart + forward PnL log ----
+    def _data_dir(self) -> str:
+        return os.environ.get("HMATS_DATA_DIR", "data")
+
+    def _state_path(self) -> str:
+        return os.path.join(self._data_dir(), "coinbase_sleeve_state.json")
+
+    def _pnl_path(self) -> str:
+        return os.path.join(self._data_dir(), "coinbase_sleeve_pnl.jsonl")
+
+    def _restore_state(self) -> None:
+        """Restore the risk baseline + sticky halt from disk so the drawdown cap
+        is anchored to inception, not to post-restart equity. Best-effort."""
+        try:
+            p = self._state_path()
+            if not os.path.exists(p):
+                return
+            with open(p, "r", encoding="utf-8") as fh:
+                st = json.load(fh)
+            se = st.get("sleeve_start_equity")
+            self._sleeve_start_equity = float(se) if se is not None else None
+            self._halted = bool(st.get("halted", False))
+            self._halt_reason = str(st.get("halt_reason", "") or "")
+            logger.info(
+                f"[COINBASE_SLEEVE] restored state: baseline="
+                f"${(self._sleeve_start_equity or 0):,.2f} halted={self._halted}"
+                + (f" ({self._halt_reason})" if self._halted else "")
+            )
+        except Exception as e:  # noqa: silent-swallow — bad/old state file; fall back to fresh baseline + log
+            logger.warning(f"[COINBASE_SLEEVE] state restore failed: {type(e).__name__}: {e}")
+
+    def _persist_state(self) -> None:
+        """Atomically write the baseline + halt. Best-effort; never raises."""
+        try:
+            p = self._state_path()
+            os.makedirs(os.path.dirname(p) or ".", exist_ok=True)
+            tmp = p + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump({
+                    "sleeve_start_equity": self._sleeve_start_equity,
+                    "halted": self._halted,
+                    "halt_reason": self._halt_reason,
+                    "saved_ts": time.time(),
+                }, fh)
+            os.replace(tmp, p)
+        except Exception as e:  # noqa: silent-swallow — persistence is best-effort, never break the tick
+            logger.debug(f"[COINBASE_SLEEVE] state persist failed: {type(e).__name__}: {e}")
+
+    def log_pnl_point(self) -> Dict[str, Any]:
+        """[P150] Append one forward-PnL record to a JSONL so the sleeve's live
+        edge can be JUDGED on real data (not a backtest) over days/weeks. Returns
+        the record. Call once per tick. Best-effort; never raises to the caller."""
+        eq = self.sleeve_equity_usd()
+        start = self._sleeve_start_equity
+        pnl_usd = (eq - start) if (start is not None) else 0.0
+        pnl_pct = (pnl_usd / start) if (start and start > 0) else 0.0
+        rec = {
+            "ts": time.time(),
+            "equity_usd": round(eq, 2),
+            "start_equity_usd": round(start, 2) if start is not None else None,
+            "pnl_usd": round(pnl_usd, 2),
+            "pnl_pct": round(pnl_pct, 4),
+            "buying_power_usd": round(self._last_buying_power_usd, 2),
+            "positions": {a: p.get("signed_contracts")
+                          for a, p in self._last_positions.items()},
+            "unrealized_pnl_usd": round(
+                sum(_f(p.get("unrealized_pnl")) for p in self._last_positions.values()), 2),
+            "halted": self._halted,
+        }
+        try:
+            p = self._pnl_path()
+            os.makedirs(os.path.dirname(p) or ".", exist_ok=True)
+            with open(p, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(rec) + "\n")
+        except Exception as e:  # noqa: silent-swallow — logging is best-effort, never break the tick
+            logger.debug(f"[COINBASE_SLEEVE] pnl log failed: {type(e).__name__}: {e}")
+        return rec
 
     @staticmethod
     def target_for_signal(direction: float, threshold: float = 0.15) -> int:
