@@ -40,10 +40,11 @@ Kraken-authoritative −25% = −$2,314 trading + −$125 fees. Decomposition: *
 - **Method (R2):** weight each signal by `rolling_IC × persistence`; zero-IC ⇒ zero weight automatically (the principled "demote the dead/inverted" without hardcoding). This is the `LiveICBucketGate` from the companion prompt, generalized from gate→weight.
 - **Code+design.** Subsumes the IC-gate prompt; shares its rolling-IC infra with Layer 1.
 
-### Layer 3 — Model-validation harness (stop trusting backtest Sharpe)
-- **Problem:** DRL +9 backtest → break-even live; v5.1 just promoted with ZERO validation.
-- **Method (R3):** `analytics/validation/` — Deflated Sharpe Ratio + Combinatorial Purged CV + the FinRL RL test, as a **pre-promotion gate**. Retro-run on the live TQC models (likely fail → **demote DRL DECIDE→ADVISE**) and on the 4 v5.1 strategies.
-- **Process/design.** Offline first; becomes a required gate before any model promotion.
+### Layer 3 — Model-validation harness (stop trusting backtest Sharpe) **(BUILT 2026-06-14)**
+- **Problem (the root DRL flaw):** `training/train_drl_full.py:1488` selects `best_fold = max(folds, key=mean_reward)` — picking the best of 3 folds is selection bias (no deflation), validated on RL *reward* not realized OOS Sharpe, `purge_window` default 0. That IS the mechanism: backtest Sharpe 9-10 → live −2.62. The purged K-fold *structure* is fine; the SELECTION + METRIC are wrong.
+- **Built:** `analytics/validation/sharpe_validation.py` (PSR + Deflated Sharpe + backtest-vs-live) + `analytics/validation/cpcv.py` (Combinatorial Purged splits + **CSCV PBO** — Bailey/López de Prado Probability of Backtest Overfitting: fraction of combinatorial IS/OOS partitions where the IS-best config ranks below the OOS median). Tests: `tests/test_sharpe_validation.py` (9), `tests/test_cpcv.py` (5). This is the **pre-promotion gate** that replaces max-reward selection — it would have CAUGHT the DRL overfit at selection time.
+- **Trend-following re-validated through it (honest result):** PBO over an 8-point param grid = **0.42 (MARGINAL)**; param Sharpes range 0.12–0.75 (mostly ~0.4); OOS-Sharpe of the IS-best param ≈ +0.47. So the edge is **real and OOS-positive (~0.4 Sharpe) but param-selection-sensitive** — use textbook defaults, do NOT chase the lucky 0.75 (PBO says that's partly luck). Tempers the single-split 0.53 down to a robust ~0.4.
+- **Apply it to:** DRL (re-select via DSR on realized OOS Sharpe, not reward — likely fails → demote) and the 4 v5.1 strategies (promoted with ZERO validation). Required gate before any model promotion.
 
 ### Layer 4 — Beta budget + instrument-level perp hedge
 - **Problem:** +0.54 net-long, no exposure control.
