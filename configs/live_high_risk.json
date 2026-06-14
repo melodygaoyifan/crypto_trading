@@ -8,6 +8,8 @@
   "_l2_churn_note": "L2-CHURN 2026-06-13: flip-persistence whipsaw guard. Require an opposing direction signal to persist N consecutive 4H ticks before committing a flip. Set flip_persistence_enabled=false to disable. AC thresholds (min-hold/global/daily) tightened in main.py:~2105 literals.",
   "flip_persistence_enabled": true,
   "flip_persist_ticks": 2,
+  "_trend_layer_note": "TREND-LAYER 2026-06-14 (P146): trend-following IS the live decision layer (enforce). Replaces the quant signal with vol-targeted time-series momentum (backtest 3-asset Sharpe ~0.4, PBO 0.42, +5.4%/yr). Operator-chosen enforce on forward-UNCONFIRMED edge; bounded by net cap 0.5 + 20%/asset size cap + existence fuse -5% halt. Currently SHORT the downtrend (margin shorts via B2). Watch PnL; revert to off if it degrades. HMATS_TREND_MODE env overrides.",
+  "trend_following_mode": "enforce",
   "_v5_1_note": "v5.1 PROMOTED 2026-06-13: operator override of Iron Law 7 (shadow>=30d). The 4 shadow strategy families (micro/cascade/funding/ml_factor) blend into a live ADVISE fusion agent with ZERO validation. ADVISE-bounded (nudges, cannot override quant/DRL). Reversible: set false + restart. Watch PnL; revert if it degrades.",
   "v5_1_strategies_live": true,
   "assets": ["SOL", "BTC", "ETH"],
