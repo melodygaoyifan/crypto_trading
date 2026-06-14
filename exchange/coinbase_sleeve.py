@@ -62,6 +62,7 @@ class CoinbaseSleeve:
         self._last_positions: Dict[str, Dict[str, Any]] = {}
         self._last_buying_power_usd: float = 0.0
         self._last_equity_usd: float = 0.0
+        self._cb_portfolio_uuid: Optional[str] = None  # [P153] cached Default portfolio uuid
         # True only after a SUCCESSFUL venue reconcile this call. Autonomous
         # management refuses to act when this is False (don't trade on a stale
         # snapshot after an API timeout). See manage_to_signal.
@@ -149,19 +150,52 @@ class CoinbaseSleeve:
             logger.warning(f"[COINBASE_SLEEVE] buying_power failed: {type(e).__name__}: {e}")
             return self._last_buying_power_usd
 
-    def sleeve_equity_usd(self) -> float:
-        """True NET LIQUIDATION VALUE of the futures sleeve = total USD collateral
-        in the portfolio + unrealized PnL. This is the correct base for the
-        drawdown anchor + PnL.
+    def _portfolio_uuid(self) -> Optional[str]:
+        """Default portfolio uuid (cached) — needed to read TRUE account equity."""
+        if self._cb_portfolio_uuid is not None:
+            return self._cb_portfolio_uuid
+        try:
+            ports = self._adapter._client.get_portfolios()
+            pl = _g(ports, "portfolios") or []
+            for p in pl:
+                if str(_g(p, "type") or "").upper() == "DEFAULT":
+                    self._cb_portfolio_uuid = str(_g(p, "uuid") or "")
+                    return self._cb_portfolio_uuid
+            if pl:
+                self._cb_portfolio_uuid = str(_g(pl[0], "uuid") or "")
+        except Exception as e:
+            logger.warning(f"[COINBASE_SLEEVE] portfolio uuid fetch failed: {type(e).__name__}: {e}")
+        return self._cb_portfolio_uuid
 
-        [P151] MUST NOT use futures_buying_power — that is leverage-adjusted
-        (collateral x max-leverage, ~8x) and overstates losable capital by ~8x,
-        which made the 15% halt anchor on ~$3,560 when the account only holds
-        ~$439 (it would liquidate near $376 long before a 15%-of-$3560 loss).
+    def sleeve_equity_usd(self) -> float:
+        """True account equity (net liquidation value) of the Coinbase sleeve.
+
+        [P153] = the Default PORTFOLIO's `total_balance` (cash USDC collateral +
+        futures uPnL). The Coinbase US perp product cross-collateralizes futures
+        against the spot USDC wallet, so the real equity is the PORTFOLIO total
+        (~$4,000), NOT `futures_balance_summary.total_usd_balance` (~$439, an
+        FCM-only subset) and NOT `futures_buying_power`. P151 used the $439 figure
+        and wrongly concluded the account was thinly margined near liquidation;
+        the portfolio breakdown shows ~$4,000 USDC backing ~$2,050 notional
+        (~0.5x leverage). Falls back to the futures-summary estimate on error.
         Used ONLY for the sleeve's own risk guard + reporting — never fed into the
         Kraken existence-fuse/drawdown."""
         if not self.is_ready():
             return self._last_equity_usd
+        # primary: real portfolio total_balance (the cross-collateralized equity)
+        try:
+            uuid = self._portfolio_uuid()
+            if uuid:
+                bd = self._adapter._client.get_portfolio_breakdown(portfolio_uuid=uuid)
+                d = _g(bd, "breakdown") or bd
+                pb = _g(d, "portfolio_balances") or {}
+                tb = _f(_g(_g(pb, "total_balance") or {}, "value"), 0.0)
+                if tb > 0:
+                    self._last_equity_usd = tb
+                    return tb
+        except Exception as e:
+            logger.warning(f"[COINBASE_SLEEVE] portfolio equity fetch failed: {type(e).__name__}: {e}")
+        # fallback (degraded): futures-summary collateral + uPnL
         try:
             fb = self._adapter._client.get_futures_balance_summary()
             bs = _g(fb, "balance_summary") or fb
@@ -169,17 +203,14 @@ class CoinbaseSleeve:
             def _field(name: str) -> float:
                 return _f(_g(_g(bs, name) or {}, "value"), 0.0)
 
-            total = _field("total_usd_balance")
-            if total <= 0:  # fallback: available + posted margin = total collateral
-                total = _field("available_margin") + _field("initial_margin")
-            upnl = _field("unrealized_pnl")
-            if upnl == 0.0:  # summary had none -> sum position-level uPnL
-                upnl = sum(_f(p.get("unrealized_pnl")) for p in self._last_positions.values())
+            total = _field("total_usd_balance") or (_field("available_margin") + _field("initial_margin"))
+            upnl = _field("unrealized_pnl") or sum(
+                _f(p.get("unrealized_pnl")) for p in self._last_positions.values())
             eq = (total + upnl) if total > 0 else self._last_equity_usd
             self._last_equity_usd = eq
             return eq
         except Exception as e:
-            logger.warning(f"[COINBASE_SLEEVE] equity fetch failed: {type(e).__name__}: {e}")
+            logger.warning(f"[COINBASE_SLEEVE] equity fallback failed: {type(e).__name__}: {e}")
             return self._last_equity_usd
 
     # ----- isolated sleeve risk guard -------------------------------------
@@ -226,9 +257,11 @@ class CoinbaseSleeve:
         logger.warning("[COINBASE_SLEEVE] halt manually reset")
 
     # ----- [P150] persistence: baseline survives restart + forward PnL log ----
-    # [P151] bump when the equity FORMULA changes -> stale-baseline files are
+    # [P151/P153] bump when the equity FORMULA changes -> stale-baseline files are
     # discarded on restore instead of producing a false drawdown reading.
-    _BASE_VERSION = "net_liq_v2"
+    # v2 = futures-summary total_usd_balance (~$439, WRONG subset);
+    # v3 = portfolio total_balance (~$4,000, true cross-collateralized equity).
+    _BASE_VERSION = "portfolio_total_v3"
 
     def _data_dir(self) -> str:
         return os.environ.get("HMATS_DATA_DIR", "data")
