@@ -10,9 +10,6 @@
       "onchain_graph": [
         "no direct writer for 'onchain_graph_direction' (may be set via dict-update)"
       ],
-      "quant": [
-        "no direct writer for 'quant_direction' (may be set via dict-update)"
-      ],
       "regime": [
         "no direct writer for 'regime_direction' (may be set via dict-update)"
       ],

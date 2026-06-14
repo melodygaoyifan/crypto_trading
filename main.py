@@ -1784,8 +1784,9 @@ class ProductionConfig:
             # [L2-CHURN 2026-06-13] flip-persistence whipsaw guard (default ON)
             flip_persistence_enabled=data.get("flip_persistence_enabled", True),
             flip_persist_ticks=int(data.get("flip_persist_ticks", 2)),
-            # [TREND-LAYER 2026-06-14] decision-layer mode (off|shadow|enforce; default off)
-            trend_following_mode=str(data.get("trend_following_mode", "off")),
+            # [TREND-LAYER 2026-06-14] decision-layer mode (off|shadow|enforce; default off).
+            # HMATS_TREND_MODE env overrides the JSON (testing + operational escape hatch).
+            trend_following_mode=str(os.environ.get("HMATS_TREND_MODE") or data.get("trend_following_mode", "off")),
             # [Coinbase Phase 2] read-only shadow routing switch (default OFF)
             coinbase_routing_enabled=data.get("coinbase_routing_enabled", False),
             # [v5.1 PROMOTED 2026-06-13] live ADVISE promotion of shadow strategies
@@ -7588,13 +7589,16 @@ class HMATSProductionRunner:
             _ohlcv_df = _ta_c.get("drl_df")
             if _ohlcv_df is None:
                 _ohlcv_df = _ta_c.get("df")
-        # [TREND-LAYER 2026-06-14] cache closes for the trend decision layer (default off -> no-op)
+        # [TREND-LAYER 2026-06-14] trend decision layer (default off -> no-op). Runs
+        # BEFORE fusion: shadow logs trend vs quant; enforce INJECTS trend as the
+        # quant signal so the full pipeline (gate/sizing/NET cap P144) trades it.
         if getattr(self.config, "trend_following_mode", "off") != "off":
             try:
                 from core.trend_decision_layer import get_trend_decision_layer
-                get_trend_decision_layer(self.config.trend_following_mode).cache(asset, _ohlcv_df)
+                get_trend_decision_layer(self.config.trend_following_mode).process(
+                    asset, _ohlcv_df, agent_signals, market_data)
             except Exception as _tl_e:
-                logger.debug(f"[TREND-LAYER] cache hook skip: {type(_tl_e).__name__}: {_tl_e}")
+                logger.warning(f"[TREND-LAYER] {asset} process skip: {type(_tl_e).__name__}: {_tl_e}")
         _gmm_probs = market_data.get("_gmm_probs", [])
         _regime_name = market_data.get("regime_state", "UNKNOWN")
         _env_state = self._build_drl_env_state(asset)
@@ -11696,9 +11700,14 @@ class HMATSProductionRunner:
                     f"cur_dir={_b1_cur_dir:+.0f} cur_exp={_b1_cur_exp:.4f} "
                     f"regime={agent_signals.get('regime_state','?')}"
                 )
+                # [FIX 2026-06-14] is_actionable is a read-only @property (no setter)
+                # — it returns False automatically when direction=0/target=0. Setting
+                # it directly raised AttributeError and crashed the tick whenever B1
+                # fired (a spot-short entry). Latent since P140; only surfaced now that
+                # trend-following can produce short signals. direction/target=0 above
+                # already make is_actionable False.
                 intent.direction = 0.0
                 intent.target_exposure = 0.0
-                intent.is_actionable = False
                 intent.veto_active = True
                 intent.veto_reason = (
                     (str(intent.veto_reason) + " | " if intent.veto_reason else "")
@@ -11746,9 +11755,12 @@ class HMATSProductionRunner:
                         f"dir={_fp_newdir:+d} persisted {_fp_state['consec']}/{_fp_need} "
                         f"ticks; suppressing flip (cur_dir={_fp_curdir:+.0f})"
                     )
-                    # hold the existing position this tick: do nothing (no flip,
-                    # no close). is_actionable=False halts execution for this asset.
-                    intent.is_actionable = False
+                    # hold the existing position this tick: do nothing (no flip, no
+                    # close). is_actionable is a read-only @property -> setting
+                    # direction/target=0 makes it False (don't assign it directly:
+                    # AttributeError, no setter — see B1 fix above).
+                    intent.direction = 0.0
+                    intent.target_exposure = 0.0
                     intent.veto_active = True
                     intent.veto_reason = (
                         (str(intent.veto_reason) + " | " if intent.veto_reason else "")
@@ -11757,19 +11769,6 @@ class HMATSProductionRunner:
             except Exception as _fp_err:
                 logger.warning(f"[FLIP-PERSIST] {asset}: guard error, allowing intent: "
                                f"{type(_fp_err).__name__}: {_fp_err}")
-
-        # [TREND-LAYER 2026-06-14] trend-following decision layer (default off -> no-op).
-        # shadow: logs trend target vs the engine's intent. enforce: OVERRIDES
-        # intent.direction/target_exposure with trend-following. NET cap (P144) still
-        # applies downstream. Do NOT set enforce until the forward validation confirms
-        # (trend_shadow_tracker `score`) — flipping early repeats the backtest-vs-live trap.
-        if getattr(self.config, "trend_following_mode", "off") != "off":
-            try:
-                from core.trend_decision_layer import get_trend_decision_layer
-                get_trend_decision_layer(self.config.trend_following_mode).apply(asset, intent)
-            except Exception as _tl_e:
-                logger.warning(f"[TREND-LAYER] {asset} apply hook skip: "
-                               f"{type(_tl_e).__name__}: {_tl_e}")
 
         # =================================================================
         # V6.7 STEP B3: TQC UNCERTAINTY DISCOUNT
