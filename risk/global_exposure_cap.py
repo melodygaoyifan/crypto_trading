@@ -52,7 +52,14 @@ class ExposureCapConfig:
     
     # Absolute hard cap (NEVER exceeded)
     absolute_max_gross: float = 1.50
-    
+
+    # [NET-CAP 2026-06-14] Net (signed) directional exposure budget.
+    # The book ran +0.54 net-long into a -23% market = ~HALF the Apr-Jun loss,
+    # but gross caps don't constrain net DIRECTION (BTC+ETH+SOL all-long passes a
+    # gross cap). This caps |net_exposure| so the book cannot become a pure
+    # directional bet. None = OFF (backward-compatible). Set in the live profile.
+    max_net_exposure: Optional[float] = None
+
     # Per-asset caps (default, can be overridden by mode)
     default_asset_caps: Dict[str, float] = field(default_factory=lambda: {
         "BTC": 0.80,
@@ -294,7 +301,25 @@ class GlobalExposureCapManager:
             if scaled_request > 0:
                 scaled_request = min(scaled_request, available_gross)
                 gross_cap_adjusted = True
-        
+
+        # [NET-CAP 2026-06-14] Net (signed) directional exposure budget.
+        # Gross caps above don't constrain net DIRECTION; the book ran +0.54
+        # net-long into a -23% market (~half the loss). Clamp a request that
+        # would push |net| beyond the budget in the already-dominant direction.
+        # ONLY reduces a request that INCREASES |net| -> de-risking/hedging (a
+        # request that reduces |net|) is never blocked. None = OFF.
+        net_cap_adjusted = False
+        _net_cap = getattr(self.config, "max_net_exposure", None)
+        if _net_cap is not None and _net_cap >= 0:
+            current_net = self.state.net_exposure
+            new_net = current_net + scaled_request
+            if abs(new_net) > _net_cap and abs(new_net) > abs(current_net):
+                if scaled_request > 0:
+                    scaled_request = min(scaled_request, max(0.0, _net_cap - current_net))
+                else:
+                    scaled_request = max(scaled_request, -max(0.0, _net_cap + current_net))
+                net_cap_adjusted = True
+
         # Recalculate final values
         final_gross = current_gross + (abs(current_asset + scaled_request) - abs(current_asset))
         
@@ -302,6 +327,9 @@ class GlobalExposureCapManager:
         if scaled_request == 0 and requested_exposure_delta != 0:
             adjustment_reason = "Request fully blocked by caps"
             is_allowed = False
+        elif net_cap_adjusted:
+            adjustment_reason = f"Adjusted for NET exposure budget ({_net_cap:.0%}); net was {self.state.net_exposure:+.2f}"
+            is_allowed = scaled_request != 0
         elif asset_cap_adjusted and gross_cap_adjusted:
             adjustment_reason = f"Adjusted for asset cap ({asset_cap:.0%}) and gross cap ({gross_cap:.0%})"
             is_allowed = True

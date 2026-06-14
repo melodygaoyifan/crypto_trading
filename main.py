@@ -1374,6 +1374,10 @@ class ProductionConfig:
     hard_drawdown_halt: float = HARD_DRAWDOWN_HALT
     correlation_crisis: float = CORRELATION_CRISIS
     max_gross_exposure: float = MAX_GROSS_EXPOSURE
+    # [NET-CAP 2026-06-14] Net (signed) directional exposure budget. The book ran
+    # +0.54 net-long into a -23% market (~half the Apr-Jun loss); gross caps don't
+    # constrain net direction. None = OFF. Set in the live JSON profile.
+    max_net_exposure: Optional[float] = None
     max_single_asset_pct: float = MAX_SINGLE_ASSET_PCT
     max_leverage: float = MAX_LEVERAGE
     reduce_at_drawdown: float = REDUCE_AT_DRAWDOWN
@@ -1755,6 +1759,8 @@ class ProductionConfig:
             hard_drawdown_halt=risk.get("hard_drawdown_halt", HARD_DRAWDOWN_HALT),
             correlation_crisis=risk.get("correlation_crisis", CORRELATION_CRISIS),
             max_gross_exposure=risk.get("max_gross_exposure", MAX_GROSS_EXPOSURE),
+            # [NET-CAP 2026-06-14] net directional budget (None=OFF; JSON enables)
+            max_net_exposure=risk.get("max_net_exposure", None),
             max_single_asset_pct=risk.get("max_single_asset_pct", risk.get("max_asset_exposure", MAX_SINGLE_ASSET_PCT)),
             max_leverage=leverage.get("max_leverage", risk.get("max_leverage", MAX_LEVERAGE)),
             reduce_at_drawdown=risk.get("reduce_at_drawdown", REDUCE_AT_DRAWDOWN),
@@ -3020,9 +3026,12 @@ class HMATSProductionRunner:
             get_exposure_cap_manager(ExposureCapConfig(
                 max_gross_normal=self.config.max_gross_exposure,
                 absolute_max_gross=self.config.max_gross_exposure,
+                # [NET-CAP 2026-06-14] net directional budget (None=OFF)
+                max_net_exposure=getattr(self.config, "max_net_exposure", None),
             ))
             logger.info(
                 f"  GlobalExposureCap: absolute_max={self.config.max_gross_exposure:.2f}x"
+                f" | max_net={getattr(self.config, 'max_net_exposure', None)}"
             )
         except Exception as _e:
             logger.debug(f"  GlobalExposureCap init skipped: {_e}")

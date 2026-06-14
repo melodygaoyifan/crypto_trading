@@ -30,6 +30,8 @@
     "max_position_pct": 0.80,
     "max_exposure_total": 1.50,
     "max_gross_exposure": 1.50,
+    "_net_cap_note": "NET-CAP 2026-06-14: caps |net signed exposure| (BTC+ETH+SOL). The book ran +0.54 net-long into a -23% market = ~half the Apr-Jun loss; gross caps don't constrain net direction. 0.50 allows a real directional/trend tilt but blocks all-in net-long. Only reduces requests that increase |net|; de-risking always free. Set null to disable.",
+    "max_net_exposure": 0.50,
     "max_single_asset_pct": 0.80,
     "max_drawdown": 0.35,
     "daily_loss_limit": 0.08,
