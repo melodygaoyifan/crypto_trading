@@ -345,6 +345,7 @@ def train_and_validate(
                 _model_file, map_location="cpu", weights_only=False)
             _blob["ic_per_dim"] = ic_per_dim
             _blob["promoted_dims"] = promoted_dims
+            _blob["hidden_dims"] = list(DEFAULT_HIDDEN_DIMS)  # runtime rebuilds encoder from this
             torch.save(_blob, _model_file)
     except Exception as _se:
         logger.warning(f"[FACTOR_EXTRACTION] {asset} IC-table embed failed: {_se}")

@@ -103,16 +103,29 @@ class MLFactorFusionAgent:
 
         try:
             import torch
-            from training.factor_extraction.autoencoder_factor import build_autoencoder
+            import torch.nn as nn
             blob = torch.load(self.model_path, weights_only=False)
             self._input_dim = int(blob["input_dim"])
             self._latent_dim = int(blob["latent_dim"])
             self._median = list(map(float, blob["median"]))
             self._iqr = list(map(float, blob["iqr"]))
-            encoder, _decoder = build_autoencoder(
-                input_dim=self._input_dim, latent_dim=self._latent_dim
-            )
-            encoder.load_state_dict(blob["encoder"])
+            # [P147-c] Inline the encoder architecture so runtime does NOT import
+            # from training/ (excluded from the lean runtime image -> previously
+            # ModuleNotFoundError: training.factor_extraction). Must match the
+            # training architecture exactly so state_dict keys align. hidden_dims
+            # is read from the blob (training embeds it) with a (64,16) fallback.
+            _hidden = tuple(blob.get("hidden_dims", (64, 16)))
+            _layers, _prev = [], self._input_dim
+            for _h in _hidden:
+                _layers += [nn.Linear(_prev, _h), nn.ReLU()]
+                _prev = _h
+            _layers.append(nn.Linear(_prev, self._latent_dim))
+            encoder = nn.Sequential(*_layers)
+            # training's Encoder wrapped the Sequential in `.net` -> remap keys
+            _sd = blob["encoder"]
+            if any(k.startswith("net.") for k in _sd):
+                _sd = {k[len("net."):]: v for k, v in _sd.items() if k.startswith("net.")}
+            encoder.load_state_dict(_sd)
             encoder.eval()
             self._encoder = encoder
             self._loaded = True
@@ -175,9 +188,11 @@ class MLFactorFusionAgent:
         try:
             import torch
             x = torch.tensor([feats], dtype=torch.float32)
-            # Apply per-feature robust scaling
+            # Apply per-feature robust scaling + clip to +/-10 to match training
+            # ([P147-c]: training clips IQR-normalized features to +/-10).
             for i, (m, q) in enumerate(zip(self._median, self._iqr)):
-                x[0, i] = (x[0, i] - m) / max(q, 1e-6)
+                _v = (x[0, i] - m) / max(q, 1e-6)
+                x[0, i] = max(-10.0, min(10.0, float(_v)))
             with torch.no_grad():
                 z = self._encoder(x).cpu().numpy()[0]
         except Exception as e:  # noqa: silent-swallow
