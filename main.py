@@ -7530,16 +7530,11 @@ class HMATSProductionRunner:
             except Exception as _v51_err:
                 logger.debug(f"[V5_1_PROMOTED] {asset} skipped: {_v51_err}")
 
-        # [v5.1 Phase 6] Shadow-mode ML factor agent observation. Iron-Law-7
-        # contract. Output ledger data/strategy_shadow/ml_factor_*.jsonl.
-        # Until autoencoders are trained + IC tables loaded, agent emits
-        # NEUTRAL on every tick (fail-closed). Agent uses ADVISE confidence
-        # cap (0.50) so even after promotion it cannot displace quant DECIDE.
-        if getattr(self, "_ml_factor_shadow", None) is not None and not p0_abort_tick:
-            try:
-                self._ml_factor_shadow.observe(asset, _shadow_md)
-            except Exception as _mf_err:
-                logger.debug(f"[v5.1 PHASE6] ml_factor observe {asset} skipped: {_mf_err}")
+        # [v5.1 Phase 6] ML factor shadow observation is RELOCATED below (after
+        # the DRL `_ohlcv_df` is built ~:7665) — the 122 named features it needs
+        # live in that feature dataframe, which is NOT yet in the TA cache at
+        # this point in the tick (DRL reads it successfully at :7660, but here it
+        # is absent -> the agent saw missing_features). See [P147-c RELOCATED].
 
         # [v5.1 Phase 7] Sleeve allocator advisory record. Iron Law 7: this
         # output is NOT consumed by UnifiedPositionSizer.calculate_position_size
@@ -7663,6 +7658,25 @@ class HMATSProductionRunner:
             _ohlcv_df = _ta_c.get("drl_df")
             if _ohlcv_df is None:
                 _ohlcv_df = _ta_c.get("df")
+
+        # [P147-c RELOCATED] ML factor shadow observe runs HERE (not up at the
+        # other shadow harnesses ~:7400) because the 122 NAMED features it needs
+        # live in `_ohlcv_df`, which is only populated in the TA cache at this
+        # point in the tick — the same df DRL consumes at :7705. Build a shadow-
+        # only view: _shadow_md (funding_rate_8h/current_price enrichment) + the
+        # feature row. Iron Law 7: observe() has no fusion side-effect.
+        if getattr(self, "_ml_factor_shadow", None) is not None and not p0_abort_tick:
+            try:
+                _ml_md = dict(_shadow_md)
+                if _ohlcv_df is not None and len(_ohlcv_df):
+                    _ml_last = _ohlcv_df.iloc[-1]
+                    for _col in _ohlcv_df.columns:
+                        if _col not in _ml_md:
+                            _ml_md[_col] = _ml_last[_col]
+                self._ml_factor_shadow.observe(asset, _ml_md)
+            except Exception as _mf_err:
+                logger.debug(f"[v5.1 PHASE6] ml_factor observe {asset} skipped: {_mf_err}")
+
         # [TREND-LAYER 2026-06-14] trend decision layer (default off -> no-op). Runs
         # BEFORE fusion: shadow logs trend vs quant; enforce INJECTS trend as the
         # quant signal so the full pipeline (gate/sizing/NET cap P144) trades it.
