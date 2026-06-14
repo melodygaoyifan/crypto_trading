@@ -1,0 +1,134 @@
+{
+  "BTC": {
+    "asset": "BTC",
+    "per_fold": {
+      "1": {
+        "full_sharpe": 16.37078586969311,
+        "full_psr": 1.0,
+        "clean_bars": 179,
+        "clean_sharpe": 19.198663900337106,
+        "clean_psr": 0.9999999538574085,
+        "n_long": 562,
+        "n_short": 399
+      },
+      "2": {
+        "full_sharpe": 13.999811992120833,
+        "full_psr": 1.0,
+        "clean_bars": 179,
+        "clean_sharpe": 12.729665419460716,
+        "clean_psr": 0.9999044462713886,
+        "n_long": 405,
+        "n_short": 539
+      },
+      "3": {
+        "full_sharpe": 17.405187360390638,
+        "full_psr": 1.0,
+        "clean_bars": 179,
+        "clean_sharpe": 19.488541563600077,
+        "clean_psr": 0.9999999666199124,
+        "n_long": 476,
+        "n_short": 469
+      }
+    },
+    "pbo": {
+      "pbo": 0.011904761904761904,
+      "n_partitions": 252,
+      "n_configs": 3,
+      "mean_oos_sharpe_of_is_best": 0.35885756031476296,
+      "median_oos_sharpe_all": 0.3483076337510649,
+      "verdict": "ROBUST_SELECTION"
+    },
+    "best_fold": 3,
+    "val_sharpe": 17.405187360390638,
+    "live_sharpe_anchor": -2.62,
+    "verdict": "BACKTEST_CONTRADICTS_LIVE"
+  },
+  "ETH": {
+    "asset": "ETH",
+    "per_fold": {
+      "1": {
+        "full_sharpe": 12.250572351276514,
+        "full_psr": 0.9999999999999993,
+        "clean_bars": 179,
+        "clean_sharpe": 12.162737778413504,
+        "clean_psr": 0.9997688882952122,
+        "n_long": 536,
+        "n_short": 413
+      },
+      "2": {
+        "full_sharpe": 14.849334233586212,
+        "full_psr": 1.0,
+        "clean_bars": 179,
+        "clean_sharpe": 17.88695292907767,
+        "clean_psr": 0.9999999915321739,
+        "n_long": 663,
+        "n_short": 305
+      },
+      "3": {
+        "full_sharpe": 10.08816741777641,
+        "full_psr": 0.9999999999998526,
+        "clean_bars": 179,
+        "clean_sharpe": 13.188453702057146,
+        "clean_psr": 0.9999656331277085,
+        "n_long": 229,
+        "n_short": 722
+      }
+    },
+    "pbo": {
+      "pbo": 0.015873015873015872,
+      "n_partitions": 252,
+      "n_configs": 3,
+      "mean_oos_sharpe_of_is_best": 0.31568116671275154,
+      "median_oos_sharpe_all": 0.2636885410124673,
+      "verdict": "ROBUST_SELECTION"
+    },
+    "best_fold": 2,
+    "val_sharpe": 14.849334233586212,
+    "live_sharpe_anchor": -2.62,
+    "verdict": "BACKTEST_CONTRADICTS_LIVE"
+  },
+  "SOL": {
+    "asset": "SOL",
+    "per_fold": {
+      "1": {
+        "full_sharpe": 11.107175483614345,
+        "full_psr": 0.9999999999999918,
+        "clean_bars": 179,
+        "clean_sharpe": 12.883908906698819,
+        "clean_psr": 0.999914652146425,
+        "n_long": 408,
+        "n_short": 544
+      },
+      "2": {
+        "full_sharpe": 7.035205148247118,
+        "full_psr": 0.9999985116023229,
+        "clean_bars": 179,
+        "clean_sharpe": 15.816158562722697,
+        "clean_psr": 0.999998940548712,
+        "n_long": 629,
+        "n_short": 328
+      },
+      "3": {
+        "full_sharpe": 10.885738275218934,
+        "full_psr": 0.9999999999999836,
+        "clean_bars": 179,
+        "clean_sharpe": 13.201154447476075,
+        "clean_psr": 0.9999944661697717,
+        "n_long": 640,
+        "n_short": 289
+      }
+    },
+    "pbo": {
+      "pbo": 0.07142857142857142,
+      "n_partitions": 252,
+      "n_configs": 3,
+      "mean_oos_sharpe_of_is_best": 0.2162625188979798,
+      "median_oos_sharpe_all": 0.217889876525978,
+      "verdict": "ROBUST_SELECTION"
+    },
+    "best_fold": 1,
+    "val_sharpe": 11.107175483614345,
+    "live_sharpe_anchor": -2.62,
+    "verdict": "BACKTEST_CONTRADICTS_LIVE"
+  }
+}

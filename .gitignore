@@ -79,3 +79,6 @@ pytorch_build/
 # Coinbase CDP key (never commit secrets)
 .coinbase_key.json
 COINBASE_*.json
+
+# DRL validation per-bar return series (regenerable via scripts/validate_drl_oos.py)
+data/validation_export/*_val_returns.jsonl

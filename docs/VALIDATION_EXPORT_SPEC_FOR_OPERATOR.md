@@ -1,9 +1,25 @@
 # Export spec — what the operator must produce so the validation harness can run
 
-**Purpose:** the CPCV/PBO + Deflated-Sharpe harness (`analytics/validation/{sharpe_validation,cpcv}.py`)
-needs **per-period realized return SERIES** — not summary rewards or assumed Sharpes.
-What's currently on the box can't be validated (see below). Produce these exports
-from the training/backtest pipeline and the harness runs in minutes.
+> ## ✅ DRL HALF (Part A) — RESOLVED LOCALLY 2026-06-14, no operator export needed
+> The premise "what's on the box can't be validated" was **wrong for the DRL**.
+> All artifacts existed (val parquets, 9/9 fold checkpoints + scalers, the
+> `TQCTeacherOracle` rollout). `scripts/validate_drl_oos.py` now rolls each fold
+> over the val window, **exports the per-bar return series** to
+> `data/validation_export/drl_{ASSET}_fold_{k}_val_returns.jsonl`, and runs PSR +
+> CSCV-PBO. **Result (all 3 assets): val-window Sharpe +11..+19, PSR 100%, PBO
+> 1–7% ("ROBUST") — yet LIVE Sharpe is −2.62. Verdict: `BACKTEST_CONTRADICTS_LIVE`.**
+> The backtest (even with CPCV/PBO) is NON-PREDICTIVE of live because PBO only
+> tests fold-to-fold generalization within the same historical window — it is
+> blind to the regime shift between that window (Oct'25–Mar'26) and the live
+> future (Apr–Jun'26). **Conclusion: forward-live PSR is the ONLY valid arbiter;
+> do NOT promote/trust any DRL version on backtest metrics.** This vindicates the
+> current bounded-ADVISE posture (don't demote, don't expand). Report:
+> `data/validation_export/drl_validation_report.json`.
+>
+> **Part B (v5.1 strategies) still needs work** — those strategies are live-only
+> (no backtest harness, hardcoded assumed Sharpes) and are already demoted OFF
+> live (P147, zero measured signal). A proper backtest needs a ~2–3 day refactor
+> to make them accept historical OHLCV; lower priority since they're already off.
 
 ---
 
