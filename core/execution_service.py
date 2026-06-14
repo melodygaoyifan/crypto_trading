@@ -281,6 +281,26 @@ async def execute_intent_v2(
     if _is_full_exit_request and not _has_active_position:
         return {"status": "SKIPPED", "reason": "No active position to close"}
 
+    # [P152 2026-06-14] Coinbase two-sleeve: for a Coinbase-ROUTED asset, the
+    # Coinbase derivatives sleeve (main.py heartbeat -> sleeve.manage_to_signal)
+    # is the SOLE directional driver. The Kraken spot sleeve must NOT open a
+    # parallel ENTRY: a short entry is structurally impossible on spot and spams
+    # CRITICAL INSUFFICIENT_SPOT_BALANCE rejects (e.g. SOL SELL needs 6.3 SOL,
+    # free=0), and a long entry would double the book. B1 was meant to cover the
+    # short case but is leverage-gated and missed it when regime_leverage briefly
+    # read >=2 at the B1 check yet executed at 1x (spot). Skip NEW ENTRIES only;
+    # exits/reduces of a REAL Kraken spot holding still execute (so any legacy
+    # spot position can always be unwound). `_coinbase_routed` is the same helper
+    # the routing tests cover; it fail-closes to Kraken on any error.
+    if (not _has_active_position and not _is_full_exit_request
+            and _coinbase_routed(ctx, asset)):
+        logger.info(
+            f"[P152] {asset}: Coinbase-routed -> Kraken spot ENTRY skipped "
+            f"(dir={getattr(intent, 'direction', 0.0):+.2f}; Coinbase sleeve is "
+            f"the sole directional driver for this asset)")
+        return {"status": "SKIPPED", "reason": "coinbase_routed_no_kraken_entry",
+                "asset": asset}
+
     _execution_direction = float(getattr(intent, "direction", 0.0) or 0.0)
     if _is_full_exit_request and abs(_execution_direction) < 1e-9 and _has_active_position:
         _position_dir = float(_existing_position.get("direction", 0.0) or 0.0)
