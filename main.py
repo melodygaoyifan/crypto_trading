@@ -7667,13 +7667,22 @@ class HMATSProductionRunner:
         # feature row. Iron Law 7: observe() has no fusion side-effect.
         if getattr(self, "_ml_factor_shadow", None) is not None and not p0_abort_tick:
             try:
-                _ml_md = dict(_shadow_md)
-                # _ohlcv_df is RAW OHLCV (~11 cols); the 122 named features are
-                # COMPUTED on the fly by the obs builder's FeatureEngineer (see
-                # drl/runtime_obs_builder.build_obs). Compute them the same way so
-                # ml_factor's _extract_features resolves the manifest schema. The
-                # denoised/external/regime features come from market_data (already
-                # in _shadow_md). Shadow-only; never touches fusion.
+                # The 122-feature manifest = 102 base + 5 denoised + 7 external +
+                # 8 regime_proba, assembled from THREE sources (same as build_obs):
+                #  - base: computed on the fly by the FeatureEngineer from raw
+                #    _ohlcv_df (it is NOT a 122-col df — it is raw OHLCV).
+                #  - denoised + external: live in market_data. Use the CURRENT
+                #    market_data (externals are added by _derive_runtime_external_
+                #    features at :7656, AFTER the _shadow_md snapshot at :7402).
+                #  - regime_proba_0..7: from market_data["_gmm_probs"].
+                # Overlay the _shadow_md funding/price enrichment for anything the
+                # live market_data lacks. Shadow-only; never touches fusion.
+                _ml_md = dict(market_data)
+                for _k, _v in _shadow_md.items():
+                    if _k not in _ml_md:
+                        _ml_md[_k] = _v
+                for _gi, _gv in enumerate((market_data.get("_gmm_probs") or [])[:8]):
+                    _ml_md.setdefault(f"regime_proba_{_gi}", _gv)
                 _ob = getattr(self, "_obs_builder", None)
                 _fe = getattr(_ob, "_feature_engineer", None) if _ob is not None else None
                 if _fe is not None and _ohlcv_df is not None and len(_ohlcv_df):
