@@ -61,6 +61,7 @@ class CoinbaseSleeve:
                 pass
         self._last_positions: Dict[str, Dict[str, Any]] = {}
         self._last_buying_power_usd: float = 0.0
+        self._last_equity_usd: float = 0.0
         # True only after a SUCCESSFUL venue reconcile this call. Autonomous
         # management refuses to act when this is False (don't trade on a stale
         # snapshot after an API timeout). See manage_to_signal.
@@ -149,12 +150,37 @@ class CoinbaseSleeve:
             return self._last_buying_power_usd
 
     def sleeve_equity_usd(self) -> float:
-        """Approximate Coinbase sleeve equity = buying power + unrealized PnL of
-        open positions. Used ONLY for the sleeve's own risk guard + reporting —
-        never fed into the Kraken existence-fuse/drawdown."""
-        bp = self.buying_power_usd()
-        upnl = sum(_f(p.get("unrealized_pnl")) for p in self._last_positions.values())
-        return bp + upnl
+        """True NET LIQUIDATION VALUE of the futures sleeve = total USD collateral
+        in the portfolio + unrealized PnL. This is the correct base for the
+        drawdown anchor + PnL.
+
+        [P151] MUST NOT use futures_buying_power — that is leverage-adjusted
+        (collateral x max-leverage, ~8x) and overstates losable capital by ~8x,
+        which made the 15% halt anchor on ~$3,560 when the account only holds
+        ~$439 (it would liquidate near $376 long before a 15%-of-$3560 loss).
+        Used ONLY for the sleeve's own risk guard + reporting — never fed into the
+        Kraken existence-fuse/drawdown."""
+        if not self.is_ready():
+            return self._last_equity_usd
+        try:
+            fb = self._adapter._client.get_futures_balance_summary()
+            bs = _g(fb, "balance_summary") or fb
+
+            def _field(name: str) -> float:
+                return _f(_g(_g(bs, name) or {}, "value"), 0.0)
+
+            total = _field("total_usd_balance")
+            if total <= 0:  # fallback: available + posted margin = total collateral
+                total = _field("available_margin") + _field("initial_margin")
+            upnl = _field("unrealized_pnl")
+            if upnl == 0.0:  # summary had none -> sum position-level uPnL
+                upnl = sum(_f(p.get("unrealized_pnl")) for p in self._last_positions.values())
+            eq = (total + upnl) if total > 0 else self._last_equity_usd
+            self._last_equity_usd = eq
+            return eq
+        except Exception as e:
+            logger.warning(f"[COINBASE_SLEEVE] equity fetch failed: {type(e).__name__}: {e}")
+            return self._last_equity_usd
 
     # ----- isolated sleeve risk guard -------------------------------------
 
@@ -200,6 +226,10 @@ class CoinbaseSleeve:
         logger.warning("[COINBASE_SLEEVE] halt manually reset")
 
     # ----- [P150] persistence: baseline survives restart + forward PnL log ----
+    # [P151] bump when the equity FORMULA changes -> stale-baseline files are
+    # discarded on restore instead of producing a false drawdown reading.
+    _BASE_VERSION = "net_liq_v2"
+
     def _data_dir(self) -> str:
         return os.environ.get("HMATS_DATA_DIR", "data")
 
@@ -218,6 +248,16 @@ class CoinbaseSleeve:
                 return
             with open(p, "r", encoding="utf-8") as fh:
                 st = json.load(fh)
+            # [P151] the baseline UNIT changed (buying_power -> net-liq equity).
+            # Discard any state written under the old formula so the cap
+            # re-anchors to true equity instead of false-halting (a ~$3,561
+            # baseline vs ~$439 equity would read as an 87% drawdown).
+            if st.get("base_version") != self._BASE_VERSION:
+                logger.warning(
+                    f"[COINBASE_SLEEVE] state base_version="
+                    f"{st.get('base_version')!r} != {self._BASE_VERSION!r} "
+                    f"-> discarding stale baseline, will re-anchor to true equity")
+                return
             se = st.get("sleeve_start_equity")
             self._sleeve_start_equity = float(se) if se is not None else None
             self._halted = bool(st.get("halted", False))
@@ -241,6 +281,7 @@ class CoinbaseSleeve:
                     "sleeve_start_equity": self._sleeve_start_equity,
                     "halted": self._halted,
                     "halt_reason": self._halt_reason,
+                    "base_version": self._BASE_VERSION,
                     "saved_ts": time.time(),
                 }, fh)
             os.replace(tmp, p)

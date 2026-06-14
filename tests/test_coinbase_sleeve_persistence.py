@@ -23,7 +23,7 @@ def _sleeve(tmp_path, monkeypatch, start_eq=None, **kw):
     monkeypatch.setenv("HMATS_DATA_DIR", str(tmp_path))
     s = CoinbaseSleeve(_StubAdapter(), assets=("BTC", "ETH", "SOL"), **kw)
     if start_eq is not None:
-        s._last_buying_power_usd = start_eq  # equity = bp + upnl(0)
+        s._last_equity_usd = start_eq  # [P151] equity = net-liq, not buying power
     return s
 
 
@@ -56,7 +56,7 @@ def test_halt_triggers_from_restored_baseline(tmp_path, monkeypatch):
 def test_sticky_halt_survives_restart(tmp_path, monkeypatch):
     a = _sleeve(tmp_path, monkeypatch, start_eq=4000.0)
     a.update_risk()
-    a._last_buying_power_usd = 3300.0
+    a._last_equity_usd = 3300.0
     a.update_risk()  # trips + persists halt
     assert a._halted is True
 
@@ -71,7 +71,7 @@ def test_sticky_halt_survives_restart(tmp_path, monkeypatch):
 def test_reset_halt_clears_persisted(tmp_path, monkeypatch):
     a = _sleeve(tmp_path, monkeypatch, start_eq=4000.0)
     a.update_risk()
-    a._last_buying_power_usd = 3000.0
+    a._last_equity_usd = 3000.0
     a.update_risk()
     assert a._halted is True
     a.reset_halt()
@@ -84,7 +84,7 @@ def test_pnl_log_appends_each_tick(tmp_path, monkeypatch):
     a = _sleeve(tmp_path, monkeypatch, start_eq=4000.0)
     a.update_risk()  # baseline
     a.log_pnl_point()
-    a._last_buying_power_usd = 4080.0
+    a._last_equity_usd = 4080.0
     a.log_pnl_point()
     p = a._pnl_path()
     assert os.path.exists(p)
@@ -110,3 +110,17 @@ def test_corrupt_state_file_falls_back(tmp_path, monkeypatch):
     # must not raise — degrades to fresh baseline
     s = CoinbaseSleeve(_StubAdapter(), assets=("BTC",))
     assert s._sleeve_start_equity is None
+
+
+def test_stale_base_version_discarded(tmp_path, monkeypatch):
+    """[P151] a pre-fix state file (buying-power-era baseline, no/old base_version)
+    must be DISCARDED on restore — else a ~$3,561 baseline vs ~$439 equity reads
+    as an 87% drawdown and false-halts the sleeve on startup."""
+    monkeypatch.setenv("HMATS_DATA_DIR", str(tmp_path))
+    p = os.path.join(str(tmp_path), "coinbase_sleeve_state.json")
+    with open(p, "w", encoding="utf-8") as fh:
+        json.dump({"sleeve_start_equity": 3561.42, "halted": False,
+                   "halt_reason": "", "saved_ts": 1.0}, fh)  # no base_version
+    s = CoinbaseSleeve(_StubAdapter(), assets=("BTC",))
+    assert s._sleeve_start_equity is None  # stale baseline rejected -> re-anchor fresh
+    assert s._halted is False
