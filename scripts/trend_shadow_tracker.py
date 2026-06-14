@@ -32,8 +32,9 @@ from datetime import datetime, timezone
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from strategies.trend_following import TrendFollowingStrategy  # noqa: E402
 
-LOG = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                   "data", "trend_shadow.jsonl")
+LOG = os.environ.get("TREND_SHADOW_LOG") or os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "data", "trend_shadow.jsonl")
 ASSETS = [("BTC", "BTC/USDT:USDT"), ("ETH", "ETH/USDT:USDT"), ("SOL", "SOL/USDT:USDT")]
 COST_BPS = 15.0
 YEAR_BARS = 365 * 6
