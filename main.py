@@ -7391,13 +7391,35 @@ class HMATSProductionRunner:
             except Exception as _micro_err:
                 logger.debug(f"[WIRE-MICRO] {asset} skipped: {_micro_err}")
 
+        # [P-SHADOW-WIRE 2026-06-13] The v5.1 shadow strategies read market_data
+        # keys the engine populates under DIFFERENT names (P2 key-mismatch) — a
+        # 6-week-long dead-shadow bug: 6188/6190 records had direction=0 because
+        # e.g. funding strategies read `funding_rate_8h` while the engine stores
+        # the 8h value under `funding_rate` (main.py:5898), and kyle_lambda reads
+        # `current_price` while the engine has `mark_price`. Build a SHADOW-ONLY
+        # enriched copy so the harness sees real inputs. NEVER mutates the shared
+        # market_data dict (Iron Law 7: shadow cannot affect fusion).
+        _shadow_md = market_data
+        try:
+            _enrich = {}
+            if market_data.get("funding_rate_8h") is None and market_data.get("funding_rate") is not None:
+                _enrich["funding_rate_8h"] = market_data["funding_rate"]  # 8h-normalized at :5898
+            if market_data.get("current_price") is None:
+                _cp = market_data.get("price") or market_data.get("mark_price")
+                if _cp:
+                    _enrich["current_price"] = _cp
+            if _enrich:
+                _shadow_md = {**market_data, **_enrich}
+        except Exception:  # noqa: enrichment is best-effort; fall back to raw market_data
+            _shadow_md = market_data
+
         # [v5.1 Phase 4] Shadow-mode microstructure observation. NEVER touches
         # agent_signals or market_data — pure write to JSONL ledger for Phase
         # Pre-6 IC compute. Iron Law 7 enforced by call signature: observe()
         # has no return value and the harness has no fusion hook.
         if getattr(self, "_micro_shadow", None) is not None and not p0_abort_tick:
             try:
-                self._micro_shadow.observe(asset, market_data)
+                self._micro_shadow.observe(asset, _shadow_md)
             except Exception as _ms_err:
                 # Iron Law 4: shadow harness exception MUST NOT corrupt main tick.
                 # Already swallowed inside harness; double-guard here.
@@ -7408,7 +7430,7 @@ class HMATSProductionRunner:
         # Distinct ledger (data/strategy_shadow/cascade_*.jsonl).
         if getattr(self, "_cascade_shadow", None) is not None and not p0_abort_tick:
             try:
-                self._cascade_shadow.observe(asset, market_data)
+                self._cascade_shadow.observe(asset, _shadow_md)
             except Exception as _cs_err:
                 logger.debug(f"[v5.1 PHASE8] cascade observe {asset} skipped: {_cs_err}")
 
@@ -7416,7 +7438,7 @@ class HMATSProductionRunner:
         # contract. Distinct ledger (data/strategy_shadow/funding_*.jsonl).
         if getattr(self, "_funding_shadow", None) is not None and not p0_abort_tick:
             try:
-                self._funding_shadow.observe(asset, market_data)
+                self._funding_shadow.observe(asset, _shadow_md)
             except Exception as _fs_err:
                 logger.debug(f"[v5.1 PHASE3] funding observe {asset} skipped: {_fs_err}")
 
@@ -7436,7 +7458,7 @@ class HMATSProductionRunner:
                         continue
                     for _v51_st in getattr(_v51_h, "_strategies", []):
                         try:
-                            _v51_sig = _v51_st.evaluate(asset, market_data)
+                            _v51_sig = _v51_st.evaluate(asset, _shadow_md)
                             _v51_d = float(getattr(_v51_sig, "direction", 0.0) or 0.0)
                             _v51_c = float(getattr(_v51_sig, "confidence", 0.0) or 0.0)
                             if _v51_d != 0.0 and _v51_c > 0.0:
@@ -7463,7 +7485,7 @@ class HMATSProductionRunner:
         # cap (0.50) so even after promotion it cannot displace quant DECIDE.
         if getattr(self, "_ml_factor_shadow", None) is not None and not p0_abort_tick:
             try:
-                self._ml_factor_shadow.observe(asset, market_data)
+                self._ml_factor_shadow.observe(asset, _shadow_md)
             except Exception as _mf_err:
                 logger.debug(f"[v5.1 PHASE6] ml_factor observe {asset} skipped: {_mf_err}")
 
