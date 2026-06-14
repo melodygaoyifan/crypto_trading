@@ -160,19 +160,27 @@ class MLFactorFusionAgent:
         all_features = manifest.get("all_features", [])
         if len(all_features) != self._input_dim:
             return None
-        # Fail-closed: any missing feature → NEUTRAL upstream
+        # [P147-c] Tolerant extraction: zero-fill missing/NaN features (the same
+        # compromise drl/runtime_obs_builder.build_obs makes) instead of failing
+        # closed on a single absent value. The live feature row routinely has a
+        # few NaN (incomplete current bar, warmup-dependent features), which made
+        # the strict version return missing_features on EVERY tick. Guard against
+        # garbage: if >10% of features are absent/NaN, still fail closed.
         vec: List[float] = []
+        missing = 0
         for fname in all_features:
             v = market_data.get(fname)
-            if v is None:
-                return None
             try:
-                f = float(v)
-                if f != f:
-                    return None
-            except (TypeError, ValueError):  # noqa: silent-swallow
-                return None
+                f = float(v) if v is not None else float("nan")
+            except (TypeError, ValueError):
+                f = float("nan")
+            if f != f:  # NaN or unparseable
+                f = 0.0
+                missing += 1
             vec.append(f)
+        self._last_missing = missing
+        if missing > 0.10 * len(all_features):
+            return None
         return vec
 
     def evaluate(self, asset: str, market_data: Dict[str, Any]) -> ShadowSignal:
@@ -183,7 +191,8 @@ class MLFactorFusionAgent:
 
         feats = self._extract_features(market_data)
         if feats is None:
-            return NEUTRAL("ml_factor", asset, "missing_features")
+            return NEUTRAL("ml_factor", asset,
+                           f"missing_features({getattr(self, '_last_missing', '?')}/{self._input_dim})")
 
         try:
             import torch
