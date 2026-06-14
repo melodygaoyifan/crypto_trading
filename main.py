@@ -1530,6 +1530,12 @@ class ProductionConfig:
     # Sim: persist=2 cut historical flips ~59%. Reversible via the live JSON.
     flip_persistence_enabled: bool = True
     flip_persist_ticks: int = 2
+    # [TREND-LAYER 2026-06-14] Trend-following decision layer mode: off|shadow|enforce.
+    # DEFAULT "off" (engine byte-identical to today). "shadow" logs trend vs engine;
+    # "enforce" makes trend-following the decision layer. Do NOT set "enforce" until
+    # the forward validation (the trend_shadow_tracker cron's `score`) confirms a
+    # positive forward Sharpe — flipping before that repeats the backtest-vs-live trap.
+    trend_following_mode: str = "off"
     # [Coinbase Phase 2] Master switch for Coinbase US perp routing. Default OFF
     # -> engine is byte-identical to today (Kraken-only). When ON, Phase A logs
     # read-only Coinbase-vs-Kraken parity in the heartbeat; order routing stays
@@ -1778,6 +1784,8 @@ class ProductionConfig:
             # [L2-CHURN 2026-06-13] flip-persistence whipsaw guard (default ON)
             flip_persistence_enabled=data.get("flip_persistence_enabled", True),
             flip_persist_ticks=int(data.get("flip_persist_ticks", 2)),
+            # [TREND-LAYER 2026-06-14] decision-layer mode (off|shadow|enforce; default off)
+            trend_following_mode=str(data.get("trend_following_mode", "off")),
             # [Coinbase Phase 2] read-only shadow routing switch (default OFF)
             coinbase_routing_enabled=data.get("coinbase_routing_enabled", False),
             # [v5.1 PROMOTED 2026-06-13] live ADVISE promotion of shadow strategies
@@ -7580,6 +7588,13 @@ class HMATSProductionRunner:
             _ohlcv_df = _ta_c.get("drl_df")
             if _ohlcv_df is None:
                 _ohlcv_df = _ta_c.get("df")
+        # [TREND-LAYER 2026-06-14] cache closes for the trend decision layer (default off -> no-op)
+        if getattr(self.config, "trend_following_mode", "off") != "off":
+            try:
+                from core.trend_decision_layer import get_trend_decision_layer
+                get_trend_decision_layer(self.config.trend_following_mode).cache(asset, _ohlcv_df)
+            except Exception as _tl_e:
+                logger.debug(f"[TREND-LAYER] cache hook skip: {type(_tl_e).__name__}: {_tl_e}")
         _gmm_probs = market_data.get("_gmm_probs", [])
         _regime_name = market_data.get("regime_state", "UNKNOWN")
         _env_state = self._build_drl_env_state(asset)
@@ -11742,6 +11757,19 @@ class HMATSProductionRunner:
             except Exception as _fp_err:
                 logger.warning(f"[FLIP-PERSIST] {asset}: guard error, allowing intent: "
                                f"{type(_fp_err).__name__}: {_fp_err}")
+
+        # [TREND-LAYER 2026-06-14] trend-following decision layer (default off -> no-op).
+        # shadow: logs trend target vs the engine's intent. enforce: OVERRIDES
+        # intent.direction/target_exposure with trend-following. NET cap (P144) still
+        # applies downstream. Do NOT set enforce until the forward validation confirms
+        # (trend_shadow_tracker `score`) — flipping early repeats the backtest-vs-live trap.
+        if getattr(self.config, "trend_following_mode", "off") != "off":
+            try:
+                from core.trend_decision_layer import get_trend_decision_layer
+                get_trend_decision_layer(self.config.trend_following_mode).apply(asset, intent)
+            except Exception as _tl_e:
+                logger.warning(f"[TREND-LAYER] {asset} apply hook skip: "
+                               f"{type(_tl_e).__name__}: {_tl_e}")
 
         # =================================================================
         # V6.7 STEP B3: TQC UNCERTAINTY DISCOUNT
