@@ -19,7 +19,9 @@ Backward compat aliases:
 import importlib
 import json
 import logging
+import os
 import sys
+import time
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
@@ -112,9 +114,48 @@ class TQCInference:
 
         self._tqc_model = None
         self._obs_buffer: deque = deque(maxlen=N_STACK)
+        # [P148 2026-06-14] restore the frame buffer from a quick prior restart so
+        # we don't zero-pad for 8 ticks (32h) every time the engine restarts.
+        self._restore_buffer()
 
         if tqc_path:
             self._load_tqc(tqc_path, device)
+
+    # ---- [P148] frame-buffer persistence (no 32h warmup after a restart) -------
+    _BUFFER_MAX_AGE_SEC = 12 * 3600  # restore only if fresh enough to stay temporally consecutive (~3 bars)
+
+    def _buffer_path(self) -> str:
+        d = os.environ.get("HMATS_DATA_DIR", "data")
+        return os.path.join(d, f"drl_obs_buffer_{self._asset}.npz")
+
+    def _restore_buffer(self) -> None:
+        try:
+            p = self._buffer_path()
+            if not os.path.exists(p):
+                return
+            z = np.load(p, allow_pickle=False)
+            age = time.time() - float(z["saved_ts"])
+            if age > self._BUFFER_MAX_AGE_SEC:
+                logger.info(f"[DRL_BUFFER] {self._asset}: saved buffer stale "
+                            f"({age/3600:.1f}h) -> warmup fresh (zero-pad)")
+                return
+            for f in z["frames"]:
+                self._obs_buffer.append(np.asarray(f, dtype=np.float32))
+            logger.info(f"[DRL_BUFFER] {self._asset}: restored {len(self._obs_buffer)}/{N_STACK} "
+                        f"frames (age {age/3600:.1f}h) -> no 32h warmup")
+        except Exception as e:  # noqa: silent-swallow — bad/old buffer file; fall back to empty (warmup) + log
+            logger.warning(f"[DRL_BUFFER] {self._asset}: restore failed: {type(e).__name__}: {e}")
+
+    def _save_buffer(self) -> None:
+        try:
+            if not self._obs_buffer:
+                return
+            frames = np.stack([np.asarray(f, dtype=np.float32) for f in self._obs_buffer])
+            p = self._buffer_path()
+            os.makedirs(os.path.dirname(p) or ".", exist_ok=True)
+            np.savez(p, frames=frames, saved_ts=np.float64(time.time()))
+        except Exception as e:  # noqa: silent-swallow — persistence is best-effort, never break inference
+            logger.debug(f"[DRL_BUFFER] {self._asset}: save failed: {type(e).__name__}: {e}")
 
     def _load_tqc(self, path: str, device: str = "auto"):
         """Load TQC model with LSTM_FILM_A support."""
@@ -207,6 +248,7 @@ class TQCInference:
                     stacked = np.zeros((1, _expected_stacked), dtype=np.float32)
                 else:
                     self._obs_buffer.append(obs_126.copy())
+                    self._save_buffer()  # [P148] persist so a restart doesn't zero-pad 32h
                     if len(self._obs_buffer) < N_STACK:
                         padded = [np.zeros(SINGLE_OBS_DIM, dtype=np.float32)] * (
                             N_STACK - len(self._obs_buffer)
