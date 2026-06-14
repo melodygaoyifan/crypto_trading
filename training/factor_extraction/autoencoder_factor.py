@@ -224,6 +224,12 @@ def train_and_validate(
     import torch.optim as optim
     import numpy as np
 
+    # [P147-c] Deterministic training — without a fixed seed the promoted-dims
+    # set flips between runs (BTC observed promoting [2,3] then [] across runs),
+    # which makes the deployed model + its gate verdict non-reproducible.
+    torch.manual_seed(42)
+    np.random.seed(42)
+
     data = load_training_data(asset)
     if data is None:
         return {"asset": asset, "error": "data_missing",
@@ -245,6 +251,13 @@ def train_and_validate(
     iqr[iqr < 1e-6] = 1.0  # protect against constant features
     train_norm = (train_arr - median) / iqr
     val_norm = (val_arr - median) / iqr
+    # [P147-c] Clip heavy-tailed outliers after robust scaling. Without this,
+    # IQR-normalized features still carry extreme tails (a feature with small IQR
+    # + occasional spikes maps to ~1e2-1e3), which blow up MSE and diverge the
+    # gradient (observed: val_loss 1674->15770 at epoch 25). Clip to +/-10 sigma-
+    # equivalent; replace any residual NaN/inf with 0.
+    train_norm = np.nan_to_num(np.clip(train_norm, -10.0, 10.0), nan=0.0, posinf=10.0, neginf=-10.0)
+    val_norm = np.nan_to_num(np.clip(val_norm, -10.0, 10.0), nan=0.0, posinf=10.0, neginf=-10.0)
 
     input_dim = train_norm.shape[1]
     encoder, decoder = build_autoencoder(input_dim=input_dim, latent_dim=latent_dim)
@@ -268,6 +281,11 @@ def train_and_validate(
             x_recon = decoder(encoder(x))
             loss = loss_fn(x_recon, x)
             loss.backward()
+            # [P147-c] Gradient clipping — belt-and-suspenders against the
+            # divergence the feature-clip above already mostly fixes.
+            torch.nn.utils.clip_grad_norm_(
+                list(encoder.parameters()) + list(decoder.parameters()), max_norm=5.0
+            )
             optim_.step()
             train_loss_sum += loss.item() * len(idx)
         train_loss = train_loss_sum / len(perm)
@@ -302,9 +320,34 @@ def train_and_validate(
                 logger.info(f"[FACTOR_EXTRACTION] early stop at epoch {epoch}")
                 break
 
-    # Per-latent IC on val
+    # [P147-c] Reload the BEST-saved weights so the IC table matches the
+    # persisted model (the in-loop save keeps the best-val epoch, which may
+    # differ from the final epoch's encoder).
+    _model_file = (output_dir or (MODEL_DIR / asset)) / "factor_autoencoder.pt"
+    try:
+        if _model_file.exists():
+            _best_blob = torch.load(_model_file, map_location="cpu", weights_only=False)
+            encoder.load_state_dict(_best_blob["encoder"])
+            encoder.eval()
+    except Exception as _re:
+        logger.warning(f"[FACTOR_EXTRACTION] {asset} best-weights reload failed: {_re}")
+        _best_blob = None
+
+    # Per-latent IC on val (computed on the persisted/best encoder)
     ic_per_dim = compute_per_latent_ic(encoder, val_x, val_fwd)
     promoted_dims = [k for k, ic in enumerate(ic_per_dim) if abs(ic) >= DEFAULT_PROMOTE_IC]
+
+    # [P147-c] Embed the IC table INTO the model blob so MLFactorDispatcher can
+    # project latent->direction at load time (it needs promoted_dims + ic_per_dim).
+    try:
+        if _model_file.exists():
+            _blob = _best_blob if _best_blob is not None else torch.load(
+                _model_file, map_location="cpu", weights_only=False)
+            _blob["ic_per_dim"] = ic_per_dim
+            _blob["promoted_dims"] = promoted_dims
+            torch.save(_blob, _model_file)
+    except Exception as _se:
+        logger.warning(f"[FACTOR_EXTRACTION] {asset} IC-table embed failed: {_se}")
 
     report = {
         "asset": asset,

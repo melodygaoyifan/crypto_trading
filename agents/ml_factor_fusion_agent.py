@@ -116,6 +116,11 @@ class MLFactorFusionAgent:
             encoder.eval()
             self._encoder = encoder
             self._loaded = True
+            # [P147-c] IC table embedded in the model blob (training re-saves it
+            # after computing per-latent IC). Without it, latent->direction
+            # projection has no promoted dims -> NEUTRAL("no_promoted_dims...").
+            if blob.get("ic_per_dim") is not None and blob.get("promoted_dims") is not None:
+                self.load_ic_report(blob["ic_per_dim"], blob["promoted_dims"])
         except Exception as e:
             self._load_error = f"load_failed:{type(e).__name__}:{e}"
             logger.warning(

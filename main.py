@@ -7402,12 +7402,59 @@ class HMATSProductionRunner:
         _shadow_md = market_data
         try:
             _enrich = {}
-            if market_data.get("funding_rate_8h") is None and market_data.get("funding_rate") is not None:
-                _enrich["funding_rate_8h"] = market_data["funding_rate"]  # 8h-normalized at :5898
-            if market_data.get("current_price") is None:
-                _cp = market_data.get("price") or market_data.get("mark_price")
-                if _cp:
-                    _enrich["current_price"] = _cp
+            # (a) funding_rate_8h key-mismatch — engine stores the 8h value as `funding_rate` (:5898)
+            _fr8 = market_data.get("funding_rate_8h")
+            if _fr8 is None and market_data.get("funding_rate") is not None:
+                _fr8 = market_data["funding_rate"]
+                _enrich["funding_rate_8h"] = _fr8
+            # (b) current_price key-mismatch — engine has `mark_price`
+            _cp = market_data.get("current_price") or market_data.get("price") or market_data.get("mark_price")
+            if market_data.get("current_price") is None and _cp:
+                _enrich["current_price"] = _cp
+            # (c) [P147-b] funding_sustained_hours — funding_extreme needs how long |funding_8h|
+            # has stayed >= the extreme threshold. Stateful wall-clock tracker (in-memory;
+            # resets on restart = conservative). Threshold matches the strategy (0.03%/8h).
+            if _fr8 is not None and market_data.get("funding_sustained_hours") is None:
+                if not hasattr(self, "_funding_extreme_since"):
+                    self._funding_extreme_since = {}
+                _now = datetime.now(timezone.utc)
+                if abs(float(_fr8)) >= 0.0003:
+                    _since = self._funding_extreme_since.get(asset) or _now
+                    self._funding_extreme_since[asset] = _since
+                    _enrich["funding_sustained_hours"] = (_now - _since).total_seconds() / 3600.0
+                else:
+                    self._funding_extreme_since[asset] = None
+                    _enrich["funding_sustained_hours"] = 0.0
+            # (d) [P147-b] price_change_4h_pct — cascade needs the 4h return. Rolling (ts,price)
+            # buffer per asset; resolve the price ~4h ago. In-memory; no 4h history for the
+            # first ~4h after restart (warmup, acceptable).
+            if _cp and market_data.get("price_change_4h_pct") is None:
+                if not hasattr(self, "_price_4h_buffer"):
+                    self._price_4h_buffer = {}
+                _now = datetime.now(timezone.utc)
+                _buf = self._price_4h_buffer.setdefault(asset, [])
+                _buf.append((_now, float(_cp)))
+                _cutoff = _now - timedelta(hours=5)
+                while _buf and _buf[0][0] < _cutoff:
+                    _buf.pop(0)
+                _p4 = next((p for (t, p) in _buf if (_now - t).total_seconds() >= 4 * 3600), None)
+                if _p4 and _p4 > 0:
+                    _enrich["price_change_4h_pct"] = (float(_cp) - _p4) / _p4 * 100.0
+            # (e) [P147-c] ml_factor needs the 122 NAMED features (manifest order), which
+            # live in the computed feature dataframe (TA cache), NOT flat in market_data —
+            # the same `_ohlcv_df` the DRL obs builder consumes at :7705. Merge its last
+            # row's columns (only those absent from market_data) so MLFactorDispatcher's
+            # _extract_features resolves. Shadow-only.
+            try:
+                _ta_c = self._ta_cache.get(asset) if getattr(self, "_ta_cache", None) else None
+                _fdf = (_ta_c.get("drl_df") if _ta_c else None) or (_ta_c.get("df") if _ta_c else None)
+                if _fdf is not None and len(_fdf):
+                    _last = _fdf.iloc[-1]
+                    for _col in _fdf.columns:
+                        if _col not in market_data and _col not in _enrich:
+                            _enrich[_col] = _last[_col]
+            except Exception:  # noqa: feature-row merge best-effort
+                pass
             if _enrich:
                 _shadow_md = {**market_data, **_enrich}
         except Exception:  # noqa: enrichment is best-effort; fall back to raw market_data
