@@ -6374,9 +6374,20 @@ class HMATSProductionRunner:
         # [AUDIT H2] Removed hot-loop `import time` -already top-level (L54)
 
         # [CRACK-3] Track per-asset quant direction for cross-asset alignment
+        # [P155] Record UNCONDITIONALLY. The old `if abs(_qd) > 0.05` write-gate
+        # made this dict a high-water mark, not a current reading: once an asset
+        # printed a strong direction the entry was FROZEN there forever, because
+        # a decay to |dir|<=0.05 simply skipped the write instead of updating it.
+        # Two consumers read stale values as if they were live:
+        #   - _compute_crack_weight (~L5222) counts any |d|>0.1 toward cross-asset
+        #     alignment, so a long-dead direction kept voting.
+        #   - the Coinbase sleeve's per-tick driver (~L18039) turns this number
+        #     straight into a position target.
+        # Safe to widen: CRACK-3 applies its own |d|>0.1 filter downstream, so
+        # recording weak values cannot manufacture alignment — it only stops
+        # expired ones from persisting.
         _qd = market_data.get("quant_direction", 0.0)
-        if abs(_qd) > 0.05:
-            self._last_quant_directions[asset] = _qd
+        self._last_quant_directions[asset] = float(_qd or 0.0)
 
         # [CRACK-3] Compute live CRACK weight (replaces always-zero default)
         _computed_crack = self._compute_crack_weight(asset, market_data)
@@ -17886,10 +17897,18 @@ class HMATSProductionRunner:
                             a: f"{'L' if p.get('direction',0)>0 else 'S'} ${abs(p.get('notional',0)):,.0f}"
                             for a, p in self._paper_positions.items() if p and p.get('direction', 0) != 0
                         }
+                        # [P155] KRAKEN-ONLY count. `execution_status` has exactly one
+                        # writer (the Kraken execute_intent_v2 path, ~L13552); the
+                        # Coinbase sleeve never sets it. Since Phase B routed all 3
+                        # assets to Coinbase, this number is structurally 0 and reading
+                        # it as "the system traded 0 times" is wrong — the sleeve's
+                        # record is data/coinbase_sleeve_pnl.jsonl + [COINBASE-MANAGE].
+                        # Labelled explicitly rather than silently summed.
                         _hb_trades_this_tick = sum(
                             1 for a in self.config.assets
                             if self._dashboard_asset_runtime.get(a, {}).get("execution_status") == "FILLED"
                         )
+                        _hb_cb_last = getattr(self, "_coinbase_manage_last", None) or {}
                         from datetime import datetime, timezone as _tz
                         _hb_now_dt = datetime.now(_tz.utc)
                         _hb_now = _hb_now_dt.strftime("%H:%M UTC")
@@ -17919,14 +17938,27 @@ class HMATSProductionRunner:
                         _hb_msg = (
                             f"**4H Tick #{self._live_round_count}** ({_hb_now})"
                             + (" | WEEKEND" if _hb_is_weekend else "")
-                            + f" | Trades: {_hb_trades_this_tick}"
+                            + f" | Kraken trades: {_hb_trades_this_tick}"
                         )
+                        # [P155] Surface the Coinbase sleeve in the heartbeat. Reports the
+                        # PREVIOUS tick's result — the manage driver runs further down this
+                        # same block, after the message is composed — so it is labelled
+                        # "prev tick" rather than passed off as current.
+                        _hb_cb_txt = "not routed"
+                        if getattr(self.config, "coinbase_routing_enabled", False):
+                            if _hb_cb_last:
+                                _hb_cb_txt = ", ".join(
+                                    f"{_a}={_v}" for _a, _v in sorted(_hb_cb_last.items())
+                                ) + " (prev tick)"
+                            else:
+                                _hb_cb_txt = "NO RESULT YET — driver has never run"
                         self.audit_manager.log_event(
                             AlertSeverity.INFO, AlertCategory.TRADING,
                             _hb_msg,
                             details={
                                 "Equity": f"${_hb_equity:,.2f}",
-                                "Positions": ", ".join(f"{a}={v}" for a, v in _hb_positions.items()) if _hb_positions else "FLAT",
+                                "Positions (Kraken)": ", ".join(f"{a}={v}" for a, v in _hb_positions.items()) if _hb_positions else "FLAT",
+                                "Coinbase sleeve": _hb_cb_txt,
                                 "Analysis": "\n".join(_hb_lines),
                             },
                         )
@@ -18032,26 +18064,81 @@ class HMATSProductionRunner:
                                         _rp = _es._coinbase_get_routing()
                                         _flag = getattr(self.config, "coinbase_routing_enabled", False)
                                         _sl = getattr(self, "_coinbase_sleeve", None)
+                                        # [P155] Record EVERY routed asset's outcome, then log
+                                        # one unconditional summary. The old code logged only
+                                        # non-NOOP/NOT_READY results, so a sleeve that had gone
+                                        # permanently idle (halted, stale reconcile, or target
+                                        # already met) emitted literally nothing — silence was
+                                        # indistinguishable from healthy. Feeds the heartbeat.
+                                        _m_summary = {}
                                         if _flag and _rp is not None and _sl is not None:
                                             for _m_a in self.config.assets:
                                                 if _rp.venue_for(_m_a) != "coinbase":
                                                     continue
                                                 _m_dir = float(self._last_quant_directions.get(_m_a, 0.0) or 0.0)
                                                 _m_res = await _sl.manage_to_signal(_m_a, _m_dir)
-                                                if _m_res.get("status") not in ("NOOP", "NOT_READY"):
+                                                _m_st = _m_res.get("status")
+                                                _m_summary[_m_a] = (
+                                                    f"{_m_st}(dir={_m_dir:+.2f},"
+                                                    f"{_sl.signed_contracts(_m_a)}ct)"
+                                                )
+                                                if _m_st not in ("NOOP", "NOT_READY"):
                                                     logger.info(
                                                         f"[COINBASE-MANAGE] {_m_a}: dir={_m_dir:+.2f} -> "
-                                                        f"{_m_res.get('status')} pos="
-                                                        f"{_sl.signed_contracts(_m_a)}ct"
+                                                        f"{_m_st} pos={_sl.signed_contracts(_m_a)}ct"
                                                     )
+                                        self._coinbase_manage_last = _m_summary
+                                        if _m_summary:
+                                            logger.info(
+                                                "[COINBASE-MANAGE] tick summary: "
+                                                + ", ".join(f"{_a}={_v}" for _a, _v in sorted(_m_summary.items()))
+                                            )
+                                        else:
+                                            logger.warning(
+                                                "[COINBASE-MANAGE] NO routed assets managed this tick "
+                                                f"(routing_enabled={_flag}, "
+                                                f"policy={'None' if _rp is None else getattr(_rp, 'phase', '?')}, "
+                                                f"sleeve={'None' if _sl is None else 'ok'}) "
+                                                "— the Coinbase order path is inert"
+                                            )
                                     except Exception as _cb_mg_err:
-                                        logger.debug(f"[COINBASE-MANAGE] skipped: {_cb_mg_err}")
+                                        # [P155] WARNING, not DEBUG: this is the sole Coinbase
+                                        # order path. A swallowed exception here means zero
+                                        # trades with no visible cause.
+                                        self._coinbase_manage_last = {"ERROR": str(_cb_mg_err)}
+                                        logger.warning(
+                                            f"[COINBASE-MANAGE] order path FAILED: "
+                                            f"{type(_cb_mg_err).__name__}: {_cb_mg_err}",
+                                            exc_info=True,
+                                        )
                                 else:
-                                    logger.debug("[COINBASE-SHADOW] adapter not connected (no creds on host)")
+                                    # [P155] WARNING, not DEBUG. With routing enabled, an
+                                    # unconnected adapter means the sleeve cannot trade at
+                                    # all — that is not a debug-level condition.
+                                    self._coinbase_manage_last = {"ERROR": "adapter not connected"}
+                                    logger.warning(
+                                        "[COINBASE-SHADOW] adapter NOT CONNECTED while "
+                                        "coinbase_routing_enabled=true — no Coinbase orders "
+                                        "are possible (check COINBASE_KEY_FILE on the volume)"
+                                    )
                             except Exception as _cb_err:
-                                logger.debug(f"[COINBASE-SHADOW] skipped: {_cb_err}")
+                                # [P155] WARNING + type: this wraps the entire Coinbase
+                                # block, order path included.
+                                logger.warning(
+                                    f"[COINBASE-SHADOW] block FAILED: "
+                                    f"{type(_cb_err).__name__}: {_cb_err}", exc_info=True
+                                )
                 except Exception as _hb_err:
-                    logger.debug(f"[HEARTBEAT] Discord push failed: {_hb_err}")
+                    # [P155] This handler wraps the WHOLE heartbeat block, which since
+                    # Phase B contains the only Coinbase order path — not just the
+                    # Discord push. The old "Discord push failed" text sent anyone
+                    # reading the logs after a silent no-trade stretch to the wrong
+                    # subsystem entirely.
+                    logger.warning(
+                        f"[HEARTBEAT] block FAILED (includes the Coinbase order path, "
+                        f"NOT just the Discord push): {type(_hb_err).__name__}: {_hb_err}",
+                        exc_info=True,
+                    )
 
                 # [EQUITY-LOG] Append equity snapshot for Sharpe computation
                 try:

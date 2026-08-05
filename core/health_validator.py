@@ -412,6 +412,67 @@ class PerTickInvariantChecker:
         return HealthCheck("T2", "DRL authority stable", "PASS",
                            f"manual change {old}→{current}", "Bug #1")
 
+    @staticmethod
+    def _actionable_blocker(intent) -> str:
+        """[P155] Name the term(s) that made `is_actionable` False.
+
+        `IntentV36.is_actionable` is a conjunction of three clauses:
+            not veto_active  AND  |direction| > dir_thresh  AND  target_exposure > exp_thresh
+        Reporting only "check VETO_CHAIN logs" (the previous message) is
+        unactionable when the real blocker is a collapsed `target_exposure` —
+        the veto chain is then completely silent and the operator looks in the
+        wrong place. SOL sat at 312 consecutive blocked ticks (~52 days) with
+        nobody able to tell which clause was false.
+
+        Thresholds are read off the intent itself rather than re-hardcoded, so
+        this cannot drift from `is_actionable`. Reports EVERY failing clause,
+        not just the first — more than one is routinely false at once.
+        """
+        if intent is None:
+            return "intent=None"
+        try:
+            veto = bool(getattr(intent, 'veto_active', False))
+            direction = float(getattr(intent, 'direction', 0.0) or 0.0)
+            exposure = float(getattr(intent, 'target_exposure', 0.0) or 0.0)
+            mode = str(getattr(intent, 'system_mode', '') or '')
+            gate_ok = bool(getattr(intent, 'alpha_gate_passed', False))
+
+            # Mirror is_actionable's threshold selection (integration_v36.py:245-262).
+            dir_thresh = float(getattr(intent, 'base_actionable_direction_threshold', 0.10) or 0.10)
+            exp_thresh = 0.01
+            if gate_ok and mode == "OPPORTUNITY":
+                dir_thresh = float(
+                    getattr(intent, 'opportunity_actionable_direction_threshold', dir_thresh) or dir_thresh)
+                _short = getattr(intent, 'opportunity_actionable_direction_threshold_short', None)
+                if direction < 0 and _short is not None:
+                    dir_thresh = float(_short)
+                _exp = getattr(intent, 'opportunity_actionable_exposure_threshold', None)
+                if _exp is not None:
+                    exp_thresh = float(_exp)
+            elif gate_ok and mode == "NORMAL" and direction < 0:
+                _short = getattr(intent, 'normal_actionable_direction_threshold_short', None)
+                if _short is not None:
+                    dir_thresh = float(_short)
+
+            blockers = []
+            if veto:
+                reason = str(getattr(intent, 'veto_reason', '') or '(no reason recorded)')
+                blockers.append(f"VETO_ACTIVE reason={reason!r}")
+            if abs(direction) <= dir_thresh:
+                blockers.append(f"WEAK_DIRECTION |dir|={abs(direction):.4f} <= {dir_thresh:.4f}")
+            if exposure <= exp_thresh:
+                blockers.append(f"ZERO_EXPOSURE target_exposure={exposure:.4f} <= {exp_thresh:.4f}")
+            if not blockers:
+                # is_actionable was False but no clause reproduces it — force_execution
+                # / is_reduce_intent shortcuts, or the property changed shape.
+                blockers.append("UNEXPLAINED (is_actionable False but all 3 clauses pass)")
+            return (f"blocked_by=[{'; '.join(blockers)}] "
+                    f"mode={mode} alpha_gate_passed={gate_ok} "
+                    f"alpha={float(getattr(intent, 'alpha_estimated_bps', 0.0) or 0.0):.1f}bps"
+                    f"/thresh={float(getattr(intent, 'alpha_threshold_bps', 0.0) or 0.0):.1f}bps")
+        except Exception as err:  # diagnostics must never break the tick
+            return f"blocker_introspection_failed={err}"
+
     def _t3_intent_actionable(self, asset, intent) -> HealthCheck:
         """Track consecutive non-actionable ticks.
         CRITICAL at 10+ consecutive blocks — this caught the 10-day no-trade bug."""
@@ -424,12 +485,16 @@ class PerTickInvariantChecker:
         self._consecutive_blocked[asset] = self._consecutive_blocked.get(asset, 0) + 1
         streak = self._consecutive_blocked[asset]
         if streak >= 10:
+            # [P155] name the failing clause — "check VETO_CHAIN logs" sent the
+            # operator to a silent log when the blocker was exposure/direction.
             return HealthCheck("T3", f"{asset} intent actionable", "CRITICAL",
                                f"BLOCKED {streak} consecutive ticks — system cannot trade! "
-                               f"Check VETO_CHAIN logs for root cause.", "Bug #16: 10-day no-trade")
+                               f"strategy={strategy} {self._actionable_blocker(intent)}",
+                               "Bug #16: 10-day no-trade")
         if streak >= 5:
             return HealthCheck("T3", f"{asset} intent actionable", "WARN",
-                               f"blocked {streak} consecutive ticks (approaching critical)", "All wiring")
+                               f"blocked {streak} consecutive ticks (approaching critical) "
+                               f"{self._actionable_blocker(intent)}", "All wiring")
         return HealthCheck("T3", f"{asset} intent actionable", "PASS",
                            f"blocked (streak={streak})", "All wiring")
 
