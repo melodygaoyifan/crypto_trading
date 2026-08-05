@@ -4,56 +4,101 @@
     "generated_at": "2026-04-29",
     "purpose": "Phase 1 strategy library audit + archive decisions per docs/PHASE_BASELINE_v5_1.md",
     "iron_law_6_min_active": 3,
-    "hot_revert": "set archived=false on a strategy and restart engine; no code change required"
+    "hot_revert": "set archived=false on a strategy and restart engine; no code change required",
+    "bucket_taxonomy": {
+      "_note": "[P157 2026-08-04] Buckets are a CLASS LETTER + descriptive suffix. Two entries (derivatives_cascade, vol_options_derived) were written without a letter, making the set read as 7 ad-hoc labels rather than a taxonomy. Renamed; no decision changed. `bucket` is descriptive metadata only — the engine reads `archived` and `decision`.",
+      "A": "pure technical / statistical on price alone",
+      "B": "orderbook microstructure",
+      "C": "funding rate (incl. cash-and-carry variants)",
+      "D": "cross-asset / cointegration",
+      "E": "derivatives liquidation + cascade",
+      "F": "volatility / options-derived"
+    }
   },
   "strategies": {
     "LiquidationCascadeHunter": {
-      "strategy_id": 1, "bucket": "derivatives_cascade", "decision": "KEEP_IMPROVE",
-      "archived": false, "phase_owner": "Phase 8 expansion"
+      "strategy_id": 1,
+      "bucket": "E_derivatives_cascade",
+      "decision": "KEEP_IMPROVE",
+      "archived": false,
+      "phase_owner": "Phase 8 expansion"
     },
     "HurstExponentStrategy": {
-      "strategy_id": 2, "bucket": "A_pure_technical", "decision": "ARCHIVE",
-      "archived": true, "reason": "Pure-technical IC ceiling 0.02-0.05 per V2; OHLCV-only signal redundant with DRL TQC features"
+      "strategy_id": 2,
+      "bucket": "A_pure_technical",
+      "decision": "ARCHIVE",
+      "archived": true,
+      "reason": "Pure-technical IC ceiling 0.02-0.05 per V2; OHLCV-only signal redundant with DRL TQC features"
     },
     "ShannonEntropyStrategy": {
-      "strategy_id": 3, "bucket": "A_pure_technical", "decision": "ARCHIVE",
-      "archived": true, "reason": "Pure-technical IC ceiling 0.02-0.05; entropy is implicit in DRL feature set already"
+      "strategy_id": 3,
+      "bucket": "A_pure_technical",
+      "decision": "ARCHIVE",
+      "archived": true,
+      "reason": "Pure-technical IC ceiling 0.02-0.05; entropy is implicit in DRL feature set already"
     },
     "VarianceRiskPremiumStrategy": {
-      "strategy_id": 4, "bucket": "vol_options_derived", "decision": "KEEP_AS_IS",
-      "archived": false, "reason": "Conditional on V13 options access; pseudo-IV synthesizes realized vol when no options chain"
+      "strategy_id": 4,
+      "bucket": "F_vol_options_derived",
+      "decision": "KEEP_AS_IS",
+      "archived": false,
+      "reason": "Conditional on V13 options access; pseudo-IV synthesizes realized vol when no options chain"
     },
     "FundingDivergenceStrategy": {
-      "strategy_id": 5, "bucket": "C_funding", "decision": "KEEP_IMPROVE",
-      "archived": false, "phase_owner": "Phase 3 expansion"
+      "strategy_id": 5,
+      "bucket": "C_funding",
+      "decision": "KEEP_IMPROVE",
+      "archived": false,
+      "phase_owner": "Phase 3 expansion"
     },
     "ETFSpotCointegration": {
-      "strategy_id": 6, "bucket": "D_cross_asset", "decision": "KEEP_AS_IS",
-      "archived": false, "reason": "Cross-asset cointegration; falls back to price-momentum proxy when no ETF flow API. Class is ETFSpotCointegrationStrategy but instance name= is ETFSpotCointegration."
+      "strategy_id": 6,
+      "bucket": "D_cross_asset",
+      "decision": "KEEP_AS_IS",
+      "archived": false,
+      "reason": "Cross-asset cointegration; falls back to price-momentum proxy when no ETF flow API. Class is ETFSpotCointegrationStrategy but instance name= is ETFSpotCointegration."
     },
     "RelativeStrengthStrategy": {
-      "strategy_id": 7, "bucket": "D_cross_asset", "decision": "KEEP_AS_IS",
-      "archived": false, "reason": "Cross-asset relative strength; expected IC 0.05-0.08"
+      "strategy_id": 7,
+      "bucket": "D_cross_asset",
+      "decision": "KEEP_AS_IS",
+      "archived": false,
+      "reason": "Cross-asset relative strength; expected IC 0.05-0.08"
     },
     "OrderBookImbalance": {
-      "strategy_id": 8, "bucket": "B_microstructure", "decision": "KEEP_IMPROVE",
-      "archived": false, "phase_owner": "Phase 4 expansion"
+      "strategy_id": 8,
+      "bucket": "B_microstructure",
+      "decision": "KEEP_IMPROVE",
+      "archived": false,
+      "phase_owner": "Phase 4 expansion"
     },
     "KalmanCointegration_SOL_ETH": {
-      "strategy_id": 9, "bucket": "D_cross_asset", "decision": "KEEP_AS_IS",
-      "archived": false, "reason": "f-string-named pair instance; SOL-ETH only in current allocator"
+      "strategy_id": 9,
+      "bucket": "D_cross_asset",
+      "decision": "KEEP_AS_IS",
+      "archived": false,
+      "reason": "f-string-named pair instance; SOL-ETH only in current allocator"
     },
     "OrnsteinUhlenbeckStrategy": {
-      "strategy_id": 10, "bucket": "A_pure_technical", "decision": "ARCHIVE",
-      "archived": true, "reason": "Pure-technical mean-reversion IC ceiling 0.02-0.05; OU process already captured in DRL features (zscore_*)"
+      "strategy_id": 10,
+      "bucket": "A_pure_technical",
+      "decision": "ARCHIVE",
+      "archived": true,
+      "reason": "Pure-technical mean-reversion IC ceiling 0.02-0.05; OU process already captured in DRL features (zscore_*)"
     },
     "DarkPoolVolumeStrategy": {
-      "strategy_id": 11, "bucket": "B_microstructure", "decision": "KEEP_IMPROVE",
-      "archived": false, "phase_owner": "Phase 4 expansion"
+      "strategy_id": 11,
+      "bucket": "B_microstructure",
+      "decision": "KEEP_IMPROVE",
+      "archived": false,
+      "phase_owner": "Phase 4 expansion"
     },
     "DeltaNeutralFundingStrategy": {
-      "strategy_id": 12, "bucket": "C_funding_cash_carry", "decision": "DEFER_v6",
-      "archived": true, "reason": "Cash-and-carry sleeve deferred v6 per V5 BIS sizing + $10K AUM too small; module retained for v6 reactivation"
+      "strategy_id": 12,
+      "bucket": "C_funding_cash_carry",
+      "decision": "DEFER_v6",
+      "archived": true,
+      "reason": "Cash-and-carry sleeve deferred v6 per V5 BIS sizing + $10K AUM too small; module retained for v6 reactivation"
     }
   }
 }

@@ -172,3 +172,31 @@ def test_fee_warning_reports_the_live_configured_fee(caplog):
     msgs = _warnings(caplog)
     assert any("taker=10.0bps" in m for m in msgs), msgs
     assert any("over-charged ~7bps taker" in m for m in msgs), msgs
+
+
+# ---------------------------------------------------------------------------
+# [P155e] venue-aware fee constants + the default-OFF contract
+# ---------------------------------------------------------------------------
+
+def test_coinbase_fee_constants_are_cheaper_than_kraken():
+    """If these ever invert, the venue-aware path would TIGHTEN the gate
+    instead of loosening it, and the default-OFF rationale would be wrong."""
+    assert es._COINBASE_TAKER_BPS < 26.0
+    assert es._COINBASE_MAKER_BPS < 16.0
+
+
+def test_venue_aware_fees_default_to_off(tmp_path):
+    """Enabling this loosens a risk gate, so it must never default on. A config
+    JSON written before the flag existed must also still load, and load OFF."""
+    import json as _json
+    from main import ProductionConfig
+
+    assert ProductionConfig().coinbase_venue_aware_fees is False
+
+    legacy = tmp_path / "legacy.json"
+    legacy.write_text(_json.dumps({"coinbase_routing_enabled": True}))
+    assert ProductionConfig.from_file(legacy).coinbase_venue_aware_fees is False
+
+    enabled = tmp_path / "enabled.json"
+    enabled.write_text(_json.dumps({"coinbase_venue_aware_fees": True}))
+    assert ProductionConfig.from_file(enabled).coinbase_venue_aware_fees is True

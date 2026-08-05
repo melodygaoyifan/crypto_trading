@@ -49,9 +49,20 @@ class FastRiskTick:
     # EXIT_FAILED_BACKOFF_SEC. set_4h_anchor() clears the backoff so the
     # next 4H tick gets a fresh attempt.
     EXIT_FAILED_BACKOFF_SEC = 1800.0  # 30 min
+    # [P156] Every trigger below compares "now" against a reference captured by
+    # set_4h_anchor(). That call sits at the END of the 4H decision path
+    # (main.py:10166) and is skipped by every early return before it — notably
+    # the P0 ABORT at main.py:7998. Nothing bounded how old the reference could
+    # get, so an anchor frozen at a healthy value made every later reading look
+    # like a catastrophic drop, forever. 1.5 × the 4H tick: long enough that a
+    # normally-late tick does not trip it, short enough that two consecutive
+    # missed anchors do.
+    ANCHOR_MAX_AGE_SEC = 21600.0  # 6h
 
     def __init__(self, shadow_mode: bool = True):
         self.shadow_mode = shadow_mode
+        self._anchor_set_at: Dict[str, float] = {}  # [P156] anchor freshness
+        self._anchor_stale_log_at: Dict[str, float] = {}
         self._last_4h_prices: Dict[str, float] = {}
         self._baseline_volatility: Dict[str, float] = {}
         self._baseline_depth: Dict[str, float] = {}
@@ -68,6 +79,8 @@ class FastRiskTick:
                       volatility: float = 0.0, depth: float = 0.0):
         """Called after each 4H decision to set reference values."""
         self._last_4h_prices[asset] = price
+        self._anchor_set_at[asset] = time.time()  # [P156]
+        self._anchor_stale_log_at.pop(asset, None)
         if volatility > 0:
             self._baseline_volatility[asset] = volatility
         if depth > 0:
@@ -127,6 +140,31 @@ class FastRiskTick:
         # Only evaluate once at least one set_4h_anchor() call has occurred for this asset.
         if asset not in self._last_4h_prices:
             return FastRiskResult(FastRiskAction.HOLD, "warmup_no_anchor", 0.0, now)
+
+        # [P156] Refuse to act on a stale reference. set_4h_anchor() is the last
+        # statement of the 4H decision path, so ANY early return before it (P0
+        # ABORT at main.py:7998, and any future one) silently leaves every
+        # baseline below frozen — while this evaluator keeps comparing live
+        # readings against them every 30s. A depth baseline anchored during a
+        # healthy book then makes normal depth look like an 80%+ collapse
+        # indefinitely, firing REDUCE_50 forever and ratcheting exposure toward
+        # zero. Same failure shape as P155's `_last_quant_directions`
+        # high-water mark: state that reads as live but stopped updating.
+        # Fail-SAFE: HOLD (this evaluator can only reduce, so refusing to act is
+        # always the conservative side).
+        _anchor_age = now - self._anchor_set_at.get(asset, 0.0)
+        if _anchor_age > self.ANCHOR_MAX_AGE_SEC:
+            self._depth_drop_streak[asset] = 0
+            _last_log = self._anchor_stale_log_at.get(asset, 0.0)
+            if (now - _last_log) > 600.0:
+                self._anchor_stale_log_at[asset] = now
+                logger.warning(
+                    f"[FastRiskTick] {asset}: anchor is {_anchor_age/3600:.1f}h old "
+                    f"(max {self.ANCHOR_MAX_AGE_SEC/3600:.1f}h) — HOLDING. The 4H "
+                    f"path has not reached set_4h_anchor(); check for an aborted "
+                    f"tick. All triggers are suppressed until the anchor refreshes."
+                )
+            return FastRiskResult(FastRiskAction.HOLD, "anchor_stale", 0.0, now)
 
         price_move_pct = abs(current_price - anchor_price) / anchor_price
         data_valid = bool(market_data.get("data_valid", True))

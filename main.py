@@ -1542,6 +1542,16 @@ class ProductionConfig:
     # Kraken until RoutingPolicy is advanced past SHADOW (separate gated step).
     # See docs/COINBASE_ENGINE_INTEGRATION_PLAN.md.
     coinbase_routing_enabled: bool = False
+    # [P155e] Price alpha-gate friction with the fee schedule of the venue the
+    # order will ACTUALLY execute on. The gate has always charged Kraken's tier
+    # (~26/16bps) to every asset, including the ones routed to Coinbase US perp
+    # (~3/0bps) since Phase B — friction is subtracted from expected alpha
+    # BEFORE sizing, so a routed asset is over-charged ~23bps and its
+    # target_exposure is systematically shrunk. That is a leading candidate for
+    # the ZERO_EXPOSURE blocker in P155.
+    # Default OFF because enabling it LOOSENS a risk gate. Confirm the blocker
+    # with scripts/why_no_trade.py first, then set true in the live JSON.
+    coinbase_venue_aware_fees: bool = False
     # [v5.1 PROMOTED 2026-06-13] Operator override of Iron Law 7 (shadow >=30d):
     # blend the 4 v5.1 shadow strategy families into a live ADVISE fusion agent
     # with ZERO validation. Default OFF; set true in the live JSON. ADVISE-bounded
@@ -1789,6 +1799,8 @@ class ProductionConfig:
             trend_following_mode=str(os.environ.get("HMATS_TREND_MODE") or data.get("trend_following_mode", "off")),
             # [Coinbase Phase 2] read-only shadow routing switch (default OFF)
             coinbase_routing_enabled=data.get("coinbase_routing_enabled", False),
+            # [P155e] venue-aware alpha-gate friction (default OFF — loosens the gate)
+            coinbase_venue_aware_fees=data.get("coinbase_venue_aware_fees", False),
             # [v5.1 PROMOTED 2026-06-13] live ADVISE promotion of shadow strategies
             v5_1_strategies_live=data.get("v5_1_strategies_live", False),
             # P1-02: Thesis budget parameters (overlay-aware)
@@ -8511,6 +8523,32 @@ class HMATSProductionRunner:
                 fee_calc = get_fee_calculator()
                 maker_fee_bps = fee_calc.blender.apply(0.0016, monthly_vol) * 10000.0
                 taker_fee_bps = fee_calc.blender.apply(0.0026, monthly_vol) * 10000.0
+                # [P155e] This block runs per-asset, so friction CAN be priced
+                # for the venue this asset will actually execute on. Kraken's
+                # tier is the default for everything, which over-charges every
+                # Coinbase-routed asset by ~23bps of alpha before sizing.
+                # Gated OFF by default: correcting it loosens the gate.
+                _venue_fee_applied = False
+                if getattr(self.config, "coinbase_venue_aware_fees", False):
+                    try:
+                        from core.execution_service import (
+                            _coinbase_routed, _COINBASE_MAKER_BPS, _COINBASE_TAKER_BPS,
+                        )
+                        if _coinbase_routed(self, asset):
+                            maker_fee_bps = _COINBASE_MAKER_BPS
+                            taker_fee_bps = _COINBASE_TAKER_BPS
+                            _venue_fee_applied = True
+                    except Exception as _vf_err:
+                        logger.warning(
+                            f"[VENUE-FEE] {asset}: venue-aware fee lookup failed "
+                            f"({_vf_err}) — falling back to Kraken tier (conservative)"
+                        )
+                if _venue_fee_applied:
+                    logger.info(
+                        f"[VENUE-FEE] {asset}: alpha-gate friction priced for "
+                        f"COINBASE (taker={taker_fee_bps:.1f}bps "
+                        f"maker={maker_fee_bps:.1f}bps), not Kraken"
+                    )
                 self.engine.guarantees.alpha_calculator.FRICTION.update_for_volume(monthly_vol)
                 self.engine.guarantees.alpha_calculator.FRICTION.update_fee_bps(
                     maker_fee_bps=maker_fee_bps,
