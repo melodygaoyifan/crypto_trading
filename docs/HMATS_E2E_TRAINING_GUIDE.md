@@ -1688,7 +1688,9 @@ A/B baseline = 先前裸跑 Paper Run 数据
   source_weights                — news 0.30, twitter 0.20, llm 0.15 等已设计
 
 需补完:
-  1. CryptoPanic API 数据获取 (free tier, title-only)
+  1. CryptoPanic API 数据获取 (title-only)
+     ⚠️ [P155 2026-08-04] 原写 "free tier"，实际代码用付费 Growth 版
+     (cryptopanic_feed.py BASE_URL = .../api/growth/v2)。
   2. Haiku API 调用 (structured JSON output)
   3. Fallback 链接入
   4. sentiment_zscore 写入 market_data (当前硬编码 0.0)
@@ -1736,7 +1738,7 @@ class LLMSentimentEngine:
         return {"sentiment": 0.0, "confidence": 0.0, "source": "default"}
 
     async def _fetch_cryptopanic(self, asset: str, n: int, timeout: int) -> list:
-        """CryptoPanic free tier: title + metadata, 无 full content"""
+        """CryptoPanic: title + metadata, 无 full content (付费 Growth 版, 非 free tier)"""
         # GET https://cryptopanic.com/api/v1/posts/
         #   ?auth_token={FREE_TOKEN}&currencies={asset}&kind=news&public=true
         # 返回 title list, 不含正文 (free tier 限制)
@@ -1945,7 +1947,7 @@ L3 接入:
       - Acc=57.8% (> baseline 48.7%), MAE=0.414 (> 0.3 但方向性准确)
       - 8 few-shot examples 嵌入 calibrated short-bias prompt
       - 剩余 MAE gap 因标注尺度差异 (你标 ±1.0, Haiku 标 ±0.4) — 生产中安全
-  [x] CryptoPanic API token 配置 (free tier)
+  [x] CryptoPanic API token 配置 (Growth 付费版)
   [x] sentiment_llm_agent.py 完整实现 (976 lines, circuit breaker, caching, events)
   [x] Haiku API 调用 + structured JSON 解析 (fence stripping + schema validation)
   [x] sentiment_zscore 从硬编码 0.0 → LLM 实际值 (confidence > 0.3 时升级)

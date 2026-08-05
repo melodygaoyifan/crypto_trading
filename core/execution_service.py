@@ -224,6 +224,95 @@ def _coinbase_get_routing():
     return _CB_ROUTING
 
 
+_CB_IRON_LAW_8_WARNED = False
+
+
+def _coinbase_check_iron_law_8(ctx, rp) -> None:
+    """[P155] Iron Law 8 (DRL ACTIVE during cutover) was defined but never
+    enforced — a P152-class defect.
+
+    `RoutingPolicy.advance_phase()` does enforce it, but NOTHING in production
+    calls advance_phase(): `_coinbase_get_routing()` above assigns `rp.phase`
+    straight from data/coinbase_routing_state.json. So the cutover can be
+    advanced by editing a JSON file with DRL demoted to SHADOW, and the guard
+    never runs. Three docstrings claimed this was a "continuous check".
+
+    This OBSERVES rather than blocks, deliberately. Blocking would route the
+    asset back to Kraken, which is structurally flat post-Phase-B, i.e. a
+    fail-closed here converts a DRL-authority problem into a silent total
+    trading stop — the exact failure mode P155 was opened to end. Logged once
+    per process at CRITICAL so it surfaces without per-tick spam.
+    """
+    global _CB_IRON_LAW_8_WARNED
+    if _CB_IRON_LAW_8_WARNED:
+        return
+    try:
+        from exchange.cutover import validate_drl_active
+        from exchange.routing import CutoverPhase
+        if rp.phase == CutoverPhase.PRE_PHASE_2:
+            return  # not in cutover; invariant does not apply
+        ok, reason = validate_drl_active(getattr(ctx, "drl_authority_level", ""))
+        if not ok:
+            _CB_IRON_LAW_8_WARNED = True
+            logger.critical(
+                f"[CUTOVER-IRON-LAW-8] {reason} — routing phase is "
+                f"{rp.phase.value} and Coinbase orders ARE being routed. The "
+                f"cutover advanced without the DRL-ACTIVE check because the "
+                f"phase was loaded from coinbase_routing_state.json, not via "
+                f"advance_phase(). Not blocking (see _coinbase_check_iron_law_8)."
+            )
+    except Exception as err:
+        logger.warning(f"[CUTOVER-IRON-LAW-8] check failed: {err}")
+
+
+_CB_FEE_MODEL_WARNED = False
+
+# Coinbase US perp advertised schedule at the base tier. Documented here for
+# the size of the mispricing only — NOT wired into the alpha gate (see below).
+_COINBASE_MAKER_BPS = 0.0
+_COINBASE_TAKER_BPS = 3.0
+
+
+def _coinbase_fee_model_warning(ctx) -> None:
+    """[P155] The alpha gate prices EVERY asset with Kraken's fee tier.
+
+    `FRICTION.update_fee_bps` (main.py:4419) is global and is fed from Kraken's
+    fee-tier API — there is no venue dimension. Post-Phase-B the routed assets
+    execute on Coinbase at ~0/3bps, so their intents are charged roughly 23-26bps
+    of friction that they will never pay. Friction is subtracted from expected
+    alpha before sizing, so this systematically shrinks `target_exposure` and can
+    collapse it below the actionable floor — a candidate root cause for the
+    ZERO_EXPOSURE blocker, and the reason the "0/3bps fees" migration item is not
+    actually implemented.
+
+    Deliberately REPORTS rather than corrects: making the gate venue-aware
+    loosens it, and loosening a risk gate blind — on a system that has not
+    traded since 2026-06-12 and whose blocker is not yet confirmed — is a change
+    that must be made with evidence and the operator's consent, not as a
+    side-effect of a diagnostics commit. Run scripts/why_no_trade.py first.
+    """
+    global _CB_FEE_MODEL_WARNED
+    if _CB_FEE_MODEL_WARNED:
+        return
+    _CB_FEE_MODEL_WARNED = True
+    try:
+        _friction = ctx.engine.guarantees.alpha_calculator.FRICTION
+        _taker = float(getattr(_friction, "taker_fee_bps", 26.0))
+        _maker = float(getattr(_friction, "maker_fee_bps", 16.0))
+    except Exception:
+        _taker, _maker = 26.0, 16.0
+    logger.warning(
+        f"[FEE-MODEL-MISMATCH] Asset routed to Coinbase but the alpha gate is "
+        f"pricing friction with Kraken fees (taker={_taker:.1f}bps "
+        f"maker={_maker:.1f}bps). Coinbase US perp is ~"
+        f"{_COINBASE_TAKER_BPS:.0f}/{_COINBASE_MAKER_BPS:.0f}bps, so intents are "
+        f"over-charged ~{max(0.0, _taker - _COINBASE_TAKER_BPS):.0f}bps taker / "
+        f"~{max(0.0, _maker - _COINBASE_MAKER_BPS):.0f}bps maker. This shrinks "
+        f"target_exposure and is a candidate cause of ZERO_EXPOSURE. NOT "
+        f"auto-corrected — see _coinbase_fee_model_warning()."
+    )
+
+
 def _coinbase_routed(ctx, asset: str) -> bool:
     """True only when the flag is on AND RoutingPolicy routes this asset to
     Coinbase. Fail-closed to Kraken on any error."""
@@ -233,7 +322,11 @@ def _coinbase_routed(ctx, asset: str) -> bool:
         rp = _coinbase_get_routing()
         if rp is None:
             return False
-        return rp.venue_for(asset) == "coinbase"
+        _coinbase_check_iron_law_8(ctx, rp)
+        _routed = rp.venue_for(asset) == "coinbase"
+        if _routed:
+            _coinbase_fee_model_warning(ctx)
+        return _routed
     except Exception:  # noqa: silent-swallow — intentional fail-closed to Kraken (default venue) on any routing error
         return False
 

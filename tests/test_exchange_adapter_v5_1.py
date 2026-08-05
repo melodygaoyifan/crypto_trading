@@ -201,8 +201,23 @@ def test_advance_phase_iron_law_8_blocks_when_drl_demoted():
     p = RoutingPolicy()
     ok, reason = p.advance_phase(CutoverPhase.SHADOW, drl_authority_level="SHADOW")
     assert ok is False
-    assert "Iron Law 8" in reason
+    # [P155] advance_phase now delegates to cutover.validate_drl_active instead
+    # of re-implementing the comparison, so the reason is that function's
+    # wording ("Iron Law 5/8 violation") rather than a second copy of it.
+    assert "5/8" in reason and "SHADOW" in reason
     assert p.phase == CutoverPhase.PRE_PHASE_2
+
+
+def test_advance_phase_fails_closed_on_missing_drl_level():
+    """[P155] The old inline check compared `str(None).upper() != "ACTIVE"`, so
+    it happened to block — but an empty string was never explicitly handled.
+    Delegating to validate_drl_active makes fail-closed the documented
+    behaviour."""
+    for level in ("", None, "unknown"):
+        p = RoutingPolicy()
+        ok, _ = p.advance_phase(CutoverPhase.SHADOW, drl_authority_level=level)
+        assert ok is False, f"level={level!r} must not advance the cutover"
+        assert p.phase == CutoverPhase.PRE_PHASE_2
 
 
 def test_advance_phase_drl_active_permits():

@@ -2,10 +2,17 @@
 HMATS v5.1 Phase 2 - Cutover Invariants (Iron Law 1/5/8/9 continuous checks)
 ============================================================================
 
-Referenced by exchange.adapter and exchange.routing. Pure-logic guards that
-gate any Coinbase-migration phase advance. NO live side effects, NO venue
-I/O — these are decision functions the operator/orchestration calls before
-and during cutover.
+Pure-logic guards that gate any Coinbase-migration phase advance. NO live
+side effects, NO venue I/O — these are decision functions the operator calls
+before and during cutover.
+
+⚠️ [P155, 2026-08-04] CALLER REALITY. `validate_drl_active` is called by
+RoutingPolicy.advance_phase() and by execution_service._coinbase_check_iron_law_8
+(log-only). `cutover_invariants()` and `validate_obs_dim`/`validate_maker_first`
+still have NO production caller — they are exercised by tests only. Do not read
+this module as evidence that Iron Laws 1/9 are enforced at runtime; they are
+not. The module docstring previously claimed it was "referenced by
+exchange.adapter", which was never true.
 
 The binding invariants during a Coinbase cutover (v5.1 Iron Laws):
   1. obs_dim == 126                       (model input contract unchanged)

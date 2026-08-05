@@ -16,9 +16,17 @@ handles each order. Default policy implements the v5.1 prompt's
 
 Iron Laws:
   5. DRL ACTIVE during cutover: routing does NOT touch DRL inference.
-  8. (NEW) DRL ACTIVE invariant during cutover: validated continuously
-     via cutover.validate_drl_active() — refuses to advance phase if
-     DRL has demoted to SHADOW.
+  8. DRL ACTIVE invariant during cutover: advance_phase() validates via
+     cutover.validate_drl_active() and refuses to advance if DRL has
+     demoted to SHADOW.
+
+     ⚠️ [P155, 2026-08-04] This docstring used to say "validated
+     continuously". It is NOT. advance_phase() has no production callers:
+     core.execution_service._coinbase_get_routing() loads the phase by
+     assigning `rp.phase` directly from data/coinbase_routing_state.json,
+     which bypasses this method and therefore the Iron Law 8 check
+     entirely. _coinbase_check_iron_law_8() now logs (does not block) when
+     the loaded phase is past PRE_PHASE_2 with DRL demoted.
 """
 
 from __future__ import annotations
@@ -80,11 +88,14 @@ class RoutingPolicy:
             self.phase_started_at = datetime.now(timezone.utc)
             return True, "rollback always permitted"
 
-        if str(drl_authority_level).upper() != "ACTIVE":
-            return False, (
-                f"Iron Law 8 violation: DRL authority is {drl_authority_level}, "
-                f"not ACTIVE. Cutover refuses to advance."
-            )
+        # [P155] Delegate to the canonical validator rather than re-implementing
+        # the comparison — the duplicate was free to drift from cutover.py, and
+        # cutover.validate_drl_active is the fail-closed version (empty/None is
+        # not ACTIVE).
+        from exchange.cutover import validate_drl_active
+        _ok, _reason = validate_drl_active(drl_authority_level)
+        if not _ok:
+            return False, _reason
 
         # Sanity: enforce monotonic progression except for ROLLBACK
         valid_progressions = {

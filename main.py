@@ -16302,7 +16302,12 @@ class HMATSProductionRunner:
             }
             for asset, data in asset_data.items():
                 if isinstance(data, dict):
-                    merged_asset_data[asset] = dict(data)
+                    # [P155] Was `= dict(data)` — a full REPLACE despite the name.
+                    # Harmless while every caller passed the same full dict, but the
+                    # live loop now omits the intent-clause fields on a tick where
+                    # the asset was skipped (prefetch failure), and a replace would
+                    # blank the last real reading instead of carrying it forward.
+                    merged_asset_data.setdefault(asset, {}).update(data)
             self._dashboard_asset_snapshot = merged_asset_data
 
             active_positions = self._normalize_runtime_position_state(prune=True)
@@ -17803,6 +17808,7 @@ class HMATSProductionRunner:
                     break
 
                 _live_prices = {}
+                _live_intents = {}
 
                 # [P-7 Phase 2] Pre-fetch all market data in parallel
                 _pf_keys = list(self.config.assets)
@@ -17827,6 +17833,7 @@ class HMATSProductionRunner:
                     else:
                         market_data = _pf
                     intent = await self.process_4h_tick(asset, market_data)
+                    _live_intents[asset] = intent
                     _p = market_data.get("current_price", 0)
                     if _p > 0:
                         _live_prices[asset] = _p
@@ -17837,13 +17844,53 @@ class HMATSProductionRunner:
                     self._live_tick_count = 0
                 self._live_round_count += 1
                 self._live_tick_count += len(self.config.assets)
+                # [P155] The live export used to be `{price, regime}` ONLY, while the
+                # paper loop exported the full intent decomposition (main.py:17049).
+                # So in the mode that actually matters, dashboard_state.json carried
+                # no `direction` / `target_exposure` / `veto_reason` / `actionable` —
+                # the dashboard could not answer "why is nothing trading?" either, and
+                # the operator was left with the [HEALTH_T3] log line as the only
+                # source. Export the clause inputs here too. This is diagnostics ONLY:
+                # nothing downstream reads these fields back into a trading decision.
+                try:
+                    from core.health_validator import PerTickInvariantChecker as _PTIC
+                    _ld_blocker = _PTIC._actionable_blocker
+                except Exception:
+                    _ld_blocker = lambda _i: "blocker_introspection_unavailable"
                 _live_asset_data = {}
                 for _ld_asset in self.config.assets:
                     _ld_pos = self._paper_positions.get(_ld_asset, {})
+                    _ld_rt = getattr(self, "_dashboard_asset_runtime", {}).get(_ld_asset, {}) or {}
+                    _ld_intent = _live_intents.get(_ld_asset)
                     _live_asset_data[_ld_asset] = {
                         "price": _live_prices.get(_ld_asset, 0),
                         "regime": getattr(self, '_last_regime', {}).get(_ld_asset, "UNKNOWN"),
+                        "intent_missing": _ld_intent is None,
                     }
+                    if _ld_intent is None:
+                        # Prefetch failed and the asset was skipped (main.py:17826).
+                        # Emitting zeroed clause fields here would read as "the signal
+                        # died"; leave them out and let _export_dashboard_state carry
+                        # forward the last real reading, flagged by intent_missing.
+                        continue
+                    _live_asset_data[_ld_asset].update({
+                        # is_actionable's three clause inputs + why it failed
+                        "actionable": bool(getattr(_ld_intent, "is_actionable", False)),
+                        "direction": float(getattr(_ld_intent, "direction", 0.0) or 0.0),
+                        "target_exposure": float(getattr(_ld_intent, "target_exposure", 0.0) or 0.0),
+                        "veto_active": bool(getattr(_ld_intent, "veto_active", False)),
+                        "veto_reason": str(getattr(_ld_intent, "veto_reason", "") or ""),
+                        "blocked_by": ("" if getattr(_ld_intent, "is_actionable", False)
+                                       else _ld_blocker(_ld_intent)),
+                        # supporting context for the blocker
+                        "strategy": str(getattr(_ld_intent, "quant_strategy_id", "") or ""),
+                        "system_mode": str(getattr(_ld_intent, "system_mode", "") or ""),
+                        "alpha_bps": float(getattr(_ld_intent, "alpha_estimated_bps", 0.0) or 0.0),
+                        "alpha_threshold_bps": float(getattr(_ld_intent, "alpha_threshold_bps", 0.0) or 0.0),
+                        "alpha_gate_passed": bool(getattr(_ld_intent, "alpha_gate_passed", False)),
+                        "execution_status": _ld_rt.get("execution_status", "NOT_CALLED"),
+                        "execution_effective": _ld_rt.get("execution_effective", False),
+                    })
                 try:
                     self._export_dashboard_state(self._live_round_count, self._live_tick_count, _live_asset_data)
                 except Exception as _ld_err:

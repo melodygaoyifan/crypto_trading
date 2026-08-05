@@ -43,6 +43,13 @@ def test_incremental_dashboard_export_preserves_previous_assets(tmp_path):
 
 
 def test_incremental_dashboard_export_overwrites_current_asset_snapshot(tmp_path):
+    """Despite the name, what is asserted (and what P155 relies on) is
+    last-write-wins PER FIELD, not a whole-dict replace. `_export_dashboard_state`
+    merges with `.update()` so a live tick that omits the intent-clause fields —
+    because the asset was skipped on a prefetch failure — carries forward its last
+    real reading instead of blanking it to zeros. Do not re-tighten this to
+    `== dict(data)`.
+    """
     runner = _make_runner(tmp_path)
     runner._record_realized_pnl_breakdown(
         asset="ETH",

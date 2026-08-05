@@ -23,8 +23,12 @@ Iron Laws:
      Each method documents its exception types.
   5. DRL ACTIVE during cutover: adapter swap does NOT touch DRL inference;
      DRL authority level untouched.
-  8. (NEW) DRL ACTIVE during cutover (Iron Law 8 per v5.1 prompt):
-     enforced at exchange.cutover.cutover_invariants(). Continuous check.
+  8. DRL ACTIVE during cutover (Iron Law 8 per v5.1 prompt).
+     ⚠️ [P155, 2026-08-04] This said "enforced at
+     exchange.cutover.cutover_invariants(). Continuous check." Neither half
+     was true: this module never imported cutover, and cutover_invariants()
+     has no production caller at all. See exchange/cutover.py's header for
+     what is actually wired.
   10. zero pre-existing-runtime side-effect for the abstraction itself —
       only concrete implementations interact with venue.
 """
