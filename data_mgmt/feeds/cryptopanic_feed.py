@@ -28,7 +28,9 @@ from data_mgmt.feeds._http import create_session
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any, Callable
 from datetime import datetime, timedelta, timezone
+import json
 import os
+import time
 import numpy as np
 from collections import deque
 
@@ -160,7 +162,13 @@ class CryptoPanicFeed:
         
         if not self.api_key and not mock_mode:
             logger.warning("[CRYPTOPANIC] No API key. Set CRYPTOPANIC_API_KEY env var.")
-        
+
+        # [P154] Restore throttle + 429 backoff + news cache from disk BEFORE the
+        # first tick. Without this every process start re-armed a fresh fetch and
+        # forgot any active rate-limit backoff — see the class docstring on
+        # _restore_state for why that is the actual quota driver.
+        self._restore_state()
+
         logger.info(f"[CRYPTOPANIC] Initialized: mock={mock_mode}")
     
     # =========================================================================
@@ -257,9 +265,186 @@ class CryptoPanicFeed:
         }
     
     # =========================================================================
+    # [P154] PERSISTENCE — rate-limit state must survive restarts
+    # =========================================================================
+    # `_last_fetch_time` (300s throttle), `_backoff_until` (429 circuit breaker)
+    # and `_last_data` (the 1h cache the LLM-sentiment agent gates its refresh on)
+    # were in-memory only. run_live() runs a full tick immediately on entering its
+    # loop (main.py, before any sleep), so EVERY process start burned a fresh
+    # 3-request fetch AND forgot an active 429 backoff — i.e. a crash-restart loop
+    # hammered an API that had just said "wait 15 minutes". Same in-memory-state-
+    # is-not-a-control-across-restarts class as P150/P148/P140-B2.
+    #
+    # Bump _STATE_VERSION whenever the serialized SHAPE changes so stale files are
+    # discarded on restore rather than half-parsed (P153 pattern).
+    _STATE_VERSION = "cp_cache_v1"
+
+    # Cache older than this is dropped on restore. Consumers already gate on
+    # staleness (the agent refetches above 1h), so this is just a sanity bound.
+    _MAX_RESTORED_CACHE_AGE_SEC = 86400.0
+
+    def _data_dir(self) -> str:
+        return os.environ.get("HMATS_DATA_DIR", "data")
+
+    def _state_path(self) -> str:
+        return os.path.join(self._data_dir(), "cryptopanic_state.json")
+
+    @staticmethod
+    def _parse_dt(raw: Optional[str]) -> Optional[datetime]:
+        """Parse an ISO timestamp, forcing tz-aware UTC (P40/P97 discipline —
+        a naive datetime here would raise on every comparison in fetch())."""
+        if not raw:
+            return None
+        dt = datetime.fromisoformat(raw)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+
+    @staticmethod
+    def _news_to_json(item: NewsItem) -> Dict[str, Any]:
+        """Full round-trippable form. NewsItem.to_dict() is the lossy display
+        shape (5 fields) and cannot rebuild the item — don't reuse it here."""
+        return {
+            "id": item.id,
+            "title": item.title,
+            "source": item.source,
+            "url": item.url,
+            "published_at": item.published_at.isoformat(),
+            "currencies": list(item.currencies),
+            "votes_positive": item.votes_positive,
+            "votes_negative": item.votes_negative,
+            "votes_important": item.votes_important,
+            "votes_liked": item.votes_liked,
+            "votes_disliked": item.votes_disliked,
+            "votes_lol": item.votes_lol,
+            "votes_toxic": item.votes_toxic,
+            "votes_saved": item.votes_saved,
+            "sentiment_score": item.sentiment_score,
+        }
+
+    @classmethod
+    def _news_from_json(cls, raw: Dict[str, Any]) -> NewsItem:
+        return NewsItem(
+            id=str(raw.get("id", "")),
+            title=str(raw.get("title", "")),
+            source=str(raw.get("source", "unknown")),
+            url=str(raw.get("url", "")),
+            published_at=cls._parse_dt(raw.get("published_at")) or datetime.now(timezone.utc),
+            currencies=list(raw.get("currencies", [])),
+            votes_positive=int(raw.get("votes_positive", 0)),
+            votes_negative=int(raw.get("votes_negative", 0)),
+            votes_important=int(raw.get("votes_important", 0)),
+            votes_liked=int(raw.get("votes_liked", 0)),
+            votes_disliked=int(raw.get("votes_disliked", 0)),
+            votes_lol=int(raw.get("votes_lol", 0)),
+            votes_toxic=int(raw.get("votes_toxic", 0)),
+            votes_saved=int(raw.get("votes_saved", 0)),
+            sentiment_score=float(raw.get("sentiment_score", 0.0)),
+        )
+
+    def _restore_state(self) -> None:
+        """[P154] Rehydrate throttle/backoff/cache from disk. Best-effort: any
+        problem falls back to a cold start (current behaviour), never raises."""
+        if self._mock_mode:
+            return  # mock never touches the real cache file
+        try:
+            p = self._state_path()
+            if not os.path.exists(p):
+                return
+            with open(p, "r", encoding="utf-8") as fh:
+                st = json.load(fh)
+
+            if st.get("state_version") != self._STATE_VERSION:
+                logger.warning(
+                    f"[CRYPTOPANIC] state_version={st.get('state_version')!r} != "
+                    f"{self._STATE_VERSION!r} -> discarding stale cache file"
+                )
+                return
+
+            # Backoff first — this is the field whose loss actually costs money.
+            # An already-expired value is harmless (fetch() compares against now).
+            self._backoff_until = self._parse_dt(st.get("backoff_until"))
+            self._last_fetch_time = self._parse_dt(st.get("last_fetch_time"))
+
+            payload = st.get("data")
+            age_s = None
+            if payload:
+                ts = self._parse_dt(payload.get("timestamp"))
+                if ts is not None:
+                    age_s = (datetime.now(timezone.utc) - ts).total_seconds()
+                    if age_s <= self._MAX_RESTORED_CACHE_AGE_SEC:
+                        self._last_data = CryptoPanicData(
+                            timestamp=ts,
+                            staleness_sec=float(payload.get("staleness_sec", 0.0)),
+                            recent_news=[
+                                self._news_from_json(n)
+                                for n in payload.get("recent_news", [])
+                            ],
+                            panic_score=dict(payload.get("panic_score", {})),
+                            news_velocity=dict(payload.get("news_velocity", {})),
+                            sentiment_consensus=dict(payload.get("sentiment_consensus", {})),
+                            narrative_intensity=dict(payload.get("narrative_intensity", {})),
+                            global_panic=float(payload.get("global_panic", 0.0)),
+                            global_news_velocity=float(payload.get("global_news_velocity", 0.0)),
+                        )
+                    else:
+                        logger.info(
+                            f"[CRYPTOPANIC] cached news {age_s / 3600:.1f}h old "
+                            f"(> {self._MAX_RESTORED_CACHE_AGE_SEC / 3600:.0f}h) -> dropped"
+                        )
+
+            logger.info(
+                "[CRYPTOPANIC] restored state: news=%d age=%s backoff=%s",
+                len(self._last_data.recent_news) if self._last_data else 0,
+                f"{age_s:.0f}s" if age_s is not None else "n/a",
+                self._backoff_until.isoformat() if self._backoff_until else "none",
+            )
+        except Exception as e:  # noqa: silent-swallow — bad/old state file; cold start + log
+            logger.warning(f"[CRYPTOPANIC] state restore failed: {type(e).__name__}: {e}")
+
+    def _persist_state(self) -> None:
+        """[P154] Atomically write throttle/backoff/cache. Never raises."""
+        if self._mock_mode:
+            return
+        try:
+            p = self._state_path()
+            os.makedirs(os.path.dirname(p) or ".", exist_ok=True)
+            payload = None
+            if self._last_data is not None:
+                payload = {
+                    "timestamp": self._last_data.timestamp.isoformat(),
+                    "staleness_sec": self._last_data.staleness_sec,
+                    "recent_news": [
+                        self._news_to_json(n) for n in self._last_data.recent_news
+                    ],
+                    "panic_score": self._last_data.panic_score,
+                    "news_velocity": self._last_data.news_velocity,
+                    "sentiment_consensus": self._last_data.sentiment_consensus,
+                    "narrative_intensity": self._last_data.narrative_intensity,
+                    "global_panic": self._last_data.global_panic,
+                    "global_news_velocity": self._last_data.global_news_velocity,
+                }
+            tmp = p + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump({
+                    "state_version": self._STATE_VERSION,
+                    "last_fetch_time": (
+                        self._last_fetch_time.isoformat() if self._last_fetch_time else None
+                    ),
+                    "backoff_until": (
+                        self._backoff_until.isoformat() if self._backoff_until else None
+                    ),
+                    "data": payload,
+                    "saved_ts": time.time(),
+                }, fh, default=float)
+            os.replace(tmp, p)
+        except Exception as e:  # noqa: silent-swallow — persistence is best-effort, never break the tick
+            logger.debug(f"[CRYPTOPANIC] state persist failed: {type(e).__name__}: {e}")
+
+    # =========================================================================
     # REAL API
     # =========================================================================
-    
+
     async def _fetch_real(self) -> CryptoPanicData:
         """Fetch real data from CryptoPanic."""
         now = datetime.now(timezone.utc)
@@ -285,9 +470,13 @@ class CryptoPanicFeed:
         
         self._last_data = data
         self._last_fetch_time = now
-        
+
+        # [P154] Checkpoint the throttle + news cache so a restart reuses them
+        # instead of re-spending 3 requests on the immediate startup tick.
+        self._persist_state()
+
         return data
-    
+
     async def _fetch_posts(
         self,
         session: aiohttp.ClientSession,
@@ -314,6 +503,11 @@ class CryptoPanicFeed:
                         except (TypeError, ValueError):
                             retry_after_sec = 900
                     self._backoff_until = datetime.now(timezone.utc) + timedelta(seconds=retry_after_sec)
+                    # [P154] Persist the backoff IMMEDIATELY. _fetch_real's
+                    # checkpoint is not enough: if the process dies between the
+                    # 429 and the end of the fetch, the restart forgets it and
+                    # hammers the API that just rate-limited us.
+                    self._persist_state()
                 logger.warning(
                     f"[CRYPTOPANIC] {currency}: HTTP {resp.status} from API"
                 )
