@@ -73,8 +73,14 @@ def test_c2_flow_data_validity():
     print("C2 FIX: 链上 inflow data_valid 标记")
     print("=" * 60)
     
-    from models.representation.market_embedding_model import RawMarketFeatures
-    
+    # [P165] Was `models.representation...`, which does not exist (and `models/`
+    # is gitignored). The module now lives at archive/models_representation_
+    # test_only/ — the directory name records that these two tests are its only
+    # remaining consumers; there is no production reference to it.
+    from archive.models_representation_test_only.market_embedding_model import (
+        RawMarketFeatures,
+    )
+
     # 测试1: 有效数据
     valid_features = RawMarketFeatures(
         timestamp=datetime.now(),
@@ -131,7 +137,8 @@ def test_m1_embedding_rejection_logging():
     print("M1 FIX: Embedding 拒绝日志增强")
     print("=" * 60)
     
-    from models.representation.market_embedding_model import (
+    # [P165] See the note in test_c2_flow_data_validity.
+    from archive.models_representation_test_only.market_embedding_model import (
         MarketEmbeddingModel,
         RawMarketFeatures,
     )

@@ -256,16 +256,23 @@ class TestPreflightErrorClassification:
 # =====================================================================
 
 class TestAuthorityMatrixInvariants:
-    """The 25-agent authority matrix must remain at 25 entries per
-    CLAUDE.md. Drift → silent agent removal."""
+    """The authority matrix must match CLAUDE.md exactly. Drift in EITHER
+    direction is a bug: fewer entries = a silent agent removal, more =
+    an agent wired into fusion that the authority table never documented.
 
-    def test_matrix_has_25_agents(self):
+    [P165 2026-08-04] 25 -> 26 (`v5_1_strats`, added 2026-06-13 by 795ecc4
+    without the CLAUDE.md update rule #7 requires). This guard did its job;
+    it just went unread for ~7 weeks."""
+
+    def test_matrix_has_26_agents(self):
         from signals.authority_fusion import AUTHORITY_MATRIX_NORMAL
 
-        # CLAUDE.md says exactly 25 agents
-        assert len(AUTHORITY_MATRIX_NORMAL) == 25, (
+        # CLAUDE.md §Authority Matrix says exactly 26 agents
+        assert len(AUTHORITY_MATRIX_NORMAL) == 26, (
             f"Authority matrix has {len(AUTHORITY_MATRIX_NORMAL)} agents, "
-            f"expected 25 per CLAUDE.md. Drift = silent agent removal."
+            f"expected 26 per CLAUDE.md. Fewer = silent agent removal; "
+            f"more = an undocumented agent in fusion. Update BOTH the "
+            f"CLAUDE.md table and this count in the same commit."
         )
 
     def test_critical_agents_present(self):

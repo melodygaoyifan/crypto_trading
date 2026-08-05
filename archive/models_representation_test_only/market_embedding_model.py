@@ -28,7 +28,7 @@ import logging
 import numpy as np
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any, Tuple, Callable
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from collections import deque
 import json
@@ -530,7 +530,15 @@ class MarketEmbeddingModel:
         - 调用方必须处理 None 情况
         """
         # C1 FIX: 检查数据陈旧性 (Fail-Closed)
-        age_seconds = (datetime.utcnow() - raw.timestamp).total_seconds()
+        # [P165] Was `datetime.utcnow() - raw.timestamp`: a naive-vs-aware
+        # subtraction that raised TypeError for every tz-aware caller — i.e.
+        # the staleness guard could not run at all once the P40/P97 tz-aware
+        # sweep made timestamps aware. Same class as P40/P97. Treat a naive
+        # timestamp as UTC rather than rejecting it, so both shapes work.
+        _ts = raw.timestamp
+        if _ts.tzinfo is None:
+            _ts = _ts.replace(tzinfo=timezone.utc)
+        age_seconds = (datetime.now(timezone.utc) - _ts).total_seconds()
         if age_seconds > self.MAX_EMBEDDING_AGE_SEC:
             # M1 FIX: 结构化拒绝日志
             logger.warning(

@@ -57,11 +57,16 @@ def test_unit_conversion_basic():
         asset=asset
     )
     
-    # Expected: 30% of $100k = $30k notional
-    # $30k / $185 = 162.16 SOL
-    expected = 162.162162
-    
-    assert abs(qty - expected) < 0.01, f"Expected ~{expected:.2f}, got {qty:.2f}"
+    # Expected: 30% of $100k = $30k notional -> $30k / $185 = 162.162162 SOL,
+    # then [L4-06] FLOORS to the Kraken step size (SOL = 0.1) -> 162.1.
+    # [P165] The old tolerance of 0.01 was tighter than the step itself, so it
+    # could only ever pass before quantize_to_step existed. Assert the
+    # quantization instead: rounding UP would size an order the balance
+    # cannot cover, so flooring is the load-bearing property here.
+    raw = 0.3 * 100_000.0 / 185.0
+    assert abs(qty - 162.1) < 1e-9, f"expected 162.1 (floored), got {qty}"
+    assert qty <= raw, "quantization must floor, never round up"
+    assert raw - qty < 0.1, "must be within one step of the ideal size"
     logger.info(f"✓ Unit conversion: 30% of $100k @ $185 = {qty:.4f} SOL")
 
 

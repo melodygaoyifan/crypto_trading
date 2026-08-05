@@ -75,11 +75,20 @@ def _normal_context(**overrides):
 # =============================================================================
 
 class TestAuthorityMatrixLookup:
-    def test_normal_matrix_has_25_agents(self):
-        """CLAUDE.md authority matrix invariant: 25 agents in NORMAL.
+    def test_normal_matrix_has_26_agents(self):
+        """CLAUDE.md authority matrix invariant: 26 agents in NORMAL.
+
         [P49 verified 2026-04-25] Earlier audit miscounted; live matrix
-        has 25 entries including soldex (2026-04-15 addition)."""
-        assert len(AUTHORITY_MATRIX_NORMAL) == 25
+        had 25 entries including soldex (2026-04-15 addition).
+        [P165 2026-08-04] 25 -> 26: `v5_1_strats` was added 2026-06-13 by
+        commit 795ecc4 and CLAUDE.md was not updated in the same commit
+        (non-negotiable rule #7), so this guard sat red for ~7 weeks. The
+        agent is fully wired — writer main.py:7546, fusion
+        integration_v36.py:2425, extractor agents/signal_envelope.py:116 —
+        i.e. the drift was in the docs, not a silent agent removal.
+        """
+        assert len(AUTHORITY_MATRIX_NORMAL) == 26
+        assert "v5_1_strats" in AUTHORITY_MATRIX_NORMAL
 
     def test_no_trade_returns_no_trade_matrix(self):
         m = get_authority_matrix("NO_TRADE")

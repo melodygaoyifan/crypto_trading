@@ -106,8 +106,15 @@ def test_unit_conversion_basic():
         asset="SOL"
     )
     
-    expected = 162.162162
-    assert abs(qty - expected) < 0.01, f"Expected ~{expected:.2f}, got {qty:.2f}"
+    # [P165] $30k / $185 = 162.162162, then L4-06 FLOORS to the Kraken step
+    # size (SOL = 0.1) -> 162.1. The old tolerance of 0.01 was tighter than
+    # the step itself, so it could only ever pass before quantize_to_step
+    # existed. Assert the quantization, not a pre-quantization ideal:
+    # rounding UP here would size an order the balance cannot cover.
+    raw = 0.3 * 100_000.0 / 185.0
+    assert abs(qty - 162.1) < 1e-9, f"expected 162.1 (floored), got {qty}"
+    assert qty <= raw, "quantization must floor, never round up"
+    assert raw - qty < 0.1, "must be within one step of the ideal size"
     logger.info(f"✓ Unit conversion: 30% of $100k @ $185 = {qty:.4f} SOL")
     return True
 

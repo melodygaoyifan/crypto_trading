@@ -25,13 +25,28 @@ def _make_runner(level: str = "EXIT_ONLY"):
     return runner
 
 
-def test_normalize_drl_paper_bootstrap_caps_active_to_exit_only():
+def test_normalize_drl_paper_bootstrap_passes_known_levels_and_rejects_junk():
+    """[P165] Was `..._caps_active_to_exit_only`, asserting ACTIVE→EXIT_ONLY.
+
+    `main.py:18589` was deliberately changed ("[UTIL-5] ACTIVE now allowed —
+    auto-demotion safety (5 consec losses / 15% DD) still enforced"), so the cap
+    the test named no longer exists. Rewritten to the contract the function
+    actually has: it is a whitelist normalizer, and the property still worth
+    holding is that an unrecognized value returns "" rather than being passed
+    through to `_promotion_gate.promote()`.
+    """
     runner = _make_runner()
 
-    assert runner._normalize_drl_paper_bootstrap_authority("ACTIVE") == "EXIT_ONLY"
+    assert runner._normalize_drl_paper_bootstrap_authority("ACTIVE") == "ACTIVE"
     assert runner._normalize_drl_paper_bootstrap_authority("EXIT_ONLY") == "EXIT_ONLY"
     assert runner._normalize_drl_paper_bootstrap_authority("shadow") == "SHADOW"
-    assert runner._normalize_drl_paper_bootstrap_authority("bogus") == ""
+    assert runner._normalize_drl_paper_bootstrap_authority("DISABLED") == "DISABLED"
+    # Junk must NOT normalize to anything promotable — main.py:5039 gates the
+    # bootstrap on this being truthy.
+    for junk in ("bogus", "", None, "ACTIVE_", 3):
+        assert runner._normalize_drl_paper_bootstrap_authority(junk) == "", (
+            f"{junk!r} must not normalize to a promotable authority level"
+        )
 
 
 def test_drl_runtime_snapshot_keeps_exit_only_trade_impact():

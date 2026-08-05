@@ -12,6 +12,7 @@ Groups:
 import pytest
 import time
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from unittest.mock import patch
 
 from agents.model_alpha_agent import (
@@ -279,9 +280,29 @@ class TestAllowMockModel:
     """Current runtime prefers real local models when artifacts exist."""
 
     def test_default_prefers_real_model_when_available(self):
-        """Default construction should use real local artifacts when present."""
+        """`_model_loaded` must track whether the artifacts are actually on disk.
+
+        [P165] This asserted `_model_loaded is True` unconditionally, but
+        `models/` is gitignored (`.gitignore:59`) — the DT checkpoints live on the
+        `hmats-models` Docker volume, not in a checkout. So the test passed only
+        on a machine that had trained locally, and failed everywhere else for a
+        reason unrelated to the code.
+
+        Tie the assertion to the premise instead of hardcoding one side of it: on
+        the server (artifacts present) it still pins "real model gets loaded", and
+        here it pins the fail-soft contract the warning at `model_alpha_agent.py`
+        :462 promises — neutral signals, never a mock, when `allow_mock_model` is
+        False.
+        """
         agent = ModelAlphaAgent(model_path="nonexistent_path")
-        assert agent._model_loaded is True
+        artifacts_present = Path(agent.sequence_model_path).exists()
+        assert agent._model_loaded is artifacts_present, (
+            f"artifacts at {agent.sequence_model_path} "
+            f"{'exist' if artifacts_present else 'are absent'} but "
+            f"_model_loaded={agent._model_loaded}"
+        )
+        # Either way, with no state fed in the agent must emit a neutral signal —
+        # a missing model must never become a nonzero direction.
         sig = agent.to_agent_signals("BTC")
         assert sig["model_alpha_direction"] == 0.0
         assert sig["model_alpha_confidence"] == 0.0

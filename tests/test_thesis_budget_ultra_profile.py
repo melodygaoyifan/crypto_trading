@@ -400,9 +400,19 @@ class TestConfigOverlayWiring:
         self._write_json(tmp_path, "base.json", base)
 
         cfg = ProductionConfig.from_file(tmp_path / "base.json")
-        assert cfg.thesis_budget_loss_pct_nav == 0.008
-        assert cfg.thesis_budget_loss_streak_limit == 3
-        assert cfg.thesis_budget_cooldown_bars == 6
+        # [P165] Was pinned at 0.008, a pre-UNLEASH value. The canonical source
+        # is `configs/canonical_config.THESIS_BUDGET_LOSS_PCT_NAV = 0.02` (UL-6b),
+        # which `ProductionConfig` imports; the invariant is that a config file
+        # WITHOUT a thesis_budget block inherits the canonical default rather
+        # than some second literal in main.py.
+        from configs.canonical_config import (
+            THESIS_BUDGET_COOLDOWN_BARS,
+            THESIS_BUDGET_LOSS_PCT_NAV,
+            THESIS_BUDGET_LOSS_STREAK_LIMIT,
+        )
+        assert cfg.thesis_budget_loss_pct_nav == THESIS_BUDGET_LOSS_PCT_NAV
+        assert cfg.thesis_budget_loss_streak_limit == THESIS_BUDGET_LOSS_STREAK_LIMIT
+        assert cfg.thesis_budget_cooldown_bars == THESIS_BUDGET_COOLDOWN_BARS
         assert cfg.thesis_budget_max_reentry == 0
 
 

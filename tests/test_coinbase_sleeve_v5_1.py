@@ -21,6 +21,22 @@ class FakeClient:
     def get_futures_balance_summary(self):
         return {"balance_summary": {"futures_buying_power": {"value": self._bp}}}
 
+    # [P165] P153 moved `sleeve_equity_usd()` off the futures-balance summary
+    # and onto the Default PORTFOLIO's `total_balance` (the cross-collateralized
+    # equity). This mock only spoke the old API, so after P153 the sleeve fell
+    # through to the degraded fallback, read total_usd_balance=0, and held
+    # `_last_equity_usd` constant — meaning `test_drawdown_halts_*` moved `bp`
+    # and the equity never budged. The fixture, not the guard, was stale.
+    def get_portfolios(self):
+        return {"portfolios": [{"uuid": "fake-default-uuid", "type": "DEFAULT"}]}
+
+    def get_portfolio_breakdown(self, portfolio_uuid=None, **kw):
+        return {
+            "breakdown": {
+                "portfolio_balances": {"total_balance": {"value": self._bp}}
+            }
+        }
+
     def get_product(self, product_id, **kw):
         return {"product_id": product_id, "mid_market_price": "100",
                 "future_product_details": {"contract_size": "1"}}

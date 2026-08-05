@@ -501,8 +501,14 @@ class PassiveAggressiveExecutor:
     Fee Savings Target: 10 bps per trade (26 - 16)
 
     Modes:
-    - SHADOW (default): Compute decision and log, but caller uses legacy fallback.
-    - ACTIVE: Decision drives order type/price selection on hot path.
+    - SHADOW: Compute decision and log, but caller uses legacy fallback.
+    - ACTIVE (default): Decision drives order type/price selection on hot path.
+
+    [P165] This docstring said "SHADOW (default)" long after `PAExecutorConfig.
+    mode` and `from_dict` were both promoted to "ACTIVE" (line 472/481). Three
+    tests were written against the docstring rather than the field and had been
+    asserting the retired default. Note `shadow_mode = (mode != "ACTIVE")` —
+    any unrecognised mode string falls back to SHADOW, which is the safe side.
     """
 
     def __init__(self, config: Optional[PAExecutorConfig] = None):

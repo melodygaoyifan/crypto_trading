@@ -371,8 +371,16 @@ class TestConfigFromJSON(unittest.TestCase):
         cfg = AggressiveAllocationConfig.from_dict(None)
         self.assertFalse(cfg.enabled)
 
-    def test_cloud_production_has_no_allocation(self):
-        """cloud_production.json should NOT have allocation."""
+    def test_cloud_production_allocation_block_is_loadable(self):
+        """[P165] Was `test_cloud_production_has_no_allocation`.
+
+        The block is now present and enabled in that profile (deliberately —
+        `live_high_risk.json` carries a fuller version with the same flags), so
+        "must be absent" is stale. The property still worth holding is that
+        whatever is in the file round-trips through `from_dict` without silently
+        falling back to defaults, since a typo'd key there would disable
+        allocation while the JSON still reads as enabled.
+        """
         config_path = Path(__file__).parent.parent / "configs" / "cloud_production.json"
         if not config_path.exists():
             self.skipTest("cloud_production.json not found")
@@ -380,7 +388,17 @@ class TestConfigFromJSON(unittest.TestCase):
         with open(config_path) as f:
             data = json.load(f)
 
-        self.assertIsNone(data.get("allocation"))
+        block = data.get("allocation")
+        if block is None:
+            return  # absent is still a valid state
+
+        cfg = AggressiveAllocationConfig.from_dict(block)
+        self.assertEqual(cfg.enabled, bool(block.get("enabled", False)))
+        # `live_enabled` is NOT a field on this dataclass — main.py:2303 reads it
+        # straight off the raw dict. Assert the shape so a rename on either side
+        # surfaces here rather than silently defaulting the live gate to False.
+        self.assertIn("live_enabled", block)
+        self.assertFalse(hasattr(cfg, "live_enabled"))
 
 
 # ---------------------------------------------------------------------------

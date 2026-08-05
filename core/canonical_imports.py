@@ -226,11 +226,17 @@ from data_mgmt.data_health import (
 # CANONICAL EXPORTS - SENTIMENT
 # =============================================================================
 
-from engine.compute.vllm_inference_wrapper import (
+# [P165 2026-08-04] Was `from engine.compute.vllm_inference_wrapper import ...`.
+# That module lives in `archive/engine/compute/` and is NOT on the production
+# path, so this line raised ModuleNotFoundError and made THIS ENTIRE MODULE
+# unimportable — which in turn meant `main.py:19863 activate_runtime_mode()`
+# never ran in any process. See core/sentiment_config.py for the full write-up.
+from core.sentiment_config import (
     get_sentiment_config,
     is_sentiment_mock,
     sentiment_can_trigger_opportunity,
     SentimentConfig,
+    SentimentMode,
 )
 
 # =============================================================================

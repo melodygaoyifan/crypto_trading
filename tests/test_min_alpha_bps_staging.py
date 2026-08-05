@@ -297,84 +297,115 @@ class TestGateBehaviour:
         assert result_short.gate_decision == "ALLOW"
         assert result_short.passes_threshold is True
 
+def _find_borderline_signal(calc, long: bool, **gate_kwargs):
+    """[P165] Locate a signal the EV gate genuinely rejects, and by how much.
+
+    The two epsilon tests below hardcoded a signal (5.90/75 and 6.40/75) chosen
+    when the EV multiplier was 1.25x. It was later lowered to 1.10x, so both
+    signals now clear the bar unaided and the gate returns a plain "ALLOW" — the
+    tests asserted `ALLOW_EPSILON` on inputs that no longer need an epsilon, i.e.
+    they had stopped exercising the epsilon path at all while still reading like
+    they covered it. Same shape as P158/P159: a check that cannot fail.
+
+    Search for the borderline instead of pinning it. Returns
+    `(signal, shortfall_bps)` for the first signal that rejects on EV.
+    """
+    for step in range(1, 400):
+        signal = (step * 0.05) / 75.0
+        res = calc.check_alpha_gate(
+            signal_strength=signal,
+            direction=signal if long else -signal,
+            **gate_kwargs,
+        )
+        if res.gate_decision == "REJECT_EV":
+            shortfall = res.required_net_alpha_bps - res.expected_net_alpha_bps
+            if shortfall > 0:
+                return signal, shortfall
+    raise AssertionError("no EV-rejecting signal found in the scanned range")
+
+
 def test_short_borderline_epsilon_allows_near_ev_threshold():
     calc = _make_calculator(monthly_volume_usd=0.0)
-    signal = 5.90 / 75.0  # ~5.9bps estimated alpha at default confidence path
+    base = dict(regime_confidence=0.5, quant_confidence=0.5, mode="NORMAL",
+                min_alpha_bps=3.0, asset="BTC")
 
-    rejected = calc.check_alpha_gate(
-        signal_strength=signal,
-        regime_confidence=0.5,
-        quant_confidence=0.5,
-        mode="NORMAL",
-        min_alpha_bps=3.0,
-        direction=-signal,
-        asset="BTC",
-    )
-    assert rejected.gate_decision in ("REJECT_EV", "ALLOW", "ALLOW_EPSILON")  # threshold lowered
-    assert rejected.passes_threshold is True  # threshold lowered from 1.25x to 1.10x
+    signal, shortfall = _find_borderline_signal(calc, long=False, **base)
 
+    rejected = calc.check_alpha_gate(signal_strength=signal, direction=-signal, **base)
+    assert rejected.gate_decision == "REJECT_EV"
+    assert rejected.passes_threshold is False
+
+    # An epsilon just larger than the shortfall must convert it, and must report
+    # ALLOW_EPSILON rather than a plain ALLOW — that distinction is what makes an
+    # epsilon-carried trade auditable after the fact.
     allowed = calc.check_alpha_gate(
-        signal_strength=signal,
-        regime_confidence=0.5,
-        quant_confidence=0.5,
-        mode="NORMAL",
-        min_alpha_bps=3.0,
-        direction=-signal,
-        asset="BTC",
-        borderline_pass_epsilon_bps_short=0.25,
+        signal_strength=signal, direction=-signal,
+        borderline_pass_epsilon_bps_short=shortfall + 0.01, **base,
     )
     assert allowed.gate_decision == "ALLOW_EPSILON"
     assert allowed.passes_threshold is True
+
+    # An epsilon smaller than the shortfall must NOT rescue it.
+    still_rejected = calc.check_alpha_gate(
+        signal_strength=signal, direction=-signal,
+        borderline_pass_epsilon_bps_short=shortfall * 0.5, **base,
+    )
+    assert still_rejected.passes_threshold is False
 
 
 def test_long_borderline_epsilon_allows_near_ev_threshold():
     calc = _make_calculator(monthly_volume_usd=0.0)
-    signal = 6.40 / 75.0
+    base = dict(regime_confidence=0.5, quant_confidence=0.5, mode="NORMAL",
+                min_alpha_bps=3.0, asset="BTC", regime="QUIET_ACCUMULATION",
+                quiet_accum_min_direction=0.0, regime_alpha_gate_mult=0.90)
 
-    rejected = calc.check_alpha_gate(
-        signal_strength=signal,
-        regime_confidence=0.5,
-        quant_confidence=0.5,
-        mode="NORMAL",
-        min_alpha_bps=5.0,
-        direction=signal,
-        asset="BTC",
-        regime="QUIET_ACCUMULATION",
-        quiet_accum_min_direction=0.06,
-        regime_alpha_gate_mult=0.90,
-    )
-    assert rejected.gate_decision in ("REJECT_EV", "ALLOW", "ALLOW_EPSILON")  # threshold lowered
-    assert rejected.passes_threshold is True  # threshold lowered from 1.25x to 1.10x
+    signal, shortfall = _find_borderline_signal(calc, long=True, **base)
+
+    rejected = calc.check_alpha_gate(signal_strength=signal, direction=signal, **base)
+    assert rejected.gate_decision == "REJECT_EV"
+    assert rejected.passes_threshold is False
 
     allowed = calc.check_alpha_gate(
-        signal_strength=signal,
-        regime_confidence=0.5,
-        quant_confidence=0.5,
-        mode="NORMAL",
-        min_alpha_bps=5.0,
-        direction=signal,
-        asset="BTC",
-        regime="QUIET_ACCUMULATION",
-        quiet_accum_min_direction=0.06,
-        regime_alpha_gate_mult=0.90,
-        borderline_pass_epsilon_bps=0.5,
+        signal_strength=signal, direction=signal,
+        borderline_pass_epsilon_bps=shortfall + 0.01, **base,
     )
     assert allowed.gate_decision == "ALLOW_EPSILON"
     assert allowed.passes_threshold is True
 
+    still_rejected = calc.check_alpha_gate(
+        signal_strength=signal, direction=signal,
+        borderline_pass_epsilon_bps=shortfall * 0.5, **base,
+    )
+    assert still_rejected.passes_threshold is False
+
 
 def test_opportunity_actionable_min_exposure_can_admit_small_eth_short():
-    intent = TradeIntentV36(
+    """The per-asset exposure override is what admits a small ETH short.
+
+    [P165] This built an intent with `direction=-0.018` against its own
+    `opportunity_actionable_direction_threshold_short=0.04`. `is_actionable` is
+    a conjunction (`integration_v36.py:268-272`), so the direction clause was
+    always false and the test could not pass on any exposure setting — it was
+    self-contradictory, not merely stale. Give the direction enough magnitude to
+    clear its threshold so the test isolates the exposure clause it is named
+    for, and pin the negative case that proves the override is load-bearing.
+    """
+    kwargs = dict(
         asset="ETH",
-        direction=-0.018,
+        direction=-0.05,   # clears the 0.04 short threshold
         target_exposure=0.006,
         system_mode="OPPORTUNITY",
         alpha_gate_passed=True,
         opportunity_actionable_direction_threshold_short=0.04,
-        opportunity_actionable_exposure_threshold=0.005,
     )
 
-    assert intent.is_actionable is True
+    assert TradeIntentV36(
+        **kwargs, opportunity_actionable_exposure_threshold=0.005
+    ).is_actionable is True
+
+    # Without the override the default 0.01 floor blocks the same intent —
+    # otherwise this test would pass regardless of the override.
+    assert TradeIntentV36(**kwargs).is_actionable is False
 
 
 def test_high_risk_config_contains_btc_specific_short_borderline_epsilon():
@@ -386,9 +417,28 @@ def test_high_risk_config_contains_btc_specific_short_borderline_epsilon():
     assert ag["quiet_accum_min_direction_short_by_asset"]["ETH"] == pytest.approx(0.05)
     assert ag["opportunity_actionable_min_direction_short_by_asset"]["ETH"] == pytest.approx(0.04)
     assert ag["opportunity_actionable_min_exposure_by_asset"]["ETH"] == pytest.approx(0.005)
-    assert ag["borderline_alpha_pass_epsilon_bps_by_asset"]["BTC"] == pytest.approx(1.0)
-    assert ag["borderline_alpha_pass_epsilon_bps_by_asset"]["ETH"] == pytest.approx(4.5)
-    assert ag["borderline_alpha_pass_epsilon_bps_short"] == pytest.approx(0.25)
+    # [P165] BTC's long-side epsilon was pinned at 1.0 and has been retuned to
+    # 2.5. An epsilon is a *tolerance* on the EV gate, so the property worth
+    # guarding is not its exact size but that it stays small enough not to
+    # swallow the gate it relaxes — otherwise "borderline pass" becomes "always
+    # pass" and the alpha gate (non-negotiable rule #1) is silently disabled.
+    # `constitution.py:1281` adds it to expected net alpha before the comparison
+    # with the friction-multiplied requirement, so bound it by the gate's own
+    # headline floor.
+    _floor = ag["min_alpha_bps_default"]
+    for _asset, _eps in ag["borderline_alpha_pass_epsilon_bps_by_asset"].items():
+        assert 0 < _eps <= _floor, (
+            f"{_asset} long epsilon {_eps}bps is not a tolerance against a "
+            f"{_floor}bps floor"
+        )
+    assert set(ag["borderline_alpha_pass_epsilon_bps_by_asset"]) >= {"BTC", "ETH"}
+    # [P165] Same drift as the long-side epsilon above (was 0.25, now 1.5): bound
+    # it rather than pin it, and require the short side to be no more permissive
+    # than the long side — an epsilon is a relaxation, and the short leg is the
+    # riskier one (P140).
+    assert 0 < ag["borderline_alpha_pass_epsilon_bps_short"] <= _floor
+    assert (ag["borderline_alpha_pass_epsilon_bps_short"]
+            <= ag["borderline_alpha_pass_epsilon_bps"])
     assert ag["borderline_alpha_pass_epsilon_bps_short_by_asset"]["BTC"] == pytest.approx(1.0)
     assert ag["borderline_alpha_pass_epsilon_bps_short_by_asset"]["ETH"] == pytest.approx(4.5)
     assert ag["borderline_alpha_pass_epsilon_bps_short_by_asset"]["SOL"] == pytest.approx(2.0)
@@ -559,6 +609,14 @@ class TestConfigFromJSON:
         assert len(ag["staged_schedule"]) == 3
 
     def test_ultra_json_staged_values(self):
+        """The staged schedule must loosen monotonically, never tighten.
+
+        [P165] This pinned `MONTH1 == 5` while the config says 3 — and 5 would
+        have made MONTH1 *stricter* than WEEK2_3's 4, which is the one thing a
+        "staging" schedule must not do. The stale literal was asserting a shape
+        the design forbids. Pin the ordering property instead of the numbers, so
+        retuning the bar does not break the test but inverting the ramp does.
+        """
         json_path = Path("configs/ultra_aggressive_5y.json")
         if not json_path.exists():
             pytest.skip("ultra_aggressive_5y.json not found")
@@ -566,9 +624,12 @@ class TestConfigFromJSON:
             data = json.load(f)
         schedule = {e["stage"]: e["min_alpha_bps"]
                     for e in data["alpha_gate"]["staged_schedule"]}
-        assert schedule["WEEK1"] == 5
-        assert schedule["WEEK2_3"] == 4
-        assert schedule["MONTH1"] == 5
+        ordered = [schedule[s] for s in ("WEEK1", "WEEK2_3", "MONTH1") if s in schedule]
+        assert len(ordered) == 3, f"missing a stage: {schedule}"
+        assert all(v > 0 for v in ordered), f"a stage would disable the gate: {schedule}"
+        assert ordered == sorted(ordered, reverse=True), (
+            f"staged min_alpha_bps must be non-increasing over time, got {schedule}"
+        )
 
     def test_cloud_production_has_no_alpha_gate(self):
         """cloud_production.json should NOT have alpha_gate (HIGH_RISK default)."""
@@ -589,12 +650,60 @@ class TestConfigFromJSON:
         ag = data["alpha_gate"]
         assert ag["min_alpha_bps_short_default"] == 5
         assert ag["quiet_accum_min_direction_short_by_asset"]["BTC"] == pytest.approx(0.08)
-        assert ag["opportunity_actionable_min_direction_short"] == pytest.approx(0.045)
-        assert ag["normal_actionable_min_direction_short"] == pytest.approx(0.085)
-        assert ag["borderline_alpha_pass_epsilon_bps_short"] == pytest.approx(0.25)
+        # [P165] `opportunity_actionable_min_direction_short` was pinned at
+        # 0.045 and has since been retuned to 0.1. The literal was never the
+        # point of a test named "has_short_side_overrides" — what it guards is
+        # that the short side is present and NOT looser than the long side,
+        # since a spot/margin short is the riskier leg (P140). Assert that.
+        assert ag["opportunity_actionable_min_direction_short"] >= (
+            ag["opportunity_actionable_min_direction"]
+            if "opportunity_actionable_min_direction" in ag else 0.0
+        )
+        assert ag["opportunity_actionable_min_direction_short"] > 0
+        # [P165] Was pinned at 0.085, retuned to 0.15. Same reasoning as above:
+        # what the override must guarantee is that it exists and is a real floor.
+        assert ag["normal_actionable_min_direction_short"] > 0
+        # [P165] Same drift again (was 0.25, now 1.5). Bound it rather than pin
+        # it: an epsilon is a relaxation of the EV bar, so it must be positive,
+        # must not exceed the alpha floor it relaxes, and the short leg must
+        # never be more permissive than the long leg (P140).
+        assert 0 < ag["borderline_alpha_pass_epsilon_bps_short"] <= ag["min_alpha_bps_default"]
+        assert (ag["borderline_alpha_pass_epsilon_bps_short"]
+                <= ag["borderline_alpha_pass_epsilon_bps"])
         schedule = {e["stage"]: e["min_alpha_bps"] for e in ag["staged_schedule_short"]}
-        assert schedule["HIGH_RISK"] == 5
-        assert ag["regime_alpha_gate_relax_short"]["WEAK_CONSOLIDATION"] == pytest.approx(0.80)
+        long_schedule = {e["stage"]: e["min_alpha_bps"] for e in ag["staged_schedule"]}
+        # [P165] Was pinned at 5; the short schedule has since been retuned to
+        # 8/8/6/5 against the long side's 6/6/5/4. The literal was never the
+        # point — a short leg is the riskier one (P140), so what this must hold
+        # is that at every stage the short bar is at least as strict as the
+        # long bar, and that it relaxes monotonically over time like the long
+        # one does. Both survive retuning; a literal does not.
+        assert set(schedule) == set(long_schedule)
+        for _stage, _bps in schedule.items():
+            assert _bps >= long_schedule[_stage], (
+                f"short min_alpha at {_stage} ({_bps}) is looser than long "
+                f"({long_schedule[_stage]})")
+        ordered = [schedule[s] for s in ("HIGH_RISK", "WEEK1", "WEEK2_3", "MONTH1")]
+        assert all(v > 0 for v in ordered)
+        assert ordered == sorted(ordered, reverse=True), (
+            f"staged_schedule_short must be non-increasing over time, got {schedule}")
+        # [P165] Was pinned at 0.80, now 1.1. Despite the "relax" name this is a
+        # plain multiplier on the alpha gate (`main.py:8919-8922`): <1 relaxes,
+        # >1 tightens, and it is clamped to [0.5, 1.5] before use. The short map
+        # has been retuned from relaxing (0.80) to tightening (1.1), which is a
+        # deliberate risk decision, not a regression — so pin the clamp range
+        # and the long/short ordering (P140), not the number.
+        _relax_short = ag["regime_alpha_gate_relax_short"]
+        _relax_long = ag["regime_alpha_gate_relax"]
+        assert set(_relax_short) == set(_relax_long)
+        for _regime, _mult in _relax_short.items():
+            assert 0.5 <= _mult <= 1.5, (
+                f"{_regime} short relax {_mult} falls outside the [0.5, 1.5] "
+                f"clamp applied at main.py:8920 — the config value would be "
+                f"silently truncated")
+            assert _mult >= _relax_long[_regime], (
+                f"{_regime}: short gate multiplier {_mult} is more permissive "
+                f"than long {_relax_long[_regime]}")
 
 
 # ===========================================================================

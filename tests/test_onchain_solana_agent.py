@@ -315,17 +315,40 @@ class TestP1SignalLogic:
             assert sig.signal_type == OnChainSignalType.EXCHANGE_INFLOW
 
     @pytest.mark.asyncio
-    async def test_inferred_buy_ratio_discounts_confidence(self, agent):
-        """When buy_ratio is inferred from price, confidence should be lower."""
+    async def test_inferred_buy_ratio_is_discounted_versus_real(self, agent):
+        """Inferred-from-price flow must count for strictly less than real flow.
+
+        [P165] Was `test_inferred_buy_ratio_discounts_confidence`, asserting a
+        signal came back with `confidence < 0.75`. [FIX-AG6]
+        (`onchain_solana_agent.py:736-739`) since made the discount much harsher
+        than a confidence haircut — an inferred DEX reading enters at
+        `dex_flow_weight * 0.2`, so at buy_ratio 0.70 it contributes
+        0.40 * 0.3 * 0.2 = 0.024, below the 0.05 dead zone, and the agent
+        correctly emits *nothing at all*. The old assertion demanded a signal the
+        design deliberately suppresses.
+
+        Assert the relationship rather than a literal: at the identical buy
+        ratio, real flow produces a signal and inferred flow produces either none
+        or a strictly weaker one. That holds whichever side of the dead zone the
+        weighting lands on, so it survives the next tuning change.
+        """
+        real_agent = SolanaOnChainAgent(OnChainConfig())
+        _patch_provider(real_agent, dex=_make_dex(
+            volume=1_000_000, buy_ratio=0.70, buy_source="real",
+        ))
+        await real_agent.update_metrics()
+        real_sig = real_agent.generate_signal()
+        assert real_sig is not None, "real DEX flow at 70% buy must produce a signal"
+
         _patch_provider(agent, dex=_make_dex(
             volume=1_000_000, buy_ratio=0.70, buy_source="inferred_from_price",
         ))
         await agent.update_metrics()
-
         sig = agent.generate_signal()
-        assert sig is not None
-        # The mock_ratio penalty should reduce confidence
-        assert sig.confidence < 0.75
+
+        if sig is not None:
+            assert abs(sig.direction) < abs(real_sig.direction)
+            assert sig.confidence < real_sig.confidence
 
 
 # ---------------------------------------------------------------------------

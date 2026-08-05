@@ -2,13 +2,13 @@
 tests/test_passive_aggressive_active.py - P2-03 PA Executor ACTIVE mode tests
 
 Verifies:
-1. SHADOW (default) vs ACTIVE mode switch via config
+1. SHADOW vs ACTIVE (default) mode switch via config
 2. shadow_mode attribute exists and is correct
 3. Price improvement clamping to [min, max] bounds
 4. Toxic flow ABORT threshold (configurable)
 5. Edge-insufficient gating (abort_on_insufficient_edge)
 6. Config round-trip from JSON
-7. Backward compat - no config -> SHADOW mode
+7. No config -> ACTIVE; an unrecognised mode degrades to SHADOW (P165)
 """
 
 import json
@@ -64,10 +64,22 @@ def _decide(executor, vpin=0.35, urgency="NORMAL", signal=0.5,
 class TestShadowVsActive:
     """shadow_mode attribute correctly reflects config."""
 
-    def test_default_no_config_is_shadow(self):
-        """No config -> SHADOW mode (backward compat)."""
+    def test_default_no_config_is_active(self):
+        """No config -> ACTIVE, and any unknown mode falls back to SHADOW.
+
+        [P165] Was `test_default_no_config_is_shadow`. `PAExecutorConfig.mode`
+        defaults to "ACTIVE" (`passive_aggressive.py:472`) and `from_dict`
+        likewise (`:481`) — the SHADOW default this asserted survived only in
+        the class docstring, which has now been corrected. The property worth
+        guarding is the fail-safe direction of the derivation: `shadow_mode =
+        (mode != "ACTIVE")`, so a typo or a retired mode name degrades to
+        SHADOW (decision logged, legacy path executes) rather than silently
+        taking over the hot path.
+        """
         executor = PassiveAggressiveExecutor()
-        assert executor.shadow_mode is True
+        assert executor.shadow_mode is False
+        assert PassiveAggressiveExecutor(
+            PAExecutorConfig(mode="ACTIVE_TYPO")).shadow_mode is True
 
     def test_shadow_config_is_shadow(self):
         """Explicit SHADOW config -> shadow_mode=True."""
@@ -240,11 +252,19 @@ class TestConfigRoundTrip:
         assert config.toxic_flow_abort_threshold == 0.80
         assert config.abort_on_insufficient_edge is False
 
-    def test_from_dict_defaults_to_shadow(self):
-        """from_dict with empty dict -> SHADOW defaults."""
-        config = PAExecutorConfig.from_dict({})
-        assert config.mode == "SHADOW"
-        assert config.abort_on_insufficient_edge is True
+    def test_from_dict_defaults_match_the_dataclass(self):
+        """[P165] `from_dict({})` must agree with `PAExecutorConfig()` field-for-field.
+
+        Was `test_from_dict_defaults_to_shadow`, pinning the retired "SHADOW"
+        default. Rather than re-pin "ACTIVE" (which would rot the same way the
+        next time the mode is promoted), assert the invariant that actually
+        matters: `from_dict` restates every default as a literal in its
+        `d.get(...)` calls, so it can silently disagree with the dataclass the
+        moment one side is edited. Parity is the thing to guard.
+        """
+        import dataclasses
+        assert dataclasses.asdict(PAExecutorConfig.from_dict({})) == \
+            dataclasses.asdict(PAExecutorConfig())
 
     def test_ultra_aggressive_json_has_pa_config(self):
         """ultra_aggressive_5y.json contains passive_aggressive section."""
@@ -259,10 +279,10 @@ class TestConfigRoundTrip:
         assert pa["max_price_improve_bps"] == 8
         assert pa["min_price_improve_bps"] == 2
 
-    def test_default_config_is_shadow(self):
-        """Default PAExecutorConfig (no args) is SHADOW."""
+    def test_default_config_is_active(self):
+        """[P165] Default is ACTIVE — see test_default_no_config_is_active."""
         config = PAExecutorConfig()
-        assert config.mode == "SHADOW"
+        assert config.mode == "ACTIVE"
         assert config.abort_on_insufficient_edge is True
 
 

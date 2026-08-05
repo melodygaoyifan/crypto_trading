@@ -1288,7 +1288,19 @@ class ExecutionManager:
                     f"filled={float(result.filled_size or 0):.4f}/{size}), "
                     f"falling back to market"
                 )
+                # [P165] Carry the maker KPI forward onto the fallback result.
+                # `_execute_market_order` builds a fresh OrderResult with
+                # maker_reprice_attempts=0, so before this the counters were
+                # dropped precisely in the maker-STARVED case — the one the KPI
+                # exists to measure. A reprice loop that ran 3 attempts and then
+                # fell back reported "0 attempts", making maker starvation
+                # indistinguishable from "reprice never ran". Same reads-as-
+                # healthy-when-broken shape as P155/P160.
+                _reprice_attempts = result.maker_reprice_attempts
+                _reprice_cancels = result.maker_reprice_cancel_count
                 result = self._execute_market_order(symbol, side, size, margin_params)
+                result.maker_reprice_attempts = _reprice_attempts
+                result.maker_reprice_cancel_count = _reprice_cancels
         else:
             result = self._execute_market_order(symbol, side, size, margin_params)
         
@@ -1846,9 +1858,17 @@ class ExecutionManager:
                 time_to_fill_seconds=elapsed,
             )
         else:
+            # [P165] The old message ended "- no taker fallback", which has been
+            # false since [MARKET-FALLBACK 2026-04-15]: the caller re-enabled a
+            # market fallback for the maker-starved case (<10% filled), so this
+            # line was routinely followed one log line later by "falling back to
+            # market". State what this function decided, not what the caller
+            # will do — an operator grepping for the old wording concluded no
+            # taker fee had been paid.
             self.logger.warning(
                 f"[REPRICE] DEFERRED: {total_filled:.6f}/{size:.6f} ({fill_ratio:.0%}) "
-                f"after {attempts_used} attempts - no taker fallback"
+                f"after {attempts_used} attempts - maker path gives up "
+                f"(caller may still fall back to market if enabled)"
             )
             return OrderResult(
                 success=False,

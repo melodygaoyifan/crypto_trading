@@ -277,13 +277,31 @@ class TestGovernorConfigProfile:
         assert cfg.max_asset_exposure == 1.00
 
     def test_governor_default_is_high_risk(self):
-        """Default GovernorConfig should use HIGH_RISK values."""
+        """Default GovernorConfig must agree with the canonical rule table.
+
+        [P165] Was pinned at hard_drawdown_halt=0.10 / correlation_crisis=0.95,
+        pre-UNLEASH values (`core/constants.py` now carries 0.20 [UL-5] and 0.98
+        [UL-4]) that this repo has never held — red since the initial commit.
+
+        The literals are gone on purpose. `core/constants.OPPORTUNITY_RULE_TABLE`
+        is the declared single source of truth for these thresholds and
+        `core/risk_governor.py` is one of several consumers; the failure worth
+        catching is the two disagreeing, not either one having a specific value.
+        """
+        from core.constants import get_rule
         from core.risk_governor import GovernorConfig
+
         cfg = GovernorConfig()
-        assert cfg.hard_drawdown_halt == 0.10
-        assert cfg.correlation_crisis == 0.95
-        assert cfg.max_gross_exposure == 1.50
-        assert cfg.max_asset_exposure == 0.80
+        for field in ("hard_drawdown_halt", "correlation_crisis",
+                      "max_gross_exposure", "max_asset_exposure"):
+            expected = get_rule(field, is_opportunity=False)
+            if expected is None:
+                continue  # not tracked in the rule table
+            assert getattr(cfg, field) == expected, (
+                f"GovernorConfig.{field}={getattr(cfg, field)} disagrees with "
+                f"OPPORTUNITY_RULE_TABLE['{field}']['normal']={expected}. "
+                f"Update BOTH or neither."
+            )
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -306,6 +324,9 @@ class TestRealConfigFile:
         assert data["risk"]["hard_drawdown_halt"] == 0.25
         assert data["risk"]["correlation_crisis"] == 0.98
         assert data["risk"]["max_gross_exposure"] == 2.50
-        assert data["leverage"]["max_leverage"] == 4.0
+        # [P165] Was 4.0. `configs/canonical_config.MAX_LEVERAGE` is 3.0 and the
+        # profile tracks it; assert the parity, not the literal.
+        from configs.canonical_config import MAX_LEVERAGE
+        assert data["leverage"]["max_leverage"] == MAX_LEVERAGE
         assert data["exposure_caps"]["BTC"] == 0.60
         assert data["post_leverage_caps"]["SOL"] == 0.60

@@ -284,10 +284,26 @@ class TestConfigRoundTrip:
         assert cfg.volatility_high_threshold == 2.0
 
     def test_from_dict_defaults(self):
+        """[P165] Was pinned at 4.0/5.0 — a pre-3x-cap era this repo has never
+        been in (`configs/canonical_config.MAX_LEVERAGE = 3.0` since the initial
+        commit), so the assertion has been red from day one.
+
+        Rewritten as the invariant it was reaching for: `from_dict`'s inline
+        fallbacks must not drift from the dataclass defaults, and neither may
+        exceed the canonical leverage cap. Pinning the literal instead just
+        re-states the code and rots the next time the cap moves.
+        """
+        from configs.canonical_config import MAX_LEVERAGE
+
         cfg = DynamicLimitsConfig.from_dict({})
-        assert cfg.enabled is False
-        assert cfg.base_max_leverage == 4.0
-        assert cfg.abs_max_leverage == 5.0
+        default = DynamicLimitsConfig()
+        assert cfg.enabled is False, "an empty dict must not enable dynamic limits"
+        assert cfg.base_max_leverage == default.base_max_leverage
+        assert cfg.abs_max_leverage == default.abs_max_leverage
+        assert cfg.abs_max_leverage <= MAX_LEVERAGE, (
+            f"dynamic-limits absolute cap {cfg.abs_max_leverage} exceeds the "
+            f"canonical MAX_LEVERAGE {MAX_LEVERAGE}"
+        )
 
     def test_ultra_json_has_dynamic_limits(self):
         json_path = Path("configs/ultra_aggressive_5y.json")
@@ -297,9 +313,14 @@ class TestConfigRoundTrip:
             data = json.load(f)
         dl = data.get("dynamic_limits")
         assert dl is not None
+        from configs.canonical_config import MAX_LEVERAGE
+
         assert dl["enabled"] is True
-        assert dl["base_max_leverage"] == 4.0
-        assert dl["abs_max_leverage"] == 5.0
+        # [P165] Was 4.0/5.0. The profile tracks the canonical cap (3.0); assert
+        # the parity rather than a literal, so this fails when the profile and
+        # canonical_config disagree — which is the drift worth catching.
+        assert dl["base_max_leverage"] == MAX_LEVERAGE
+        assert dl["abs_max_leverage"] == MAX_LEVERAGE
         assert dl["base_max_gross_exposure"] == 2.50
         assert dl["abs_max_gross_exposure"] == 3.0
         assert "STRONG_TREND" in dl["regime_multipliers"]

@@ -310,13 +310,28 @@ class TestPersistence(unittest.TestCase):
         gate = _gate(state_path=Path("/nonexistent/path/state.json"))
         self.assertFalse(gate.has_active_halt)
 
-    def test_corrupt_state_file_ok(self):
-        """Gate handles corrupt state file gracefully."""
+    def test_corrupt_state_file_fails_closed(self):
+        """A corrupt state file must HALT, not start clean.
+
+        [P165] This test asserted `assertFalse(has_active_halt)` — the pre-P92
+        fail-OPEN behaviour. P92 (`risk/auto_recovery_gate.py:269-307`)
+        deliberately inverted it: "no file" is a fresh start, but "file exists
+        and is unreadable" means the recorded halt state was lost, and
+        forgetting a halt is the dangerous direction. The test was pinning the
+        exact behaviour P92 removed.
+        """
         with tempfile.TemporaryDirectory() as tmpdir:
             state_path = Path(tmpdir) / "recovery_state.json"
             state_path.write_text("NOT VALID JSON {{{")
             gate = _gate(state_path=state_path)
-            self.assertFalse(gate.has_active_halt)
+            self.assertTrue(
+                gate.has_active_halt,
+                "corrupt state must fail closed (P92) — a lost halt record "
+                "must never read as 'no halt'",
+            )
+            self.assertEqual(
+                gate.halt_state.halt_reason, "STATE_CORRUPTION_DETECTED"
+            )
 
 
 # ---------------------------------------------------------------------------

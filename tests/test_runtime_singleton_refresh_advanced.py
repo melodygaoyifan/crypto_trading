@@ -47,7 +47,12 @@ def test_authority_chain_refreshes_when_constructor_inputs_change():
     reset_authority_chain()
 
 
-def test_runtime_spine_refreshes_when_config_changes():
+def test_runtime_spine_refreshes_when_config_changes(monkeypatch):
+    # [P165] RuntimeSpine now raises at construction unless this is set
+    # (core/runtime_spine.py:362) — it is deprecated and main.py owns tick
+    # processing. The guard names this env var as the testing override, so opt
+    # in explicitly rather than weakening the guard.
+    monkeypatch.setenv("HMATS_ALLOW_RUNTIME_SPINE", "1")
     reset_runtime_spine()
     first = get_runtime_spine(SpineConfig(master_tick_seconds=14400))
     second = get_runtime_spine(SpineConfig(master_tick_seconds=7200))

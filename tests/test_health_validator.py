@@ -157,12 +157,25 @@ class TestLayer3WatchdogChecks:
         status, detail = check_drl_state_file()
         assert status in ("PASS", "SKIP")
 
-    def test_w2_drl_state_unchanged(self):
-        """Same level on next call should PASS."""
+    def test_w2_drl_state_unchanged(self, tmp_path, monkeypatch):
+        """Same level on next call should PASS.
+
+        [P165] This asserted PASS while depending on `data/drl_promotion_state.json`
+        existing on the machine running the tests. It does not exist in a fresh
+        checkout (the file is runtime state written by the engine), so
+        `check_drl_state_file` returned SKIP and the test failed for a reason that
+        had nothing to do with the code under test. Point the watchdog at a real
+        temp state file so the "unchanged" branch is actually exercised.
+        """
         from scripts.live_watchdog import check_drl_state_file
         import scripts.live_watchdog as wd
+
+        state = tmp_path / "drl_promotion_state.json"
+        state.write_text(json.dumps({"authority_level": "ACTIVE"}), encoding="utf-8")
+        monkeypatch.setattr(wd, "DRL_STATE_FILE", state)
+
         wd._last_known_drl_level = None
-        check_drl_state_file()  # first call sets level
+        assert check_drl_state_file() == ("PASS", "initial=ACTIVE")  # first call sets level
         status, detail = check_drl_state_file()  # second call
         assert status == "PASS"
         assert "unchanged" in detail
@@ -204,14 +217,32 @@ class TestTickT2DRLStability:
         c = checker._t2_drl_authority_stable(runner)
         assert c.status == "PASS"
 
-    def test_critical_on_unexpected_change(self):
+    def test_change_is_reported_and_tracked(self):
+        """A level change must be named in the detail and become the new baseline.
+
+        [P165] Was `test_critical_on_unexpected_change`, asserting CRITICAL. That
+        severity was deliberately removed on 2026-04-30 (`core/health_validator.py`
+        :410 — "auto-demote paths removed. Any change here is operator manual
+        promote/demote — informational, not CRITICAL"), so the old assertion
+        contradicted the design rather than guarding it.
+
+        What still matters, and is what the check exists for, is that a change is
+        (a) *observable* — old→new both appear in the detail — and (b) *absorbed*,
+        so the next tick compares against the new level instead of re-reporting the
+        same transition forever.
+        """
         checker = PerTickInvariantChecker()
         runner = MagicMock()
         runner._drl_authority_level = "ACTIVE"
         checker._t2_drl_authority_stable(runner)  # first tick
         runner._drl_authority_level = "EXIT_ONLY"
         c = checker._t2_drl_authority_stable(runner)  # second tick
-        assert c.status == "CRITICAL"
+        assert "ACTIVE" in c.detail and "EXIT_ONLY" in c.detail
+
+        # Third tick at the same level must read as steady state, not a change.
+        c3 = checker._t2_drl_authority_stable(runner)
+        assert c3.status == "PASS"
+        assert "unchanged" in c3.detail
 
 
 class TestTickT3CriticalStreak:

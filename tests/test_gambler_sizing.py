@@ -345,13 +345,41 @@ class TestConfigRoundTrip:
         assert gb["min_seconds_between_bets"] == 14400
         assert gb["max_bets_per_week"] == 3
 
-    def test_cloud_production_has_no_gambler(self):
+    def test_cloud_production_gambler_stays_bounded(self):
+        """[P165] Was `test_cloud_production_has_no_gambler`, asserting the block
+        was absent. It is present and deliberately so — `_description` reads
+        "[PRE-LAUNCH] Aggressive sizing for OPPORTUNITY windows … Weekly limit
+        raised 3→8, cooldown 4h→2h". An operator turned it on; a test insisting
+        it be off is stale, not a finding.
+
+        What is still worth guarding is the containment around it, so this now
+        asserts the two properties that make gambler mode survivable: it can
+        only fire in OPPORTUNITY, and a single bet can never exceed the
+        `max_bet_pct_nav` ceiling the sizing module defaults to.
+        """
+        from orchestration.gambler_sizing import GamblerSizingConfig
+
         json_path = Path("configs/cloud_production.json")
         if not json_path.exists():
             pytest.skip("cloud_production.json not found")
         with open(json_path) as f:
             data = json.load(f)
-        assert data.get("gambler") is None
+        gb = data.get("gambler")
+        if gb is None or not gb.get("enabled"):
+            return  # disabled — nothing to contain
+
+        assert gb.get("allowed_modes") == ["OPPORTUNITY"], (
+            f"gambler must stay OPPORTUNITY-only; got {gb.get('allowed_modes')}"
+        )
+        ceiling = GamblerSizingConfig().max_bet_pct_nav
+        assert gb["max_bet_pct_nav"] <= ceiling, (
+            f"gambler max_bet_pct_nav={gb['max_bet_pct_nav']} exceeds the "
+            f"module ceiling {ceiling}"
+        )
+        assert gb.get("confidence_threshold", 0) > 0, (
+            "a zero/absent confidence threshold lets gambler sizing fire on "
+            "any signal"
+        )
 
 
 # ===========================================================================

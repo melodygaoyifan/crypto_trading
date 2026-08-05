@@ -56,6 +56,25 @@ def _mock_anthropic_response(text: str):
     return response
 
 
+@pytest.fixture(autouse=True)
+def _no_ambient_anthropic_key(monkeypatch):
+    """[P165] `LLMSentimentAgent(api_key="")` does NOT disable Haiku.
+
+    The constructor is `api_key or os.environ.get("ANTHROPIC_API_KEY", "")`
+    (`sentiment_llm_agent.py:466`), and `""` is falsy — so every test in this
+    file that constructs with `api_key=""` to mean "no Haiku, exercise the
+    fallback" silently picked up the developer's ambient key instead, took the
+    Haiku branch, and **issued a real billed API call**. That is why
+    `test_fg_zscore_dict` asserted `source == "f&g"` and got `"haiku"`: the test
+    was correct, the environment was leaking into it.
+
+    Clearing the variable for the whole module makes the intent real. Tests that
+    want Haiku pass an explicit key (`_make_agent_with_mock_client`) and are
+    unaffected — and they mock the client, so nothing here touches the network.
+    """
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+
 def _make_agent_with_mock_client(response_text: str = None, side_effect=None):
     """Create an LLMSentimentAgent with a mocked anthropic client."""
     agent = LLMSentimentAgent(api_key="test-key-123")
@@ -91,8 +110,13 @@ class TestCacheStaleness:
             summary="Fresh data",
         ))
 
-        # Seed BTC cache with old timestamp (2 hours ago - beyond 1h TTL)
-        old_ts = time.time() - 7200
+        # Seed BTC cache with a timestamp past the TTL.
+        # [P165] Was a hardcoded 7200s "beyond 1h TTL". `_cache_ttl` was raised
+        # to 4h by [#11] (`sentiment_llm_agent.py:477`, "per Step 18 spec"), so
+        # 2h is now well INSIDE the TTL and the stale entry was correctly
+        # returned — the test was pinning a retired constant. Read the TTL off
+        # the agent so this cannot rot again.
+        old_ts = time.time() - (agent._cache_ttl + 60)
         agent._cache["BTC"] = SentimentResult(
             asset="BTC", direction=0.1, confidence=0.1,
             source="haiku", summary="Old BTC",
@@ -225,7 +249,19 @@ class TestLLMParsing:
 class TestHeadlineFiltering:
     @pytest.mark.asyncio
     async def test_time_filter_removes_old_headlines(self):
-        """Only headlines within the 4H window should be included."""
+        """Only headlines within the 4H window should be included.
+
+        [P165] This seeded ONE fresh BTC headline and asserted a 5h-old one was
+        excluded. `[#12]` (`sentiment_llm_agent.py:1267-1281`) since added an
+        adaptive fallback: when the 4H pass yields **fewer than 3** headlines it
+        re-scans at 8H, so a single fresh item guarantees the 5h item is pulled
+        back in. The test was exercising the fallback while asserting the primary
+        filter — it did not describe the code as written.
+
+        Seed three fresh headlines so the 4H window is satisfied on its own and
+        the expansion never triggers, which is the case the test name means.
+        `test_adaptive_window_expands_when_sparse` below covers the other branch.
+        """
         now = datetime.now(timezone.utc)
 
         @dataclass
@@ -238,11 +274,14 @@ class TestHeadlineFiltering:
         class FakeData:
             recent_news: list
 
-        fresh_item = FakeItem("BTC Fresh", ["BTC"], now - timedelta(hours=1))
+        fresh_items = [
+            FakeItem(f"BTC Fresh {i}", ["BTC"], now - timedelta(hours=1))
+            for i in range(3)
+        ]
         old_item = FakeItem("BTC Old", ["BTC"], now - timedelta(hours=5))
         eth_item = FakeItem("ETH News", ["ETH"], now - timedelta(hours=1))
 
-        fake_data = FakeData(recent_news=[fresh_item, old_item, eth_item])
+        fake_data = FakeData(recent_news=[*fresh_items, old_item, eth_item])
 
         with patch("agents.sentiment_llm_agent.fetch_headlines") as mock_fetch:
             # Actually test the real function by patching the CryptoPanic feed
@@ -263,9 +302,51 @@ class TestHeadlineFiltering:
                 from agents.sentiment_llm_agent import fetch_headlines as fh
                 headlines = await fh("BTC")
 
-        assert "BTC Fresh" in headlines
+        assert "BTC Fresh 0" in headlines
         assert "BTC Old" not in headlines  # older than 4H
         assert "ETH News" not in headlines  # wrong asset
+
+    @pytest.mark.asyncio
+    async def test_adaptive_window_expands_when_sparse(self):
+        """[P165] The other branch of `[#12]`: under 3 hits, re-scan at 8H.
+
+        Pins the behaviour that made the test above misleading, and pins its
+        bound — 5h is pulled in, 9h is still excluded, so "expand" cannot quietly
+        become "no time filter at all".
+        """
+        now = datetime.now(timezone.utc)
+
+        @dataclass
+        class FakeItem:
+            title: str
+            currencies: list
+            published_at: datetime
+
+        @dataclass
+        class FakeData:
+            recent_news: list
+
+        fake_data = FakeData(recent_news=[
+            FakeItem("BTC Fresh", ["BTC"], now - timedelta(hours=1)),
+            FakeItem("BTC Five Hours", ["BTC"], now - timedelta(hours=5)),
+            FakeItem("BTC Nine Hours", ["BTC"], now - timedelta(hours=9)),
+        ])
+
+        mock_feed = MagicMock()
+        mock_feed.get_latest.return_value = fake_data
+        mock_feed.fetch = AsyncMock()
+
+        with patch.dict("sys.modules", {
+            "data_mgmt.feeds.cryptopanic_feed": MagicMock(
+                get_cryptopanic_feed=MagicMock(return_value=mock_feed),
+            ),
+        }):
+            from agents.sentiment_llm_agent import fetch_headlines as fh
+            headlines = await fh("BTC")
+
+        assert "BTC Fresh" in headlines
+        assert "BTC Five Hours" in headlines      # 4H -> 8H expansion
+        assert "BTC Nine Hours" not in headlines  # beyond the expanded window
 
     @pytest.mark.asyncio
     async def test_dedup_headlines(self):
@@ -458,9 +539,18 @@ class TestObservability:
         agent = LLMSentimentAgent(api_key="")
         result = await agent.analyze("ETH", fg_zscore=2.5)
 
-        assert result.factual_confidence < result.subjective_confidence
+        # [P165] Was `factual_confidence < subjective_confidence`, from the era
+        # when the split was 0.3 / 0.7. [FIX-AG9] (`sentiment_llm_agent.py:899`)
+        # deliberately made it an even 0.5 / 0.5 — "F&G is ~50% factual
+        # (market-wide metric), ~50% subjective (crowd behavior)" — so the old
+        # assertion now contradicts the design. What the test name is actually
+        # about is that both halves are populated and discounted, so pin that.
         assert result.factual_confidence > 0
         assert result.subjective_confidence > 0
+        assert result.factual_confidence == result.subjective_confidence
+        # Reduced: a global, inferred proxy must never reach full confidence,
+        # even at a saturating zscore (2.5 clamps |z|/2.5 to 1.0).
+        assert result.confidence < 1.0
         # Summary should mention "global" or "inferred"
         assert "global" in result.summary.lower() or "inferred" in result.summary.lower()
 

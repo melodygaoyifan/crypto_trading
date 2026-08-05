@@ -159,7 +159,19 @@ class TestP95MutationCaught:
         """Mutate _generate_stop_userref to include stop_price in the
         hash and verify the P111 test catches it."""
         from execution.execution_manager import ExecutionManager
-        original = ExecutionManager._generate_stop_userref
+        # [P165] Must grab the DESCRIPTOR out of __dict__, not the attribute.
+        # `ExecutionManager._generate_stop_userref` unwraps the staticmethod and
+        # hands back a plain function, so the `finally` below used to restore it
+        # as a plain function — i.e. as an INSTANCE method. Every later call in
+        # the same interpreter (`execution_manager.py:2298`,
+        # `self._generate_stop_userref(symbol, side, stop_price, suffix="SL")`)
+        # then bound `self` to `symbol` and died with "got multiple values for
+        # argument 'suffix'". This test's own teardown was breaking
+        # `place_stop_loss` for the rest of the session: all 8 tests in
+        # `test_stop_order_retry_policy.py` pass alone and 7 failed in a full
+        # run. A leaked monkeypatch is a test that silently changes the code
+        # under test for everything downstream of it.
+        original = ExecutionManager.__dict__["_generate_stop_userref"]
 
         def buggy(symbol, side, stop_price, suffix="SL"):
             """The pre-P95 buggy version that included stop_price."""

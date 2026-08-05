@@ -241,8 +241,23 @@ class TestZeroFillDeferred:
     """Every attempt fills 0% -> deferred after max_attempts, no market fallback."""
 
     def test_all_attempts_zero_fill(self):
+        """[P165] `market_fallback_enabled=False` is now load-bearing here.
+
+        This class is named "no market fallback" and asserts the DEFERRED
+        result's fields, but it built its manager with the DEFAULT config —
+        and `[MARKET-FALLBACK 2026-04-15]` re-enabled the market fallback for
+        exactly this case (reprice exhausted with <10% filled), because
+        deferring produced 6+ days of zero fills in production. So the returned
+        result was the MARKET result, not the deferred one, and the test was
+        asserting the deferred contract against an object that had never been
+        through the deferred path. The sibling `test_no_market_order_placed`
+        already disables the fallback explicitly; do the same here so the test
+        exercises the branch it describes.
+        """
         exchange = FakeExchange(fill_schedule=[0.0, 0.0, 0.0])
-        mgr = _make_mgr(exchange=exchange)
+        mgr = _make_mgr(exchange=exchange, config=_make_reprice_config(
+            market_fallback_enabled=False,
+        ))
 
         result = mgr.execute_order(
             symbol="BTC/USD",
@@ -257,6 +272,33 @@ class TestZeroFillDeferred:
         assert result.maker_reprice_attempts == 3
         assert result.filled_size == pytest.approx(0.0)
         assert "exhausted" in result.error_message.lower()
+
+    def test_reprice_kpi_survives_market_fallback(self):
+        """[P165] A maker-starved fallback must not report "0 reprice attempts".
+
+        `_execute_market_order` builds a fresh `OrderResult`, so replacing the
+        deferred result with it dropped `maker_reprice_attempts` /
+        `maker_reprice_cancel_count` — in the maker-STARVED case, which is the
+        one the KPI exists to measure. That made "the reprice loop tried 3
+        times and gave up" indistinguishable from "reprice never ran", i.e. the
+        telemetry read healthy precisely when execution was degraded.
+        """
+        exchange = FakeExchange(fill_schedule=[0.0, 0.0, 0.0])
+        mgr = _make_mgr(exchange=exchange, config=_make_reprice_config(
+            market_fallback_enabled=True,
+        ))
+
+        result = mgr.execute_order(
+            symbol="BTC/USD",
+            side="BUY",
+            size=0.1,
+            price=50000.0,
+            order_type="LIMIT",
+            tick_id="tick_005b",
+        )
+
+        assert result.maker_reprice_attempts == 3
+        assert result.maker_reprice_cancel_count == 3
 
     def test_no_market_order_placed(self):
         """Verify no market order was created (only limit orders)."""
@@ -280,9 +322,15 @@ class TestZeroFillDeferred:
             assert order.get("price") is not None  # Limit orders have price
 
     def test_cancel_count_equals_attempts(self):
-        """Each unfilled attempt should be cancelled."""
+        """Each unfilled attempt should be cancelled.
+
+        [P165] Same stale premise as `test_all_attempts_zero_fill` — pin the
+        deferred branch by disabling the market fallback.
+        """
         exchange = FakeExchange(fill_schedule=[0.0, 0.0, 0.0])
-        mgr = _make_mgr(exchange=exchange)
+        mgr = _make_mgr(exchange=exchange, config=_make_reprice_config(
+            market_fallback_enabled=False,
+        ))
 
         result = mgr.execute_order(
             symbol="BTC/USD",
@@ -381,7 +429,20 @@ class TestPostOnlyPriceClamping:
         assert price >= 50010.0
 
     def test_buy_with_offset_stays_maker(self):
-        """BUY with 8bps offset: price < mid, still <= best_bid."""
+        """BUY with an offset improves on the bid but never crosses the ask.
+
+        [P165] Asserted `price <= best_bid` — the ORIGINAL semantics, which
+        `[MAKER-PRICE-FIX 2026-04-15]` deliberately removed: treating
+        `improve_bps` as "go deeper below the bid" put a 6bps offset $44 below
+        best_bid on BTC, ~14x the whole spread, and guaranteed a 0% fill rate.
+        The offset now improves the price WITHIN the spread, capped one tick
+        short of the opposite side. So the old assertion pinned the behaviour
+        the fix exists to prevent, and the two would-be-maker tests could only
+        pass on the broken version.
+
+        What "stays maker" actually means: strictly inside the opposite touch,
+        so post_only cannot reject, and no worse than the near touch.
+        """
         price = ExecutionManager._compute_post_only_limit_price(
             side=OrderSide.BUY,
             mid_price=50000.0,
@@ -389,11 +450,11 @@ class TestPostOnlyPriceClamping:
             best_bid=49990.0,
             best_ask=50010.0,
         )
-        assert price <= 49990.0
-        assert price < 50000.0  # Below mid
+        assert price < 50010.0, "a BUY at or above best_ask crosses — post_only rejects"
+        assert price >= 49990.0, "should improve on, not retreat from, best_bid"
 
     def test_sell_with_offset_stays_maker(self):
-        """SELL with 8bps offset: price > mid, still >= best_ask."""
+        """SELL mirror of the BUY case — see that test for the [P165] rationale."""
         price = ExecutionManager._compute_post_only_limit_price(
             side=OrderSide.SELL,
             mid_price=50000.0,
@@ -401,24 +462,33 @@ class TestPostOnlyPriceClamping:
             best_bid=49990.0,
             best_ask=50010.0,
         )
-        assert price >= 50010.0
-        assert price > 50000.0  # Above mid
+        assert price > 49990.0, "a SELL at or below best_bid crosses — post_only rejects"
+        assert price <= 50010.0, "should improve on, not retreat from, best_ask"
 
     def test_progressively_tighter_prices(self):
-        """Each attempt with smaller bps -> price closer to mid."""
+        """Each attempt with smaller bps -> price closer to the near touch.
+
+        [P165] The old book (bid AT mid, 10-wide spread) made every offset in
+        the schedule overshoot the `best_ask - min_tick` cap, so all three
+        prices came back identical and `prices[0] <= prices[1] <= prices[2]`
+        held trivially — a check that could not fail (P158/P159 family). Use a
+        book wide enough that the schedule is not clamped, so the ordering is
+        actually produced by `improve_bps`.
+        """
         prices = []
         for bps in [8, 5, 3]:
             p = ExecutionManager._compute_post_only_limit_price(
                 side=OrderSide.BUY,
                 mid_price=50000.0,
                 improve_bps=bps,
-                best_bid=50000.0,  # bid AT mid for this test
-                best_ask=50010.0,
+                best_bid=49900.0,
+                best_ask=50100.0,  # 200-wide: an 8bps ($40) offset is not clamped
             )
             prices.append(p)
 
-        # Each successive price should be closer to mid (higher for BUY)
-        assert prices[0] <= prices[1] <= prices[2]
+        assert prices[0] > prices[1] > prices[2], (
+            f"a larger improve_bps must push a BUY further up from the bid, got {prices}")
+        assert all(p < 50100.0 for p in prices)
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -428,8 +498,36 @@ class TestPostOnlyPriceClamping:
 class TestConfigWiring:
     """ExecutionConfig fields from profile JSON."""
 
-    def test_default_reprice_disabled(self):
-        cfg = ExecutionConfig()
+    def test_reprice_is_double_gated_and_opt_in_from_config(self):
+        """[P165] The reprice loop is gated by flag AND tick_id, and config opts in.
+
+        Was `test_default_reprice_disabled`, asserting
+        `not ExecutionConfig().enable_maker_reprice`. That default has been
+        `True` since the initial commit (`execution_manager.py:85`) — the test
+        pinned a contract that never held at all, not one that drifted.
+
+        The opt-in property it was reaching for is real, it just lives in two
+        other places: `main.py:2809` reads the key with a `False` default, so
+        a profile that says nothing gets no repricing; and the loop itself
+        additionally requires a `tick_id` (`execution_manager.py:1229`), so it
+        cannot engage on a call that has no tick to key its idempotent userrefs
+        to. Assert both, since those are what actually keep it off.
+        """
+        import inspect
+        from pathlib import Path
+
+        # Gate 1: the config plumbing defaults to OFF when a profile is silent.
+        main_src = Path("main.py").read_text(encoding="utf-8-sig")
+        assert "_ec.get('enable_maker_reprice', False)" in main_src, (
+            "main.py must default enable_maker_reprice to False when the "
+            "profile's execution section omits it")
+
+        # Gate 2: the loop needs a tick_id even when the flag is on.
+        src = inspect.getsource(ExecutionManager.execute_order)
+        assert "self.config.enable_maker_reprice and tick_id" in src, (
+            "reprice must stay double-gated on flag AND tick_id")
+
+        cfg = ExecutionConfig(enable_maker_reprice=False)
         assert not cfg.enable_maker_reprice
 
     def test_enabled_reprice_config(self):
