@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from main import HMATSProductionRunner
+from main import HMATSProductionRunner, RunMode
 from core.runtime_authority import ALLOWED_RUNTIME_AUTHORITY_STATES
 
 
@@ -14,6 +14,11 @@ def _make_runner(tmp_path):
         initial_capital=10_000.0,
         risk_profile="HIGH_RISK",
         assets=["BTC", "ETH", "SOL"],
+        # [P160] Required by _export_dashboard_state (ProductionConfig.mode,
+        # main.py:1361), which is the entry point these tests drive. Without
+        # it the AttributeError was swallowed at DEBUG and every assertion
+        # failed on a missing file instead of naming the cause.
+        mode=RunMode.PAPER,
     )
     runner.account_sync = None
     runner.dead_man_switch = None

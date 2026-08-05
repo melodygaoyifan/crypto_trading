@@ -314,7 +314,23 @@ def main() -> int:
     # machine that DOES have mypy. Carry the baseline forward instead, and say
     # loudly that this run did not check.
     mypy_unavailable = isinstance(mypy_norm, dict) and "unavailable" in mypy_norm
-    if mypy_unavailable and MYPY_BASELINE.exists():
+    # [P161] Same idea one level up: a baseline produced by a DIFFERENT mypy
+    # release is not a baseline for this one. Upgrading 1.x -> 2.3.0 moved the
+    # total DOWN (1080 -> 1073) while five error codes went UP, and since _diff
+    # only flags increases that surfaced as 10 phantom "NEW findings" and
+    # blocked the deploy gate with no code regression behind it. Neither
+    # passing nor failing is honest here — the comparison cannot be made — so
+    # carry the baseline forward and say so, exactly as for a missing mypy.
+    _base_ver = None
+    if MYPY_BASELINE.exists():
+        _base_ver = json.loads(
+            MYPY_BASELINE.read_text(encoding="utf-8")
+        ).get("mypy_version")
+    _cur_ver = mypy_norm.get("mypy_version") if isinstance(mypy_norm, dict) else None
+    mypy_version_mismatch = (
+        not mypy_unavailable and _base_ver != _cur_ver and not args.update
+    )
+    if (mypy_unavailable or mypy_version_mismatch) and MYPY_BASELINE.exists():
         mypy_norm = json.loads(MYPY_BASELINE.read_text(encoding="utf-8"))
 
     # [P120 2026-04-27] signal-freshness baseline — locks 266 BLIND
@@ -335,6 +351,24 @@ def main() -> int:
             f"  {mypy_raw.get('unavailable')}\n"
             "  The previous baseline was carried forward unchanged; this run\n"
             "  did NOT verify type errors. Install mypy to restore the check.\n"
+            + "=" * 70,
+            file=sys.stderr,
+        )
+
+    if mypy_version_mismatch:
+        print(
+            "=" * 70 + "\n"
+            "[ci_check] WARNING — mypy check SKIPPED (analyzer version differs\n"
+            "  from the one that produced the baseline).\n"
+            f"  baseline: mypy {_base_ver or '<unstamped>'}   this run: mypy "
+            f"{_cur_ver or '<unknown>'}\n"
+            "  Per-code counts are a fingerprint of the mypy release, so a\n"
+            "  cross-version diff reports phantom regressions. The previous\n"
+            "  baseline was carried forward unchanged; this run did NOT verify\n"
+            "  type errors. To restore the check, either install the baseline's\n"
+            "  version, or re-baseline deliberately on a clean tree:\n"
+            "    python -X utf8 tools/ci_check_invariants.py --update\n"
+            "  and commit tools/scanner_baselines/mypy_baseline.json.\n"
             + "=" * 70,
             file=sys.stderr,
         )

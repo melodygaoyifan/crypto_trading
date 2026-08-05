@@ -54,6 +54,32 @@ class MypyUnavailable(RuntimeError):
         )
 
 
+def mypy_version() -> str:
+    """[P161] The analyzer version, stamped into the baseline.
+
+    Per-code counts are a fingerprint of the mypy release, not just of the
+    code: upgrading mypy reclassifies errors between codes. Observed here
+    going 1.x -> 2.3.0, the TOTAL fell 1080 -> 1073 while five individual
+    codes rose (+2 arg-type, +2 float, +2 index, +1 operator, +3
+    var-annotated) — ten phantom "NEW findings" that blocked the deploy
+    gate with zero code regressions behind them.
+
+    So the baseline is only meaningful against the version that produced it,
+    and a comparison across versions is not a passing check nor a failing
+    one — it is a check that cannot be made.
+    """
+    r = subprocess.run(
+        [sys.executable, "-m", "mypy", "--version"],
+        capture_output=True, text=True, cwd=REPO,
+    )
+    out = (r.stdout + r.stderr).strip()
+    if r.returncode != 0 and "No module named mypy" in out:
+        raise MypyUnavailable(sys.executable)
+    # "mypy 2.3.0 (compiled: yes)" -> "2.3.0"
+    m = re.match(r"mypy\s+(\S+)", out)
+    return m.group(1) if m else out or "unknown"
+
+
 def run_mypy(paths: List[str]) -> str:
     """Run mypy in non-strict mode (catches real bugs without
     drowning in annotation noise). --ignore-missing-imports avoids
@@ -109,6 +135,7 @@ def main() -> int:
 
     paths = args.paths if args.paths else CRITICAL_DIRS
     try:
+        version = mypy_version()
         output = run_mypy(paths)
     except MypyUnavailable as err:
         # [P159] Report unavailability as DATA, not as zero findings. The
@@ -129,6 +156,10 @@ def main() -> int:
         result = {
             "by_code": dict(sorted(by_code.items())),
             "total_count": total,
+            # [P161] Stamped so ci_check_invariants can tell "these counts are
+            # comparable to the baseline" from "a different analyzer produced
+            # them". Without it, a mypy upgrade reads as a code regression.
+            "mypy_version": version,
         }
         print(json.dumps(result, indent=2, sort_keys=True))
         return 0
@@ -137,7 +168,8 @@ def main() -> int:
         print("[lint_mypy_baseline] OK — 0 errors.")
         return 0
 
-    print(f"[lint_mypy_baseline] {total} errors across {len(by_code)} codes:")
+    print(f"[lint_mypy_baseline] mypy {version} — "
+          f"{total} errors across {len(by_code)} codes:")
     for code, count in sorted(by_code.items(), key=lambda x: -x[1]):
         print(f"  [{code}]: {count}")
     print(

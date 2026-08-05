@@ -25,7 +25,12 @@ import pytest
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
-from tools.lint_mypy_baseline import MypyUnavailable, parse_errors, run_mypy
+from tools.lint_mypy_baseline import (
+    MypyUnavailable,
+    mypy_version,
+    parse_errors,
+    run_mypy,
+)
 
 
 def test_missing_mypy_raises_instead_of_returning_empty(monkeypatch):
@@ -83,6 +88,66 @@ def test_baseline_format_emits_unavailable_sentinel_not_zero():
         )
     else:
         assert payload["total_count"] == sum(payload["by_code"].values())
+
+
+# ---------------------------------------------------------------------------
+# [P161] the baseline is only comparable to the analyzer that produced it
+# ---------------------------------------------------------------------------
+
+def test_version_is_parsed_from_mypy_banner(monkeypatch):
+    class _R:
+        returncode = 0
+        stdout = "mypy 2.3.0 (compiled: yes)\n"
+        stderr = ""
+
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: _R())
+    assert mypy_version() == "2.3.0"
+
+
+def test_version_probe_reports_unavailable_rather_than_a_fake_version(monkeypatch):
+    """A missing tool must fail the same way here as in run_mypy — otherwise
+    the stamp would read as a real version and the counts as comparable."""
+    class _R:
+        returncode = 1
+        stdout = ""
+        stderr = f"{sys.executable}: No module named mypy\n"
+
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: _R())
+    with pytest.raises(MypyUnavailable):
+        mypy_version()
+
+
+def test_baseline_format_stamps_the_analyzer_version():
+    """Without this stamp a mypy upgrade is indistinguishable from a code
+    regression: going 1.x -> 2.3.0 dropped the TOTAL 1080 -> 1073 while five
+    individual codes ROSE, and the gate only flags increases."""
+    r = subprocess.run(
+        [sys.executable, "-X", "utf8", "tools/lint_mypy_baseline.py",
+         "--baseline-format"],
+        capture_output=True, text=True, cwd=REPO,
+    )
+    assert r.returncode == 0, r.stderr
+    payload = json.loads(r.stdout)
+    if "unavailable" not in payload:
+        assert payload.get("mypy_version"), (
+            "counts without a version stamp cannot be compared to a baseline"
+        )
+
+
+def test_gate_does_not_report_phantom_findings_on_this_machine():
+    """End-to-end: the deploy gate must exit 0 on an unmodified checkout.
+
+    This is the regression that mattered — 10 phantom mypy 'NEW findings'
+    blocked `scripts/hetzner_deploy.sh` at step 0/5 with no code change
+    behind them.
+    """
+    r = subprocess.run(
+        [sys.executable, "-X", "utf8", "tools/ci_check_invariants.py"],
+        capture_output=True, text=True, cwd=REPO,
+    )
+    assert r.returncode == 0, (
+        f"CI gate failed:\n{r.stdout}\n{r.stderr}"
+    )
 
 
 def test_ci_check_never_writes_a_zero_mypy_baseline(tmp_path):

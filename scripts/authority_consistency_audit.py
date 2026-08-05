@@ -91,7 +91,12 @@ def _detect_grep_mode() -> str:
     global _GREP_MODE
     if _GREP_MODE is not None:
         return _GREP_MODE
-    probe = r"\bcanary_probe\b\s*=\s*1"
+    # Probe ALL THREE escape classes the patterns in this file actually use.
+    # \s and \b alone are not enough: glibc regcomp (Linux CI) implements
+    # those two but NOT \d, so an \s/\b-only canary would happily select `-E`
+    # there and leave every \d pattern — DRL_PUNCH_THROUGH_CONF, BEST_FOLDS_ETH
+    # — silently matching nothing, which is the exact bug P158 fixes.
+    probe = r"\bcanary_probe\b\s*=\s*\d"
     for mode in ("-P", "-E"):
         try:
             r = subprocess.run(
@@ -104,11 +109,13 @@ def _detect_grep_mode() -> str:
             _GREP_MODE = mode
             return mode
     raise RuntimeError(
-        "[_git_grep] no available git grep engine honours \\s and \\b "
+        "[_git_grep] no available git grep engine honours \\s, \\b AND \\d "
         "(tried -P then -E). Every pattern in this audit is written in Python "
         "re syntax, so under such an engine the audit silently reports zero "
         "hits for wiring that exists — 20 phantom 'no direct writer' issues "
-        "and 22 phantom dead flags. Refusing to produce false findings. "
+        "and 22 phantom dead flags on BSD regcomp, or a silently unevaluated "
+        "DRL_PUNCH_THROUGH_CONF on glibc regcomp, which implements \\s and \\b "
+        "but not \\d. Refusing to produce false findings. "
         "Install a git built with PCRE support (git grep -P)."
     )
 

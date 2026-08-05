@@ -76,6 +76,34 @@ def test_detect_grep_mode_is_stable_and_valid():
     assert _detect_grep_mode() == mode  # cached, no re-probe drift
 
 
+def test_a_digit_blind_engine_is_rejected_rather_than_selected(monkeypatch):
+    """Simulates glibc regcomp (Linux CI): \\s and \\b work, \\d does not.
+
+    An \\s/\\b-only canary would happily select `-E` there and leave every
+    \\d pattern matching nothing — reintroducing P158 on the machine that
+    gates every push. The probe must therefore exercise \\d too.
+    """
+    import scripts.authority_consistency_audit as audit
+
+    real_run = subprocess.run
+
+    def fake_run(args, **kwargs):
+        if "-P" in args:                      # git built without PCRE
+            class R:
+                returncode, stdout, stderr = 128, "", "PCRE not supported"
+            return R()
+        if r"\d" in args[-1]:                 # glibc: \d unimplemented
+            class R:
+                returncode, stdout, stderr = 1, "", ""
+            return R()
+        return real_run(args, **kwargs)
+
+    monkeypatch.setattr(audit, "_GREP_MODE", None)
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    with pytest.raises(RuntimeError, match=r"\\d"):
+        audit._detect_grep_mode()
+
+
 # ---------------------------------------------------------------------------
 # the findings the broken engine fabricated
 # ---------------------------------------------------------------------------

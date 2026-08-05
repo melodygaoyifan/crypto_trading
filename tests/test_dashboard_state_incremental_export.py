@@ -1,13 +1,22 @@
 import json
 from types import SimpleNamespace
 
-from main import HMATSProductionRunner
+from main import HMATSProductionRunner, RunMode
 from core.runtime_authority import ALLOWED_RUNTIME_AUTHORITY_STATES
 
 
 def _make_runner(tmp_path):
     runner = HMATSProductionRunner.__new__(HMATSProductionRunner)
-    runner.config = SimpleNamespace(initial_capital=10_000.0, risk_profile="HIGH_RISK")
+    # `mode` is read by _export_dashboard_state (ProductionConfig.mode,
+    # main.py:1361). Omitting it raised AttributeError inside the method's
+    # blanket `except Exception`, which logged at DEBUG and returned without
+    # writing the file — so both tests failed on a missing file with no clue
+    # why. See test_dashboard_export_failure_is_visible below.
+    runner.config = SimpleNamespace(
+        initial_capital=10_000.0,
+        risk_profile="HIGH_RISK",
+        mode=RunMode.PAPER,
+    )
     runner.account_sync = None
     runner._paper_positions = {}
     runner._position_entry_times = {}

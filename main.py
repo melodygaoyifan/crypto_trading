@@ -16436,7 +16436,36 @@ class HMATSProductionRunner:
                 runtime_ts=_runtime_ts,
             )
         except Exception as e:
-            logger.debug(f"[DASHBOARD] State export failed: {e}")
+            # [P160] Was logger.debug — invisible at production log levels.
+            # This method is the ONLY writer of dashboard_state.json, which is
+            # what the API serves and what an operator reads to decide whether
+            # the engine is alive. A persistent failure here (one bad attribute
+            # is enough — a SimpleNamespace missing `mode` reproduces it) froze
+            # the dashboard at its last good values with nothing said anywhere.
+            # Same shape as P155/P156: state that reads as live but stopped
+            # updating. Keep it non-fatal — a diagnostics writer must never
+            # kill the tick — but make a sustained outage impossible to miss.
+            self._dashboard_export_fail_count = (
+                getattr(self, "_dashboard_export_fail_count", 0) + 1
+            )
+            _n = self._dashboard_export_fail_count
+            # 1st, 10th, then every 100th: loud enough to notice, quiet enough
+            # not to bury the log if it fails every tick forever.
+            if _n == 1 or _n == 10 or _n % 100 == 0:
+                logger.error(
+                    f"[DASHBOARD] State export FAILED ({type(e).__name__}: {e}) "
+                    f"— consecutive failures={_n}. dashboard_state.json is "
+                    f"STALE; anything reading it is showing old values.",
+                    exc_info=(_n == 1),
+                )
+        else:
+            _prev_fails = getattr(self, "_dashboard_export_fail_count", 0)
+            if _prev_fails:
+                logger.warning(
+                    f"[DASHBOARD] State export recovered after {_prev_fails} "
+                    f"consecutive failures."
+                )
+            self._dashboard_export_fail_count = 0
 
     # ── Structure mode helpers (delegated to core/structure_mode_service.py) ──
 
