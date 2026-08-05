@@ -287,6 +287,24 @@ discipline + the grep habit.
 
 ### Recent pitfalls (last ~30 days)
 
+### P159. [FIXED 2026-08-04] "mypy is not installed" was recorded as "mypy found 0 errors", and `--update` then zeroed the baseline
+- `tools/lint_mypy_baseline.py:run_mypy` shells out to `sys.executable -m mypy`. When mypy is absent that command **exits 1 and prints to stderr** — it does **not** raise `FileNotFoundError`, so the `except FileNotFoundError` guard was unreachable (**P152 shape**: guard defined but never called). `parse_errors()` then found no `error: … [code]` lines and reported `total_count: 0`.
+- Two consequences, second one worse: (1) in check mode the count only ever went *down* vs baseline and the gate only flags *increases*, so the mypy check **passed silently without ever running**; (2) `ci_check_invariants --update` on such a machine **rewrote `mypy_baseline.json` from 1080 → 0**, which would then fail the gate with **+1080** on every machine that does have mypy. This machine (`/Users/yifangao/miniconda3/bin/python`) has no mypy, so any local rebaseline was one commit away from breaking CI for everyone.
+- Fixed: `run_mypy` raises `MypyUnavailable`; the scanner emits `{"unavailable": …}` as **data** rather than a zero count; `ci_check_invariants` carries the previous baseline forward and prints a loud `mypy check SKIPPED` banner. **A missing tool is a broken check, never a passing one.** Tests: `tests/test_mypy_baseline_unavailable.py`.
+- **mypy is a declared dev dependency** (`requirements-train.txt:59`) — `pip install mypy` restores the check.
+
+### P158. [FIXED 2026-08-04] The authority audit silently matched nothing — 20 phantom "no direct writer" issues, 22 phantom dead flags, and one check that had never run in the project's history
+- Every pattern in `scripts/authority_consistency_audit.py` is authored in **Python `re` syntax** (`\s`, `\b`, `\d`) but executed by **`git grep`**, whose engine depends on how git was *built*. An unsupported escape is **not a syntax error**: the pattern compiles, matches nothing, and git grep exits **1 = "no matches"** — indistinguishable from the wiring genuinely being absent. The 2026-04-25 hardening only caught exit > 1.
+- **Engine matrix — this is the load-bearing detail:**
+  | escape | glibc regcomp (Linux CI) | BSD regcomp (macOS, Apple git 2.39) | PCRE (`git grep -P`) |
+  |---|---|---|---|
+  | `\s` `\b` `\w` | ✅ GNU extensions | ❌ | ✅ |
+  | `\d` | ❌ **not implemented** | ❌ | ✅ |
+- So on macOS the whole audit went dark (Section A reported "no direct writer" for **all 20** agents; Section B reported **22 dead `ENABLE_*` flags**), and on Linux CI `\d` never worked either — meaning **`DRL_PUNCH_THROUGH_CONF` was never once evaluated**, which is why the baseline had no entry for it despite the drift predating the baseline commit. `BEST_FOLDS_ETH` (the only other `\d` pattern) happens to be clean.
+- Fixed: `_detect_grep_mode()` probes the engine **once** against a known canary line using `\s` and `\b`, prefers `-P`, and **raises** if no available engine honours the escapes rather than emitting a wall of false findings. Tests: `tests/test_authority_audit_regex_engine.py` pins the engine contract, not any particular finding.
+- **When adding a tracked constant/pattern here, verify it actually matches something.** A pattern that matches nothing is an unevaluated check that reads in the baseline exactly like a clean one — `test_every_git_grep_pattern_in_tracked_constants_matches_something` now enforces this.
+- Accepted into the baseline (**not** a regression, and deliberately **not** "fixed" by editing live thresholds): `DRL_PUNCH_THROUGH_CONF` observes 5 values at 5 *semantically distinct* decision points — `0.3` entry punch-through (`integration_v36.py:784`, `main.py:5304/5344`), `0.35` DRL-vs-position conflict (`execution_service.py:2682/2734`, `integration_v36.py:2250/2255`), `0.4` exit alignment (`tick_exit_triggers.py:144`), `0.55` (`integration_v36.py:2253`) and `0.6` strong-conviction exit (`tick_exit_triggers.py:496`).
+
 ### P157. [FIXED 2026-08-04] Phase 1 audit buckets read as 7 ad-hoc labels instead of a taxonomy
 - `configs/strategy_v5_1_decisions.json` classified 12 strategies into buckets meant to be *class letter + descriptive suffix*, but two entries (`derivatives_cascade`, `vol_options_derived`) were written with no letter — so the set looked like 7 unrelated labels and the "5-bucket categorization" the phase was described as never existed in any form. Renamed to `E_derivatives_cascade` / `F_vol_options_derived`; the real taxonomy is **six** classes A–F, now documented in `_meta.bucket_taxonomy`.
 - **No decision changed** (`KEEP_IMPROVE` 4 / `KEEP_AS_IS` 4 / `ARCHIVE` 3 / `DEFER_v6` 1), and this is safe because `bucket` has **no production consumer** — the engine reads only `archived` and `decision` (`agents/kraken_quant_agent.py:2303`, `analytics/sixty_day_review/review_aggregator.py:445`).

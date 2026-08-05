@@ -306,6 +306,16 @@ def main() -> int:
         "--baseline-format",
     ])
     mypy_norm = mypy_raw
+    # [P159] "mypy is not installed" must never read as "mypy found nothing".
+    # `python -m mypy` with mypy absent exits 1 and prints to stderr; the old
+    # FileNotFoundError guard in the scanner never fired, so parse_errors saw
+    # no "error: [code]" lines and reported 0. Under --update that overwrote
+    # the 1080-finding baseline with 0, arming a +1080 gate failure for every
+    # machine that DOES have mypy. Carry the baseline forward instead, and say
+    # loudly that this run did not check.
+    mypy_unavailable = isinstance(mypy_norm, dict) and "unavailable" in mypy_norm
+    if mypy_unavailable and MYPY_BASELINE.exists():
+        mypy_norm = json.loads(MYPY_BASELINE.read_text(encoding="utf-8"))
 
     # [P120 2026-04-27] signal-freshness baseline — locks 266 BLIND
     # agent_signals[X] writes (no freshness guard, no per-signal timestamp).
@@ -317,6 +327,17 @@ def main() -> int:
         "--baseline-format",
     ])
     freshness_norm = freshness_raw
+
+    if mypy_unavailable:
+        print(
+            "=" * 70 + "\n"
+            "[ci_check] WARNING — mypy check SKIPPED (mypy not installed).\n"
+            f"  {mypy_raw.get('unavailable')}\n"
+            "  The previous baseline was carried forward unchanged; this run\n"
+            "  did NOT verify type errors. Install mypy to restore the check.\n"
+            + "=" * 70,
+            file=sys.stderr,
+        )
 
     if args.update:
         AUTHORITY_BASELINE.write_text(

@@ -470,8 +470,14 @@ class PerTickInvariantChecker:
                     f"mode={mode} alpha_gate_passed={gate_ok} "
                     f"alpha={float(getattr(intent, 'alpha_estimated_bps', 0.0) or 0.0):.1f}bps"
                     f"/thresh={float(getattr(intent, 'alpha_threshold_bps', 0.0) or 0.0):.1f}bps")
-        except Exception as err:  # diagnostics must never break the tick
-            return f"blocker_introspection_failed={err}"
+        except Exception as err:  # noqa: silent-swallow
+            # Diagnostics must never break the tick, and this is NOT a silent
+            # swallow: the failure is surfaced by return value, which the caller
+            # embeds verbatim in the HEALTH_T3 CRITICAL line. Logging here too
+            # would double-report on every tick of a multi-hundred-tick streak.
+            # Carry the type name — a bare str(err) is empty for AttributeError.
+            return (f"blocker_introspection_failed="
+                    f"{type(err).__name__}: {err}")
 
     def _t3_intent_actionable(self, asset, intent) -> HealthCheck:
         """Track consecutive non-actionable ticks.

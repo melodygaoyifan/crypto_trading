@@ -38,6 +38,22 @@ REPO = Path(__file__).resolve().parents[1]
 CRITICAL_DIRS = ["risk", "core", "defense", "analytics", "signals", "execution"]
 
 
+class MypyUnavailable(RuntimeError):
+    """[P159] mypy is not importable by this interpreter.
+
+    Distinct from "mypy ran and found nothing". Conflating the two is what
+    let `ci_check_invariants --update` rewrite the baseline from 1080 findings
+    to 0 on a machine without mypy — which would then fail the gate with
+    +1080 on every machine that has it.
+    """
+
+    def __init__(self, interpreter: str):
+        super().__init__(
+            f"mypy is not installed in {interpreter}. "
+            f"Run: pip install mypy  (declared in requirements-train.txt)"
+        )
+
+
 def run_mypy(paths: List[str]) -> str:
     """Run mypy in non-strict mode (catches real bugs without
     drowning in annotation noise). --ignore-missing-imports avoids
@@ -51,10 +67,23 @@ def run_mypy(paths: List[str]) -> str:
     ]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, cwd=REPO)
-        return r.stdout + r.stderr
     except FileNotFoundError:
+        # [P159] Unreachable in practice: the executable is sys.executable,
+        # which by definition exists. Kept only for the pathological case.
         print("ERROR: mypy not installed. Run: pip install mypy", file=sys.stderr)
         sys.exit(2)
+    out = r.stdout + r.stderr
+    # [P159] `python -m mypy` with mypy absent exits 1 and prints
+    # "No module named mypy" to stderr — it does NOT raise FileNotFoundError,
+    # so the guard above never fired. parse_errors() then found no
+    # "error: ... [code]" lines and reported ZERO findings, which is
+    # indistinguishable from a clean tree. Under `ci_check_invariants --update`
+    # that silently rewrote the baseline from 1080 findings to 0, which would
+    # then make the gate fail with +1080 on any machine that DOES have mypy.
+    # A missing tool is a broken check, never a passing one.
+    if r.returncode != 0 and "No module named mypy" in out:
+        raise MypyUnavailable(sys.executable)
+    return out
 
 
 def parse_errors(output: str) -> Dict[str, int]:
@@ -79,7 +108,19 @@ def main() -> int:
     args = ap.parse_args()
 
     paths = args.paths if args.paths else CRITICAL_DIRS
-    output = run_mypy(paths)
+    try:
+        output = run_mypy(paths)
+    except MypyUnavailable as err:
+        # [P159] Report unavailability as DATA, not as zero findings. The
+        # consumer (ci_check_invariants) carries the previous baseline forward
+        # and prints a SKIPPED banner rather than silently passing a check
+        # that never ran.
+        print(f"[lint_mypy_baseline] UNAVAILABLE: {err}", file=sys.stderr)
+        if args.baseline_format:
+            print(json.dumps({"unavailable": str(err)}, indent=2, sort_keys=True))
+            return 0
+        return 2
+
     by_code = parse_errors(output)
     total = sum(by_code.values())
 

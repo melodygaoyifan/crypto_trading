@@ -21,6 +21,15 @@
     "matrix_size": 25
   },
   "constants": {
+    "DRL_PUNCH_THROUGH_CONF": {
+      "drift_values": [
+        "0.35",
+        "0.4",
+        "0.55",
+        "0.6"
+      ],
+      "expected": "0.3"
+    },
     "MAX_LEVERAGE": {
       "drift_values": [
         "2",

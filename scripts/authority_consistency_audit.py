@@ -58,6 +58,61 @@ EXCLUDE_DIRS = (
 )
 
 
+# [P158] Regex-engine canary. Every pattern in this file is authored in
+# PYTHON `re` syntax (they are built with re.escape and use \s / \b), but they
+# are executed by git grep, whose engine depends on how git was BUILT. Apple
+# git 2.39 with `-E` uses the system POSIX ERE, where \s and \b are NOT
+# supported: `\b` matches nothing and `\s*` collapses to zero-width, so
+# `agent_signals\["quant_direction"\]\s*=` never matches the real
+# `agent_signals["quant_direction"] = sig`.
+#
+# The failure is silent in the worst possible way: the pattern is syntactically
+# VALID, so git grep exits 1 = "no matches" — indistinguishable from a genuine
+# absence. The 2026-04-25 hardening above only catches exit > 1 (syntax
+# errors). On macOS this made Section A report "no direct writer" for all 20
+# agents and Section B report 22 dead ENABLE_* flags, none of which are real.
+#
+# So: probe the engine once against a line in THIS file whose content is known,
+# using both \s and \b. If the probe fails the escapes are not honoured, and
+# every finding this scanner produces would be a false positive — that is a
+# hard error, never a quiet degradation.
+_REGEX_ENGINE_CANARY = "canary_probe = 1"  # do not edit: _detect_grep_mode greps this
+_GREP_MODE: str | None = None
+
+
+def _detect_grep_mode() -> str:
+    """Return the git-grep regex flag whose engine honours \\s and \\b.
+
+    Prefers `-P` (PCRE, exactly the Python syntax the patterns are written in)
+    and falls back to `-E` only if the local git honours the escapes anyway
+    (GNU builds do). Raises if neither works, because the alternative is
+    emitting a wall of false findings that reads like a real regression.
+    """
+    global _GREP_MODE
+    if _GREP_MODE is not None:
+        return _GREP_MODE
+    probe = r"\bcanary_probe\b\s*=\s*1"
+    for mode in ("-P", "-E"):
+        try:
+            r = subprocess.run(
+                ["git", "grep", "-l", mode, probe],
+                capture_output=True, text=True, cwd=REPO_ROOT,
+            )
+        except FileNotFoundError:
+            break
+        if r.returncode == 0 and "authority_consistency_audit.py" in r.stdout:
+            _GREP_MODE = mode
+            return mode
+    raise RuntimeError(
+        "[_git_grep] no available git grep engine honours \\s and \\b "
+        "(tried -P then -E). Every pattern in this audit is written in Python "
+        "re syntax, so under such an engine the audit silently reports zero "
+        "hits for wiring that exists — 20 phantom 'no direct writer' issues "
+        "and 22 phantom dead flags. Refusing to produce false findings. "
+        "Install a git built with PCRE support (git grep -P)."
+    )
+
+
 def _git_grep(pattern: str, files_only: bool = False) -> list[str]:
     """Run git grep against the live tree (excluding archive/legacy).
 
@@ -68,10 +123,14 @@ def _git_grep(pattern: str, files_only: bool = False) -> list[str]:
     audit/safety-defense slice 1, 2026-04-25 — POSIX ERE rejected a
     Perl negative-lookahead and the audit never noticed). Surface any
     return code above 1 to stderr so the next syntax error is loud.
+
+    [P158] Exit 1 is the *other* half of that hazard — a valid pattern the
+    engine cannot honour also reports "no matches". See _detect_grep_mode.
     """
-    args = ["git", "grep", "-n", "-E", pattern]
+    mode = _detect_grep_mode()
+    args = ["git", "grep", "-n", mode, pattern]
     if files_only:
-        args = ["git", "grep", "-l", "-E", pattern]
+        args = ["git", "grep", "-l", mode, pattern]
     try:
         r = subprocess.run(args, capture_output=True, text=True, cwd=REPO_ROOT)
     except FileNotFoundError:
@@ -363,12 +422,23 @@ TRACKED_CONSTANTS = [
         "p_history": "P4 + P53 ETH fold_1 stale -> fold_3",
     },
     {
+        # [P158] This check had NEVER RUN before 2026-08-04. It is the only
+        # tracked constant whose pattern used `\d`, which git's POSIX engine
+        # does not support on EITHER platform in use here — glibc regcomp
+        # implements the GNU escapes \s \b \w but not \d, and BSD regcomp
+        # implements none of them. So it silently matched nothing everywhere,
+        # which is why the baseline has no entry for it despite the drift
+        # predating the baseline commit. Now runs under `-P`.
+        #
+        # The old capture was `0\.(\d+)`, which reported "35"/"3" — and made
+        # `expected: "30"` unsatisfiable by construction, since the canonical
+        # sites are written `0.3`, not `0.30`. Capture the whole literal.
         "name": "DRL_PUNCH_THROUGH_CONF",
         "patterns": [
-            r"_drl_conf\s*>=\s*0\.(\d+)",  # most live thresholds are 0.30
+            r"_drl_conf\s*>=\s*(0\.\d+)",
         ],
-        "expected": "30",
-        "p_history": "P19/P20/P46 all use 0.30",
+        "expected": "0.3",
+        "p_history": "P19/P20/P46 all use 0.30; P158 check first executed",
     },
     {
         # [P59 2026-04-25] hard_drawdown_halt — CLAUDE.md says canonical=20%
