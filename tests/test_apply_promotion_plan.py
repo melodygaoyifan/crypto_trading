@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+import analytics.promotion_gate.apply_promotion_plan as ap
 from analytics.promotion_gate.apply_promotion_plan import (
     apply_archive_actions,
     atomic_write,
@@ -27,6 +28,38 @@ from analytics.promotion_gate.apply_promotion_plan import (
     simulate_archive_iron_law_6,
     write_audit_log,
 )
+
+
+@pytest.fixture(autouse=True)
+def _no_writes_into_the_repo(tmp_path, monkeypatch):
+    """Point every repo-writing global at tmp_path, for every test in the file.
+
+    `test_main_confirm_executes_atomic_archive` drives `main(--confirm)`, which
+    calls `write_audit_log`, which writes `APPLIED_DIR/applied_<utc_ts>.json`.
+    Only two tests patched APPLIED_DIR, so the rest deposited a real audit
+    record into the working tree on every run — 36 of them had accumulated
+    under analytics/promotion_gate/applied/ before this fixture existed. They
+    are indistinguishable from records of real operator applications except by
+    reading input_plan_path and noticing it points at /var/folders (pytest
+    tmp_path). An audit log whose contents are mostly test droppings is not an
+    audit log.
+
+    DECISIONS_PATH is redirected for the same reason and a worse one: it is the
+    default argument of `execute_confirm`, so a test that omits `decisions_path`
+    would archive strategies in the live configs/strategy_v5_1_decisions.json —
+    changing what the running system trades. Nothing currently does that; this
+    makes it impossible rather than merely unobserved.
+
+    Autouse, not per-test, because the failure mode is *forgetting* to patch.
+    tests/conftest.py::pytest_sessionfinish independently fails the run if
+    anything lands in those directories anyway — this fixture prevents it, that
+    guard proves the prevention worked.
+    """
+    monkeypatch.setattr(ap, "APPLIED_DIR", tmp_path / "applied")
+    monkeypatch.setattr(ap, "PENDING_UPDATE_DIR", tmp_path / "pending_data")
+    decisions = tmp_path / "strategy_v5_1_decisions.json"
+    decisions.write_text(json.dumps({"strategies": {}}), encoding="utf-8")
+    monkeypatch.setattr(ap, "DECISIONS_PATH", decisions)
 
 
 # ---------- load_plan ------------------------------------------------------

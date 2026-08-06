@@ -148,7 +148,18 @@ buckets = {"aligned": [], "opposed": [], "silent": [], "no_signal": []}
 authority_seen = defaultdict(int)
 
 _skipped_no_ts = 0
+_skipped_orphan = 0
 for t in trades:
+    # [P185] `entry_recorded is False` marks a trade whose exit arrived with no
+    # matching record_entry — the entry_* fields are defaults, not
+    # measurements. Counted separately from an unparseable timestamp because
+    # they have different causes and different fixes: an orphan means the
+    # position straddled a restart (TradeAttributor now persists open trades),
+    # a parse failure means the writer emitted a timestamp nothing can read.
+    # Legacy records predate the flag; there, an empty entry_time is the tell.
+    if t.get("entry_recorded") is False:
+        _skipped_orphan += 1
+        continue
     if not t.get("entry_time"):
         _skipped_no_ts += 1
         continue
@@ -202,10 +213,15 @@ _unmatched = len(buckets["no_signal"])
 print("="*78)
 print(f"COVERAGE: {_matched}/{len(trades)} closed trades matched a DRL signal "
       f"within +/-4h of entry "
-      f"({_unmatched} had no nearby signal, {_skipped_no_ts} had no usable "
-      f"entry_time and were dropped before bucketing; {len(sig_idx)} "
+      f"({_unmatched} had no nearby signal, {_skipped_orphan} were orphans "
+      f"[P185: exit with no recorded entry], {_skipped_no_ts} had an "
+      f"unparseable entry_time; all dropped before bucketing. {len(sig_idx)} "
       f"asset-days indexed from "
       f"{len(sorted(SIG_DIR.glob('signals_*.jsonl')))} file(s))")
+if _skipped_orphan:
+    print(f"  NOTE: those {_skipped_orphan} orphans also carry entry_fee_usd="
+          f"0.0, so their net_pnl_usd understates cost by roughly one taker "
+          f"fee. Realized-PnL totals taken from this file inherit that.")
 if _matched == 0:
     print("  WARNING: zero matches. Every number below is about the absence "
           "of overlap between the signal files and the trade window, NOT "
@@ -240,6 +256,7 @@ print("="*78)
 hi_aligned = []; hi_opposed = []
 lo_aligned = []; lo_opposed = []
 for t in trades:
+    if t.get("entry_recorded") is False: continue  # [P185] same filter as above
     if not t.get("entry_time"): continue
     try:
         entry_ts = parse_ts(t["entry_time"])

@@ -288,6 +288,83 @@ discipline + the grep habit.
 
 ### Recent pitfalls (last ~30 days)
 
+### P185–P186. [FIXED 2026-08-05] Two ledgers and one build target that had been failing quietly for months
+
+Follow-on work from the P179–P184 pass. Each of these was found by a number
+that a *previous* fix had forced into the open — which is the argument for
+printing coverage next to every aggregate.
+
+**P185 — 38 of 90 closed trades had no recorded entry, and the ledger
+understated its own costs because of it.** The P183 coverage line surfaced the
+count; the cause was not the one the code had been blaming. `TradeAttributor`
+persisted only CLOSED trades: `_open_trades` lived in memory and
+`_load_persisted` restored `_closed_trades` alone, so every position held
+across a process restart lost its entry record. The exit then fell into
+`record_exit`'s orphan branch with `entry_price=0.0`, `direction=0`,
+`strategy=""` and — the part that moved money-shaped numbers —
+`entry_fee_usd=0.0`. `net_pnl_usd` subtracts that field, so each
+restart-straddling trade understated its cost by roughly one taker fee (26bps
+at Kraken) and the ledger read more profitable than the account.
+
+A 2026-04-28 comment at `core/execution_service.py:3743` had diagnosed this as
+a swallowed exception in `record_entry` and added logging to catch it. Wrong
+suspect: the call succeeded, its result was never written down. *Instrumenting
+the caller cannot find a bug in the writer.*
+
+Fixes: an atomic `data/trade_attribution_open.json` sidecar written on every
+mutation of `_open_trades` (entry, funding, exit, backfill) and restored in
+`__init__`; `TradeRecord.entry_recorded: bool` so an orphan is *marked* rather
+than inferred from `entry_time == ""` (a legal value — the same shape as P170,
+in a second file); `entry_coverage()` returning the ratio, and a WARNING at
+construction naming it. Two smaller losses fixed in passing: `record_entry`'s
+force-close branch closed a trade and never persisted it, so the in-memory
+report and the JSONL disagreed about the set of closed trades; and
+`_load_persisted` carried its own hand-written field list that had already
+dropped `funding_payments` — both readers now share `_record_from_dict`.
+
+The DRL counterfactual filters on the flag and prints orphans separately from
+unparseable timestamps, because those have different causes and different
+fixes.
+
+**P186 — `make drl` invoked a script that does not exist.** `training/Makefile`
+advertised `make drl   DRL v5.5 (~6-12h)` and ran `drl/train_drl_v55.py`, which
+is not in the tree. The documented path to retrain DRL had been failing with
+"can't open file" for as long as anyone ran it. It also passed only
+`SOL_60m.parquet` while v5.5 is documented as Cross-Asset BTC/ETH/SOL, and
+`make check` in the same file verifies data for all three — so the two targets
+disagreed about the asset set and neither said so. Rewritten against
+`train_drl_full.py` (the only DRL trainer in the tree, and the one carrying the
+P179–P184 fixes), looping `DRL_ASSETS`, with `--venue`/`--fee-side` stated
+explicitly: after P179 the env charges real fees, and a model trained at Kraken
+26bps is not interchangeable with one trained for the Coinbase nano sleeve at
+3bps.
+
+**Also in this pass — the test suite was writing into the repo.** 36 audit
+records had accumulated in `analytics/promotion_gate/applied/`, one per run of
+`test_main_confirm_executes_atomic_archive`, which drove `main(--confirm)`
+without redirecting `APPLIED_DIR`. Every one was a valid-looking operator audit
+log; you could only tell them from real applications by reading
+`input_plan_path` and noticing it pointed at `/var/folders`. Fixed with an
+autouse fixture, plus a `pytest_sessionfinish` guard in `tests/conftest.py` that
+fails the run if anything appears in `configs/` or the applied directory —
+`data/` and `logs/` are deliberately excluded because the live system writes
+there and a guard that names the wrong culprit gets disabled. Three
+early-bound `= DECISIONS_PATH` defaults in `apply_promotion_plan.py` were made
+late-binding: monkeypatching the module global did nothing, so a test that
+omitted `decisions_path` would have archived strategies in the live config.
+
+**Tests:** `tests/test_trade_attributor_open_durability.py` (15),
+`tests/test_training_makefile_targets.py` (7). 10 gates verified
+red-on-regression before being trusted, including the repo-write guard, which
+was confirmed to exit non-zero — the first measurement said exit 0 because the
+shell reported `tail`'s status through a pipeline, not pytest's.
+
+**Consequence to carry forward:** realized-PnL totals taken from
+`data/trade_attribution.jsonl` for the period before this fix are biased
+favourably by the missing entry fees on the 38 orphans, and every per-strategy
+or per-regime figure derived from that file covers 52 of 90 trades. Do not
+compare a post-fix number to a pre-fix one without saying which is which.
+
 ### P179–P184. [FIXED 2026-08-05] The DRL was trained and selected against five numbers that were not measurements — and every model currently deployed was validated that way
 
 Operator instruction was five specific items in the training harness. All five

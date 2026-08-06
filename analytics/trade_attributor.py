@@ -73,6 +73,13 @@ class TradeRecord:
     # Status
     is_closed: bool = False
 
+    # [P185] False when the exit arrived with no matching record_entry, so the
+    # entry_* fields above are defaults rather than measurements. Absence used
+    # to be encoded as `entry_time == ""`, which is a legal value — every
+    # consumer had to guess, and the DRL counterfactual silently dropped 38 of
+    # 90 closed trades on that guess without saying so. Same shape as P170.
+    entry_recorded: bool = True
+
     def compute_waterfall(self) -> Dict[str, float]:
         """Compute the P&L waterfall."""
         return {
@@ -123,14 +130,140 @@ class TradeAttributor:
         self._lock = threading.Lock()
         self._persist_path = Path(persist_path or self.PERSIST_FILE)
         self._persist_path.parent.mkdir(parents=True, exist_ok=True)
+        # [P185] Sidecar for in-flight trades. See _save_open_trades.
+        self._open_path = self._persist_path.with_name(
+            self._persist_path.stem + "_open.json")
         self._session_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
 
         # Load previously persisted trades
         self._load_persisted()
+        self._load_open_trades()
 
         logger.info(
-            f"[TradeAttributor] Initialized: {len(self._closed_trades)} historical trades loaded"
+            f"[TradeAttributor] Initialized: {len(self._closed_trades)} historical "
+            f"trades loaded, {len(self._open_trades)} still open"
         )
+        n_orphan = sum(1 for t in self._closed_trades if not t.entry_recorded)
+        if n_orphan:
+            logger.warning(
+                "[TradeAttributor][P185] %d of %d historical closed trades have "
+                "no recorded entry. Their entry fee is missing from net_pnl_usd "
+                "and their strategy/regime attribution is blank — every "
+                "per-strategy number computed from this file covers only the "
+                "other %d.",
+                n_orphan, len(self._closed_trades),
+                len(self._closed_trades) - n_orphan)
+
+    # =========================================================================
+    # OPEN-TRADE DURABILITY  [P185]
+    # =========================================================================
+
+    def _save_open_trades(self):
+        """Persist in-flight trades so a restart does not orphan them.
+
+        Only closed trades were ever written. `_open_trades` lived in memory
+        and `_load_persisted` restored `_closed_trades` alone, so every
+        position held across a process restart lost its entry record: the
+        eventual exit fell into the orphan branch of `record_exit` with
+        entry_price=0.0, direction=0 and strategy="". That is why 38 of the 90
+        closed trades on the box are orphans — not a swallowed exception, a
+        missing write.
+
+        The damage was not only cosmetic. `net_pnl_usd` subtracts
+        `rec.entry_fee_usd`, which is 0.0 on an orphan, so every restart-
+        straddling trade understated its own cost by the entry fee (~26bps at
+        Kraken) and the ledger looked more profitable than the account.
+
+        Caller must hold self._lock.
+        """
+        try:
+            tmp = self._open_path.with_suffix(".json.tmp")
+            payload = {a: r.to_dict() for a, r in self._open_trades.items()}
+            tmp.write_text(json.dumps(payload, default=str, indent=2),
+                           encoding="utf-8")
+            tmp.replace(self._open_path)  # atomic
+        except Exception as e:
+            # Loud: a silent failure here recreates the exact bug this fixes.
+            logger.error(
+                "[TradeAttributor][P185] could not persist %d open trades to "
+                "%s: %s: %s. A restart before the next successful write will "
+                "orphan them.",
+                len(self._open_trades), self._open_path, type(e).__name__, e)
+
+    def _load_open_trades(self):
+        """Restore in-flight trades written by _save_open_trades."""
+        if not self._open_path.exists():
+            return
+        try:
+            payload = json.loads(self._open_path.read_text(encoding="utf-8"))
+        except Exception as e:
+            logger.error(
+                "[TradeAttributor][P185] open-trade sidecar %s is unreadable "
+                "(%s: %s). Positions held across this restart will be recorded "
+                "as orphans.", self._open_path, type(e).__name__, e)
+            return
+        for asset, d in (payload or {}).items():
+            try:
+                self._open_trades[asset] = self._record_from_dict(d)
+            except Exception as e:
+                logger.error(
+                    "[TradeAttributor][P185] open trade for %s is unrestorable "
+                    "(%s: %s); its exit will be an orphan", asset,
+                    type(e).__name__, e)
+        if self._open_trades:
+            logger.info(
+                "[TradeAttributor][P185] restored %d open trades: %s",
+                len(self._open_trades), sorted(self._open_trades))
+
+    @staticmethod
+    def _record_from_dict(d: Dict[str, Any]) -> TradeRecord:
+        """Rebuild a TradeRecord from its to_dict() form.
+
+        `entry_recorded` backfills from entry_time for records written before
+        [P185] added the field: those are exactly the ones where an empty
+        entry_time meant orphan.
+        """
+        return TradeRecord(
+            trade_id=d.get("trade_id", ""),
+            asset=d.get("asset", ""),
+            direction=d.get("direction", 0),
+            entry_time=d.get("entry_time", ""),
+            entry_price=d.get("entry_price", 0.0),
+            entry_fee_usd=d.get("entry_fee_usd", 0.0),
+            entry_notional=d.get("entry_notional", 0.0),
+            strategy=d.get("strategy", ""),
+            regime_at_entry=d.get("regime_at_entry", ""),
+            mode_at_entry=d.get("mode_at_entry", ""),
+            funding_payments=list(d.get("funding_payments", []) or []),
+            total_funding_pnl=d.get("total_funding_pnl", 0.0),
+            exit_time=d.get("exit_time", ""),
+            exit_price=d.get("exit_price", 0.0),
+            exit_fee_usd=d.get("exit_fee_usd", 0.0),
+            exit_notional=d.get("exit_notional", 0.0),
+            exit_type=d.get("exit_type", ""),
+            gross_alpha_usd=d.get("gross_alpha_usd", 0.0),
+            net_pnl_usd=d.get("net_pnl_usd", 0.0),
+            is_closed=d.get("is_closed", True),
+            entry_recorded=bool(d.get("entry_recorded",
+                                      bool(d.get("entry_time")))),
+        )
+
+    def entry_coverage(self) -> Dict[str, Any]:
+        """[P185] How much of the closed book actually has an entry record.
+
+        Every per-strategy, per-regime and per-agent number derived from this
+        file is computed over `with_entry` trades only. Reporting those numbers
+        without reporting this ratio is how 58% coverage read as 100%.
+        """
+        with self._lock:
+            total = len(self._closed_trades)
+            with_entry = sum(1 for t in self._closed_trades if t.entry_recorded)
+        return {
+            "closed_trades": total,
+            "with_entry": with_entry,
+            "orphans": total - with_entry,
+            "coverage_pct": (100.0 * with_entry / total) if total else 0.0,
+        }
 
     # =========================================================================
     # RECORDING METHODS
@@ -159,6 +292,12 @@ class TradeAttributor:
                 old.exit_type = "FORCE_CLOSE"
                 old.exit_time = datetime.now(timezone.utc).isoformat()
                 self._closed_trades.append(old)
+                # [P185] record_exit persists every trade it closes; this
+                # branch closed one and did not, so FORCE_CLOSE trades existed
+                # in the in-memory report and vanished from the JSONL on
+                # restart. The two views of "closed trades" disagreed and
+                # neither said so.
+                self._persist_trade(old)
 
             trade_id = f"{asset}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
             rec = TradeRecord(
@@ -174,6 +313,7 @@ class TradeAttributor:
                 mode_at_entry=mode,
             )
             self._open_trades[asset] = rec
+            self._save_open_trades()  # [P185] survive a restart
 
             logger.info(
                 f"[TradeAttributor] ENTRY {asset} dir={direction:+d} "
@@ -199,6 +339,7 @@ class TradeAttributor:
                 "funding_pnl": funding_pnl,
             })
             rec.total_funding_pnl += funding_pnl
+            self._save_open_trades()  # [P185] accrued funding survives a restart
 
             logger.debug(
                 f"[TradeAttributor] FUNDING {asset} rate={funding_rate:.6f} "
@@ -243,6 +384,11 @@ class TradeAttributor:
                     regime_at_entry=regime,
                     strategy=strategy,
                     mode_at_entry=mode,
+                    # [P185] Say so in the record. entry_fee_usd stays 0.0
+                    # below, so net_pnl_usd understates this trade's cost;
+                    # a consumer must be able to see that without inferring
+                    # it from an empty string.
+                    entry_recorded=False,
                 )
 
             rec.exit_time = datetime.now(timezone.utc).isoformat()
@@ -258,6 +404,7 @@ class TradeAttributor:
                 # Remove from open trades
                 self._open_trades.pop(asset, None)
             # PARTIAL stays open
+            self._save_open_trades()  # [P185] both branches change the set
 
             closed_rec = deepcopy(rec)
             self._closed_trades.append(closed_rec)
@@ -518,6 +665,7 @@ class TradeAttributor:
                     entry_rec = TradeRecord(
                         trade_id=f"{asset}_orphan_{timestamp[:10]}",
                         asset=asset,
+                        entry_recorded=False,  # [P185] as in record_exit
                     )
 
                 entry_rec.exit_time = timestamp
@@ -535,6 +683,7 @@ class TradeAttributor:
         with self._lock:
             self._closed_trades = closed
             self._open_trades = open_entries
+            self._save_open_trades()  # [P185] backfilled positions too
 
         logger.info(
             f"[TradeAttributor] Backfill complete: "
@@ -658,28 +807,11 @@ class TradeAttributor:
                     if not line:
                         continue
                     try:
-                        d = json.loads(line)
-                        rec = TradeRecord(
-                            trade_id=d.get("trade_id", ""),
-                            asset=d.get("asset", ""),
-                            direction=d.get("direction", 0),
-                            entry_time=d.get("entry_time", ""),
-                            entry_price=d.get("entry_price", 0.0),
-                            entry_fee_usd=d.get("entry_fee_usd", 0.0),
-                            entry_notional=d.get("entry_notional", 0.0),
-                            strategy=d.get("strategy", ""),
-                            regime_at_entry=d.get("regime_at_entry", ""),
-                            mode_at_entry=d.get("mode_at_entry", ""),
-                            total_funding_pnl=d.get("total_funding_pnl", 0.0),
-                            exit_time=d.get("exit_time", ""),
-                            exit_price=d.get("exit_price", 0.0),
-                            exit_fee_usd=d.get("exit_fee_usd", 0.0),
-                            exit_notional=d.get("exit_notional", 0.0),
-                            exit_type=d.get("exit_type", ""),
-                            gross_alpha_usd=d.get("gross_alpha_usd", 0.0),
-                            net_pnl_usd=d.get("net_pnl_usd", 0.0),
-                            is_closed=d.get("is_closed", True),
-                        )
+                        # [P185] Shared with _load_open_trades. This branch
+                        # used to have its own field-by-field copy that had
+                        # already dropped funding_payments; a second reader of
+                        # the same schema is a second place to forget a field.
+                        rec = self._record_from_dict(json.loads(line))
                         self._closed_trades.append(rec)
                         loaded += 1
                     except Exception:
