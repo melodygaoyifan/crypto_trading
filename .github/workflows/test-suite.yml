@@ -1,12 +1,18 @@
 name: test-suite
 
-# [P113 (6/6) Milestone 4 2026-04-27] Run the property-style invariant
-# tests + chaos harness on every push. Fast (~30s total) so it doesn't
-# slow PRs. Catches regressions on every P-fix shipped P90→P113.
+# [P113 (6/6) Milestone 4 2026-04-27] Run the pytest suite on every push.
+# Companion to codebase-invariants.yml (scanner gate). This workflow runs the
+# tests; that one runs the static scanners.
 #
-# Companion to codebase-invariants.yml (scanner gate). This workflow
-# runs the actual pytest invariant + chaos suites; that one runs the
-# static scanners.
+# [P188 2026-08-05] This workflow had never run a test. Two independent faults,
+# either of which alone was fatal:
+#   1. The install step omitted numpy. tests/conftest.py imports numpy at module
+#      scope, pytest aborts on a conftest ImportError, and every job exited 4 at
+#      collection. Red on every push for months, including on main.
+#   2. Even had it collected, the steps named ~13 files frozen at the P113-era
+#      list. Everything from P125 on was never going to run.
+# The header used to promise "~30s total"; the real suite is ~95s locally plus
+# install, hence the timeout below.
 
 on:
   push:
@@ -20,7 +26,9 @@ permissions:
 jobs:
   invariants:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # [P188] Was 5. Install (numpy/pandas/scipy/sklearn/pyarrow) plus a ~95s
+    # suite does not fit in that, and a timeout kill reads as a test failure.
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -32,66 +40,57 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install minimal test deps
+      - name: Install test deps
         run: |
           python -m pip install --upgrade pip
-          # Pinned versions so test runs are reproducible. Mypy is for
-          # the lint_mypy_baseline scanner; pydantic for config_schema;
-          # hypothesis for P117 property tests + P119 fuzz harness.
-          pip install pytest pytest-asyncio pydantic mypy hypothesis
+          # [P188] This step used to be
+          #   pip install pytest pytest-asyncio pydantic mypy hypothesis
+          # numpy was not in that list, tests/conftest.py imports numpy at
+          # module scope, and pytest aborts on a conftest ImportError — so
+          # every job below died at collection with exit code 4 and not one
+          # test in this repo had ever run in CI. The workflow had been red on
+          # every push, including on main.
+          pip install -r requirements.txt -r requirements-test.txt
 
-      # P111 invariant tests — the regression suite that turns every
-      # P-fix into a forcing function. If one fails, a P-fix was
-      # silently reverted.
-      - name: P111 invariant tests
+      # [P188] The whole suite, not a hand-maintained list.
+      #
+      # This step used to be thirteen separate `pytest <file>` steps naming
+      # tests from P111-P124. The list was written for P113 and never grew:
+      # every gate added after it — P125 through P187, including all the
+      # falsifiability work — sat in tests/ unexecuted by CI. Enumerating test
+      # files means CI enforces whichever ones somebody remembered to add,
+      # and there is no signal when they forget.
+      #
+      # A file that must not run belongs behind a marker or a skip in the file
+      # itself, where the reason is visible, not behind absence from a YAML
+      # list.
+      #
+      # -p no:randomly keeps the ordering stable so a failure is reproducible
+      # from the log. --durations surfaces the slow files if this starts
+      # dominating PR time.
+      - name: Full test suite
         run: |
-          python -X utf8 -m pytest tests/test_invariants_p111.py -v
+          python -X utf8 -m pytest tests/ \
+            -p no:randomly \
+            --durations=15 \
+            -q
 
-      # P113 schema + contract + signaling + mutation + replay-threshold
-      - name: P113 test infrastructure
+      # Belt and braces: the collection abort that hid this for months
+      # (conftest ImportError -> exit 4 -> "0 tests ran") is invisible in a
+      # `-q` summary if the suite is empty. Assert a floor on the count.
+      # 3247 collected locally on 2026-08-05; the floor sits well under that so
+      # ordinary churn does not trip it, but a collection abort or a whole
+      # directory going missing does.
+      - name: Refuse a suspiciously small suite
         run: |
-          python -X utf8 -m pytest \
-            tests/test_config_schema.py \
-            tests/test_external_api_contracts.py \
-            tests/test_mock_fallback_signaling.py \
-            tests/test_mutation_audit_p113.py \
-            tests/test_replay_regression_threshold.py \
-            -v
-
-      # Chaos harness — deliberate injection of failure modes that
-      # actually hit production this session.
-      - name: Chaos test harness
-        run: |
-          python -X utf8 -m pytest tests/chaos/ -v
-
-      # P116-P119 (Tier A confidence push): replay golden-trace + Hypothesis
-      # property tests + JSON fuzz tests. Caught the P118 0.0-or-0.5 bug.
-      - name: P116 fusion replay (golden trace)
-        run: |
-          python -X utf8 -m pytest tests/test_replay_fusion.py -v
-
-      - name: P117 Hypothesis property tests
-        run: |
-          python -X utf8 -m pytest tests/test_property_invariants.py -v
-
-      - name: P119 external API fuzz tests
-        run: |
-          python -X utf8 -m pytest tests/test_external_api_fuzz.py -v
-
-      # P121-P123 (Tier A3 + Tier C7-C8): trade-gate coverage + extended
-      # mutation audit + concurrent-stress safety net.
-      - name: P121 trade-gate coverage tests
-        run: |
-          python -X utf8 -m pytest tests/test_trade_gate_coverage_p121.py -v
-
-      - name: P122 mutation audit (extended)
-        run: |
-          python -X utf8 -m pytest tests/test_mutation_audit_p122.py -v
-
-      - name: P123 concurrent stress
-        run: |
-          python -X utf8 -m pytest tests/test_concurrent_stress.py -v
-
-      - name: P124 dynamic-dispatch reject coverage
-        run: |
-          python -X utf8 -m pytest tests/test_trade_gate_coverage_p124.py -v
+          set -euo pipefail
+          N=$(python -X utf8 -m pytest tests/ -p no:randomly --collect-only -q \
+                | tail -1 | grep -oE '^[0-9]+' || echo 0)
+          echo "collected $N tests"
+          if [ "$N" -lt 2500 ]; then
+            echo "::error::Only $N tests collected (expected >=2500). A conftest"
+            echo "::error::or import error is silently shrinking the suite — that"
+            echo "::error::is exactly how P188 went unnoticed. Do not lower this"
+            echo "::error::floor to make the job green."
+            exit 1
+          fi

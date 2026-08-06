@@ -255,6 +255,14 @@ def main() -> int:
         action="store_true",
         help="Print diff but always exit 0 (dev/inspection mode).",
     )
+    ap.add_argument(
+        "--require-all-gates",
+        action="store_true",
+        help="Fail if any gate could not run (e.g. mypy not installed, or a "
+             "different mypy release than the baseline's). Intended for CI. "
+             "Locally the default warns instead, so a dev without mypy is not "
+             "blocked.",
+    )
     args = ap.parse_args()
 
     BASELINES_DIR.mkdir(parents=True, exist_ok=True)
@@ -397,6 +405,34 @@ def main() -> int:
             + "=" * 70,
             file=sys.stderr,
         )
+
+    # [P187] A gate that could not run is not a gate that passed.
+    #
+    # P159 made the unavailable path emit data instead of a zero count, and
+    # P161/P175 added the version-mismatch carry-forward. Both print a loud
+    # banner and exit 0 — correct for a developer without mypy, wrong for CI,
+    # where the banner scrolls past in a log nobody reads and the job goes
+    # green. .github/workflows/codebase-invariants.yml installed nothing at
+    # all ("Scanners depend only on stdlib + git"), so mypy was absent on
+    # every CI run and the type gate had never once executed there.
+    #
+    # --require-all-gates makes that state a failure. The workflow now
+    # installs the baseline's exact mypy version and passes this flag, so the
+    # gate either runs or the build goes red — there is no third outcome that
+    # looks like success.
+    if args.require_all_gates and (mypy_unavailable or mypy_version_mismatch):
+        print(
+            "=" * 70 + "\n"
+            "[ci_check] FAIL — --require-all-gates and the mypy gate did not\n"
+            "  run (see the banner above). This job cannot report the type\n"
+            "  check as passing, because it did not perform one.\n"
+            "  Fix the environment, not this flag: install mypy "
+            f"{_base_ver or '<baseline unstamped>'}, the release that produced\n"
+            "  tools/scanner_baselines/mypy_baseline.json.\n"
+            + "=" * 70,
+            file=sys.stderr,
+        )
+        return 1
 
     if args.update:
         AUTHORITY_BASELINE.write_text(

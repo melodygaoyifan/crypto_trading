@@ -288,6 +288,83 @@ discipline + the grep habit.
 
 ### Recent pitfalls (last ~30 days)
 
+### P187–P188. [FIXED 2026-08-05] Neither CI workflow was checking anything: the type gate had no analyzer, and the test suite had never run a single test
+
+The previous ~90 P-entries were all defended the same way — write a gate, add it
+to CI, move on. This entry is what happened when someone finally looked at CI
+itself. Both workflows were reporting on work they were not doing.
+
+**P187 — the mypy gate had no mypy.** `.github/workflows/codebase-invariants.yml`
+had no install step at all; the rationale in the file was "Scanners depend only
+on stdlib + git", which is true of seven of the eight scanners and false of the
+type gate. So on every CI run `ci_check_invariants.py` printed
+`mypy check SKIPPED (mypy not installed)` and returned 0, and the job went
+green. P159, P161 and P175 each made that skip *louder* — a banner, a version
+stamp, a carry-forward — and not one of them made it *fail*. **A warning in the
+log of a green job is not a gate.** The 1076-finding type baseline had never once
+been compared against a PR.
+
+Fixed in two halves, because either alone would have left the hole open:
+- `tools/ci_check_invariants.py` gained `--require-all-gates`, which turns "this
+  gate could not run" into exit 1 with a banner naming the missing analyzer.
+  Local runs still warn, so a dev without mypy is not blocked; CI passes the flag.
+- The workflow installs the mypy release **read out of
+  `tools/scanner_baselines/mypy_baseline.json`**, not pinned in the YAML. Per-code
+  counts fingerprint the analyzer version, so a YAML pin that drifts from the
+  baseline re-creates P161 exactly. One source of truth, not two.
+
+**P188 — `test-suite` had been red on every push, including main, for months.**
+`gh run list` showed conclusion `failure` on every run. `gh run view --log-failed`
+gave the cause in three lines: `ImportError while loading conftest` →
+`tests/conftest.py:10: import numpy as np` → `ModuleNotFoundError`. The install
+step was `pip install pytest pytest-asyncio pydantic mypy hypothesis`. numpy was
+not on that list, pytest aborts the whole session on a conftest ImportError, and
+the job exited 4 at collection. **Not one test in this repository had ever run in
+CI.** The suite is the enforcement mechanism for ~90 P-entries; it was enforcing
+none of them, and the red X had been on the board long enough to stop being read.
+
+A second, independent fault sat behind the first: the job named ~13 test files
+in hand-written steps, a list frozen at the P113 era. Every gate from P125 on —
+including every falsifiability test written this week — was absent from it. Had
+numpy been installed, CI would still have run about a third of the suite and
+called it a pass.
+
+Fixed: `requirements-test.txt` (numpy comes via `requirements.txt`, plus pyarrow,
+which pandas needs for `to_parquet` and which no requirements file listed); the
+13 steps replaced by one `pytest tests/`; `timeout-minutes` 5 → 20, since the
+suite is ~95s plus install and a timeout kill reads as a test failure.
+
+And because "0 tests ran" is invisible in a `-q` summary — that is precisely how
+this survived — a second step asserts a floor on the collected count (3247 as of
+today, floor 2500) and fails loudly below it. Falsified both ways: 21 collected
+from a single file and 0 from a bad path each fire the floor.
+
+**Running the suite for the first time immediately paid for itself.** Three
+real defects that had been sitting in the tree, found by tests that existed and
+had simply never executed:
+- `MockDecisionTransformer.predict` returned `np.float32` despite its
+  `-> Tuple[float, float]` annotation (`signal += features[i] * w` promotes, and
+  the clamp propagates). `json.dumps` cannot serialize `np.float32`, and that
+  value lands in persisted agent-signal dicts — so the failure would have
+  surfaced at write time in an unrelated module. The real model already cast;
+  this branch did not. `tests/test_model_alpha_agent.py` had asserted it all along.
+- `test_account_sync_stale_detection` aged the state by *exactly*
+  `MAX_EQUITY_AGE_SECONDS` and the predicate is `age > MAX`, so it passed only on
+  the microseconds between two statements surviving float64 rounding at epoch
+  magnitude (~240ns resolution near 1.7e9). It failed about one full-suite run in
+  two. The literal was `120` under a comment calling it "2 minutes old" against a
+  limit the code comment still claimed was 60s; the constant is 120.0. Now
+  `MAX_EQUITY_AGE_SECONDS * 2`, read from the module.
+- The parquet backtest tests could not run at all — pyarrow was in no
+  requirements file.
+
+**The lesson is one step further out than the usual one.** The recurring finding
+in this file is "a check that cannot fail is indistinguishable from a check that
+passed." P187/P188 are its parent case: *the harness that runs the checks is
+itself a check, and nobody had falsified it.* Every gate in this document was
+green in CI for the same reason a deleted test file is green. Before trusting any
+CI signal, make the job fail on purpose and confirm you can see it.
+
 ### P185–P186. [FIXED 2026-08-05] Two ledgers and one build target that had been failing quietly for months
 
 Follow-on work from the P179–P184 pass. Each of these was found by a number
@@ -859,7 +936,7 @@ regex by turning `self._short_control.evaluate(` into spaced tokens).
 
 ### P161. [FIXED 2026-08-04] Installing the missing tools revealed two more "the check never ran" bugs — the mypy baseline is analyzer-version-specific, and ~30 async tests were failing purely because a declared dev dep wasn't installed
 - **Direct consequence of P159.** Once `pip install mypy` restored the check, the deploy gate immediately failed with **10 "NEW findings"** — `arg-type +2`, `float +2`, `index +2`, `operator +1`, `var-annotated +3` — with **no code change behind any of them**. The total had gone *DOWN* (1080 → 1073); mypy 2.3.0 simply **reclassifies errors between codes** versus the 1.x that produced the baseline, and `_diff` only flags increases, so the redistribution surfaced as pure phantom regressions.
-- **The baseline is a fingerprint of the analyzer, not only of the code.** A cross-version comparison is neither a pass nor a fail — it is a check that *cannot be made*. Fixed by stamping `mypy_version` into the baseline payload (`tools/lint_mypy_baseline.py:mypy_version`) and having `ci_check_invariants` carry the baseline forward + print a loud `mypy check SKIPPED (analyzer version differs)` banner on mismatch, the same shape as the P159 unavailable path. **The committed baseline is currently `<unstamped>`, so every machine gets that banner** until someone re-baselines deliberately on a clean tree (`--update`, then commit `tools/scanner_baselines/mypy_baseline.json`) — the honest state, not a silent pass.
+- **The baseline is a fingerprint of the analyzer, not only of the code.** A cross-version comparison is neither a pass nor a fail — it is a check that *cannot be made*. Fixed by stamping `mypy_version` into the baseline payload (`tools/lint_mypy_baseline.py:mypy_version`) and having `ci_check_invariants` carry the baseline forward + print a loud `mypy check SKIPPED (analyzer version differs)` banner on mismatch, the same shape as the P159 unavailable path. **[Corrected P188 2026-08-05]** This paragraph used to end "the committed baseline is currently `<unstamped>`, so every machine gets that banner." That has not been true since the re-baseline: `tools/scanner_baselines/mypy_baseline.json` carries `"mypy_version": "2.3.0"` alongside its 1076 findings, and CI now installs exactly that release by reading it out of the baseline file (P187). A machine on a different mypy still gets the version-mismatch banner, which is the honest state rather than a silent pass — and under `--require-all-gates` that banner is now a failure, not a note.
 - **`mypy>=1.5.0` (`requirements-train.txt:59`) is too loose for a count-locked baseline.** Pin it to whatever version the baseline is stamped with, or the gate oscillates between real and skipped as environments drift.
 - **The mypy check has never gated anything in CI either.** `.github/workflows/codebase-invariants.yml:40` states *"Scanners depend only on stdlib + git. No requirements install needed"* — so mypy is absent in the job that runs the scanners, and P159's SKIPPED path fires there on every run. `test-suite.yml:41` installs mypy but unpinned, and does not run the gate. Enabling it for real means adding a **pinned** mypy to the invariants workflow; not done here because it cannot be validated from this machine.
 - **Second finding, same family: `pytest-asyncio` is declared (`requirements-train.txt:55`) but was not installed**, so every `@pytest.mark.asyncio` test errored with *"async def functions are not natively supported"*. That accounted for **~30 of the 98 local failures** — `test_onchain_solana_agent.py` went 16 failed → 1, `test_sentiment_llm_agent.py` 19 → 4, and `test_http_retry_and_manifest.py` / `test_concurrent_stress.py` went fully green. Full suite: **98 → 51 failures, 2532 passed**. These were never code defects.

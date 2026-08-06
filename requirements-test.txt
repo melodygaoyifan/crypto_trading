@@ -1,0 +1,27 @@
+# ================================================================================
+# HMATS — test-only dependencies
+# ================================================================================
+# [P188 2026-08-05] Install alongside requirements.txt:
+#
+#     pip install -r requirements.txt -r requirements-test.txt
+#
+# This file exists because .github/workflows/test-suite.yml installed
+# `pytest pytest-asyncio pydantic mypy hypothesis` and nothing else. numpy was
+# not among them, tests/conftest.py imports numpy at module scope, and pytest
+# aborts on a conftest ImportError — so every job in that workflow died at
+# collection with exit code 4 and NOT ONE TEST IN THIS REPO HAD EVER RUN IN CI.
+# The suite is the enforcement mechanism for ~90 P-entries of fixes; it was
+# enforcing none of them.
+#
+# Runtime libraries belong in requirements.txt. Only things needed to *run the
+# tests* go here.
+# --------------------------------------------------------------------------
+
+pytest>=8.0.0                  # the runner
+pytest-asyncio>=0.23.0         # async test functions (sentiment, onchain agents)
+hypothesis>=6.90.0             # P117 property tests + P119 fuzz harness
+httpx>=0.27.0                  # tests/test_smart_beta.py, analytics/llm_explainer.py
+mypy>=1.5.0                    # tools/lint_mypy_baseline.py scanner
+pyarrow>=14.0.0                # df.to_parquet in tests/test_pre6_backtest_and_shadow_ic.py
+                               # (pandas' parquet engine is an optional dep and
+                               # is not pulled in by requirements.txt)

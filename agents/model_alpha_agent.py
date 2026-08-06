@@ -1321,11 +1321,20 @@ class MockDecisionTransformer:
         
         # 限制范围
         signal = max(-1.0, min(1.0, signal))
-        
+
         # 置信度基于信号强度
         confidence = min(0.9, 0.5 + abs(signal) * 0.5)
-        
-        return signal, confidence
+
+        # [P188] float(), not the bare value. `features` is float32, so every
+        # `signal += features[i] * w` above promotes `signal` to np.float32 and
+        # the clamp propagates it — this returned np.float32 despite the
+        # `-> Tuple[float, float]` annotation. json.dumps() cannot serialize
+        # np.float32, and this value lands in the agent-signal dicts that get
+        # persisted, so the failure surfaces at write time in a different
+        # module. The real model at SequenceAlphaModel.predict already casts;
+        # this branch did not. tests/test_model_alpha_agent.py had asserted
+        # this all along and had simply never been run by CI.
+        return float(signal), float(confidence)
 
 
 # =============================================================================
