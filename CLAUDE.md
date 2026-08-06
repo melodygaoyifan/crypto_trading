@@ -288,6 +288,55 @@ discipline + the grep habit.
 
 ### Recent pitfalls (last ~30 days)
 
+### P189. [FIXED 2026-08-05] The training orchestrator invoked two scripts that do not exist, and exited 0 when it failed
+
+P186 found `make drl` pointing at a trainer that was never in the tree. This is
+the same defect one layer up, in `training/run_training.py` — the module
+`make all`, `make quick` and `make gmm` all delegate to:
+
+| step | invoked | reality |
+|---|---|---|
+| `run_gmm` | `<root>/scripts/retrain_gmm.py` | not in the tree; the only copy is `archive/gmm_research/retrain_gmm.py`, and it trains the **global** 6-component model that `main.py:3552` treats as the legacy fallback |
+| `run_drl` | `<root>/train_drl_full.py` | off by one directory — the file is `training/train_drl_full.py` |
+
+So the documented full pipeline could not complete. `make all` died in step 1;
+`make quick` would have died in step 3 after the DT stage had already run.
+
+**And it exited 0 anyway.** `main()` discarded every stage's return value and
+returned `None`, so the process reported success whether it trained anything or
+not. That is the same shape as P187/P188 — a run that cannot fail says nothing
+about what it did — except here it was the *pipeline* rather than the gate.
+
+Which GMM trainer is correct was settled by reading the runtime, not by
+picking: `main.py:3520` tries `models/gmm/<ASSET>/gmm_model.pkl` first
+(`# Try per-asset models first (v7)`) and only then the global model
+(`# Fallback: try global model (legacy)`). So the target is
+`training/scripts/train_per_asset_gmm.py` — the leak-free per-asset trainer
+P164 fixed. Had the archived path existed, `make all` would have refreshed the
+fallback and left the models the runtime actually loads untouched.
+
+Fixed:
+- One `SCRIPTS` map on `TrainingOrchestrator`, resolved through `_script()`.
+  Every stage goes through it, so `preflight()` checks the paths that are used.
+- `preflight()` verifies all four scripts exist **before** step 1, and names the
+  key and the resolved path. A pipeline that discovers a bad path in step 3 has
+  already spent the cost of steps 1 and 2.
+- `main()` propagates failure: `sys.exit(main())`, `0` only if every stage
+  returned truthy.
+- `--venue` / `--fee-side` added and threaded into the DRL command (the P179 gap
+  the Makefile had already closed for `make drl`), and into the Makefile's
+  `all`/`quick` recipes — otherwise `make all DRL_VENUE=coinbase` and
+  `make drl DRL_VENUE=coinbase` charge different fees with nothing saying so.
+- Makefile help said "DRL v5.5" while the trainer self-identifies as "HMATS v7".
+  Renamed to v7. (`--output models/drl_v55` left alone: nothing reads it, and
+  renaming a live output dir is a separate change.)
+
+Gate: `tests/test_training_orchestrator_scripts.py` — every script in `SCRIPTS`
+exists, every flag passed is one the target's argparse defines, `preflight`
+fails on an injected bad path, and `main()` returns 1 on both a preflight
+failure and a stage failure. Falsified by reintroducing both wrong paths and
+dropping `--venue`: 6 of 11 go red.
+
 ### P187–P188. [FIXED 2026-08-05] Neither CI workflow was checking anything: the type gate had no analyzer, and the test suite had never run a single test
 
 The previous ~90 P-entries were all defended the same way — write a gate, add it

@@ -22,8 +22,8 @@ help:
 	@echo "  make gmm                 6-Regime GMM (~5min)"
 	@echo "  make dt                  Decision Transformer v3.2 (~2-4h)"
 	@echo "  make dt-max              DT v3.2 最大配置"
-	@echo "  make drl                 DRL v5.5 (~6-12h)"
-	@echo "  make drl-fast            DRL v5.5 快速"
+	@echo "  make drl                 DRL v7 (~6-12h)"
+	@echo "  make drl-fast            DRL v7 快速"
 	@echo "  make sentiment           Sentiment v2.2 (~1-3h)"
 	@echo "  make sentiment-ensemble  Sentiment 5模型集成"
 	@echo ""
@@ -34,11 +34,18 @@ help:
 	@echo ""
 
 # 完整流程
+# [P189] --venue/--fee-side threaded through so `make all DRL_VENUE=coinbase`
+# means the same thing as `make drl DRL_VENUE=coinbase`. Without them the
+# orchestrator's DRL step silently fell back to its own default while the
+# `drl` target honoured the variable — two ways to run the same trainer,
+# charging different fees, with nothing saying so.
 all:
-	$(PYTHON) run_training.py --all --data-dir $(DATA_DIR) --output-dir $(OUTPUT_DIR)
+	$(PYTHON) run_training.py --all --data-dir $(DATA_DIR) --output-dir $(OUTPUT_DIR) \
+		--venue $(DRL_VENUE) --fee-side $(DRL_FEE_SIDE)
 
 quick:
-	$(PYTHON) run_training.py --all --quick --data-dir $(DATA_DIR) --output-dir $(OUTPUT_DIR)
+	$(PYTHON) run_training.py --all --quick --data-dir $(DATA_DIR) --output-dir $(OUTPUT_DIR) \
+		--venue $(DRL_VENUE) --fee-side $(DRL_FEE_SIDE)
 
 # GMM
 gmm:
@@ -73,7 +80,7 @@ DRL_FAST_TIMESTEPS ?= 100000
 
 drl:
 	@for a in $(DRL_ASSETS); do \
-		echo "=== DRL v5.5 $$a ($(DRL_TIMESTEPS) steps, $(DRL_VENUE)/$(DRL_FEE_SIDE)) ==="; \
+		echo "=== DRL v7 $$a ($(DRL_TIMESTEPS) steps, $(DRL_VENUE)/$(DRL_FEE_SIDE)) ==="; \
 		$(PYTHON) -X utf8 -u train_drl_full.py --asset $$a --folds 3 \
 			--timesteps $(DRL_TIMESTEPS) --extractor lstm_film_a \
 			--reward-mode classic --no-progress-bar \
@@ -86,7 +93,7 @@ drl:
 
 drl-fast:
 	@for a in $(DRL_ASSETS); do \
-		echo "=== DRL v5.5 $$a SMOKE ($(DRL_FAST_TIMESTEPS) steps) ==="; \
+		echo "=== DRL v7 $$a SMOKE ($(DRL_FAST_TIMESTEPS) steps) ==="; \
 		$(PYTHON) -X utf8 -u train_drl_full.py --asset $$a --folds 1 \
 			--timesteps $(DRL_FAST_TIMESTEPS) --extractor lstm_film_a \
 			--reward-mode classic --no-progress-bar \
