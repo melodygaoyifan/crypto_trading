@@ -197,6 +197,13 @@ SOL_FLASH_MOVE_PCT = 0.03           # 3% move
 
 REBUILD_COOLDOWN_EXEMPT_ADDON = True  # [CFG-9] Pyramid add-on exempt from cooldown
 
+# [P168] Direction-flip exemption — OFF. A reversal is the MOST expensive form
+# of churn (a full round trip closed, another opened), not the least, and the
+# exemption fired on 67% of in-window re-entries, so it disabled the cooldown on
+# its dominant path. Measured over data/trade_attribution.jsonl: 10 exempted
+# flips, 8 losers, net -$94.45. Set True only to restore pre-P168 behaviour.
+REBUILD_COOLDOWN_EXEMPT_FLIP = False
+
 # =============================================================================
 # DERIVATIVES (Kraken Perpetual Futures) — added 2026-04-24
 # =============================================================================

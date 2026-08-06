@@ -112,7 +112,7 @@ except ImportError:
 try:
     from configs.canonical_config import (
         EXPOSURE_CAPS, POST_LEVERAGE_CAPS, MIN_REGIME_CONFIDENCE,
-        DATA_DIR, REBUILD_COOLDOWN_EXEMPT_ADDON,
+        DATA_DIR, REBUILD_COOLDOWN_EXEMPT_ADDON, REBUILD_COOLDOWN_EXEMPT_FLIP,
     )
 except ImportError:
     EXPOSURE_CAPS = {"BTC": 0.40, "ETH": 0.40, "SOL": 0.50}
@@ -120,6 +120,9 @@ except ImportError:
     MIN_REGIME_CONFIDENCE = 0.30
     DATA_DIR = Path("data")
     REBUILD_COOLDOWN_EXEMPT_ADDON = True  # [P72] safe default matching canonical_config.py:193
+    # [P168] Fallback matches canonical_config: flips are NOT exempt. The safe
+    # default for a fallback is the one that trades less.
+    REBUILD_COOLDOWN_EXEMPT_FLIP = False
 
 # [P72] StopAuthority — was a NameError when execution_service.py was extracted
 # from main.py (the names were defined at main.py:436 + 438-443 but never
@@ -163,10 +166,22 @@ except ImportError as _lep_err:
 
 # [FIX-SHADOW] Missing imports that caused NameError in shadow path
 try:
-    from core.market_data_helpers import effective_volume_ratio
+    from core.market_data_helpers import effective_volume_ratio, signal_value
 except ImportError:
     def effective_volume_ratio(md):
         return float(md.get("volume_ratio_effective", md.get("volume_ratio", 1.0)) or 1.0)
+
+    # [P173] The fallback must behave identically to the real helper. A stub
+    # that quietly reads only market_data would restore the exact bug the
+    # helper exists to prevent, and it would do so only on the import-failure
+    # path — the one nobody tests.
+    def signal_value(key, agent_signals, market_data, default=None):
+        for _src in (agent_signals, market_data):
+            if isinstance(_src, dict):
+                _v = _src.get(key, None)
+                if _v is not None:
+                    return _v
+        return default
 
 # P0_MODULES_AVAILABLE: in shadow context, P0 modules are always available
 # (shadow only runs when main path succeeded, which requires P0)
@@ -273,6 +288,81 @@ _COINBASE_MAKER_BPS = 0.0
 _COINBASE_TAKER_BPS = 3.0
 
 
+def resolve_venue_fee_bps(
+    *,
+    kraken_maker_bps: float,
+    kraken_taker_bps: float,
+    venue_aware_enabled: bool,
+    is_coinbase_routed: bool,
+) -> Tuple[float, float, str, str]:
+    """[P172] Price maker/taker friction for the venue the asset will hit.
+
+    Pure. Returns `(maker_bps, taker_bps, venue, fee_source)`.
+
+    This exists because the same tick priced the same asset's friction two
+    different ways. `main.py:8541` (P155e) already resolved the venue for the
+    alpha gate, but the `_fee_context` dict built ~60 lines later hardcoded
+    Kraken's blended tier and labelled itself `"kraken_plus_fee_blender"`. With
+    `coinbase_venue_aware_fees` ON — which it has been in
+    `configs/live_high_risk.json` since 2026-08-04 — the alpha gate charged a
+    Coinbase-routed asset 3bps while every `fee_context` consumer charged it
+    26bps: a second pre-trade veto (`main.py:12793`), the paper exit-fee
+    accrual (`main.py:18997`), and the `friction_fee_bps` telemetry
+    (`main.py:15827`), which overrides the alpha gate's own number and so
+    reported Kraken pricing for a decision made on Coinbase pricing.
+
+    Fail direction is deliberate and asymmetric: when the flag is off, or the
+    routing lookup says Kraken, or anything is unknown, callers get the Kraken
+    tier. Over-charging friction blocks trades; under-charging takes them. The
+    conservative error is the one that costs nothing but opportunity, and the
+    caller can see which it got from `fee_source`.
+
+    `fee_source` is the provenance, not a decoration — `"kraken_plus_fee_blender"`
+    must only ever appear on numbers that actually came from the blender.
+    """
+    if venue_aware_enabled and is_coinbase_routed:
+        return (
+            float(_COINBASE_MAKER_BPS),
+            float(_COINBASE_TAKER_BPS),
+            "coinbase",
+            "coinbase_venue_schedule",
+        )
+    return (
+        float(kraken_maker_bps),
+        float(kraken_taker_bps),
+        "kraken",
+        "kraken_plus_fee_blender",
+    )
+
+
+# [P162] Skip reasons that mean "this path had nothing to do", NOT "this trade
+# was blocked". Exported so the caller in main.py cannot drift from the strings
+# produced here — the reader/writer-contract drift that P2/P15/P85/P138/P139/
+# P140/P152/P155d are all instances of.
+#
+# Why this exists: `execute_intent_v2` returning SKIPPED was treated by the
+# caller as a veto, stamping `veto_active=True` and `target_exposure=0.0` onto
+# an intent that had already passed every gate. Since 2026-06-13 all three
+# assets are Coinbase-routed and Kraken-flat, so the P152 return below fires on
+# EVERY tick, and HEALTH_T3 read 312/312 consecutive ticks as "blocked". The
+# alarm was measuring a path that is retired by design.
+BENIGN_EXEC_SKIP_REASONS = frozenset({
+    "coinbase_routed_no_kraken_entry",  # P152: sleeve is the sole driver
+    "No active position to close",      # nothing to unwind
+})
+
+
+def is_benign_exec_skip(exec_result: dict) -> bool:
+    """True if a non-fill result reflects a no-op path, not a blocked trade.
+
+    Kept beside the `return {"status": "SKIPPED", ...}` sites it classifies so
+    that adding a new skip reason forces a decision about it here.
+    """
+    if str(exec_result.get("status", "") or "").upper() != "SKIPPED":
+        return False
+    return str(exec_result.get("reason", "") or "") in BENIGN_EXEC_SKIP_REASONS
+
+
 def _coinbase_fee_model_warning(ctx) -> None:
     """[P155] The alpha gate prices EVERY asset with Kraken's fee tier.
 
@@ -329,6 +419,52 @@ def _coinbase_routed(ctx, asset: str) -> bool:
         return _routed
     except Exception:  # noqa: silent-swallow — intentional fail-closed to Kraken (default venue) on any routing error
         return False
+
+
+def rebuild_cooldown_decision(
+    cooldown_entry: tuple,
+    intent_direction: float,
+    is_addon: bool,
+    now: datetime,
+    exempt_addon: bool = None,
+    exempt_flip: bool = None,
+) -> Tuple[str, str, float]:
+    """[P168] Decide the rebuild-cooldown gate. Pure — no ctx, no I/O.
+
+    This lived inline inside `execute_intent_v2`, a ~2000-line async function
+    that needs a full runner, positions, market data and an event loop to call.
+    That is why the direction-flip exemption below went unexercised for its
+    whole life: there was no way to reach it from a test. Extracted so the
+    decision can be asserted directly.
+
+    `cooldown_entry` is the `ctx.rebuild_cooldown[asset]` tuple:
+    `(cooldown_until, reason, closed_direction)`, with `closed_direction`
+    absent on entries written by older code — treated as 0 = unknown, which
+    means "cannot be a flip" and therefore blocks. Unknown must not read as
+    exempt.
+
+    Returns `(action, kind, remaining_hours)` where action is one of
+    EXEMPT_ADDON | EXEMPT_FLIP | BLOCK | EXPIRED, and kind is FLIP or SAME-DIR.
+    """
+    if exempt_addon is None:
+        exempt_addon = REBUILD_COOLDOWN_EXEMPT_ADDON
+    if exempt_flip is None:
+        exempt_flip = REBUILD_COOLDOWN_EXEMPT_FLIP
+
+    cooldown_until = cooldown_entry[0]
+    closed_dir = cooldown_entry[2] if len(cooldown_entry) > 2 else 0
+    is_flip = (closed_dir != 0 and intent_direction != 0
+               and closed_dir * intent_direction < 0)
+    kind = "FLIP" if is_flip else "SAME-DIR"
+    remaining = max(0.0, (cooldown_until - now).total_seconds() / 3600)
+
+    if is_addon and exempt_addon:
+        return "EXEMPT_ADDON", kind, remaining
+    if is_flip and exempt_flip:
+        return "EXEMPT_FLIP", kind, remaining
+    if now < cooldown_until:
+        return "BLOCK", kind, remaining
+    return "EXPIRED", kind, 0.0
 
 
 async def execute_intent_v2(
@@ -414,7 +550,19 @@ async def execute_intent_v2(
     if ctx.execution_guard:
         try:
             _side_str = "long" if intent.direction > 0 else "short"
-            _drl_conf = market_data.get("drl_confidence", 0.5)
+            # [P173] Was `market_data.get("drl_confidence", 0.5)`. Nothing ever
+            # writes drl_confidence into market_data — the producer is
+            # `agent_signals['drl_confidence']` (main.py:7817), which THIS
+            # function already reads correctly 3000 lines below at the
+            # `latest_drl_confidence` field. So this was the constant 0.5 on
+            # every call. In a VOLATILE regime `can_drl_trade` compares it
+            # against min_confidence_volatile=0.7, so it failed every time and
+            # stamped `drl_blocked_reason` onto every execution. That branch
+            # records rather than blocks, so the cost was a diagnostic that
+            # always fires — exactly as uninformative as P170's guard that
+            # never fired. Fallback 0.0 matches the M7 decision on the next
+            # line: absent DRL gets no confidence, not half.
+            _drl_conf = float(signal_value("drl_confidence", agent_signals, market_data, 0.0) or 0.0)
             # [BUGFIX M7] Fallback=0.0 (not 0.5) -DRL gets zero weight when disabled/unavailable
             _drl_weight = ctx.fn_get_drl_weight() if ctx.fn_get_drl_weight else 0.0
             _guard_ok, _guard_mode, _guard_details = ctx.execution_guard.check_execution(
@@ -837,36 +985,55 @@ async def execute_intent_v2(
 
     if (is_new_entry or is_adding) and asset in ctx.rebuild_cooldown:
         _cd_entry = ctx.rebuild_cooldown[asset]
-        cooldown_until = _cd_entry[0]
         cooldown_reason = _cd_entry[1]
         _cooldown_closed_dir = _cd_entry[2] if len(_cd_entry) > 2 else 0
-        _is_addon = getattr(intent, 'is_addon', False)
-        if _is_addon and REBUILD_COOLDOWN_EXEMPT_ADDON:
+        _action, _kind, _remaining = rebuild_cooldown_decision(
+            _cd_entry,
+            intent_direction=intent.direction,
+            is_addon=getattr(intent, 'is_addon', False),
+            now=datetime.now(timezone.utc),
+        )
+        if _action == "EXEMPT_ADDON":
             # [CFG-9] Pyramid add-on to winning position -exempt from cooldown
             logger.info(
                 f"[REBUILD_COOLDOWN] {asset}: add-on EXEMPT (pyramid into winning position)"
             )
-        elif (_cooldown_closed_dir != 0 and intent.direction != 0
-              and _cooldown_closed_dir * intent.direction < 0):
-            # Direction flip -new entry is opposite to closed position.
-            # Cooldown is designed to prevent same-direction re-entry churn.
-            # Opposite-direction entry is a signal-aligned reversal, allow it.
+        elif _action == "EXEMPT_FLIP":
+            # [P168] Legacy behaviour, OFF by default. The old comment here read
+            # "cooldown is designed to prevent same-direction re-entry churn, an
+            # opposite-direction entry is a signal-aligned reversal, allow it."
+            # That has it backwards: a reversal pays a full round trip to close
+            # plus another to open, so a flip is the most expensive churn there
+            # is. And because a close is usually *caused* by the signal turning,
+            # the next entry is opposite by construction — this branch fired on
+            # 67% of in-window re-entries, leaving the cooldown binding only on
+            # the rare path. See P168 for the measured cost.
+            #
+            # NOTE: the `del` below drops the cooldown on a *check* path, before
+            # the trade is known to execute. A flip that is then rejected by the
+            # AC-0 restart guard (or anything downstream) has still consumed the
+            # cooldown, so the next tick's same-direction entry sails through.
+            # Preserved as-is because this branch exists to restore pre-P168
+            # behaviour exactly; it is another reason not to turn it back on.
             del ctx.rebuild_cooldown[asset]
             logger.info(
                 f"[REBUILD_COOLDOWN] {asset}: DIRECTION-FLIP EXEMPT "
                 f"(closed={'LONG' if _cooldown_closed_dir > 0 else 'SHORT'} "
                 f"new={'LONG' if intent.direction > 0 else 'SHORT'}, {cooldown_reason})"
             )
-        elif datetime.now(timezone.utc) < cooldown_until:
-            remaining = (cooldown_until - datetime.now(timezone.utc)).total_seconds() / 3600
+        elif _action == "BLOCK":
+            # [P168] Name the flip case explicitly. It used to be exempt, so a
+            # silent COOLDOWN_BLOCKED would leave no way to tell from the logs
+            # whether this change is doing anything.
             logger.info(
-                f"[REBUILD_COOLDOWN] {asset}: BLOCKED entry/add "
-                f"(cooldown {remaining:.1f}h remaining, reason={cooldown_reason})"
+                f"[REBUILD_COOLDOWN] {asset}: BLOCKED entry/add [{_kind}] "
+                f"(cooldown {_remaining:.1f}h remaining, reason={cooldown_reason})"
             )
             return {
                 "status": "COOLDOWN_BLOCKED",
-                "reason": f"[REBUILD_COOLDOWN] {cooldown_reason}, {remaining:.1f}h remaining",
-                "cooldown_remaining_hours": remaining,
+                "reason": f"[REBUILD_COOLDOWN] {_kind} {cooldown_reason}, {_remaining:.1f}h remaining",
+                "cooldown_remaining_hours": _remaining,
+                "cooldown_was_flip": _kind == "FLIP",  # [P168]
             }
         else:
             # Cooldown expired -clear it
@@ -2129,6 +2296,9 @@ async def execute_intent_v2(
     # Shorts / leveraged paper trades must use margin-style fee semantics.
     # =====================================================================
     if notional_usd > 0:
+        # [P169] The venue tells us what it charged. Hand it over instead of
+        # letting the fee model guess from a hardcoded Kraken table.
+        _venue = "coinbase" if _coinbase_routed(ctx, asset) else "kraken"
         _fee_result = ctx.fn_build_execution_fee_result(
             asset=asset,
             executed_notional_usd=notional_usd,
@@ -2136,16 +2306,71 @@ async def execute_intent_v2(
             execution_direction=_execution_direction,
             regime_leverage=regime_leverage,
             existing_position=_existing_position,
+            venue=_venue,
+            venue_fee_usd=exec_result.get("fee"),
+            venue_fee_currency=exec_result.get("fee_currency", ""),
         )
         exec_result["fee_blending"] = _fee_result
+        _fee_src = _fee_result.get("fee_source", "model")
         logger.info(
-            f"[EXEC_FEE] {asset} fill ${notional_usd:,.0f} | "
+            f"[EXEC_FEE] {asset} fill ${notional_usd:,.0f} @{_venue} | "
             f"spot={_fee_result.get('is_spot', True)} "
             f"margin={_fee_result.get('requires_margin', False)} | "
             f"trade_fee=${float(_fee_result.get('trade_fee_usd', 0.0) or 0.0):.2f} "
             f"({float(_fee_result.get('fee_effective', 0.0) or 0.0) * 10000:.1f}bps) | "
-            f"maker={bool(_fee_result.get('is_maker', False))}"
+            # [P169] source is not decoration: a modelled fee that happens to
+            # look right is still not an observation of what was paid.
+            f"src={_fee_src}"
+            + (f" ({_fee_result.get('fee_source_reason')})" if _fee_src != "venue" else "")
+            + f" | maker={bool(_fee_result.get('is_maker', False))}(assumed)"
         )
+
+        # [P169] Realised slippage: fill vs the price the decision was made on.
+        # FrictionComponents.ASSET_SPREAD_BPS asserts BTC 3 / ETH 5 / SOL 10bps
+        # and P167 now charges those twice per position, but nothing has ever
+        # measured them. Emit the comparison so the constants can be replaced by
+        # observations instead of staying a calibrated guess forever.
+        try:
+            _decision_px = float(current_price or 0.0)
+            _fill_px = float(fill_price or 0.0)
+            if _decision_px > 0 and _fill_px > 0:
+                _dir = 1.0 if _execution_direction > 0 else -1.0
+                _slip_bps = (_fill_px - _decision_px) / _decision_px * 10000.0 * _dir
+                # Path is ctx.engine.guarantees... (see line 330). If it cannot
+                # be reached, report the comparison as unavailable rather than
+                # substituting a default — a delta measured against a number
+                # nobody chose is worse than no delta.
+                _assumed_bps = None
+                _alc = getattr(getattr(getattr(ctx, 'engine', None), 'guarantees', None),
+                               'alpha_calculator', None)
+                _fr = getattr(_alc, 'FRICTION', None)
+                _spreads = getattr(_fr, 'ASSET_SPREAD_BPS', None)
+                if isinstance(_spreads, dict):
+                    _assumed_bps = _spreads.get(
+                        asset.upper().replace("/USD", "").replace("USD", ""))
+                if _assumed_bps is None:
+                    logger.info(
+                        f"[FILL_VS_MID] {asset} decision=${_decision_px:.2f} "
+                        f"fill=${_fill_px:.2f} realised_slip={_slip_bps:+.1f}bps "
+                        f"assumed_spread=UNAVAILABLE type={order_type}"
+                    )
+                else:
+                    _assumed_bps = float(_assumed_bps)
+                    logger.info(
+                        f"[FILL_VS_MID] {asset} decision=${_decision_px:.2f} "
+                        f"fill=${_fill_px:.2f} realised_slip={_slip_bps:+.1f}bps "
+                        f"assumed_spread={_assumed_bps:.1f}bps "
+                        f"delta={_slip_bps - _assumed_bps:+.1f}bps type={order_type}"
+                    )
+                exec_result["realised_slippage_bps"] = _slip_bps
+                exec_result["assumed_spread_bps"] = _assumed_bps
+        # [P169] Pure telemetry: this block only reads prices and prints. An
+        # exception here means we lost a measurement, not that the fill went
+        # wrong — raising would abort post-trade recording for a genuinely
+        # filled order, which is strictly worse than a missing log line. The
+        # failure is logged, so it stays observable.
+        except Exception as _slip_err:  # noqa: silent-swallow — telemetry only, logged below
+            logger.debug(f"[FILL_VS_MID] {asset}: {_slip_err}")
 
     # [SOTA] Record successful fill for FillRateKPI
     try:
@@ -3402,7 +3627,14 @@ async def execute_intent_v2(
                 "strategy": intent.quant_strategy_id or "momentum",
                 "entry_alpha_est": getattr(intent, 'alpha_estimated_bps', 0.0),
                 "mode_at_entry": getattr(intent, 'system_mode', 'NORMAL'),
-                "phase_at_entry": market_data.get('phase', 'UNKNOWN'),
+                # [P173] Was `market_data.get('phase', 'UNKNOWN')`. Nothing
+                # writes market_data['phase']; the producer is
+                # `agent_signals['phase']` (main.py:8522) — the same dict the
+                # three latest_drl_* fields below read. Every position ever
+                # opened recorded phase_at_entry="UNKNOWN", so any analysis of
+                # which market phase the winners came from was reading a
+                # constant.
+                "phase_at_entry": signal_value("phase", agent_signals, market_data, "UNKNOWN"),
                 "crack_weight": market_data.get('crack_weight', 0.0),
                 "regime_leverage": getattr(intent, 'regime_leverage', 1.0),  # [AUDIT-D3]
                 "entry_tick": ctx.tick_count,  # [AC-1] for min hold time

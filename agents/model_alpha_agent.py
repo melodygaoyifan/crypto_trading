@@ -218,6 +218,29 @@ class UnifiedState:
                 return default
             return val
 
+        def _get_either(key, default=None):
+            """[P171] market_data first, then agent_signals, and record a miss
+            when neither has it.
+
+            `lob_imbalance` and `spread_bps` used to be read straight off
+            agent_signals. Both keys only ever exist in market_data (the
+            pipeline writes them at market_data_pipeline.py:1888/1900; nothing
+            copies them into agent_signals), so both resolved to 0.0 on every
+            call — a perfectly balanced book and a zero spread, i.e. free
+            trading — and because they bypassed _get they never showed up in
+            `missing` either, so the coverage instrumentation built to catch
+            exactly this reported full coverage. main.py:7407 already carries a
+            "[PATCH-6] Bridge micro key mismatch" comment for a neighbouring
+            key; these two were left behind.
+            """
+            val = md.get(key, None)
+            if val is None:
+                val = agent_signals.get(key, None)
+            if val is None:
+                missing.append(key)
+                return default
+            return val
+
         ts = md.get("timestamp")
         if ts is None:
             ts = datetime.now(timezone.utc)
@@ -249,8 +272,8 @@ class UnifiedState:
             returns_24h={a: float(md.get(f"{a.lower()}_returns_24h", 0.0) or 0.0) for a in ("BTC", "ETH", "SOL")},
             volatility={a: float(md.get(f"{a.lower()}_volatility", md.get("volatility_4h", 0.0)) or 0.0) for a in ("BTC", "ETH", "SOL")},
             volatility_regime=str(_get("volatility_regime", "normal")),
-            lob_imbalance={primary_asset: float(agent_signals.get("order_book_imbalance", 0.0) or 0.0)},
-            spread_bps={primary_asset: float(agent_signals.get("spread_bps", 0.0) or 0.0)},
+            lob_imbalance={primary_asset: float(_get_either("order_book_imbalance", 0.0) or 0.0)},
+            spread_bps={primary_asset: float(_get_either("spread_bps", 0.0) or 0.0)},
             fear_greed=int(md.get("fear_greed", md.get("fear_greed_index", 50)) or 50),
             sentiment_score=float(agent_signals.get("sentiment_zscore", 0.0) or 0.0),
             funding_rate={primary_asset: float(md.get("funding_rate", 0.0) or 0.0)},

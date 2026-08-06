@@ -76,12 +76,18 @@ class TestQuietAccumDirectionFloor:
 class TestBorderlineEpsilon:
     def test_epsilon_allows_marginal_pass(self, calc):
         """Signal just below threshold but within epsilon → should pass.
-        EV threshold = friction(~7bps) * 1.10 = 7.7bps. With alpha=7.0 and
-        epsilon=2.0: net_alpha + epsilon should cross threshold."""
+
+        [P167] friction is now a ROUND TRIP: 2 legs x ~7bps/leg = 14.0bps, so
+        the EV threshold is 14.0 * 1.10 = 15.4bps (was 7.0 / 7.7 when the gate
+        charged one leg). The override is haircut 0.75x by ALPHA-FEEDBACK, so
+        17.34 -> 13.0bps of alpha: below 15.4 on its own, over it with the 3bps
+        epsilon. Rescaled rather than relaxed — this still tests that epsilon,
+        and only epsilon, carries a marginal signal across.
+        """
         r = calc.check_alpha_gate(
             signal_strength=0.5, regime_confidence=0.8, mode="NORMAL",
             min_alpha_bps=5.0, direction=0.5, quant_confidence=0.8,
-            estimated_alpha_override=7.0,  # Close to EV threshold ~7.7bps
+            estimated_alpha_override=17.34,  # -> 13.0bps vs EV threshold 15.4
             borderline_pass_epsilon_bps=3.0,
         )
         # With 3bps epsilon, marginal signals should pass

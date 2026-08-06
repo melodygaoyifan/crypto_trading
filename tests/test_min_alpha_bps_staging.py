@@ -62,10 +62,13 @@ class TestHighRiskDefault:
             mode="NORMAL",
             min_alpha_bps=0.0,
         )
-        # Free tier: fees=0, slippage=5, latency=2 -> friction=7
-        # Current NORMAL multiplier=1.10 (was 1.5) -> threshold=7.7
-        assert result.threshold_bps == pytest.approx(7.7, abs=0.1)
-        assert result.ev_threshold_bps == pytest.approx(7.7, abs=0.1)
+        # [P167] Free tier per leg: fees=0, slippage=5, latency=2 -> 7.
+        # A position pays that on entry AND exit -> friction=14.
+        # NORMAL multiplier=1.10 -> threshold=15.4.
+        assert result.friction_legs == 2.0
+        assert result.friction_total_bps == pytest.approx(14.0, abs=0.1)
+        assert result.threshold_bps == pytest.approx(15.4, abs=0.1)
+        assert result.ev_threshold_bps == pytest.approx(15.4, abs=0.1)
         assert result.min_alpha_bps_used == 0.0
 
     def test_high_risk_default_threshold_matches_legacy(self):
@@ -76,13 +79,13 @@ class TestHighRiskDefault:
         result_normal = calc.check_alpha_gate(
             signal_strength=0.5, regime_confidence=0.8,
             mode="NORMAL", min_alpha_bps=0.0)
-        assert result_normal.threshold_bps == pytest.approx(7.7, abs=0.1)
+        assert result_normal.threshold_bps == pytest.approx(15.4, abs=0.1)  # [P167] 2x7 x1.10
 
         # OPPORTUNITY mode free tier
         result_opp = calc.check_alpha_gate(
             signal_strength=0.5, regime_confidence=0.8,
             mode="OPPORTUNITY", min_alpha_bps=0.0)
-        assert result_opp.threshold_bps == pytest.approx(7.0, abs=0.1)
+        assert result_opp.threshold_bps == pytest.approx(14.0, abs=0.1)  # [P167] 2x7 x1.0
 
     def test_leverage_margin_friction_increases_ev_threshold(self):
         calc = _make_calculator(monthly_volume_usd=0.0)
@@ -99,10 +102,13 @@ class TestHighRiskDefault:
         assert result.friction_fee_bps == 0.0
         assert result.friction_slippage_bps == pytest.approx(3.0)
         assert result.friction_latency_bps == pytest.approx(2.0)
+        # [P167] Margin/funding is a per-HOLD cost and must NOT be doubled;
+        # only fee+slippage+latency are per-leg. 2*(0+3+2) + 7 = 17.
         assert result.friction_margin_bps == pytest.approx(7.0)
-        assert result.friction_total_bps == pytest.approx(12.0)
-        assert result.ev_threshold_bps == pytest.approx(13.2, abs=0.1)  # 12.0 * 1.10
-        assert result.threshold_bps == pytest.approx(13.2, abs=0.1)
+        assert result.friction_legs == 2.0
+        assert result.friction_total_bps == pytest.approx(17.0)
+        assert result.ev_threshold_bps == pytest.approx(18.7, abs=0.1)  # 17.0 * 1.10
+        assert result.threshold_bps == pytest.approx(18.7, abs=0.1)
 
 
 # ===========================================================================
@@ -155,15 +161,19 @@ class TestGateBehaviour:
 
     def test_min_alpha_dominates_in_opportunity_free_tier(self):
         """
-        Free tier OPPORTUNITY: EV gate = 7 * 1.0 = 7.0bps.
-        min_alpha=10 > 7.0 -> threshold=10.
+        Free tier OPPORTUNITY: EV gate = 2*7 * 1.0 = 14.0bps  [P167].
+        min_alpha=20 > 14.0 -> threshold=20.
+
+        The floor was 10 when the EV gate priced one leg. Doubling friction
+        moved the EV gate above it, so this test would have silently stopped
+        exercising the min_alpha-dominates branch; raise the floor to keep it.
         """
         calc = _make_calculator(monthly_volume_usd=0.0)
         result = calc.check_alpha_gate(
             signal_strength=0.5, regime_confidence=0.8,
-            mode="OPPORTUNITY", min_alpha_bps=10.0)
-        assert result.threshold_bps == pytest.approx(10.0, abs=0.1)
-        assert result.ev_threshold_bps == pytest.approx(7.0, abs=0.1)
+            mode="OPPORTUNITY", min_alpha_bps=20.0)
+        assert result.threshold_bps == pytest.approx(20.0, abs=0.1)
+        assert result.ev_threshold_bps == pytest.approx(14.0, abs=0.1)
 
     def test_ev_gate_dominates_in_normal_free_tier(self):
         """
@@ -174,7 +184,7 @@ class TestGateBehaviour:
         result = calc.check_alpha_gate(
             signal_strength=0.5, regime_confidence=0.8,
             mode="NORMAL", min_alpha_bps=6.0)
-        assert result.threshold_bps == pytest.approx(7.7, abs=0.1)
+        assert result.threshold_bps == pytest.approx(15.4, abs=0.1)  # [P167] 2x7 x1.10
         assert result.min_alpha_bps_used == 6.0
 
     def test_ev_gate_always_dominates_post_free_tier(self):
@@ -186,8 +196,8 @@ class TestGateBehaviour:
         result = calc.check_alpha_gate(
             signal_strength=0.5, regime_confidence=0.8,
             mode="NORMAL", min_alpha_bps=5.0)
-        assert result.threshold_bps == pytest.approx(36.3, abs=0.1)
-        assert result.ev_threshold_bps == pytest.approx(36.3, abs=0.1)
+        assert result.threshold_bps == pytest.approx(72.6, abs=0.1)   # [P167] 2x33 x1.10
+        assert result.ev_threshold_bps == pytest.approx(72.6, abs=0.1)
         assert result.min_alpha_bps_used == 5.0
 
     def test_alpha_7bps_rejected_by_week1_allowed_by_month1(self):
@@ -203,14 +213,15 @@ class TestGateBehaviour:
         # signal = 7 / (200 * 0.8 * 0.75) = 7/120 ≈ 0.0583
         signal = 7.0 / (200.0 * 0.8 * 0.75)
 
-        # WEEK1 min_alpha=10, OPPORTUNITY EV=7.0 -> threshold=max(10, 7.0)=10
+        # [P167] WEEK1 floor raised 10 -> 20 so it still dominates the now
+        # 2-leg EV gate (14.0). Below 14 the branch under test never runs.
         result_w1 = calc.check_alpha_gate(
             signal_strength=signal, regime_confidence=0.8,
-            mode="OPPORTUNITY", min_alpha_bps=10.0)
+            mode="OPPORTUNITY", min_alpha_bps=20.0)
         assert result_w1.passes_threshold is False
         assert result_w1.gate_decision == "REJECT_MIN_ALPHA"
 
-        # MONTH1 min_alpha=5, OPPORTUNITY EV=7.0 -> threshold=max(5, 7.0)=7.0
+        # MONTH1 min_alpha=5, OPPORTUNITY EV=14.0 -> threshold=max(5, 14.0)=14.0
         result_m1 = calc.check_alpha_gate(
             signal_strength=signal, regime_confidence=0.8,
             mode="OPPORTUNITY", min_alpha_bps=5.0)
@@ -219,16 +230,18 @@ class TestGateBehaviour:
 
     def test_alpha_9bps_pass_month1_reject_week1(self):
         """
-        alpha≈9bps in OPPORTUNITY mode:
-        WEEK1 (min=10, EV=7.0 -> threshold=10) -> REJECT (min_alpha)
-        MONTH1 (min=5, EV=7.0 -> threshold=7.0) -> ALLOW
+        [P167] alpha≈18bps in OPPORTUNITY mode (was 9, which no longer clears
+        the 2-leg EV gate at 14.0 under ANY floor — the ALLOW branch would be
+        unreachable and the test would pass for the wrong reason):
+        WEEK1 (min=20, EV=14.0 -> threshold=20) -> REJECT (min_alpha)
+        MONTH1 (min=5,  EV=14.0 -> threshold=14.0) -> ALLOW
         """
         calc = _make_calculator(monthly_volume_usd=0.0)
-        signal = 9.0 / (200.0 * 0.59 * 0.75)
+        signal = 18.0 / (200.0 * 0.59 * 0.75)
 
         result_w1 = calc.check_alpha_gate(
             signal_strength=signal, regime_confidence=0.8,
-            mode="OPPORTUNITY", min_alpha_bps=10.0)
+            mode="OPPORTUNITY", min_alpha_bps=20.0)
         assert result_w1.passes_threshold is False
 
         result_m1 = calc.check_alpha_gate(
@@ -239,8 +252,11 @@ class TestGateBehaviour:
 
     def test_quiet_accum_short_uses_short_specific_direction_floor(self):
         calc = _make_calculator(monthly_volume_usd=0.0)
+        # [P167] signal 0.10 -> alpha 8.9bps, which the 2-leg EV gate (14.0)
+        # now rejects. This test is about the SHORT direction floor, so give it
+        # a signal that clears EV and let the floor be what decides.
         result = calc.check_alpha_gate(
-            signal_strength=0.10,
+            signal_strength=0.20,
             regime_confidence=0.8,
             mode="OPPORTUNITY",
             min_alpha_bps=5.0,
@@ -269,13 +285,19 @@ class TestGateBehaviour:
 
     def test_short_specific_high_risk_floor_can_pass_where_general_floor_fails(self):
         calc = _make_calculator(monthly_volume_usd=0.0)
-        signal = 0.0435  # Estimated alpha ~= 4.2bps with default confidence path
+        # [P167] was 0.0435 (alpha ~4.2bps) with floors 5.0/3.0, chosen against
+        # a 1-leg EV gate of ~4.3bps. Both floors now sit below the 2-leg gate,
+        # which would make BOTH cases REJECT_EV and test nothing. Re-pick so the
+        # general case is blocked by its FLOOR and the short case clears EV:
+        #   alpha ~= 9.0bps | general ev 8.64 floor 12 -> REJECT_MIN_ALPHA
+        #                   | short   ev 7.68 floor  3 -> ALLOW
+        signal = 0.093
 
         result_general = calc.check_alpha_gate(
             signal_strength=signal,
             regime_confidence=0.9862530385122186,
             mode="OPPORTUNITY",
-            min_alpha_bps=5.0,
+            min_alpha_bps=12.0,
             direction=-0.04716423849782937,
             asset="BTC",
             regime="WEAK_CONSOLIDATION",
@@ -518,7 +540,8 @@ class TestFrictionBreakdown:
         assert result.friction_fee_bps == 0.0
         assert result.friction_slippage_bps == 5.0
         assert result.friction_latency_bps == 2.0
-        assert result.friction_total_bps == 7.0
+        assert result.friction_legs == 2.0          # [P167] entry + exit
+        assert result.friction_total_bps == 14.0    # 2 * (0 + 5 + 2)
 
     def test_post_free_tier_friction_breakdown(self):
         """Post-free tier: taker fee=26, slippage=5, latency=2."""
@@ -529,7 +552,8 @@ class TestFrictionBreakdown:
         assert result.friction_fee_bps == 26.0
         assert result.friction_slippage_bps == 5.0
         assert result.friction_latency_bps == 2.0
-        assert result.friction_total_bps == 33.0
+        assert result.friction_legs == 2.0          # [P167] entry + exit
+        assert result.friction_total_bps == 66.0    # 2 * (26 + 5 + 2)
 
     def test_maker_fee_breakdown(self):
         """Maker mode uses maker fee (16bps post-free)."""
@@ -538,7 +562,8 @@ class TestFrictionBreakdown:
             signal_strength=0.5, regime_confidence=0.8,
             mode="NORMAL", is_maker=True, min_alpha_bps=0.0)
         assert result.friction_fee_bps == 16.0
-        assert result.friction_total_bps == 23.0
+        assert result.friction_legs == 2.0          # [P167] entry + exit
+        assert result.friction_total_bps == 46.0    # 2 * (16 + 5 + 2)
 
 
 # ===========================================================================

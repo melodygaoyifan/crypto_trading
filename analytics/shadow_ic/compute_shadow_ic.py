@@ -7,8 +7,14 @@ cascade_*.jsonl), joins each (ts, asset, strategy) signal to forward
 returns sourced from the 4H OHLCV parquets, computes per-strategy IC
 across configurable horizons, and emits a promotion verdict per strategy:
 
-    PROMOTE : IC > 0.05 stable across horizons + Sharpe > 0.5
-    HOLD    : not yet 30 days of data, OR mixed signal
+    PROMOTE : [P166] every one of these, at every horizon with enough samples —
+                * IC positive (nothing downstream inverts a negative-IC strategy)
+                * |IC| > 0.05 floor, and Sharpe > 0.5
+                * |t| = |IC|*sqrt(n-1) >= 2.0  (distinguishable from zero)
+                * expected edge >= 6.0bps round-trip cost x 2.0 margin, priced
+                  off the measured forward-return volatility
+              A missing volatility measurement is a REFUSAL, not a skip.
+    HOLD    : not yet 30 days of data, OR mixed signal, OR any bar above unmet
     KILL    : 14d window has IC < 0.05 (kill-criteria per v5.1 prompt)
 
 Output:
@@ -37,8 +43,10 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 import sys
 from collections import defaultdict
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
@@ -53,11 +61,120 @@ OHLCV_DIR = REPO / "training" / "training_data" / "drl_training"
 REPORT_DIR = REPO / "analytics" / "shadow_ic" / "reports"
 
 
+# ---------------------------------------------------------------------------
+# [P166] Cost-aware promotion constants
+# ---------------------------------------------------------------------------
+#
+# Round-trip execution cost, in bps, charged once per entry+exit pair.
+#
+# 3.0 bps taker x 2 sides = 6.0. This deliberately assumes **100% taker** even
+# though `analytics/sixty_day_review` reports maker_fee_ratio = 0.994, because
+# that metric classifies by ORDER TYPE (n_limit / n_classified), not by how the
+# fill actually cleared -- a limit order that crosses the spread pays taker. The
+# realized round-trip cost measured over the 85 closed trades in
+# `data/trade_attribution.jsonl` is **31.1 bps median / 33.0 bps mean** (Kraken
+# tier), i.e. ~400x the 0.078 bps that `training/backtest_framework.FeeSchedule`
+# assumes by default. 6.0 is the forward-looking Coinbase number; it is a floor,
+# not a measurement, which is why COST_MARGIN exists.
+DEFAULT_ROUND_TRIP_COST_BPS = 6.0
+
+# Require the estimated edge to cover costs this many times over. The margin
+# absorbs (a) spread and market impact, which the fee number excludes entirely,
+# and (b) the optimism of the linear IC->edge model below, which assumes a
+# full-size position on the sign of the signal with no capacity constraint.
+DEFAULT_COST_MARGIN = 2.0
+
+# An IC must be distinguishable from zero before it can be acted on.
+# SE(IC) ~= 1/sqrt(n-1), so the legacy gate -- IC > 0.05 at min_samples = 30 --
+# accepted a reading 0.27 standard errors from zero. Clearing |t| >= 2.0 at
+# IC = 0.05 needs n ~= 1600.
+DEFAULT_MIN_IC_T_STAT = 2.0
+
+# Absolute floor retained from the legacy gate. Kept as a floor (not the whole
+# test) so a low-volatility asset cannot produce a trivially small cost-derived
+# requirement and promote on a statistically real but economically empty edge.
+DEFAULT_IC_FLOOR = 0.05
+
+# E|z| for a standard normal: converts "correlation" into "expected return when
+# you take a full-size position on the sign of the signal".
+_SIGN_EDGE_FACTOR = math.sqrt(2.0 / math.pi)  # ~0.7979
+
+
 class Verdict(Enum):
     PROMOTE = "PROMOTE"
     HOLD = "HOLD"
     KILL = "KILL"
     INSUFFICIENT_SAMPLES = "INSUFFICIENT_SAMPLES"
+
+
+@dataclass
+class PromotionAssessment:
+    """[P166] The verdict plus the arithmetic behind it.
+
+    `blockers` is the whole point: a HOLD that does not say which bar was
+    missed is indistinguishable from a HOLD that is one sample away from
+    promoting, and the operator cannot tell whether to wait or to kill.
+    """
+    verdict: Verdict
+    blockers: List[str] = field(default_factory=list)
+    per_horizon: Dict[int, Dict[str, Any]] = field(default_factory=dict)
+    round_trip_cost_bps: float = 0.0
+    cost_margin: float = 0.0
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "verdict": self.verdict.value,
+            "blockers": list(self.blockers),
+            "per_horizon": {str(k): v for k, v in self.per_horizon.items()},
+            "round_trip_cost_bps": self.round_trip_cost_bps,
+            "cost_margin": self.cost_margin,
+        }
+
+
+def spearman_to_pearson(rho_s: float) -> float:
+    """Convert a Spearman rank correlation to the Pearson equivalent.
+
+    Exact for the bivariate normal: r = 2*sin(pi*rho_s/6). Near zero the two
+    are almost identical (rho_s=0.05 -> r=0.0523), but the conversion is cheap
+    and keeps the edge formula below dimensionally honest -- that formula is
+    derived for a *linear* correlation.
+    """
+    rho_s = max(-1.0, min(1.0, float(rho_s)))
+    return 2.0 * math.sin(math.pi * rho_s / 6.0)
+
+
+def expected_edge_bps(ic_spearman_val: float, fwd_vol_bps: float) -> float:
+    """Expected per-round-trip edge, in bps, from an IC and a forward vol.
+
+    E[r * sign(x)] = r_pearson * sigma_r * E|z| for jointly-normal (x, r).
+
+    This is what the legacy gate never did: IC is dimensionless, costs are in
+    bps, and the two were never brought into the same units, so `IC > 0.05`
+    could not possibly know whether it cleared a 6 bps round trip. It does not
+    -- at a 4-bar (16h) horizon, IC 0.05 on ~107 bps of forward vol is worth
+    about 4.4 bps, which loses money on every venue this system has traded.
+    """
+    return abs(_SIGN_EDGE_FACTOR * spearman_to_pearson(ic_spearman_val) * float(fwd_vol_bps))
+
+
+def required_ic_for_costs(
+    fwd_vol_bps: float,
+    round_trip_cost_bps: float = DEFAULT_ROUND_TRIP_COST_BPS,
+    cost_margin: float = DEFAULT_COST_MARGIN,
+) -> float:
+    """Invert `expected_edge_bps`: the smallest IC that pays for its own costs.
+
+    Returns +inf when no correlation is sufficient (vol too low to ever cover
+    the cost of trading it) -- the caller must treat that as "cannot promote",
+    never as "no requirement".
+    """
+    if fwd_vol_bps <= 0:
+        return math.inf
+    needed_bps = float(round_trip_cost_bps) * float(cost_margin)
+    r_pearson = needed_bps / (_SIGN_EDGE_FACTOR * float(fwd_vol_bps))
+    if r_pearson >= 2.0:          # asin domain: no correlation can get there
+        return math.inf
+    return (6.0 / math.pi) * math.asin(r_pearson / 2.0)
 
 
 # ---------------------------------------------------------------------------
@@ -269,6 +386,21 @@ def compute_per_strategy_ic(
 
         ic_per_h = {h: _spearman(per_h[h][0], per_h[h][1]) for h in horizons_bars}
         n_per_h = {h: len(per_h[h][0]) for h in horizons_bars}
+        # [P166] Forward-return dispersion, in bps, per horizon. This is the
+        # missing scale factor that lets a dimensionless IC be compared against
+        # a cost in bps. It is measured from the SAME joined pairs the IC is
+        # computed on, so it cannot drift from them. A horizon with fewer than
+        # two pairs gets no entry at all -- deliberately absent rather than
+        # 0.0, so `assess_promotion` can fail closed instead of silently
+        # concluding that a zero-vol asset needs zero edge (P164/P159).
+        fwd_vol_bps_per_h: Dict[int, float] = {}
+        for h in horizons_bars:
+            ys = per_h[h][1]
+            if len(ys) < 2:
+                continue
+            mean_y = sum(ys) / len(ys)
+            var_y = sum((y - mean_y) ** 2 for y in ys) / (len(ys) - 1)
+            fwd_vol_bps_per_h[h] = (var_y ** 0.5) * 10_000.0
 
         # Annualized Sharpe at the largest horizon (per-tick re-evaluations,
         # NOT per-trade — these are signals-as-positions, idealized)
@@ -287,6 +419,7 @@ def compute_per_strategy_ic(
             "n_records": len(recs),
             "n_per_horizon": n_per_h,
             "ic_per_horizon": ic_per_h,
+            "fwd_vol_bps_per_horizon": fwd_vol_bps_per_h,  # [P166]
             "annualized_sharpe": sharpe,
             "n_directional": len(per_trade_returns),
         }
@@ -298,52 +431,211 @@ def compute_per_strategy_ic(
 # Verdict
 # ---------------------------------------------------------------------------
 
+def assess_promotion(
+    ic_per_h: Dict[int, float],
+    n_per_h: Dict[int, int],
+    sharpe: float,
+    window_days: int,
+    fwd_vol_bps_per_h: Optional[Dict[int, float]] = None,
+    min_samples: int = 30,
+    promote_ic: float = DEFAULT_IC_FLOOR,
+    kill_ic: float = 0.05,
+    promote_sharpe: float = 0.5,
+    round_trip_cost_bps: float = DEFAULT_ROUND_TRIP_COST_BPS,
+    cost_margin: float = DEFAULT_COST_MARGIN,
+    min_ic_t_stat: float = DEFAULT_MIN_IC_T_STAT,
+    require_positive_ic: bool = True,
+) -> PromotionAssessment:
+    """[P166] The promotion gate, with the reasoning attached.
+
+    The legacy gate promoted on `min(|IC|) > 0.05 and sharpe > 0.5`. Three
+    things were wrong with that, each sufficient on its own to promote a
+    strategy that is guaranteed to lose money:
+
+      1. NO COST TERM. IC is dimensionless; fees and spread are in bps; the
+         two were never converted into common units. IC 0.05 against the ~107
+         bps of 16h forward vol these assets show is worth ~4.4 bps per round
+         trip, against 6 bps of Coinbase taker fees before any spread. The
+         gate's "pass" mark sat *below* break-even.
+      2. NO SIGNIFICANCE TERM. SE(IC) ~= 1/sqrt(n-1), so at the shipped
+         min_samples=30 an IC of 0.05 is 0.27 SE from zero. The gate could not
+         distinguish an edge from a coin flip, and 30 samples is reached in
+         about five days of 4H bars.
+      3. abs() ON THE PROMOTE BRANCH. `decide_strategy_action` in
+         promotion_gate/promotion_plan.py maps PROMOTE straight to
+         PROMOTE_TO_FUSION with no sign handling anywhere downstream, so a
+         strategy with IC -0.16 (P143 measured exactly that for model_alpha)
+         would be promoted and then traded in the direction it predicts
+         against.
+
+    KILL and INSUFFICIENT_SAMPLES semantics are unchanged. Every new condition
+    only ever *removes* a PROMOTE, so this cannot make the gate looser.
+    """
+    fwd_vol_bps_per_h = fwd_vol_bps_per_h or {}
+    assessment = PromotionAssessment(
+        verdict=Verdict.HOLD,
+        round_trip_cost_bps=round_trip_cost_bps,
+        cost_margin=cost_margin,
+    )
+
+    if not n_per_h or all(n < min_samples for n in n_per_h.values()):
+        assessment.verdict = Verdict.INSUFFICIENT_SAMPLES
+        assessment.blockers.append(
+            f"all horizons below min_samples={min_samples}"
+        )
+        return assessment
+
+    # Use only horizons that have enough samples
+    valid_horizons = sorted(h for h, n in n_per_h.items() if n >= min_samples)
+    if not valid_horizons:
+        assessment.verdict = Verdict.INSUFFICIENT_SAMPLES
+        assessment.blockers.append(f"no horizon reaches min_samples={min_samples}")
+        return assessment
+
+    valid_ics = [abs(ic_per_h[h]) for h in valid_horizons]
+
+    if window_days <= 14:
+        # Short window: KILL aggressively if all IC weak. Unchanged -- a short
+        # window is only ever used to cut, never to promote, so the cost and
+        # significance bars have nothing to add here.
+        if max(valid_ics) < kill_ic:
+            assessment.verdict = Verdict.KILL
+            assessment.blockers.append(
+                f"|IC| < kill_ic={kill_ic} at every valid horizon (short window)"
+            )
+        else:
+            assessment.verdict = Verdict.HOLD
+            assessment.blockers.append(
+                f"window_days={window_days} <= 14: too short to promote"
+            )
+        return assessment
+
+    # ---- Longer window (>=30d): every promotion bar must clear ----
+    blockers: List[str] = []
+
+    for h in valid_horizons:
+        ic_h = float(ic_per_h[h])
+        n_h = int(n_per_h[h])
+        detail: Dict[str, Any] = {"ic": ic_h, "n": n_h}
+
+        # (2) Significance. t = IC * sqrt(n - 1) is the standard large-sample
+        # approximation for a rank correlation.
+        t_stat = abs(ic_h) * math.sqrt(max(n_h - 1, 0))
+        detail["t_stat"] = t_stat
+        if t_stat < min_ic_t_stat:
+            blockers.append(
+                f"h={h}: IC {ic_h:+.4f} is {t_stat:.2f} SE from zero "
+                f"(need |t| >= {min_ic_t_stat}; n={n_h}, "
+                f"n_required~={int(math.ceil((min_ic_t_stat / max(abs(ic_h), 1e-9)) ** 2)) + 1})"
+            )
+
+        # (1) Costs. Absent vol => FAIL CLOSED. A cost check that could not run
+        # is not a cost check that passed (P159, P164).
+        vol_bps = fwd_vol_bps_per_h.get(h)
+        if vol_bps is None or not math.isfinite(float(vol_bps)) or float(vol_bps) <= 0.0:
+            detail["fwd_vol_bps"] = None
+            blockers.append(
+                f"h={h}: forward-return volatility unavailable — cannot verify "
+                f"the edge covers {round_trip_cost_bps:.1f}bps x {cost_margin:.1f} "
+                f"of round-trip cost; refusing to promote on an unchecked cost bar"
+            )
+        else:
+            vol_bps = float(vol_bps)
+            edge = expected_edge_bps(ic_h, vol_bps)
+            need_ic = required_ic_for_costs(vol_bps, round_trip_cost_bps, cost_margin)
+            detail["fwd_vol_bps"] = vol_bps
+            detail["edge_bps"] = edge
+            detail["required_bps"] = round_trip_cost_bps * cost_margin
+            detail["required_ic"] = need_ic
+            if edge < round_trip_cost_bps * cost_margin:
+                blockers.append(
+                    f"h={h}: edge {edge:.2f}bps < required "
+                    f"{round_trip_cost_bps * cost_margin:.2f}bps "
+                    f"({round_trip_cost_bps:.1f}bps round trip x {cost_margin:.1f} margin); "
+                    f"IC {abs(ic_h):.4f} vs required {need_ic:.4f} on "
+                    f"{vol_bps:.1f}bps forward vol"
+                )
+
+        # (3) Sign. Only checked on the promote path; KILL still uses |IC|.
+        if require_positive_ic and ic_h <= 0.0:
+            blockers.append(
+                f"h={h}: IC {ic_h:+.4f} is not positive — nothing downstream "
+                f"inverts a negative-IC strategy, so promoting it would trade "
+                f"the signal backwards"
+            )
+
+        assessment.per_horizon[h] = detail
+
+    # Absolute IC floor, retained from the legacy gate.
+    if min(valid_ics) <= promote_ic:
+        blockers.append(
+            f"min |IC| {min(valid_ics):.4f} <= floor {promote_ic}"
+        )
+
+    if sharpe <= promote_sharpe:
+        blockers.append(f"sharpe {sharpe:+.2f} <= {promote_sharpe}")
+
+    if not blockers:
+        assessment.verdict = Verdict.PROMOTE
+        return assessment
+
+    assessment.blockers = blockers
+    if max(valid_ics) < kill_ic:
+        assessment.verdict = Verdict.KILL
+    else:
+        assessment.verdict = Verdict.HOLD
+    return assessment
+
+
 def determine_verdict(
     ic_per_h: Dict[int, float],
     n_per_h: Dict[int, int],
     sharpe: float,
     window_days: int,
     min_samples: int = 30,
-    promote_ic: float = 0.05,
+    promote_ic: float = DEFAULT_IC_FLOOR,
     kill_ic: float = 0.05,
     promote_sharpe: float = 0.5,
+    fwd_vol_bps_per_h: Optional[Dict[int, float]] = None,
+    **kwargs: Any,
 ) -> Verdict:
-    """Apply v5.1 promotion gate.
-
-    Rules:
-      - ALL horizons N < min_samples -> INSUFFICIENT_SAMPLES
-      - 14d window: any horizon IC < kill_ic AND N >= min_samples -> KILL
-      - 30d window: ALL horizons IC > promote_ic AND sharpe > promote_sharpe -> PROMOTE
-      - else -> HOLD
-    """
-    if all(n < min_samples for n in n_per_h.values()):
-        return Verdict.INSUFFICIENT_SAMPLES
-
-    # Use only horizons that have enough samples
-    valid_horizons = [h for h, n in n_per_h.items() if n >= min_samples]
-    if not valid_horizons:
-        return Verdict.INSUFFICIENT_SAMPLES
-
-    valid_ics = [abs(ic_per_h[h]) for h in valid_horizons]
-
-    if window_days <= 14:
-        # Short window: KILL aggressively if all IC weak (use absolute value -
-        # negative IC is also a signal but flipped; promote logic should handle that)
-        if max(valid_ics) < kill_ic:
-            return Verdict.KILL
-        return Verdict.HOLD
-
-    # Longer window (>=30d): Look at promotion criteria
-    if min(valid_ics) > promote_ic and sharpe > promote_sharpe:
-        return Verdict.PROMOTE
-    if max(valid_ics) < kill_ic:
-        return Verdict.KILL
-    return Verdict.HOLD
+    """Thin wrapper over `assess_promotion` for callers that want only the
+    verdict. Kept so `promotion_gate/promotion_plan.py` and the existing tests
+    keep working unchanged. New code should prefer `assess_promotion`, which
+    also returns *why*."""
+    return assess_promotion(
+        ic_per_h,
+        n_per_h,
+        sharpe,
+        window_days,
+        fwd_vol_bps_per_h=fwd_vol_bps_per_h,
+        min_samples=min_samples,
+        promote_ic=promote_ic,
+        kill_ic=kill_ic,
+        promote_sharpe=promote_sharpe,
+        **kwargs,
+    ).verdict
 
 
 # ---------------------------------------------------------------------------
 # Reporting
 # ---------------------------------------------------------------------------
+
+def assess_record(record: Dict[str, Any], window_days: int) -> PromotionAssessment:
+    """[P166] Single source of truth for "what does this IC record mean?".
+
+    `render_summary` and the JSON report used to call `determine_verdict`
+    separately with their own argument lists. Two call sites deriving the same
+    verdict independently is how a console PROMOTE and a report HOLD end up in
+    the same run; route both through here instead."""
+    return assess_promotion(
+        record.get("ic_per_horizon", {}) or {},
+        record.get("n_per_horizon", {}) or {},
+        record.get("annualized_sharpe", 0.0) or 0.0,
+        window_days,
+        fwd_vol_bps_per_h=record.get("fwd_vol_bps_per_horizon", {}) or {},
+    )
+
 
 def render_summary(
     per_strategy: Dict[Tuple[str, str], Dict[str, Any]],
@@ -365,13 +657,36 @@ def render_summary(
         ic_per_h = v.get("ic_per_horizon", {})
         n_per_h = v.get("n_per_horizon", {})
         sharpe = v.get("annualized_sharpe", 0.0)
-        verdict = determine_verdict(ic_per_h, n_per_h, sharpe, window_days)
+        assessment = assess_record(v, window_days)
         n_max = max(n_per_h.values()) if n_per_h else 0
         ic_strs = " ".join(f"{ic_per_h.get(h, 0.0):+.3f}" for h in horizons_bars)
         lines.append(
-            f"  {strat:<24} {asset:<5} {n_max:>6} {ic_strs} {sharpe:+8.2f} {verdict.value:>20}"
+            f"  {strat:<24} {asset:<5} {n_max:>6} {ic_strs} {sharpe:+8.2f} "
+            f"{assessment.verdict.value:>20}"
         )
+        # [P166] A verdict without its arithmetic is not auditable. Print the
+        # edge-vs-cost line for every horizon, then why promotion was refused.
+        for h in horizons_bars:
+            d = assessment.per_horizon.get(h)
+            if not d:
+                continue
+            if d.get("edge_bps") is None:
+                lines.append(f"      h={h:<3} edge=UNKNOWN (no forward vol) t={d['t_stat']:.2f}")
+            else:
+                lines.append(
+                    f"      h={h:<3} edge={d['edge_bps']:6.2f}bps  "
+                    f"need={d['required_bps']:6.2f}bps  "
+                    f"vol={d['fwd_vol_bps']:8.1f}bps  "
+                    f"IC={d['ic']:+.4f} (req {d['required_ic']:.4f})  t={d['t_stat']:.2f}"
+                )
+        for b in assessment.blockers:
+            lines.append(f"      BLOCKED: {b}")
     lines.append("=" * 90)
+    lines.append(
+        f"  cost model: {DEFAULT_ROUND_TRIP_COST_BPS:.1f}bps round trip "
+        f"x {DEFAULT_COST_MARGIN:.1f} margin | significance: |t| >= "
+        f"{DEFAULT_MIN_IC_T_STAT:.1f} | IC floor: {DEFAULT_IC_FLOOR}   [P166]"
+    )
     return "\n".join(lines)
 
 
@@ -412,12 +727,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                 "strategy": s,
                 "asset": a,
                 **v,
-                "verdict": determine_verdict(
-                    v.get("ic_per_horizon", {}),
-                    v.get("n_per_horizon", {}),
-                    v.get("annualized_sharpe", 0.0),
-                    args.window_days,
-                ).value,
+                # [P166] Same assessment object the console summary printed.
+                **assess_record(v, args.window_days).to_dict(),
             }
             for (s, a), v in per_strategy.items()
         ],

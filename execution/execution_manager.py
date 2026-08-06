@@ -141,6 +141,11 @@ class OrderResult:
             "filled_size": self.filled_size,
             "slippage": self.slippage,
             "fee": self.fee,
+            # [P169] `fee` alone is unusable: ccxt reports the fee in whatever
+            # currency the venue charged it in, and 0.0031 means very different
+            # things in USD and in ETH. The field was parsed at line 1463 and
+            # then dropped here, so every downstream consumer had to guess.
+            "fee_currency": self.fee_currency,
             "status": self.status.value,
             "error_message": self.error_message,
             "timestamp": self.timestamp.isoformat(),

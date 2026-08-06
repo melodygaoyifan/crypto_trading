@@ -1,28 +1,28 @@
 {
   "by_code": {
-    "arg-type": 81,
-    "assignment": 463,
+    "arg-type": 83,
+    "assignment": 453,
     "attr-defined": 70,
     "call-arg": 8,
     "call-overload": 5,
     "dict-item": 28,
-    "float": 6,
+    "float": 8,
     "has-type": 3,
-    "index": 24,
+    "index": 26,
     "int": 14,
-    "list-item": 1,
-    "misc": 70,
+    "misc": 68,
     "name-defined": 2,
     "no-redef": 7,
-    "operator": 42,
+    "operator": 43,
     "return": 1,
-    "return-value": 17,
+    "return-value": 16,
     "str": 33,
     "truthy-function": 4,
     "type-var": 1,
     "union-attr": 139,
     "valid-type": 8,
-    "var-annotated": 53
+    "var-annotated": 56
   },
-  "total_count": 1080
+  "mypy_version": "2.3.0",
+  "total_count": 1076
 }

@@ -190,9 +190,15 @@ def test_verdict_hold_when_short_window_and_some_ic():
 
 
 def test_verdict_promote_when_long_window_clean():
-    v = determine_verdict({4: 0.06, 12: 0.07, 24: 0.08},
-                          {4: 100, 12: 100, 24: 100},
-                          sharpe=0.8, window_days=30)
+    # [P166] These inputs were IC 0.06/0.07/0.08 at n=100 with no volatility
+    # supplied. That combination is 0.6 SE from zero and worth ~5bps against a
+    # 12bps cost bar — it is not a clean promote, it is noise that the old gate
+    # could not tell apart from an edge. A genuine PROMOTE now needs an IC that
+    # is both statistically real and economically positive.
+    v = determine_verdict({4: 0.12, 12: 0.13, 24: 0.14},
+                          {4: 400, 12: 400, 24: 400},
+                          sharpe=0.8, window_days=30,
+                          fwd_vol_bps_per_h={4: 400.0, 12: 400.0, 24: 400.0})
     assert v is Verdict.PROMOTE
 
 

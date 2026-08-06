@@ -111,7 +111,7 @@ EXTERNAL_FEATURE_COLS = [
 # ── RegimeSmoother ────────────────────────────────────────────────────
 from core.regime_smoother import RegimeSmoother  # noqa: E402
 from scripts.wavelet_denoise import (  # noqa: E402
-    wavelet_denoise, DENOISE_COLUMNS, DENOISED_FEATURE_NAMES,
+    wavelet_denoise_causal, DENOISE_COLUMNS, DENOISED_FEATURE_NAMES,
 )
 
 
@@ -813,7 +813,14 @@ def main():
                 nan_mask = np.isnan(raw_vals)
                 if nan_mask.any():
                     raw_vals[nan_mask] = np.nanmedian(raw_vals)
-                denoised = wavelet_denoise(raw_vals)
+                # [P164] CAUSAL. The previous `wavelet_denoise(raw_vals)` applied
+                # the transform to the entire 8.5-year column at once, and its
+                # VisuShrink threshold is computed from the whole array — so every
+                # training row saw the future while live rows see a trailing 256
+                # window. That gap, not regime shift, is what separates the
+                # reported val Sharpe (+7 to +17) from the live IC (+0.052).
+                # Do not "optimise" this back into a single whole-column call.
+                denoised = wavelet_denoise_causal(raw_vals)
                 df[dst_col] = denoised
                 n_added += 1
 
