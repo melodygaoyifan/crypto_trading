@@ -1,0 +1,9 @@
+[P183] AttributionTracker writes signals_YYYYMMDD.jsonl and outcomes_YYYYMMDD.jsonl here.
+
+This directory is tracked (empty) because analytics/drl_realized/drl_counterfactual_sharpe.py
+globs it. When it did not exist the glob returned nothing, every trade fell into the
+"no_signal" bucket, and the report printed "(empty)" for aligned/opposed/silent while the
+ALL TRADES row still printed — so a run with zero input was indistinguishable from a run
+that measured DRL and found no contribution.
+
+In the container the real path is the mounted hmats-logs volume; set HMATS_LOG_DIR.

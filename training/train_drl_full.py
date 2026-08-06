@@ -169,7 +169,9 @@ class EnhancedRewardCalculator:
         quality_weight: float = 0.1,
         risk_weight: float = 0.1,
         mode: str = "sortino",
+        regime_alignment_bonus: bool = False,
     ):
+        self.regime_alignment_bonus = regime_alignment_bonus
         self.window = window
         self.downside_weight = downside_weight
         self.dd_threshold = dd_threshold
@@ -234,15 +236,30 @@ class EnhancedRewardCalculator:
             pnl_r *= bull_mult
 
         # --- Quality component (direction alignment) ---
+        # [P180] OFF by default. This paid the agent for holding a position
+        # aligned with POSITION_BIAS[regime] whether or not the position made
+        # money — a reward for agreeing with the GMM's label, not for being
+        # right. Two compounding problems:
+        #
+        #   * it is unfalsifiable inside the training loop. If the regime
+        #     labels are wrong the agent is trained to be confidently wrong,
+        #     and the reward curve goes up either way.
+        #   * `mean_reward` was the fold-selection metric (see P180 in
+        #     _summarize), so a fold in which the GMM happened to fit could
+        #     out-score a fold that made more money.
+        #
+        # `bull_mult`/`bear_mult` above are a different thing and stay: they
+        # scale *realized* pnl_pct, so a wrong regime label scales a loss.
         quality_r = 0.0
-        position_bias = POSITION_BIAS.get(regime, 0.0)
-        if position * position_bias > 0:
-            quality_r += abs(position_bias) * 0.5
-        if abs(position_change) < 0.1:
-            if regime in BULL_REGIMES and position < 0:
-                quality_r -= 0.03
-            elif regime in BEAR_REGIMES and position > 0:
-                quality_r -= 0.05
+        if self.regime_alignment_bonus:
+            position_bias = POSITION_BIAS.get(regime, 0.0)
+            if position * position_bias > 0:
+                quality_r += abs(position_bias) * 0.5
+            if abs(position_change) < 0.1:
+                if regime in BULL_REGIMES and position < 0:
+                    quality_r -= 0.03
+                elif regime in BEAR_REGIMES and position > 0:
+                    quality_r -= 0.05
 
         # --- Risk component (drawdown + proportional turnover) ---
         risk_r = 0.0
@@ -337,17 +354,86 @@ FOLD_WEIGHTS = [0.45, 0.35, 0.20]
 # Stage 9: Real Friction Cost Model
 # =============================================================================
 
-# Kraken Pro fee structure
-KRAKEN_PRO_FEES = {
-    'within_free_tier': {
-        'maker_fee_bps': 0.0,
-        'taker_fee_bps': 0.0,
-    },
-    'beyond_free_tier': {
-        'maker_fee_bps': 16.0,   # 0.16%
-        'taker_fee_bps': 26.0,   # 0.26%
-    },
+# [P179] KRAKEN_PRO_FEES removed. It encoded the same 16/26 bps as
+# VENUE_FEES_BPS below, was never read by anything, and its
+# 'within_free_tier' branch was the justification quoted in the comment on the
+# hardcoded `fee_bps = 0.0` it was supposed to replace. Keeping a second,
+# unread fee table around is how the first one got ignored. Use
+# VENUE_FEES_BPS, which is venue-aware and checked against the live table.
+
+
+# [P179] Exchange fees, mirrored from the live venue table.
+#
+# Until P179 this table was defined and never read: `grep -rn KRAKEN_PRO_FEES`
+# returned exactly one line, its own definition. `_compute_trade_cost_bps` had
+#
+#     fee_bps = 0.0  # within free tier ($10K/mo)
+#
+# hardcoded, so the DRL was validated on slippage and impact alone — 3-10 bps
+# per side — against a live Kraken taker fee of 26 bps. Roughly half the
+# friction, on a strategy whose measured defect (P142) is over-trading. The
+# free-tier assumption is now an explicit opt-in (`assume_free_tier`) rather
+# than a silent default, because it is only true below $10K monthly volume and
+# nothing in the trainer checked that.
+#
+# Source of truth is core/paper_fee_service.py::VENUE_FEE_STD, imported when
+# reachable so the two cannot drift; the literal below is the fallback for
+# standalone training boxes that do not have the repo root importable.
+# tests/test_drl_cost_realism.py fails if the fallback and the live table
+# disagree — the P170/P176 lesson is that a mirrored constant with no equality
+# check is a future divergence, not a constant.
+_VENUE_FEES_FALLBACK_BPS = {
+    "kraken":   {"maker": 16.0, "taker": 26.0},
+    "coinbase": {"maker": 0.0,  "taker": 3.0},   # US nano perp futures
 }
+
+
+def _load_venue_fees() -> Tuple[Dict[str, Dict[str, float]], str]:
+    """Live venue fee table in bps, falling back to the literal above.
+
+    Returns (table, source) where source is "live" or "fallback". The source is
+    returned rather than inferred, because the fallback is a correct copy of
+    the live table and the two are therefore indistinguishable by value — see
+    below for what that cost.
+
+    [P179] The first version of this imported `_VENUE_FEES`, which does not
+    exist — the live symbol is `VENUE_FEE_STD`. `except Exception` swallowed
+    the ImportError and returned the fallback, so the trainer ran on a
+    hardcoded copy while claiming to track the live table, and the two agreed
+    only because the copy happened to be correct. That is the same defect this
+    whole entry is about: a lookup that cannot succeed is indistinguishable
+    from one that succeeded when the failure path is silent and the answers
+    match. The fallback stays — a standalone training box need not have the
+    repo root importable — but it now says which table it used.
+    """
+    try:
+        _root = str(Path(__file__).resolve().parents[1])
+        if _root not in sys.path:
+            sys.path.insert(0, _root)
+        from core.paper_fee_service import VENUE_FEE_STD  # type: ignore
+        # Live table stores fractions (0.0026); training works in bps.
+        return ({
+            v: {k: float(x) * 10000.0 for k, x in d.items()}
+            for v, d in VENUE_FEE_STD.items()
+        }, "live")
+    except Exception as e:
+        logger.warning(
+            "[P179] could not read the live venue fee table "
+            "(core.paper_fee_service.VENUE_FEE_STD): %s: %s. Using the "
+            "hardcoded fallback %s. If the live table has moved, training is "
+            "now pricing a venue the engine does not.",
+            type(e).__name__, e, _VENUE_FEES_FALLBACK_BPS)
+        return ({v: dict(d) for v, d in _VENUE_FEES_FALLBACK_BPS.items()},
+                "fallback")
+
+
+VENUE_FEES_BPS, VENUE_FEES_SOURCE = _load_venue_fees()
+
+# The DRL sets a target position every bar and expects to reach it, which is
+# market-order semantics. Charging maker would assume fills this policy never
+# waits for.
+DEFAULT_FEE_SIDE = "taker"
+DEFAULT_VENUE = "kraken"
 
 # Per-asset baseline slippage (bps) - from historical data medians
 ASSET_SLIPPAGE_BPS = {
@@ -355,6 +441,225 @@ ASSET_SLIPPAGE_BPS = {
     'ETH': 5.0,   # medium liquidity
     'SOL': 10.0,  # lower liquidity, Asia sessions can reach 15-20 bps
 }
+
+# 4h bars: 6/day * 365. Used to annualize; the number itself is not a claim
+# about the strategy, only about the sampling rate.
+BARS_PER_YEAR_4H = 6 * 365
+
+
+# =============================================================================
+# [P181] Evaluation statistics
+#
+# These exist because `_evaluate` reported `std_reward` and it was 0.0 on every
+# fold of every asset of every run: `deterministic=True` over a fixed window is
+# a pure function, so ten rollouts produced ten identical numbers. Fold
+# selection then compared three point estimates with no error bar. A dispersion
+# figure that is structurally incapable of being non-zero is not a measurement.
+# =============================================================================
+
+def _returns_from_curve(curve: Optional[np.ndarray]) -> np.ndarray:
+    """Per-bar simple returns of an equity curve, after cost.
+
+    The env's `balance` already has trade cost deducted
+    (`self.balance += pnl - trade_cost`), so no further adjustment is made
+    here — doing so would double-charge.
+    """
+    if curve is None or len(curve) < 3:
+        return np.zeros(0, dtype=float)
+    c = np.asarray(curve, dtype=float)
+    prev = c[:-1]
+    # A blown-up account (balance <= 0) makes the ratio meaningless rather
+    # than merely bad; drop those steps instead of emitting inf.
+    with np.errstate(divide="ignore", invalid="ignore"):
+        r = np.where(prev > 0, (c[1:] - prev) / prev, np.nan)
+    return r[np.isfinite(r)]
+
+
+def _median_curve(curves: List[np.ndarray],
+                  finals: List[float]) -> Optional[np.ndarray]:
+    """The episode whose final balance is closest to the median."""
+    pairs = [(f, c) for f, c in zip(finals, curves)
+             if c is not None and len(c) >= 3 and np.isfinite(f)]
+    if not pairs:
+        return None
+    med = float(np.median([f for f, _ in pairs]))
+    return min(pairs, key=lambda p: abs(p[0] - med))[1]
+
+
+def _annualized_sharpe(rets: np.ndarray, bars_per_year: int) -> float:
+    """Annualized Sharpe of per-bar returns, rf=0.
+
+    Returns 0.0 — not inf — for a flat curve. A policy that never trades has
+    no risk-adjusted edge; reporting inf would rank it first.
+    """
+    if rets is None or len(rets) < 2:
+        return 0.0
+    sd = float(np.std(rets, ddof=1))
+    if not np.isfinite(sd) or sd <= 1e-12:
+        return 0.0
+    return float(np.mean(rets) / sd * np.sqrt(bars_per_year))
+
+
+def _bootstrap_sharpe_ci(
+    rets: np.ndarray,
+    bars_per_year: int,
+    n: int = 1000,
+    alpha: float = 0.05,
+    rng: Optional[np.random.Generator] = None,
+) -> Tuple[float, float]:
+    """Percentile bootstrap CI for annualized Sharpe.
+
+    One validation window is one sample path. Its Sharpe is a draw from a
+    distribution, and with ~6k 4h bars the standard error on Sharpe is large
+    enough that a fold "winning" by 0.2 is routinely noise. Resampling returns
+    i.i.d. ignores autocorrelation and so if anything *understates* the width;
+    a CI that already contains zero at this optimistic setting is decisive.
+    """
+    if rets is None or len(rets) < 30:
+        return (0.0, 0.0)
+    rng = rng or np.random.default_rng(0)
+    idx = rng.integers(0, len(rets), size=(int(n), len(rets)))
+    samples = rets[idx]
+    mu = samples.mean(axis=1)
+    sd = samples.std(axis=1, ddof=1)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        sh = np.where(sd > 1e-12, mu / sd * np.sqrt(bars_per_year), 0.0)
+    sh = sh[np.isfinite(sh)]
+    if sh.size == 0:
+        return (0.0, 0.0)
+    return (float(np.quantile(sh, alpha / 2.0)),
+            float(np.quantile(sh, 1.0 - alpha / 2.0)))
+
+
+# =============================================================================
+# [P182] Baselines
+#
+# The promotion gate was "Sharpe > X on the validation fold". That question is
+# not the one that decides whether to run this thing: a 4h crypto long-only
+# hold has posted a high Sharpe over most windows in this dataset, so a model
+# can clear an absolute bar while being strictly worse than doing nothing.
+# Under-performing a baseline is the only validation result that is actually
+# actionable, and until now it could not be observed because no baseline was
+# ever run through this env.
+#
+# Baselines run in the SAME TradingEnvFull, on the SAME fold, with the SAME
+# P179 venue fees, slippage and impact. Any cost asymmetry would make the
+# comparison decorative.
+# =============================================================================
+
+def _unwrap_trading_env(env) -> Optional["TradingEnvFull"]:
+    """Reach the TradingEnvFull through VecFrameStack/DummyVecEnv/Monitor."""
+    cur = env
+    for _ in range(12):
+        if isinstance(cur, TradingEnvFull):
+            return cur
+        nxt = getattr(cur, "venv", None)
+        if nxt is None:
+            envs = getattr(cur, "envs", None)
+            nxt = envs[0] if envs else getattr(cur, "env", None)
+        if nxt is None or nxt is cur:
+            return None
+        cur = nxt
+    return None
+
+
+class ScriptedPolicy:
+    """Duck-types `model.predict` so a rule can use the RL evaluation path.
+
+    The rule reads the environment's own price series rather than the
+    observation: these are price rules, not policies over the 126-dim state,
+    and feeding them a scaled feature vector would misrepresent what they are.
+    Reads are causal — only `df.iloc[:current_step + 1]` is ever visible.
+    """
+
+    def __init__(self, name: str, fn, raw_env: "TradingEnvFull"):
+        self.name = name
+        self._fn = fn
+        self._env = raw_env
+
+    def predict(self, obs, deterministic: bool = True):
+        n = int(obs.shape[0]) if hasattr(obs, "shape") and obs.ndim > 1 else 1
+        a = float(np.clip(self._fn(self._env), -1.0, 1.0))
+        return np.full((n, 1), a, dtype=np.float32), None
+
+
+def _buy_and_hold(env: "TradingEnvFull") -> float:
+    return 1.0
+
+
+def _sma_rule(window: int):
+    """Long above the SMA, flat below. Window is in BARS, not days.
+
+    Named by bar count everywhere it is reported, because "SMA(200)" on 4h
+    bars is ~33 days and reads as 200 days to anyone who skims it.
+    Before `window` bars of history exist the rule is flat, which is the
+    honest answer for a rule that has not yet been computable.
+    """
+    def _fn(env: "TradingEnvFull") -> float:
+        i = env.current_step
+        if i < window:
+            return 0.0
+        closes = env.df["close"].values[i - window + 1: i + 1]
+        return 1.0 if float(closes[-1]) > float(np.mean(closes)) else 0.0
+    return _fn
+
+
+def baseline_policies(raw_env: "TradingEnvFull",
+                      sma_window: int = 200) -> Dict[str, ScriptedPolicy]:
+    return {
+        "buy_and_hold": ScriptedPolicy("buy_and_hold", _buy_and_hold, raw_env),
+        f"sma_{sma_window}bar": ScriptedPolicy(
+            f"sma_{sma_window}bar", _sma_rule(sma_window), raw_env),
+    }
+
+
+def _promotion_verdict(metrics: Dict, baselines: Dict[str, Dict]) -> Dict:
+    """[P182] Two gates, both relative to something falsifiable.
+
+      1. after-cost PnL must exceed EVERY baseline on the same fold at the
+         same fees. This replaces "Sharpe > X", which a long-only hold clears
+         on most windows of this dataset — so the old gate could pass a model
+         that was strictly worse than not running it.
+      2. the bootstrap CI on the model's own after-cost Sharpe must exclude
+         zero. Beating buy-and-hold by a hair on one sample path is the same
+         illusion the absolute gate was; requiring both means a pass needs an
+         edge that is both relative and distinguishable from noise.
+
+    No baselines means NO PASS. An unmeasured comparison is not a favourable
+    one, and defaulting to pass here would reproduce the exact defect this
+    replaces.
+    """
+    pnl = float(metrics.get("mean_pnl_after_cost", float("nan")))
+    if not baselines:
+        return {"passes": False, "reason":
+                "no baselines evaluated - cannot establish the model beats "
+                "doing nothing, so it is not promotable",
+                "model_pnl_after_cost": pnl, "beaten": [], "lost_to": []}
+
+    beaten, lost_to = [], []
+    for name, m in baselines.items():
+        b = float(m.get("mean_pnl_after_cost", float("nan")))
+        (beaten if (np.isfinite(pnl) and np.isfinite(b) and pnl > b)
+         else lost_to).append(name)
+
+    significant = bool(metrics.get("sharpe_ci_excludes_zero", False))
+    passes = (not lost_to) and significant
+
+    if lost_to:
+        reason = (f"after-cost PnL ${pnl:,.0f} does not beat "
+                  f"{', '.join(lost_to)}")
+    elif not significant:
+        reason = (f"beats all baselines but the after-cost Sharpe CI "
+                  f"[{metrics.get('sharpe_ci_low', 0):.2f}, "
+                  f"{metrics.get('sharpe_ci_high', 0):.2f}] includes zero")
+    else:
+        reason = (f"after-cost PnL ${pnl:,.0f} beats {', '.join(beaten)} "
+                  f"and the Sharpe CI excludes zero")
+
+    return {"passes": passes, "reason": reason,
+            "model_pnl_after_cost": pnl,
+            "beaten": beaten, "lost_to": lost_to,
+            "edge_is_significant": significant}
 
 
 # =============================================================================
@@ -404,8 +709,18 @@ class TradingEnvFull(gym.Env):
         slippage_bps_override: Optional[float] = None,
         turnover_cost_mult: float = 1.0,
         turnover_min_change: float = 0.01,
+        # [P179] Venue fees. Defaults charge Kraken taker (26bps) because that
+        # is what the legacy sleeve actually pays; pass venue="coinbase" for
+        # the nano-perp sleeve (3bps taker). assume_free_tier=True restores the
+        # old zero-fee behaviour and must be set deliberately.
+        venue: str = DEFAULT_VENUE,
+        fee_side: str = DEFAULT_FEE_SIDE,
+        assume_free_tier: bool = False,
+        # [P180] Regime-alignment bonus. Off by default; see step().
+        regime_alignment_bonus: bool = False,
     ):
         super().__init__()
+        self._regime_alignment_bonus = bool(regime_alignment_bonus)
 
         self.df = df.reset_index(drop=True)
         self.feature_cols = feature_cols
@@ -425,6 +740,32 @@ class TradingEnvFull(gym.Env):
         self._slippage_bps = slippage_bps_override if slippage_bps_override is not None else ASSET_SLIPPAGE_BPS.get(asset, 10.0)
         self._turnover_cost_mult = turnover_cost_mult
         self._turnover_min_change = turnover_min_change
+
+        # [P179] Venue fee resolution. Fail loudly on an unknown venue rather
+        # than falling back to zero — a typo silently restoring the old
+        # no-fee behaviour is exactly the defect being fixed here.
+        self._venue = str(venue).lower()
+        self._fee_side = str(fee_side).lower()
+        self._assume_free_tier = bool(assume_free_tier)
+        if self._venue not in VENUE_FEES_BPS:
+            raise ValueError(
+                f"[P179] unknown venue {venue!r}; known: "
+                f"{sorted(VENUE_FEES_BPS)}. Refusing to default to zero fees."
+            )
+        if self._fee_side not in ("maker", "taker"):
+            raise ValueError(
+                f"[P179] fee_side must be 'maker' or 'taker', got {fee_side!r}"
+            )
+        self._fee_bps = (
+            0.0 if self._assume_free_tier
+            else float(VENUE_FEES_BPS[self._venue][self._fee_side])
+        )
+        if self._assume_free_tier:
+            logger.warning(
+                "[P179] assume_free_tier=True: charging 0 bps exchange fee. "
+                "Only valid below Kraken's $10K/mo free tier; results are not "
+                "comparable to live unless that holds."
+            )
         # Friction tracking (reset in reset())
         self.cumulative_trade_cost = 0.0
         self._last_trade_cost_bps = 0.0
@@ -440,6 +781,7 @@ class TradingEnvFull(gym.Env):
 
         # P3: Rare regime reward weighting (inverse sqrt frequency)
         self.regime_weights = self._compute_regime_weights()
+        self._assert_regimes_resolve()  # [P184]
 
         # Stage 3/7: Enhanced reward calculator (sortino or sharpe mode)
         self._sortino_calc = EnhancedRewardCalculator(
@@ -452,6 +794,7 @@ class TradingEnvFull(gym.Env):
             quality_weight=quality_weight,
             risk_weight=risk_weight,
             mode=reward_mode,
+            regime_alignment_bonus=self._regime_alignment_bonus,
         ) if reward_mode in ("sortino", "sharpe") else None
 
         n_features = len(feature_cols)
@@ -490,12 +833,16 @@ class TradingEnvFull(gym.Env):
     def _compute_trade_cost_bps(self, trade_notional_usd: float) -> float:
         """Stage 9.1: Compute total friction cost (bps) for a single trade.
 
-        Training assumes within free tier (fee=0), only slippage + impact.
+        [P179] Now charges the venue's exchange fee on top of slippage and
+        impact. It previously hardcoded `fee_bps = 0.0` with the comment
+        "within free tier ($10K/mo)" — an assumption no part of the trainer
+        verified, and one that stopped being defensible for the Coinbase
+        sleeve entirely.
         """
         if not self._friction_enabled:
             return 0.0
 
-        fee_bps = 0.0  # within free tier ($10K/mo)
+        fee_bps = self._fee_bps
         slippage_bps = self._slippage_bps
 
         # Large-trade market impact (simplified linear model)
@@ -565,18 +912,71 @@ class TradingEnvFull(gym.Env):
 
     @staticmethod
     def _regime_to_name(regime_val) -> str:
-        """Convert regime int/string to name. Handles variable k."""
+        """Convert regime id to name. Handles variable k.
+
+        [P184] Integral floats now resolve. They previously did not, and the
+        consequence was silent and total: `_get_regime` reads a regime out of
+        `df.iloc[step]`, which builds a Series over the whole row. If every
+        column in that row is numeric, pandas upcasts the int64 regime to
+        float64, `isinstance(2.0, np.integer)` is False, and this returned the
+        string "2.0". Nothing raises. "2.0" is not in POSITION_BIAS, not in
+        BULL_REGIMES, not in BEAR_REGIMES and not in self.regime_weights, so
+        every regime-conditional term in the reward — bull/bear multipliers,
+        rare-regime weighting, the alignment bonus — quietly evaluates to its
+        no-op branch and the environment trains as if regime-blind.
+
+        On the production parquets this is latent rather than live: they carry
+        a `timestamp` datetime64 column, which forces the row Series to dtype
+        object and preserves the int. So the regime machinery works today
+        because of a column it does not use. Drop `timestamp` for memory and
+        the reward function silently changes meaning with no error and no
+        change in the logs.
+
+        Verified:
+            df[timestamp, close, regime].iloc[2]["regime"] -> np.int64(2)
+            df[close, regime].iloc[2]["regime"]            -> np.float64(2.0)
+        """
+        if isinstance(regime_val, (bool, np.bool_)):
+            return str(regime_val)
         if isinstance(regime_val, (int, np.integer)):
-            if 0 <= regime_val < len(REGIME_NAMES):
-                return REGIME_NAMES[regime_val]
-            return f"REGIME_{regime_val}"
-        return str(regime_val)
+            idx = int(regime_val)
+        elif isinstance(regime_val, (float, np.floating)):
+            if not np.isfinite(regime_val) or float(regime_val) != int(regime_val):
+                return str(regime_val)
+            idx = int(regime_val)
+        else:
+            return str(regime_val)
+        if 0 <= idx < len(REGIME_NAMES):
+            return REGIME_NAMES[idx]
+        return f"REGIME_{idx}"
 
     def _get_regime(self) -> str:
         if "regime" in self.df.columns:
             regime_val = self.df.iloc[self.current_step]["regime"]
             return self._regime_to_name(regime_val)
         return "WEAK_CONSOLIDATION"
+
+    def _assert_regimes_resolve(self) -> None:
+        """[P184] Fail loudly if regime ids do not map to known names.
+
+        Without this the failure is invisible: the reward function keeps
+        producing plausible numbers and the training curve keeps rising, it is
+        just no longer regime-aware. Checked once at construction against the
+        actual column, not against an assumption about its dtype.
+        """
+        if "regime" not in self.df.columns:
+            return
+        vals = self.df["regime"].dropna().unique()[:64]
+        names = {self._regime_to_name(v) for v in vals}
+        unknown = sorted(n for n in names if n not in REGIME_NAMES)
+        if unknown:
+            logger.warning(
+                "[P184] %d regime id(s) do not map to a known regime name: "
+                "%s. Known names: %s. Every regime-conditional reward term "
+                "(bull/bear multiplier, rare-regime weight, alignment bonus) "
+                "is inert for those bars.",
+                len(unknown), unknown[:8], REGIME_NAMES,
+            )
 
     def step(self, action: np.ndarray):
         action_val = float(np.clip(action[0], -1.0, 1.0))
@@ -664,15 +1064,20 @@ class TradingEnvFull(gym.Env):
                 elif regime in BULL_REGIMES and self.position > 0:
                     reward *= self.bull_reward_multiplier
 
-                if self.position * position_bias > 0:
-                    reward += abs(position_bias) * 0.5
+                # [P180] Same regime-alignment bonus as EnhancedRewardCalculator
+                # (see the note there), and worse here: this branch adds it to
+                # the raw reward with no quality_weight, so a 0.5 alignment
+                # bonus outweighs a 0.4% bar move. Off by default.
+                if self._regime_alignment_bonus:
+                    if self.position * position_bias > 0:
+                        reward += abs(position_bias) * 0.5
 
-                position_held = abs(position_change) < 0.1
-                if position_held:
-                    if regime in BULL_REGIMES and self.position < 0:
-                        reward -= 0.03
-                    elif regime in BEAR_REGIMES and self.position > 0:
-                        reward -= 0.05
+                    position_held = abs(position_change) < 0.1
+                    if position_held:
+                        if regime in BULL_REGIMES and self.position < 0:
+                            reward -= 0.03
+                        elif regime in BEAR_REGIMES and self.position > 0:
+                            reward -= 0.05
 
                 if drawdown > self.dd_threshold:
                     reward -= drawdown * self.dd_penalty_mult
@@ -892,6 +1297,12 @@ class FullDRLTrainer:
         slippage_bps: Optional[float] = None,
         turnover_cost_mult: float = 1.0,
         turnover_min_change: float = 0.01,
+        # [P179] Venue fees — see VENUE_FEES_BPS.
+        venue: str = DEFAULT_VENUE,
+        fee_side: str = DEFAULT_FEE_SIDE,
+        assume_free_tier: bool = False,
+        # [P180] Regime-alignment bonus (off by default)
+        regime_alignment_bonus: bool = False,
         # VecEnv
         vec_env_type: str = "dummy",
         n_envs: int = 1,
@@ -940,6 +1351,22 @@ class FullDRLTrainer:
         self.turnover_cost_mult = turnover_cost_mult
         self.turnover_min_change = turnover_min_change
 
+        # [P179] Venue fees. Validated in TradingEnvFull.__init__, which
+        # raises on an unknown venue rather than defaulting to zero.
+        self.venue = venue
+        self.fee_side = fee_side
+        self.assume_free_tier = assume_free_tier
+        self.regime_alignment_bonus = regime_alignment_bonus
+
+        # [P181] Evaluation constants. initial_balance must track the env's
+        # default or after-cost PnL is computed against the wrong base.
+        self.initial_balance = 100000.0
+        self.bars_per_year = BARS_PER_YEAR_4H
+        self.eval_episodes = 10
+        self.eval_deterministic = False
+        # [P182] SMA window in BARS (200 bars @4h ~ 33 days), not days.
+        self.baseline_sma_window = 200
+
         # VecEnv
         self.vec_env_type = vec_env_type
         self.n_envs = n_envs
@@ -977,6 +1404,11 @@ class FullDRLTrainer:
             slippage_bps_override=self.slippage_bps,
             turnover_cost_mult=self.turnover_cost_mult,
             turnover_min_change=self.turnover_min_change,
+            # [P179] without these three the env silently reverts to 0 bps fee
+            venue=self.venue,
+            fee_side=self.fee_side,
+            assume_free_tier=self.assume_free_tier,
+            regime_alignment_bonus=self.regime_alignment_bonus,
         )
         return Monitor(env)
 
@@ -1104,7 +1536,15 @@ class FullDRLTrainer:
         logger.info(f"  Friction:   {'ON' if self.friction_enabled else 'OFF'} "
                      f"(slip={_slip} bps, to_mult={self.turnover_cost_mult}, "
                      f"min_chg={self.turnover_min_change})")
+        _fee = (0.0 if self.assume_free_tier
+                else VENUE_FEES_BPS.get(self.venue, {}).get(self.fee_side, 0.0))
+        logger.info(f"  Fees:       {self.venue}/{self.fee_side} = {_fee} bps"
+                     f"{'  [FREE-TIER OVERRIDE]' if self.assume_free_tier else ''}")
         logger.info(f"  rw_range:   [{self.regime_weight_min}, {self.regime_weight_max}]")
+        logger.info(f"  Align bonus:{'ON' if self.regime_alignment_bonus else 'OFF (P180)'}")
+        logger.info(f"  Eval:       {self.eval_episodes} episodes, "
+                     f"{'deterministic' if self.eval_deterministic else 'stochastic'}"
+                     f", baselines=buy_and_hold+sma_{self.baseline_sma_window}bar")
         logger.info(f"  Checkpoint: every 500K steps")
         logger.info("=" * 70)
 
@@ -1358,6 +1798,14 @@ class FullDRLTrainer:
                                 "slippage_bps": inner_env._slippage_bps,
                                 "friction_enabled": True,
                                 "turnover_cost_mult": inner_env._turnover_cost_mult,
+                                # [P179] Recorded so a saved run states which
+                                # fee assumption produced it. Without this a
+                                # zero-fee run and a 26bps run are
+                                # indistinguishable artifacts.
+                                "venue": inner_env._venue,
+                                "fee_side": inner_env._fee_side,
+                                "exchange_fee_bps": inner_env._fee_bps,
+                                "assume_free_tier": inner_env._assume_free_tier,
                             }
                             friction_path = log_dir / "training_friction.json"
                             with open(friction_path, "w") as f:
@@ -1371,11 +1819,23 @@ class FullDRLTrainer:
                     best_path = log_dir / "best_model" / "best_model.zip"
                     if best_path.exists():
                         logger.info(f"  Evaluating with best_model (not overfitted final_model)")
-                        best_model = TQC.load(str(best_path), env=eval_env, device=self.device)
-                        mean_reward, std_reward = self._evaluate(best_model, eval_env)
+                        eval_model = TQC.load(str(best_path), env=eval_env, device=self.device)
+                        best_model = eval_model
                     else:
                         logger.warning(f"  No best_model found, evaluating with final_model")
-                        mean_reward, std_reward = self._evaluate(model, eval_env)
+                        eval_model = model
+
+                    metrics = self.evaluate_policy_full(
+                        eval_model, eval_env,
+                        n_episodes=self.eval_episodes,
+                        deterministic=self.eval_deterministic,
+                    )
+                    mean_reward = metrics["mean_reward"]
+                    std_reward = metrics["std_reward"]
+
+                    # [P182] Same env, same fold, same P179 costs.
+                    baselines = self._evaluate_baselines(eval_env)
+                    verdict = _promotion_verdict(metrics, baselines)
 
                     self.results[fold_name] = {
                         "mean_reward": mean_reward,
@@ -1383,11 +1843,35 @@ class FullDRLTrainer:
                         "train_time_minutes": train_time / 60,
                         "train_rows": len(train_df),
                         "val_rows": len(val_df),
+                        # [P181] after-cost figures — what selection now uses
+                        **{k: v for k, v in metrics.items()
+                           if k not in ("mean_reward", "std_reward")},
+                        # [P182] the comparison that decides promotion
+                        "baselines": baselines,
+                        "promotion": verdict,
                     }
 
                     logger.info(
                         f"  Done: reward={mean_reward:.2f} +/- {std_reward:.2f} "
                         f"({train_time / 60:.1f} min)"
+                    )
+                    logger.info(
+                        f"  After cost: pnl=${metrics['mean_pnl_after_cost']:,.0f} "
+                        f"sharpe={metrics['sharpe_after_cost']:.2f} "
+                        f"[{metrics['sharpe_ci_low']:.2f}, "
+                        f"{metrics['sharpe_ci_high']:.2f}] "
+                        f"trades={metrics['trade_count']:.0f} "
+                        f"cost=${metrics['cumulative_trade_cost']:,.0f}"
+                    )
+                    for _bn, _bm in baselines.items():
+                        logger.info(
+                            f"  Baseline {_bn}: "
+                            f"pnl=${_bm['mean_pnl_after_cost']:,.0f} "
+                            f"sharpe={_bm['sharpe_after_cost']:.2f}"
+                        )
+                    logger.info(
+                        f"  PROMOTION: {'PASS' if verdict['passes'] else 'FAIL'}"
+                        f" - {verdict['reason']}"
                     )
                 else:
                     logger.warning(f"  {fold_name} training failed - skipping save/eval")
@@ -1457,17 +1941,138 @@ class FullDRLTrainer:
                 pass
 
     def _evaluate(self, model, env, n_episodes: int = 10) -> Tuple[float, float]:
-        rewards = []
-        for _ in range(n_episodes):
+        """Backwards-compatible shim. Prefer `evaluate_policy_full`."""
+        m = self.evaluate_policy_full(model, env, n_episodes=n_episodes)
+        return m["mean_reward"], m["std_reward"]
+
+    def evaluate_policy_full(
+        self,
+        model,
+        env,
+        n_episodes: int = 10,
+        deterministic: bool = False,
+        bootstrap_n: int = 1000,
+        seed: int = 0,
+    ) -> Dict:
+        """[P181] Evaluate a policy with an error bar and after-cost PnL.
+
+        The version this replaces ran `n_episodes` rollouts with
+        `deterministic=True` over one fixed validation window. The policy is a
+        deterministic function of the observation and the window never changes,
+        so all ten rollouts were byte-identical and `std_reward` was exactly
+        0.0 on every fold, every asset, every run. `best_fold` was then chosen
+        by comparing three means with no dispersion — there was no way, even in
+        principle, to tell a fold's advantage from noise.
+
+        Two independent sources of uncertainty are now measured:
+
+          * policy noise - rollouts are stochastic by default, so repeated
+            episodes actually differ. `deterministic=True` is still available
+            and still collapses the spread; that is now a caller's explicit
+            choice and `degenerate_spread` records when it happened.
+          * path noise - the after-cost per-step returns of the best episode
+            are bootstrapped to a 95% CI on Sharpe. One validation window is
+            one sample path; its Sharpe is a point estimate of a random
+            variable and was being read as a measurement.
+
+        Returns after-cost figures throughout: `balance` in the env info has
+        already had trade cost deducted (`self.balance += pnl - trade_cost`),
+        so these are net of the P179 venue fees, slippage and impact.
+        """
+        rng = np.random.default_rng(seed)
+        rewards: List[float] = []
+        finals: List[float] = []
+        costs: List[float] = []
+        trades: List[int] = []
+        curves: List[np.ndarray] = []
+
+        for _ in range(max(1, int(n_episodes))):
             obs = env.reset()
             done = False
-            total = 0
+            total = 0.0
+            curve: List[float] = []
+            last_info: Dict = {}
             while not done:
-                action, _ = model.predict(obs, deterministic=True)
+                action, _ = model.predict(obs, deterministic=deterministic)
                 obs, reward, done, info = env.step(action)
-                total += reward[0]
+                total += float(reward[0])
+                i0 = info[0] if isinstance(info, (list, tuple)) and info else {}
+                if isinstance(i0, dict):
+                    last_info = i0
+                    if "balance" in i0:
+                        curve.append(float(i0["balance"]))
             rewards.append(total)
-        return float(np.mean(rewards)), float(np.std(rewards))
+            finals.append(float(last_info.get("balance", np.nan)))
+            costs.append(float(last_info.get("cumulative_trade_cost", 0.0)))
+            trades.append(int(last_info.get("trade_count", 0)))
+            curves.append(np.asarray(curve, dtype=float))
+
+        # Median episode, not the best one. Taking the best of N stochastic
+        # rollouts and then bootstrapping its Sharpe would put a confidence
+        # interval around a max-order statistic — the CI would be honest about
+        # path noise and silently dishonest about selection.
+        rets = _returns_from_curve(_median_curve(curves, finals))
+        sharpe = _annualized_sharpe(rets, self.bars_per_year)
+        lo, hi = _bootstrap_sharpe_ci(
+            rets, self.bars_per_year, n=bootstrap_n, rng=rng)
+
+        init = float(getattr(self, "initial_balance", 100000.0))
+        mean_final = float(np.nanmean(finals)) if finals else float("nan")
+
+        return {
+            # kept so existing readers and saved JSON stay parseable
+            "mean_reward": float(np.mean(rewards)),
+            "std_reward": float(np.std(rewards)),
+            # [P181] what selection and promotion should actually use
+            "mean_final_balance": mean_final,
+            "std_final_balance": float(np.nanstd(finals)) if finals else 0.0,
+            "mean_pnl_after_cost": mean_final - init,
+            "return_pct_after_cost": (mean_final / init - 1.0) * 100.0,
+            "sharpe_after_cost": sharpe,
+            "sharpe_ci_low": lo,
+            "sharpe_ci_high": hi,
+            "sharpe_ci_excludes_zero": bool(lo > 0.0),
+            "cumulative_trade_cost": float(np.mean(costs)) if costs else 0.0,
+            "trade_count": float(np.mean(trades)) if trades else 0.0,
+            "n_episodes": len(rewards),
+            "deterministic": bool(deterministic),
+            # True when every rollout scored identically, i.e. the spread
+            # carries no information. This is what was silently always true.
+            "degenerate_spread": bool(float(np.std(rewards)) == 0.0),
+        }
+
+    def _evaluate_baselines(self, eval_env) -> Dict[str, Dict]:
+        """[P182] Run buy-and-hold and SMA through the model's own eval env.
+
+        Deliberately the same `eval_env` object the model was scored on, not a
+        fresh one: a baseline built from a separately-constructed env could
+        differ in fees, slippage or fold slice and the comparison would stop
+        being a comparison. `evaluate_policy_full` resets it between runs.
+
+        Baselines are deterministic given the fold, so one episode each.
+
+        Failure returns {} rather than a partial dict, and
+        `_promotion_verdict` treats {} as NO PASS. Silently promoting because
+        the yardstick crashed is the failure mode being designed out.
+        """
+        raw = _unwrap_trading_env(eval_env)
+        if raw is None:
+            logger.warning(
+                "[P182] could not reach TradingEnvFull through the vec-env "
+                "wrappers; baselines skipped and this fold cannot be promoted")
+            return {}
+        out: Dict[str, Dict] = {}
+        try:
+            for name, pol in baseline_policies(
+                    raw, sma_window=self.baseline_sma_window).items():
+                m = self.evaluate_policy_full(
+                    pol, eval_env, n_episodes=1, deterministic=True)
+                m["policy"] = name
+                out[name] = m
+        except Exception as e:
+            logger.warning(f"[P182] baseline evaluation failed: {e}")
+            return {}
+        return out
 
     def _summarize(self) -> Dict:
         if not self.results:
@@ -1485,7 +2090,40 @@ class FullDRLTrainer:
             for k, v in self.results.items()
         )
 
-        best_fold = max(self.results, key=lambda k: self.results[k]["mean_reward"])
+        # [P180] Fold selection moved off mean_reward.
+        #
+        # `mean_reward` is the shaped training signal: pnl term, sortino term,
+        # drawdown penalty, turnover penalty, regime weight, and (until P180)
+        # a bonus for holding a position aligned with the GMM regime bias.
+        # Picking the fold with the highest shaped reward picks the fold where
+        # the shaping paid out most, which is a statement about the reward
+        # function, not about money. Two folds can differ by 30 reward points
+        # and by nothing in realized PnL.
+        #
+        # Selection is now realized after-cost PnL — the env's own balance net
+        # of P179 fees, slippage and impact. `mean_reward` is still recorded so
+        # historical runs stay comparable; it just no longer decides anything.
+        def _sel(k) -> float:
+            v = self.results[k]
+            pnl = v.get("mean_pnl_after_cost")
+            # A fold restored by _load_fold_result has no after-cost figure.
+            # Rank it below every measured fold rather than substituting
+            # mean_reward, which is a different quantity in different units.
+            return float(pnl) if pnl is not None and np.isfinite(pnl) else -np.inf
+
+        best_fold = max(self.results, key=_sel)
+        best_pnl = _sel(best_fold)
+        if not np.isfinite(best_pnl):
+            logger.warning(
+                "[P180] no fold reports after-cost PnL (all restored from "
+                "cached eval results?). Falling back to mean_reward for "
+                "selection — this is the pre-P180 behaviour and the choice "
+                "is not grounded in realized money.")
+            best_fold = max(self.results,
+                            key=lambda k: self.results[k]["mean_reward"])
+
+        promotable = [k for k, v in self.results.items()
+                      if v.get("promotion", {}).get("passes")]
 
         return {
             "asset": self.asset,
@@ -1494,6 +2132,14 @@ class FullDRLTrainer:
             "weighted_score": weighted_score,
             "best_fold": best_fold,
             "best_reward": self.results[best_fold]["mean_reward"],
+            # [P180] what the choice was actually made on
+            "selection_metric": "mean_pnl_after_cost",
+            "best_pnl_after_cost": self.results[best_fold].get(
+                "mean_pnl_after_cost"),
+            # [P182] promotion is a property of the run, not of a threshold
+            # somebody reads off a chart later.
+            "promotable_folds": promotable,
+            "promotable": bool(promotable),
         }
 
     def _save_results(self, summary: Dict):
@@ -1506,13 +2152,29 @@ class FullDRLTrainer:
         logger.info("=" * 70)
         for fold, metrics in self.results.items():
             w = summary.get("weights", {}).get(fold, 0)
+            pnl = metrics.get("mean_pnl_after_cost")
+            pnl_s = f"${pnl:,.0f}" if pnl is not None else "n/a"
             logger.info(
-                f"  {fold}: reward={metrics['mean_reward']:.2f} "
+                f"  {fold}: after-cost pnl={pnl_s} "
+                f"sharpe={metrics.get('sharpe_after_cost', float('nan')):.2f} "
+                f"| reward={metrics['mean_reward']:.2f} "
                 f"+/- {metrics['std_reward']:.2f} (weight={w:.2f})"
             )
+            for bn, bm in (metrics.get("baselines") or {}).items():
+                logger.info(
+                    f"      vs {bn}: ${bm.get('mean_pnl_after_cost', 0):,.0f}")
         logger.info(f"\n  Weighted score: {summary.get('weighted_score', 0):.2f}")
         logger.info(f"  Best fold: {summary.get('best_fold')} "
-                     f"({summary.get('best_reward', 0):.2f})")
+                     f"(selected on {summary.get('selection_metric', 'mean_reward')})")
+        # [P182] The headline. A run that beats no baseline is not a weaker
+        # result than one that does — it is the result that says do not deploy.
+        if summary.get("promotable"):
+            logger.info(f"  PROMOTABLE folds: {summary.get('promotable_folds')}")
+        else:
+            logger.warning(
+                "  NOT PROMOTABLE: no fold beat buy-and-hold and SMA after "
+                "fees with a Sharpe CI excluding zero. Deploying this model "
+                "would be worse than holding.")
         logger.info(f"  Results: {path}")
 
 
@@ -1722,11 +2384,19 @@ def run_optuna_tuning(
             'n_critics': trial.suggest_categorical('n_critics', [2, 3]),
         }
 
-    def _eval_nav(model, eval_env, n_episodes: int = 5) -> float:
+    def _eval_nav(model, eval_env, n_episodes: int = 5,
+                  deterministic: bool = False) -> float:
         """Run eval episodes and return mean NAV%.
 
         NAV% = (mean_final_balance - initial_balance) / initial_balance * 100.
         Scale-invariant across different dd_penalty_mult values.
+
+        [P181] `deterministic` defaults to False. It was hardcoded True, and a
+        deterministic policy over one fixed validation window is a pure
+        function — so all five episodes were byte-identical and the "mean over
+        5" was one number computed five times. Optuna was then ranking trials
+        on a single sample with no notion of its own noise, at 5x the compute.
+        Stochastic rollouts make the mean an actual average over policy noise.
         """
         initial = eval_env.get_attr("initial_balance")[0]
         balances = []
@@ -1734,7 +2404,7 @@ def run_optuna_tuning(
             obs = eval_env.reset()
             done = False
             while not done:
-                action, _ = model.predict(obs, deterministic=True)
+                action, _ = model.predict(obs, deterministic=deterministic)
                 obs, _, dones, infos = eval_env.step(action)
                 done = dones[0]
             # Get final balance from env info
@@ -1787,6 +2457,10 @@ def run_optuna_tuning(
             # Stage 9: Friction enabled in Optuna trials too
             asset=asset,
             friction_enabled=True,
+            # [P179] venue/fee_side default to kraken/taker, so Optuna trials
+            # are now scored against 26bps like everything else. Trials tuned
+            # before P179 were tuned at half the friction and their winners do
+            # not carry over.
         )
 
         model = None
@@ -2211,6 +2885,38 @@ def main():
     parser.add_argument("--turnover-min-change", type=float, default=0.01,
                         help="Min position change to trigger friction (default: 0.01)")
 
+    # [P179] Venue fee args
+    parser.add_argument("--venue", type=str, default=DEFAULT_VENUE,
+                        choices=sorted(VENUE_FEES_BPS),
+                        help="Exchange whose fees to charge. kraken=26bps taker "
+                             "(legacy sleeve), coinbase=3bps taker (nano perp).")
+    parser.add_argument("--fee-side", type=str, default=DEFAULT_FEE_SIDE,
+                        choices=["maker", "taker"],
+                        help="Default taker: the policy sets a target position "
+                             "each bar and expects to reach it.")
+    parser.add_argument("--assume-free-tier", action="store_true",
+                        help="Charge 0 bps exchange fee. Only valid below "
+                             "Kraken's $10K/mo free tier. This was the silent "
+                             "default before P179; it is now opt-in.")
+
+    # [P181] Evaluation args
+    parser.add_argument("--eval-episodes", type=int, default=10,
+                        help="Validation rollouts per fold (default: 10)")
+    parser.add_argument("--eval-deterministic", action="store_true",
+                        help="Deterministic eval rollouts. Collapses the "
+                             "episode spread to exactly 0 — the pre-P181 "
+                             "behaviour. Only useful for reproducing old runs.")
+
+    # [P182] Baseline args
+    parser.add_argument("--baseline-sma-window", type=int, default=200,
+                        help="SMA baseline window in BARS (200 @4h ~ 33 days)")
+
+    # [P180] Reward shaping
+    parser.add_argument("--regime-alignment-bonus", action="store_true",
+                        help="Re-enable the regime-alignment reward bonus. "
+                             "It pays for agreeing with the GMM label rather "
+                             "than for being right; off since P180.")
+
     # Optuna tuning args
     parser.add_argument("--config", type=str, default=None,
                         help="JSON config file (e.g. config/optuna_winner.json). "
@@ -2427,10 +3133,21 @@ def main():
         slippage_bps=args.slippage_bps,
         turnover_cost_mult=args.turnover_mult,
         turnover_min_change=args.turnover_min_change,
+        # [P179] Venue fees
+        venue=args.venue,
+        fee_side=args.fee_side,
+        assume_free_tier=args.assume_free_tier,
+        # [P180] Reward shaping
+        regime_alignment_bonus=args.regime_alignment_bonus,
         # VecEnv
         vec_env_type=args.vec_env,
         n_envs=args.n_envs,
     )
+    # [P181] Evaluation knobs — set after construction to keep the
+    # constructor signature from growing a third batch of parameters.
+    trainer.eval_episodes = int(args.eval_episodes)
+    trainer.eval_deterministic = bool(args.eval_deterministic)
+    trainer.baseline_sma_window = int(args.baseline_sma_window)
 
     trainer.run()
 

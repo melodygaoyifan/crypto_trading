@@ -25,12 +25,14 @@ system with no short risk control at all.
 """
 
 import ast
-import io
 import re
-import tokenize
+import sys
 from pathlib import Path
 
 import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _source_scan import code_only, read_source  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MAIN = REPO_ROOT / "main.py"
@@ -50,8 +52,7 @@ def _production_py():
         yield p
 
 
-def _read(p):
-    return p.read_text(encoding="utf-8-sig", errors="replace")
+_read = read_source
 
 
 def _code(p):
@@ -64,26 +65,12 @@ def _code(p):
     their own documentation and fail. A scanner that cannot tell code from
     prose about code is not measuring what it claims to.
 
-    Literals are kept because the banner under test IS a literal
-    (`logger.info("...V6 SOTA modules loaded...")`); blanking strings would
-    make that test unable to fail.
+    Literals are kept (`strip_docstrings=False`) because the banner under test
+    IS a literal (`logger.info("...V6 SOTA modules loaded...")`); blanking
+    strings would make that test unable to fail. P179 needed the opposite
+    setting for the same reason in reverse — see tests/_source_scan.py.
     """
-    src = _read(p)
-    try:
-        toks = list(tokenize.generate_tokens(io.StringIO(src).readline))
-    except (tokenize.TokenError, IndentationError, SyntaxError):
-        return src
-    # Blank comments in place. Joining tokens with separators instead would
-    # turn `self._short_control.evaluate(` into `self . _short_control .
-    # evaluate (` and quietly break every regex below — which it did.
-    lines = src.splitlines(keepends=True)
-    for t in toks:
-        if t.type != tokenize.COMMENT:
-            continue
-        row, col = t.start[0] - 1, t.start[1]
-        line = lines[row]
-        lines[row] = line[:col] + " " * (t.end[1] - col) + line[t.end[1]:]
-    return "".join(lines)
+    return code_only(p, strip_docstrings=False)
 
 
 class TestTheMisleadingLoadBannerIsGone:

@@ -288,6 +288,155 @@ discipline + the grep habit.
 
 ### Recent pitfalls (last ~30 days)
 
+### P179–P184. [FIXED 2026-08-05] The DRL was trained and selected against five numbers that were not measurements — and every model currently deployed was validated that way
+
+Operator instruction was five specific items in the training harness. All five
+were real; a sixth (P184) fell out of probing the second. They share one shape,
+the same one as P155-L5/P156/P158–P160/P164/P166/P169–P171/P174/P175/P177/P178:
+**a quantity that looked like an observation and was structurally incapable of
+being one.** Taken together they mean the reported per-fold validation Sharpes
+(header table: BTC +9.22 / ETH +7.32 / SOL +10.29) are not evidence of edge —
+this compounds P164, which already established the features were leaked.
+
+**Nothing here retrains anything.** The parquets and the training data are
+server-side. These fixes stop the *next* run from being meaningless; the
+deployed models are still the ones selected under all six defects.
+
+#### P179. `KRAKEN_PRO_FEES` was defined, never read, and the fee it described was hardcoded to zero
+`TradingEnvFull._compute_trade_cost_bps` had `fee_bps = 0.0  # within free tier
+($10K/mo)`. `grep -rn KRAKEN_PRO_FEES` returned **one line — its own
+definition**; the constant that was supposed to price the trade had no reader,
+and the comment justifying the zero cited the free-tier branch of the table
+nobody was reading. So the DRL was validated on slippage and impact alone (3–10
+bps/side) against a live Kraken taker fee of **26 bps** — roughly half the real
+friction, on a strategy whose measured defect (P142) is over-trading.
+
+Fixed with `VENUE_FEES_BPS`, venue-aware and sourced from the live table, plus
+`--venue` / `--fee-side` / `--assume-free-tier`. The free-tier assumption is now
+an explicit opt-in, because it holds only below $10K monthly volume and nothing
+in the trainer ever checked that. Unknown venue or bad fee side **raises**
+rather than defaulting to zero. `KRAKEN_PRO_FEES` was deleted: a second unread
+fee table is how the first one got ignored.
+
+**The fix shipped with the same bug and the test caught it.** `_load_venue_fees`
+imported `_VENUE_FEES`; the live symbol is `VENUE_FEE_STD`. `except Exception`
+swallowed the ImportError and returned the hardcoded fallback — and because the
+fallback is a *correct copy*, the numbers were right and the source was wrong,
+which is undetectable by value. The loader now returns `(table, source)` and
+logs loudly on fallback. **When a fallback is a correct copy of the thing it
+falls back from, agreement proves nothing; you must record which one you read.**
+
+#### P180. Fold selection ran on the shaped reward, which paid for agreeing with the GMM
+`best_fold = max(mean_reward)`. `mean_reward` included a bonus for holding a
+position aligned with `POSITION_BIAS[regime]` **whether or not it made money** —
+a reward for agreeing with the regime label, not for being right. It is
+unfalsifiable inside the training loop (the agent can raise it without earning
+anything), and it was then the selection metric, so the choice of fold was
+partly a statement about the reward function. Worse in the "classic" branch,
+which added it to the raw reward with no `quality_weight`, so a 0.5 alignment
+bonus outweighed a 0.4% bar move.
+
+The bonus is now `regime_alignment_bonus=False` by default in **both** copies
+(`EnhancedRewardCalculator.compute` and `step()`); `bull_mult`/`bear_mult` stay,
+because those scale *realized* pnl, so a wrong label scales a loss. Selection is
+`mean_pnl_after_cost`, with `selection_metric` recorded in the summary. The
+mean_reward path survives only as a guarded fallback for folds restored from
+cache with no after-cost figure, and it logs that the choice is not grounded in
+realized money.
+
+#### P181. `std_reward` was exactly 0.0 on every fold, of every asset, of every run
+`_evaluate` ran ten `deterministic=True` rollouts over one fixed validation
+window. A deterministic policy on a fixed window is a pure function — all ten
+episodes were byte-identical by construction. **A dispersion figure that cannot
+be non-zero is not a measurement**, and it sat next to a Sharpe as if it
+qualified it. Replaced by `evaluate_policy_full`: stochastic rollouts, after-cost
+PnL, an annualized Sharpe off the **median** episode (bootstrapping the best of N
+would put a confidence interval around a max-order statistic), and a percentile
+bootstrap CI. `degenerate_spread` is still computed from the actual spread, so
+the old condition remains *observable* rather than merely absent. Optuna's
+`_eval_nav` had the identical defect — 5 identical episodes averaged into one
+number that ranked trials — and is fixed the same way.
+
+#### P182. "Under-performs buy-and-hold" was not an outcome the harness could produce
+No baseline had ever been run through this environment, so the promotion
+criterion was `Sharpe > X` — an absolute number with nothing to be worse than.
+Added `buy_and_hold` and `sma_200bar` as `ScriptedPolicy` objects that duck-type
+`model.predict`, so they run the **same** eval path at the **same** fees on the
+**same** fold. Promotion now needs two gates: beat **every** baseline on
+after-cost PnL, and a bootstrap Sharpe CI excluding zero. **No baselines means
+NO PASS** — `_evaluate_baselines` returns `{}` rather than a partial dict on any
+failure, because a model that "beat" one of two baselines because the other
+crashed is exactly the reassuring-looking artifact this replaces. An unmeasured
+comparison is not a favourable one.
+
+#### P183. The DRL counterfactual read nothing and reported that DRL contributed nothing
+`analytics/drl_realized/drl_counterfactual_sharpe.py` globbed `logs/attribution/`
+for `signals_*.jsonl`. The directory is not in the repo, and the path was
+hardcoded to the repo root while the container writes to the `hmats-logs` volume
+(`HMATS_LOG_DIR`). With no files to read, every trade fell into `no_signal`, the
+aligned/opposed/silent rows printed `(empty)`, and the **ALL TRADES row still
+printed real numbers underneath** — so the report looked like it ran and looked
+like it found no DRL contribution. It found nothing because it read nothing.
+Now honours `HMATS_LOG_DIR`, `logs/attribution/.gitkeep` is tracked, and the
+script **exits non-zero** on a missing/empty/all-empty directory rather than
+producing a report. It also prints a COVERAGE line, which immediately surfaced
+something invisible before: of 90 closed trades, **38 have no usable
+`entry_time`** and were being silently dropped before bucketing.
+
+#### P184. A regime id read as a float disabled every regime-conditional reward term
+Found while probing P180: with the bonus flag on and off, the reward was
+*identical*. Not a bug in the flag — `_regime_to_name` was returning the string
+`"2.0"`. `_get_regime` reads the regime out of `df.iloc[step]`, which builds a
+Series over the whole row; if every column in that row is numeric, pandas upcasts
+the int64 regime to float64, `isinstance(2.0, np.integer)` is False, and the
+name comes back as `"2.0"`. That string is not in `POSITION_BIAS`, not in
+`BULL_REGIMES`, not in `BEAR_REGIMES`, not in `regime_weights` — so every
+regime-conditional term quietly took its no-op branch and the environment
+trained **regime-blind**, with nothing raised.
+
+Verified directly:
+
+    df[timestamp, close, regime].iloc[2]["regime"] -> np.int64(2)
+    df[close, regime].iloc[2]["regime"]            -> np.float64(2.0)
+
+**Latent today, not live**: the production parquets carry a `timestamp`
+datetime64 column, which forces the row Series to dtype object and preserves the
+int. So the correctness of the reward function depends on an unrelated column
+being present — drop `timestamp` in any preprocessing step and the regime logic
+silently evaporates. `_regime_to_name` now accepts integral floats, and
+`_assert_regimes_resolve()` warns at construction if any id fails to map. A test
+pins the pandas upcast itself, so if that behaviour ever changes the explanation
+in the code is flagged rather than left quietly wrong.
+
+#### Tests and method
+`tests/test_drl_cost_realism.py` (36). Two layers, deliberately: source-level
+gates that run everywhere, and behavioural tests gated on
+`pytest.importorskip("gymnasium")` — the training stack is not installed on most
+machines, so behavioural tests alone would skip silently and guard nothing.
+**All 13 source gates were verified red-on-regression by injecting the
+corresponding defect into a scratch copy** (never the shared working tree) and
+confirming each predicate flips. Behavioural verification ran against minimal
+gymnasium/sb3 stubs. Measured after the fixes: kraken/taker `fee_bps=26.00`
+(coinbase `3.00`, free tier `0.00`); deterministic `std_reward=0.000000
+degenerate=True` vs stochastic `260.670062 degenerate=False`; `buy_and_hold
+pnl=-$46,245.68`, `sma_200bar pnl=-$23,977.47`.
+
+`tests/_source_scan.py` is new and shared. P177's scanner blanked `#` comments
+but kept string literals, which is correct for asserting a *log line* is gone
+and wrong for asserting a *statement* is gone — the P179 fix documents the
+removed `fee_bps = 0.0` inside a docstring, so a comments-only scan matched its
+own explanation. Hence `strip_docstrings`. It returns the raw source unchanged
+on a parse failure, because a scanner that returns `""` would make every
+"X is absent" assertion pass vacuously.
+
+#### Consequence to carry forward
+**Every DRL run predating this is invalid for promotion purposes** — validated
+at roughly half the real friction, selected on a shaped reward that paid for
+agreeing with a label, with an error bar that was zero by construction, against
+no baseline, on an environment that was regime-blind whenever the frame was
+all-numeric. Retraining is server-side and is a prerequisite for any promotion
+decision, not an optimisation.
+
 ### P178. [FIXED 2026-08-05] The DRL scored an all-zero state vector and returned it as a signal; and main.py named a DEPRECATED file as the canonical main loop
 
 `DRLAgent.generate_signal` takes 8 args; the 3 that carry state
