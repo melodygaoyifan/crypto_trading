@@ -28,6 +28,30 @@ from infra.kraken_derivatives_client import DerivativesMarketData
 # FIXTURES
 # =============================================================================
 
+@pytest.fixture(autouse=True)
+def _no_ambient_initial_size_cap(monkeypatch):
+    """[P194] Isolate from DERIVATIVES_INITIAL_SIZE_USD_CAP in the ambient env.
+
+    `_build_executor()` passes `initial_size_cap_usd=None`, and the constructor
+    then falls back to `os.environ["DERIVATIVES_INITIAL_SIZE_USD_CAP"]`
+    (derivatives_executor.py:194). The repo's own .env sets that to 250, and
+    main.py load_dotenv()s at import time — so as soon as any earlier test in
+    the session imports main, a $250 cap appears here and fires BEFORE the cap
+    each test is actually asserting:
+
+        assert "single_position_cap" in result.reason
+        AssertionError: ... 'initial_usd_cap_exceeded:2000.0>250.0'
+
+    Nine tests in this file failed that way in a full-suite run while passing
+    in isolation. CI never saw it because .env is gitignored and absent there —
+    the suite was green on the machine that had no config and red on every
+    machine that did.
+
+    Tests that want the cap set it explicitly via `_build_executor(initial_cap=...)`.
+    """
+    monkeypatch.delenv("DERIVATIVES_INITIAL_SIZE_USD_CAP", raising=False)
+
+
 class FakeIntent:
     def __init__(self, asset="BTC", direction=1, leverage=1.0, size_usd=500,
                  strategy=""):

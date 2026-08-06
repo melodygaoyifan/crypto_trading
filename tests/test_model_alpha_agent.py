@@ -234,14 +234,43 @@ class TestWeightControllers:
 # ============================================================================
 
 class TestTorchFallback:
-    """Mock model works when torch model file is absent."""
+    """Mock model works when torch model file is absent.
 
-    def test_mock_model_loaded(self):
-        agent = _make_agent(model_path="nonexistent_path")
+    [P194] Both tests must force the no-checkpoint state, and `model_path` is
+    not enough to do it. `model_path` only selects the DecisionTransformer;
+    the sequence model is resolved separately from `self.sequence_model_path`,
+    which `__init__` hardcodes to models/model_alpha and does not accept as a
+    kwarg. So on any machine that HAS the checkpoint, `_make_agent()` returned
+    a RealSequenceAlphaModel and these "torch-missing fallback" tests were
+    exercising the real model instead of the fallback.
+
+    That made `test_mock_predict_returns_values` fail — the real model wants
+    122 features, gets 13, raises, and returns (None, None) per [FIX-AG7]. And
+    it made `test_mock_model_loaded` pass for the wrong reason: `_model_loaded`
+    is True when the REAL model loads too, so it asserted nothing about the
+    mock. Green in CI only because models/ is gitignored and absent there.
+
+    Patching the checkpoint resolver to None reproduces exactly the state CI
+    and a torch-less box are in.
+    """
+
+    @staticmethod
+    def _mock_only_agent(monkeypatch):
+        monkeypatch.setattr(
+            ModelAlphaAgent, "_resolve_sequence_model_checkpoint",
+            lambda self, asset: None,
+        )
+        return _make_agent(model_path="nonexistent_path")
+
+    def test_mock_model_loaded(self, monkeypatch):
+        from agents.model_alpha_agent import MockDecisionTransformer
+        agent = self._mock_only_agent(monkeypatch)
         assert agent._model_loaded is True  # falls back to mock
+        # Assert WHICH model, not just that something loaded.
+        assert isinstance(agent._model, MockDecisionTransformer), type(agent._model)
 
-    def test_mock_predict_returns_values(self):
-        agent = _make_agent()
+    def test_mock_predict_returns_values(self, monkeypatch):
+        agent = self._mock_only_agent(monkeypatch)
         import numpy as np
         features = np.zeros(13, dtype=np.float32)
         pred, conf = agent._model.predict(features)

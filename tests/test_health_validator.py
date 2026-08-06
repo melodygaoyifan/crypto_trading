@@ -181,10 +181,19 @@ class TestLayer3WatchdogChecks:
         assert "unchanged" in detail
 
     def test_w3_log_growing(self):
-        """Log file should not be frozen."""
+        """The checker returns a valid status for whatever log state exists.
+
+        [P194] WARN belongs in this set. check_log_growing() returns WARN when
+        the log is older than MAX_LOG_STALE_SECONDS (live_watchdog.py:279) —
+        that is the check working, not failing, and the sibling w4 test already
+        accepts WARN. Omitting it here made the test assert "this machine has a
+        recently-written live_stderr.log", which is true only on the live box:
+        green in CI (logs/ is gitignored, so SKIP) and red on any developer
+        machine that has ever run the engine.
+        """
         from scripts.live_watchdog import check_log_growing
         status, detail = check_log_growing()
-        assert status in ("PASS", "SKIP")
+        assert status in ("PASS", "SKIP", "WARN"), (status, detail)
 
     def test_w4_data_rate(self):
         """Should find LIVE_DATA entries in recent logs."""

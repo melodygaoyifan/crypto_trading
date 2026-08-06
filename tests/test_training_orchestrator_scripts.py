@@ -74,7 +74,11 @@ def test_preflight_fails_when_a_script_is_missing(orch, monkeypatch, caplog):
     monkeypatch.setitem(orch.SCRIPTS, "gmm", ("script_dir", "no/such/trainer.py"))
     with caplog.at_level("ERROR"):
         assert orch.preflight() is False
-    joined = caplog.text
+    # [P194] Compare on forward slashes. preflight() logs an OS-native resolved
+    # path, so on Windows the message reads ...\no\such\trainer.py and the
+    # literal "no/such/trainer.py" is never found — the test failed there while
+    # passing on Linux CI, asserting the platform rather than the diagnostic.
+    joined = caplog.text.replace("\\", "/")
     assert "gmm" in joined and "no/such/trainer.py" in joined, (
         f"preflight failed without saying which script or where it looked: "
         f"{joined!r}"
