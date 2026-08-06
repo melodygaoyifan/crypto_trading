@@ -175,6 +175,72 @@ def test_the_allowlist_stays_an_allowlist():
     )
 
 
+DOCKERIGNORE = REPO_ROOT / ".dockerignore"
+
+
+def _dockerignore_patterns():
+    return [
+        line.strip()
+        for line in DOCKERIGNORE.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+
+
+def test_every_allowlisted_script_survives_dockerignore():
+    """[P192] Being named in a COPY is not the same as being buildable.
+
+    The test above asserts the diagnostics appear in Dockerfile.engine. They
+    did — and the image still could not build, because `.dockerignore` excludes
+    `scripts/`, so the COPY resolved against an empty build context and
+    `docker build` died with `"/scripts/why_no_trade.py": not found`. The gate
+    that was supposed to guarantee "the documented command works" was satisfied
+    by a Dockerfile line that could never run.
+
+    Checking membership in one file while the neighbouring file silently
+    removes it is the same shape as P170/P176: a check whose subject was
+    already gone.
+    """
+    patterns = _dockerignore_patterns()
+    copied = _engine_copied_scripts()
+    assert copied, (
+        "Dockerfile.engine copies no scripts at all — the allowlist this test "
+        "guards has vanished; see P190."
+    )
+
+    dir_excluded = [p for p in patterns
+                    if p.rstrip("/") == "scripts" or p.startswith("scripts/**")]
+    # Asserted, not branched on: the exclusion is itself a safety property.
+    # Without it the whole directory enters the build context, which is what
+    # P141 (no order-placing code in the live image) exists to prevent. If this
+    # ever fails, do not delete the negations — restore the exclusion.
+    assert dir_excluded, (
+        "`scripts/` is no longer excluded in .dockerignore, so the entire "
+        "directory — including launch_live.py, coinbase_test_order.py and "
+        "coinbase_flatten.py — is now in the engine build context. P141 keeps "
+        "order-placing code out of the live trading image. Restore the "
+        "`scripts/` exclusion along with the `!scripts/<file>` re-includes."
+    )
+
+    negated = {p[len("!scripts/"):] for p in patterns if p.startswith("!scripts/")}
+    missing = sorted(name for name in copied if name not in negated)
+    assert not missing, (
+        f".dockerignore excludes scripts/ via {dir_excluded[0]!r} but never "
+        f"re-includes {missing}. `docker build` fails on the COPY at "
+        f"Dockerfile.engine with \"not found\" — the engine image cannot be "
+        f"built at all, which is the P192 breakage. Add a `!scripts/<name>` "
+        f"line for each, placed AFTER the `scripts/` line (Docker takes the "
+        f"last matching pattern)."
+    )
+
+    # A negation naming a file that does not exist is dead config: it re-includes
+    # nothing, and the failure only shows up in a build log nobody reads.
+    ghosts = sorted(n for n in negated if not (REPO_ROOT / "scripts" / n).is_file())
+    assert not ghosts, (
+        f".dockerignore re-includes scripts that do not exist on disk: {ghosts}. "
+        f"Either restore the file or drop the stale `!scripts/` line."
+    )
+
+
 DEPLOY_GUIDE = REPO_ROOT / "docs" / "hetzner_deployment_guide.md"
 DEPLOY_SCRIPT = REPO_ROOT / "scripts" / "hetzner_deploy.sh"
 
