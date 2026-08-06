@@ -288,6 +288,68 @@ discipline + the grep habit.
 
 ### Recent pitfalls (last ~30 days)
 
+### P191. [FIXED 2026-08-06] The deployment guide built a different system than the one we deploy, and drove it with systemd
+
+P190 fixed the operations runbook and left this as "needs verification against
+the box". That was wrong: `scripts/hetzner_deploy.sh` is in the tree and **is**
+the authority on what gets deployed. Everything below was checkable locally.
+
+`docs/hetzner_deployment_guide.md` §4 方式 A "Docker 部署（推荐）" walked the
+operator through `docker build -t hmats:6.8.0 .` — the **root** `Dockerfile`,
+v5.1.0 layout — then `docker run --name hmats-paper` with host mounts at
+`/var/log/hmats` and `/var/lib/hmats`. It never named
+`docker-compose.hetzner.yml`, `Dockerfile.engine`, `hmats-engine`, or
+`hetzner_deploy.sh`. Every other operational doc says `docker exec hmats-engine`;
+following the build guide produces a container by a different name, from a
+different Dockerfile, with state in directories nothing else reads. Mounting the
+old paths also leaves engine state inside the container layer — lost on the next
+`up -d`, since the real state lives in the named volumes `hmats-data`/`hmats-logs`
+at `/opt/hmats/data`, `/opt/hmats/logs`.
+
+Then five separate places drove the engine through systemd — §7 (the recipe
+itself), §8.1 (the cron health check), §9.1 更新代码, §9.2 更新模型, 快速参考, and
+Paper→Live. `deploy/systemd/hmats.service` is a v5.1.0 artifact still launching
+`main.py --mode paper`; there is no such unit in production. Two consequences
+worth naming separately:
+
+- **§8.1 fails silently in the wrong direction.** `systemctl is-active --quiet
+  hmats` on a nonexistent unit returns non-zero forever, so a health check copied
+  from the guide alerts "HMATS is DOWN!" every 5 minutes while the engine is
+  perfectly healthy. Same class as P155-L5/P174: a check whose result carries no
+  information.
+- **§9.2 更新模型 was wrong even after the systemd lines were fixed.** The engine
+  reads models from the **named volume** `hmats-models` (`:ro` at
+  `/opt/hmats/models`), not from `~/hmats/models`. `scp`-ing to the host dir
+  without syncing into the volume leaves the engine on the old models — which is
+  exactly the 2026-04-22 `models_ready=0` / DRL-stuck-in-SHADOW incident recorded
+  in the compose file's own comment. The guide now carries
+  `hetzner_deploy.sh`'s step-4 `docker run --rm -v hmats-models:/models ...` line.
+
+Also fixed: `docs/HMATS_Architecture_Part4_Execution_DRL_v10.md:424`, the model
+promotion checklist, step 6 `systemctl restart hmats` → the compose equivalent.
+
+§7 is kept, retitled 历史路径，线上未使用, with a legacy banner and a
+systemd→docker equivalence table, because the non-Docker install is still a
+legitimate path and an operator who inherits one needs it.
+
+Gate: three tests in `tests/test_ops_docs_reference_real_commands.py` — the guide
+must name what `hetzner_deploy.sh` actually deploys (and clone into the `APP_DIR`
+the script `cd`s to, read out of the script, not hardcoded); no doc may drive
+`hmats` through systemd outside §7; §7 must still carry its banner (a
+falsification guard — the exemption is only safe while the label is there). All
+3 red against the pre-fix guide.
+
+**Two gate bugs found while writing this, both worth remembering:**
+
+1. The confinement check first scanned only ```bash fences. Part4:424 sits in an
+   **untagged** fence next to a directory tree, so the check could not have
+   caught the one line it was written for. Added `_all_fenced_lines()`.
+2. It first exempted the deployment guide **as a whole file**. That hid the four
+   other systemd sites in that same file (§8.1, §9.1, §9.2, 快速参考, Paper→Live)
+   — they only surfaced after the exemption was narrowed to §7's line range. An
+   exemption the width of a file is not a carve-out, it is a blind spot. If you
+   exempt something, exempt the smallest region that needs it.
+
 ### P190. [FIXED 2026-08-06] The operations runbook documented 14 scripts that never existed — including the emergency-flatten procedure
 
 P186 found `make drl` pointing at a trainer that was never in the tree; P189
@@ -341,10 +403,9 @@ allowlist has not become a blanket copy, and the runbook does not drive the
 system through systemd. Falsified against the pre-fix files: 3 red; plus 2 red
 on injected bad commands.
 
-**Still stale, not fixed here:** `docs/hetzner_deployment_guide.md` §360-401 and
-`docs/HMATS_Architecture_Part4_Execution_DRL_v10.md:424` also describe the
-systemd deployment. Rewriting a deployment guide needs verification against the
-box, which is an operator task.
+**Follow-up:** the two remaining systemd-era documents named here
+(`docs/hetzner_deployment_guide.md`, `docs/HMATS_Architecture_Part4_Execution_DRL_v10.md:424`)
+were fixed in **P191**.
 
 ### P189. [FIXED 2026-08-05] The training orchestrator invoked two scripts that do not exist, and exited 0 when it failed
 
