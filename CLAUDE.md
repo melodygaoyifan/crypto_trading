@@ -288,6 +288,64 @@ discipline + the grep habit.
 
 ### Recent pitfalls (last ~30 days)
 
+### P190. [FIXED 2026-08-06] The operations runbook documented 14 scripts that never existed — including the emergency-flatten procedure
+
+P186 found `make drl` pointing at a trainer that was never in the tree; P189
+found the same in `run_training.py`. This is the third instance, and it is on
+the incident-response path.
+
+`docs/HMATS_Architecture_Part5_Operations_v10.md` instructed the operator to run
+14 files under `/opt/hmats/scripts/`: `reconcile_positions.py`,
+`check_drawdown.py`, `check_fuse_status.py`, `check_bull_transition.py`,
+`check_positions.py`, `check_drl_drift.py`, `fill_quality_weekly.py`,
+`weekly_performance.py`, `drl_promotion_gate.py`, `pnl_attribution.py`,
+`fee_analysis.py`, `fuse_reset.py`, `emergency_flatten.py`,
+`remote_emergency_flatten.py`. **`git log --all --diff-filter=A` finds no commit
+that ever added any of them.** The first line of 紧急程序 1 was
+`python /opt/hmats/scripts/emergency_flatten.py --confirm`.
+
+Two more defects in the same section:
+
+- **The deployment is not systemd.** `sudo systemctl stop hmats` /
+  `journalctl -u hmats` describe the v5.1.0 venv install
+  (`deploy/systemd/hmats.service`, which still launches `main.py --mode paper`).
+  Live is `docker-compose.hetzner.yml` — `hmats-engine` v6.8.0 + `hmats-api`,
+  deployed by `scripts/hetzner_deploy.sh` into `/home/hmats/hmats/app`. So the
+  stop-the-engine step of an emergency flatten stopped nothing either.
+- **`scripts/` is not in the engine image.** `Dockerfile.engine` copies 20-odd
+  packages and no `scripts/`, yet lines 66–75 of this file document
+  `docker exec hmats-engine python -X utf8 scripts/<x>.py`. Line 1118 had
+  already noticed in passing ("scp the script in first — scripts/ isn't baked
+  into the image") without the other call sites being corrected.
+
+Fixed:
+- Runbook rewritten against what exists. Capabilities with no implementation are
+  marked **[未实现]** rather than left as commands that read as working — there
+  is no general emergency flatten; the real paths are Kraken Pro UI,
+  `scripts/coinbase_flatten.py` (Coinbase sleeve only), and
+  `scripts/reconcile_flatten_2026_06_12.py` (Kraken **spot longs** only,
+  dry-run by default, does not close margin shorts).
+- `Dockerfile.engine` now copies `why_no_trade.py`, `kq_strategy_diagnostic.py`
+  and `agent_audit_16.py` — an **allowlist**, not `COPY scripts/`. `scripts/`
+  also holds `launch_live.py`, `coinbase_test_order.py` and
+  `coinbase_flatten.py`; baking those into the live trading container is exactly
+  what P141 exists to prevent. The three copied files are stdlib-only and read
+  data/logs. **These `docker exec` commands only start working after the image
+  is rebuilt and redeployed.**
+
+Gate: `tests/test_ops_docs_reference_real_commands.py` reads only `bash` fenced
+blocks (prose describing a historical bug is not an instruction) and asserts
+every documented command's script exists, no command points at
+`/opt/hmats/scripts/`, every `docker exec` target is in the image allowlist, the
+allowlist has not become a blanket copy, and the runbook does not drive the
+system through systemd. Falsified against the pre-fix files: 3 red; plus 2 red
+on injected bad commands.
+
+**Still stale, not fixed here:** `docs/hetzner_deployment_guide.md` §360-401 and
+`docs/HMATS_Architecture_Part4_Execution_DRL_v10.md:424` also describe the
+systemd deployment. Rewriting a deployment guide needs verification against the
+box, which is an operator task.
+
 ### P189. [FIXED 2026-08-05] The training orchestrator invoked two scripts that do not exist, and exited 0 when it failed
 
 P186 found `make drl` pointing at a trainer that was never in the tree. This is
