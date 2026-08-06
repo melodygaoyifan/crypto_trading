@@ -349,6 +349,11 @@ falsification guard — the exemption is only safe while the label is there). Al
    — they only surfaced after the exemption was narrowed to §7's line range. An
    exemption the width of a file is not a carve-out, it is a blind spot. If you
    exempt something, exempt the smallest region that needs it.
+3. It scanned only `docs/*.md` + this file, leaving root-level markdown
+   uncovered — including `README_DEPLOY_HETZNER.md`, a deployment doc, i.e.
+   exactly the class of file that rotted here. Widened to `REPO_ROOT/*.md`;
+   those files are clean today, which is the point of covering them now rather
+   than after they aren't.
 
 ### P190. [FIXED 2026-08-06] The operations runbook documented 14 scripts that never existed — including the emergency-flatten procedure
 

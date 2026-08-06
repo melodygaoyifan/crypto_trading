@@ -69,7 +69,11 @@ def _all_fenced_lines(path: Path):
 
 
 def _documented_files():
-    return [CLAUDE_MD] + DOCS
+    # [P191] Root-level markdown too. README_DEPLOY_HETZNER.md is a deployment
+    # doc — the exact class of file P190/P191 found rotted — and scanning only
+    # docs/ + CLAUDE.md left it uncovered. It is clean today; the point is that
+    # it stays that way.
+    return sorted(set([CLAUDE_MD] + DOCS + list(REPO_ROOT.glob("*.md"))))
 
 
 def test_the_docs_this_reads_are_where_it_expects():
