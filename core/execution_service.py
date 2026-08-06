@@ -242,6 +242,33 @@ def _coinbase_get_routing():
 _CB_IRON_LAW_8_WARNED = False
 
 
+def _resolve_drl_authority_level(ctx) -> str:
+    """[P193] `_coinbase_routed()` is called with two different object shapes.
+
+    `execute_intent_v2` passes an ExecutionContext, which exposes
+    `drl_authority_level` (execution_context.py:106). `main.py:8562` — the P172
+    venue-fee resolution — passes the HMATSProductionRunner itself, and the
+    runner names the same value `_drl_authority_level` (main.py:5021).
+
+    Reading only the first name made every runner-path call look like
+    "DRL authority is ''". That is a FALSE Iron Law 8 violation, and because the
+    check latches on its first failure it burned the one-shot on the false
+    alarm — permanently silencing the real check for the life of the process.
+    Observed live 2026-08-06: CRITICAL at 23:04:12 while the promotion gate had
+    logged ACTIVE at 23:03:30 and DECIDE_POOL reported ACTIVE throughout.
+
+    Returns "" when neither name carries a value. That is deliberate: an
+    authority level we cannot determine is not ACTIVE, and validate_drl_active
+    fails closed on it (see
+    test_missing_authority_attribute_fails_closed_to_reporting).
+    """
+    for _name in ("drl_authority_level", "_drl_authority_level"):
+        _val = getattr(ctx, _name, None)
+        if _val:
+            return str(_val)
+    return ""
+
+
 def _coinbase_check_iron_law_8(ctx, rp) -> None:
     """[P155] Iron Law 8 (DRL ACTIVE during cutover) was defined but never
     enforced — a P152-class defect.
@@ -266,7 +293,7 @@ def _coinbase_check_iron_law_8(ctx, rp) -> None:
         from exchange.routing import CutoverPhase
         if rp.phase == CutoverPhase.PRE_PHASE_2:
             return  # not in cutover; invariant does not apply
-        ok, reason = validate_drl_active(getattr(ctx, "drl_authority_level", ""))
+        ok, reason = validate_drl_active(_resolve_drl_authority_level(ctx))
         if not ok:
             _CB_IRON_LAW_8_WARNED = True
             logger.critical(

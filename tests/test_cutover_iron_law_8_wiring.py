@@ -88,6 +88,78 @@ def test_check_never_raises_into_the_order_path():
 
 
 # ---------------------------------------------------------------------------
+# [P193] the caller passes two different shapes
+# ---------------------------------------------------------------------------
+
+def _runner_ctx(drl_level="ACTIVE", routing_enabled=True):
+    """The HMATSProductionRunner shape.
+
+    main.py:8562 calls `_coinbase_routed(self, asset)` for the P172 venue-fee
+    resolution, so `ctx` is the runner, which names the authority
+    `_drl_authority_level`. Every _ctx() above is the ExecutionContext shape;
+    nothing covered this one, which is how P193 shipped.
+    """
+    return types.SimpleNamespace(
+        _drl_authority_level=drl_level,
+        config=types.SimpleNamespace(coinbase_routing_enabled=routing_enabled),
+    )
+
+
+def test_active_drl_on_the_runner_shape_is_silent(caplog):
+    """The live false alarm: runner says ACTIVE, check read '' and cried wolf."""
+    rp = RoutingPolicy(phase=CutoverPhase.DUAL_VENUE)
+    with caplog.at_level(logging.CRITICAL):
+        es._coinbase_check_iron_law_8(_runner_ctx("ACTIVE"), rp)
+    assert _critical(caplog) == [], (
+        "DRL is ACTIVE on the runner but Iron Law 8 reported a violation — it "
+        "is reading `drl_authority_level` and missing `_drl_authority_level`."
+    )
+
+
+def test_demoted_drl_on_the_runner_shape_is_still_reported(caplog):
+    """Falsification: the fix must not make the runner path unconditionally quiet."""
+    rp = RoutingPolicy(phase=CutoverPhase.DUAL_VENUE)
+    with caplog.at_level(logging.CRITICAL):
+        es._coinbase_check_iron_law_8(_runner_ctx("SHADOW"), rp)
+    assert any("IRON-LAW-8" in r.message for r in _critical(caplog))
+
+
+def test_a_false_alarm_does_not_burn_the_one_shot_for_a_real_one(caplog):
+    """The consequence that made P193 worth fixing.
+
+    The latch fires once per process. A false positive on the runner path spent
+    it during warmup, so a genuine demotion later in the same process was never
+    reported at all.
+    """
+    rp = RoutingPolicy(phase=CutoverPhase.DUAL_VENUE)
+    with caplog.at_level(logging.CRITICAL):
+        es._coinbase_check_iron_law_8(_runner_ctx("ACTIVE"), rp)   # must stay silent
+        es._coinbase_check_iron_law_8(_ctx("SHADOW"), rp)          # real violation
+    msgs = [r.message for r in _critical(caplog)]
+    assert len(msgs) == 1, msgs
+    # Asserting the COUNT alone would pass either way — pre-fix the single
+    # alert is the phantom "authority is ''" and the real SHADOW demotion is
+    # the one that got swallowed. Assert WHICH violation survived.
+    assert "'SHADOW'" in msgs[0], (
+        f"the surviving alert is not the real demotion: {msgs[0]!r}. A false "
+        f"alarm consumed the once-per-process latch and the genuine violation "
+        f"was never reported."
+    )
+
+
+def test_empty_string_authority_is_not_treated_as_a_level(caplog):
+    """An empty ExecutionContext field must fall through to the runner name."""
+    rp = RoutingPolicy(phase=CutoverPhase.DUAL_VENUE)
+    ctx = types.SimpleNamespace(
+        drl_authority_level="", _drl_authority_level="ACTIVE",
+        config=types.SimpleNamespace(coinbase_routing_enabled=True),
+    )
+    with caplog.at_level(logging.CRITICAL):
+        es._coinbase_check_iron_law_8(ctx, rp)
+    assert _critical(caplog) == []
+
+
+# ---------------------------------------------------------------------------
 # it must OBSERVE, not block
 # ---------------------------------------------------------------------------
 
