@@ -187,7 +187,12 @@ class TestGenerateSignal:
         agent.model = MagicMock()
         agent.model.predict.return_value = (np.array([0.8]), None)
 
-        payload = agent.generate_signal(asset="BTC")
+        # [P178] generate_signal now refuses a call with no state
+        # inputs at all. This test is about the action->direction
+        # mapping, not about empty input, so give it a minimal but
+        # real market_data rather than relying on the empty-dict path.
+        payload = agent.generate_signal(
+            asset="BTC", market_data={"close": 50000.0})
         assert payload.direction > 0, "ESCALATE should produce positive direction"
         assert payload.action == "ESCALATE"
         assert payload.tranche_advice == "ESCALATE"
@@ -199,7 +204,12 @@ class TestGenerateSignal:
         agent.model = MagicMock()
         agent.model.predict.return_value = (np.array([-0.9]), None)
 
-        payload = agent.generate_signal(asset="BTC")
+        # [P178] generate_signal now refuses a call with no state
+        # inputs at all. This test is about the action->direction
+        # mapping, not about empty input, so give it a minimal but
+        # real market_data rather than relying on the empty-dict path.
+        payload = agent.generate_signal(
+            asset="BTC", market_data={"close": 50000.0})
         assert payload.direction < 0, "RELEASE_RUNNER should produce negative direction"
         assert payload.action == "RELEASE_RUNNER"
         assert payload.exit_signal == "RELEASE_RUNNER"

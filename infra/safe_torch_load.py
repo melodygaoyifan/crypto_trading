@@ -128,7 +128,16 @@ def safe_torch_load(
     """
     target = validate_model_path(path, extra_allowed_roots=extra_allowed_roots)
     if torch_module is None:
-        import torch as torch_module  # lazy
+        # [P188] `import torch as torch_module` rebinds the parameter with an
+        # import statement, which mypy reports as no-redef — but only on a
+        # machine where torch is absent, because with torch installed it
+        # resolves the name through the real module instead. That made the
+        # scanner baseline environment-dependent: 7 no-redef on a dev box with
+        # the training deps, 8 in CI, where the gate installs mypy alone. The
+        # counts diverge with no code change between them. Bind through a
+        # separate name so both environments agree.
+        import torch as _torch  # lazy
+        torch_module = _torch
     return torch_module.load(
         str(target),
         map_location=map_location,
@@ -157,7 +166,8 @@ def safe_joblib_load(
     """
     target = validate_model_path(path, extra_allowed_roots=extra_allowed_roots)
     if joblib_module is None:
-        import joblib as joblib_module  # lazy
+        import joblib as _joblib  # lazy  [P188] see safe_torch_load above
+        joblib_module = _joblib
     return joblib_module.load(str(target), **kwargs)
 
 
@@ -182,6 +192,7 @@ def safe_pickle_load(
     """
     target = validate_model_path(path, extra_allowed_roots=extra_allowed_roots)
     if pickle_module is None:
-        import pickle as pickle_module  # lazy
+        import pickle as _pickle  # lazy  [P188] see safe_torch_load above
+        pickle_module = _pickle
     with open(str(target), "rb") as fh:
         return pickle_module.load(fh, **kwargs)

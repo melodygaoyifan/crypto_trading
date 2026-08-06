@@ -288,6 +288,813 @@ discipline + the grep habit.
 
 ### Recent pitfalls (last ~30 days)
 
+### P191. [FIXED 2026-08-06] The deployment guide built a different system than the one we deploy, and drove it with systemd
+
+P190 fixed the operations runbook and left this as "needs verification against
+the box". That was wrong: `scripts/hetzner_deploy.sh` is in the tree and **is**
+the authority on what gets deployed. Everything below was checkable locally.
+
+`docs/hetzner_deployment_guide.md` §4 方式 A "Docker 部署（推荐）" walked the
+operator through `docker build -t hmats:6.8.0 .` — the **root** `Dockerfile`,
+v5.1.0 layout — then `docker run --name hmats-paper` with host mounts at
+`/var/log/hmats` and `/var/lib/hmats`. It never named
+`docker-compose.hetzner.yml`, `Dockerfile.engine`, `hmats-engine`, or
+`hetzner_deploy.sh`. Every other operational doc says `docker exec hmats-engine`;
+following the build guide produces a container by a different name, from a
+different Dockerfile, with state in directories nothing else reads. Mounting the
+old paths also leaves engine state inside the container layer — lost on the next
+`up -d`, since the real state lives in the named volumes `hmats-data`/`hmats-logs`
+at `/opt/hmats/data`, `/opt/hmats/logs`.
+
+Then five separate places drove the engine through systemd — §7 (the recipe
+itself), §8.1 (the cron health check), §9.1 更新代码, §9.2 更新模型, 快速参考, and
+Paper→Live. `deploy/systemd/hmats.service` is a v5.1.0 artifact still launching
+`main.py --mode paper`; there is no such unit in production. Two consequences
+worth naming separately:
+
+- **§8.1 fails silently in the wrong direction.** `systemctl is-active --quiet
+  hmats` on a nonexistent unit returns non-zero forever, so a health check copied
+  from the guide alerts "HMATS is DOWN!" every 5 minutes while the engine is
+  perfectly healthy. Same class as P155-L5/P174: a check whose result carries no
+  information.
+- **§9.2 更新模型 was wrong even after the systemd lines were fixed.** The engine
+  reads models from the **named volume** `hmats-models` (`:ro` at
+  `/opt/hmats/models`), not from `~/hmats/models`. `scp`-ing to the host dir
+  without syncing into the volume leaves the engine on the old models — which is
+  exactly the 2026-04-22 `models_ready=0` / DRL-stuck-in-SHADOW incident recorded
+  in the compose file's own comment. The guide now carries
+  `hetzner_deploy.sh`'s step-4 `docker run --rm -v hmats-models:/models ...` line.
+
+Also fixed: `docs/HMATS_Architecture_Part4_Execution_DRL_v10.md:424`, the model
+promotion checklist, step 6 `systemctl restart hmats` → the compose equivalent.
+
+§7 is kept, retitled 历史路径，线上未使用, with a legacy banner and a
+systemd→docker equivalence table, because the non-Docker install is still a
+legitimate path and an operator who inherits one needs it.
+
+Gate: three tests in `tests/test_ops_docs_reference_real_commands.py` — the guide
+must name what `hetzner_deploy.sh` actually deploys (and clone into the `APP_DIR`
+the script `cd`s to, read out of the script, not hardcoded); no doc may drive
+`hmats` through systemd outside §7; §7 must still carry its banner (a
+falsification guard — the exemption is only safe while the label is there). All
+3 red against the pre-fix guide.
+
+**Two gate bugs found while writing this, both worth remembering:**
+
+1. The confinement check first scanned only ```bash fences. Part4:424 sits in an
+   **untagged** fence next to a directory tree, so the check could not have
+   caught the one line it was written for. Added `_all_fenced_lines()`.
+2. It first exempted the deployment guide **as a whole file**. That hid the four
+   other systemd sites in that same file (§8.1, §9.1, §9.2, 快速参考, Paper→Live)
+   — they only surfaced after the exemption was narrowed to §7's line range. An
+   exemption the width of a file is not a carve-out, it is a blind spot. If you
+   exempt something, exempt the smallest region that needs it.
+3. It scanned only `docs/*.md` + this file, leaving root-level markdown
+   uncovered — including `README_DEPLOY_HETZNER.md`, a deployment doc, i.e.
+   exactly the class of file that rotted here. Widened to `REPO_ROOT/*.md`;
+   those files are clean today, which is the point of covering them now rather
+   than after they aren't.
+
+### P190. [FIXED 2026-08-06] The operations runbook documented 14 scripts that never existed — including the emergency-flatten procedure
+
+P186 found `make drl` pointing at a trainer that was never in the tree; P189
+found the same in `run_training.py`. This is the third instance, and it is on
+the incident-response path.
+
+`docs/HMATS_Architecture_Part5_Operations_v10.md` instructed the operator to run
+14 files under `/opt/hmats/scripts/`: `reconcile_positions.py`,
+`check_drawdown.py`, `check_fuse_status.py`, `check_bull_transition.py`,
+`check_positions.py`, `check_drl_drift.py`, `fill_quality_weekly.py`,
+`weekly_performance.py`, `drl_promotion_gate.py`, `pnl_attribution.py`,
+`fee_analysis.py`, `fuse_reset.py`, `emergency_flatten.py`,
+`remote_emergency_flatten.py`. **`git log --all --diff-filter=A` finds no commit
+that ever added any of them.** The first line of 紧急程序 1 was
+`python /opt/hmats/scripts/emergency_flatten.py --confirm`.
+
+Two more defects in the same section:
+
+- **The deployment is not systemd.** `sudo systemctl stop hmats` /
+  `journalctl -u hmats` describe the v5.1.0 venv install
+  (`deploy/systemd/hmats.service`, which still launches `main.py --mode paper`).
+  Live is `docker-compose.hetzner.yml` — `hmats-engine` v6.8.0 + `hmats-api`,
+  deployed by `scripts/hetzner_deploy.sh` into `/home/hmats/hmats/app`. So the
+  stop-the-engine step of an emergency flatten stopped nothing either.
+- **`scripts/` is not in the engine image.** `Dockerfile.engine` copies 20-odd
+  packages and no `scripts/`, yet lines 66–75 of this file document
+  `docker exec hmats-engine python -X utf8 scripts/<x>.py`. Line 1118 had
+  already noticed in passing ("scp the script in first — scripts/ isn't baked
+  into the image") without the other call sites being corrected.
+
+Fixed:
+- Runbook rewritten against what exists. Capabilities with no implementation are
+  marked **[未实现]** rather than left as commands that read as working — there
+  is no general emergency flatten; the real paths are Kraken Pro UI,
+  `scripts/coinbase_flatten.py` (Coinbase sleeve only), and
+  `scripts/reconcile_flatten_2026_06_12.py` (Kraken **spot longs** only,
+  dry-run by default, does not close margin shorts).
+- `Dockerfile.engine` now copies `why_no_trade.py`, `kq_strategy_diagnostic.py`
+  and `agent_audit_16.py` — an **allowlist**, not `COPY scripts/`. `scripts/`
+  also holds `launch_live.py`, `coinbase_test_order.py` and
+  `coinbase_flatten.py`; baking those into the live trading container is exactly
+  what P141 exists to prevent. The three copied files are stdlib-only and read
+  data/logs. **These `docker exec` commands only start working after the image
+  is rebuilt and redeployed.**
+
+Gate: `tests/test_ops_docs_reference_real_commands.py` reads only `bash` fenced
+blocks (prose describing a historical bug is not an instruction) and asserts
+every documented command's script exists, no command points at
+`/opt/hmats/scripts/`, every `docker exec` target is in the image allowlist, the
+allowlist has not become a blanket copy, and the runbook does not drive the
+system through systemd. Falsified against the pre-fix files: 3 red; plus 2 red
+on injected bad commands.
+
+**Follow-up:** the two remaining systemd-era documents named here
+(`docs/hetzner_deployment_guide.md`, `docs/HMATS_Architecture_Part4_Execution_DRL_v10.md:424`)
+were fixed in **P191**.
+
+### P189. [FIXED 2026-08-05] The training orchestrator invoked two scripts that do not exist, and exited 0 when it failed
+
+P186 found `make drl` pointing at a trainer that was never in the tree. This is
+the same defect one layer up, in `training/run_training.py` — the module
+`make all`, `make quick` and `make gmm` all delegate to:
+
+| step | invoked | reality |
+|---|---|---|
+| `run_gmm` | `<root>/scripts/retrain_gmm.py` | not in the tree; the only copy is `archive/gmm_research/retrain_gmm.py`, and it trains the **global** 6-component model that `main.py:3552` treats as the legacy fallback |
+| `run_drl` | `<root>/train_drl_full.py` | off by one directory — the file is `training/train_drl_full.py` |
+
+So the documented full pipeline could not complete. `make all` died in step 1;
+`make quick` would have died in step 3 after the DT stage had already run.
+
+**And it exited 0 anyway.** `main()` discarded every stage's return value and
+returned `None`, so the process reported success whether it trained anything or
+not. That is the same shape as P187/P188 — a run that cannot fail says nothing
+about what it did — except here it was the *pipeline* rather than the gate.
+
+Which GMM trainer is correct was settled by reading the runtime, not by
+picking: `main.py:3520` tries `models/gmm/<ASSET>/gmm_model.pkl` first
+(`# Try per-asset models first (v7)`) and only then the global model
+(`# Fallback: try global model (legacy)`). So the target is
+`training/scripts/train_per_asset_gmm.py` — the leak-free per-asset trainer
+P164 fixed. Had the archived path existed, `make all` would have refreshed the
+fallback and left the models the runtime actually loads untouched.
+
+Fixed:
+- One `SCRIPTS` map on `TrainingOrchestrator`, resolved through `_script()`.
+  Every stage goes through it, so `preflight()` checks the paths that are used.
+- `preflight()` verifies all four scripts exist **before** step 1, and names the
+  key and the resolved path. A pipeline that discovers a bad path in step 3 has
+  already spent the cost of steps 1 and 2.
+- `main()` propagates failure: `sys.exit(main())`, `0` only if every stage
+  returned truthy.
+- `--venue` / `--fee-side` added and threaded into the DRL command (the P179 gap
+  the Makefile had already closed for `make drl`), and into the Makefile's
+  `all`/`quick` recipes — otherwise `make all DRL_VENUE=coinbase` and
+  `make drl DRL_VENUE=coinbase` charge different fees with nothing saying so.
+- Makefile help said "DRL v5.5" while the trainer self-identifies as "HMATS v7".
+  Renamed to v7. (`--output models/drl_v55` left alone: nothing reads it, and
+  renaming a live output dir is a separate change.)
+
+Gate: `tests/test_training_orchestrator_scripts.py` — every script in `SCRIPTS`
+exists, every flag passed is one the target's argparse defines, `preflight`
+fails on an injected bad path, and `main()` returns 1 on both a preflight
+failure and a stage failure. Falsified by reintroducing both wrong paths and
+dropping `--venue`: 6 of 11 go red.
+
+### P187–P188. [FIXED 2026-08-05] Neither CI workflow was checking anything: the type gate had no analyzer, and the test suite had never run a single test
+
+The previous ~90 P-entries were all defended the same way — write a gate, add it
+to CI, move on. This entry is what happened when someone finally looked at CI
+itself. Both workflows were reporting on work they were not doing.
+
+**P187 — the mypy gate had no mypy.** `.github/workflows/codebase-invariants.yml`
+had no install step at all; the rationale in the file was "Scanners depend only
+on stdlib + git", which is true of seven of the eight scanners and false of the
+type gate. So on every CI run `ci_check_invariants.py` printed
+`mypy check SKIPPED (mypy not installed)` and returned 0, and the job went
+green. P159, P161 and P175 each made that skip *louder* — a banner, a version
+stamp, a carry-forward — and not one of them made it *fail*. **A warning in the
+log of a green job is not a gate.** The 1076-finding type baseline had never once
+been compared against a PR.
+
+Fixed in two halves, because either alone would have left the hole open:
+- `tools/ci_check_invariants.py` gained `--require-all-gates`, which turns "this
+  gate could not run" into exit 1 with a banner naming the missing analyzer.
+  Local runs still warn, so a dev without mypy is not blocked; CI passes the flag.
+- The workflow installs the mypy release **read out of
+  `tools/scanner_baselines/mypy_baseline.json`**, not pinned in the YAML. Per-code
+  counts fingerprint the analyzer version, so a YAML pin that drifts from the
+  baseline re-creates P161 exactly. One source of truth, not two.
+
+**P188 — `test-suite` had been red on every push, including main, for months.**
+`gh run list` showed conclusion `failure` on every run. `gh run view --log-failed`
+gave the cause in three lines: `ImportError while loading conftest` →
+`tests/conftest.py:10: import numpy as np` → `ModuleNotFoundError`. The install
+step was `pip install pytest pytest-asyncio pydantic mypy hypothesis`. numpy was
+not on that list, pytest aborts the whole session on a conftest ImportError, and
+the job exited 4 at collection. **Not one test in this repository had ever run in
+CI.** The suite is the enforcement mechanism for ~90 P-entries; it was enforcing
+none of them, and the red X had been on the board long enough to stop being read.
+
+A second, independent fault sat behind the first: the job named ~13 test files
+in hand-written steps, a list frozen at the P113 era. Every gate from P125 on —
+including every falsifiability test written this week — was absent from it. Had
+numpy been installed, CI would still have run about a third of the suite and
+called it a pass.
+
+Fixed: `requirements-test.txt` (numpy comes via `requirements.txt`, plus pyarrow,
+which pandas needs for `to_parquet` and which no requirements file listed); the
+13 steps replaced by one `pytest tests/`; `timeout-minutes` 5 → 20, since the
+suite is ~95s plus install and a timeout kill reads as a test failure.
+
+And because "0 tests ran" is invisible in a `-q` summary — that is precisely how
+this survived — a second step asserts a floor on the collected count (3247 as of
+today, floor 2500) and fails loudly below it. Falsified both ways: 21 collected
+from a single file and 0 from a bad path each fire the floor.
+
+**Running the suite for the first time immediately paid for itself.** Three
+real defects that had been sitting in the tree, found by tests that existed and
+had simply never executed:
+- `MockDecisionTransformer.predict` returned `np.float32` despite its
+  `-> Tuple[float, float]` annotation (`signal += features[i] * w` promotes, and
+  the clamp propagates). `json.dumps` cannot serialize `np.float32`, and that
+  value lands in persisted agent-signal dicts — so the failure would have
+  surfaced at write time in an unrelated module. The real model already cast;
+  this branch did not. `tests/test_model_alpha_agent.py` had asserted it all along.
+- `test_account_sync_stale_detection` aged the state by *exactly*
+  `MAX_EQUITY_AGE_SECONDS` and the predicate is `age > MAX`, so it passed only on
+  the microseconds between two statements surviving float64 rounding at epoch
+  magnitude (~240ns resolution near 1.7e9). It failed about one full-suite run in
+  two. The literal was `120` under a comment calling it "2 minutes old" against a
+  limit the code comment still claimed was 60s; the constant is 120.0. Now
+  `MAX_EQUITY_AGE_SECONDS * 2`, read from the module.
+- The parquet backtest tests could not run at all — pyarrow was in no
+  requirements file.
+
+**Then the first real CI run failed, and that was the point.** Both jobs went red
+on the push that fixed them — locally everything was green. Three more defects,
+none of which any amount of local testing would have surfaced:
+
+- **The scanner baseline fingerprints mypy's *environment*, not just its
+  version.** P161 established that the baseline is version-specific and stamped
+  the version. This is that lesson one level deeper: with numpy and pandas
+  absent, `--ignore-missing-imports` turns them into `Any` and mypy reports a
+  *different set of errors on identical code*. The gate installed bare mypy and
+  failed with `no-redef 7 → 8` against a baseline built on a dev box. Verified by
+  reproducing all three environments locally: bare mypy diverges, `requirements.txt`
+  + mypy 2.3.0 matches the baseline exactly. **`--update` would have "fixed" this
+  by baking a CI-shaped number into a file that dev boxes then disagree with.**
+  The workflow now installs `requirements.txt`, and the divergent finding was
+  fixed at the source instead.
+- `infra/safe_torch_load.py` did `import torch as torch_module` — rebinding its
+  own parameter with an import statement, which mypy flags as `no-redef` *only
+  where torch is missing*. Same pattern in the joblib and pickle wrappers. Fixed
+  all three; both environments now agree.
+- `training/exit_drl/validate_against_baseline.py` called `sys.exit(1)` at module
+  scope when torch was missing. `SystemExit` is not an `Exception` subclass, so
+  it tears straight through `try/except ImportError` guards; two tests that only
+  import dataclasses from that module died with it. Availability is now recorded
+  at import and enforced at use. That in turn required `STATE_DIM`/`ACTION_DIM`
+  to move to the torch-free module — they had been *restated* in
+  `train_exit_sac.py` under a comment reading "Must match
+  generate_expert_trajectories.py", which nothing checked. Another instance of
+  the drift class, found only because the module had to become importable.
+
+**The lesson is one step further out than the usual one.** The recurring finding
+in this file is "a check that cannot fail is indistinguishable from a check that
+passed." P187/P188 are its parent case: *the harness that runs the checks is
+itself a check, and nobody had falsified it.* Every gate in this document was
+green in CI for the same reason a deleted test file is green.
+
+And the corollary, which cost two round trips here: **a gate verified only on
+your own machine has been verified in one environment, which is not the one it
+runs in.** Local green told me nothing about numpy-less mypy or torch-less
+imports. Push it, watch it fail, read `gh run view --log-failed`, fix the real
+cause — and specifically *do not* reach for `--update` when a baseline gate goes
+red in CI. That converts an environment discrepancy into a permanently wrong
+number.
+
+### P185–P186. [FIXED 2026-08-05] Two ledgers and one build target that had been failing quietly for months
+
+Follow-on work from the P179–P184 pass. Each of these was found by a number
+that a *previous* fix had forced into the open — which is the argument for
+printing coverage next to every aggregate.
+
+**P185 — 38 of 90 closed trades had no recorded entry, and the ledger
+understated its own costs because of it.** The P183 coverage line surfaced the
+count; the cause was not the one the code had been blaming. `TradeAttributor`
+persisted only CLOSED trades: `_open_trades` lived in memory and
+`_load_persisted` restored `_closed_trades` alone, so every position held
+across a process restart lost its entry record. The exit then fell into
+`record_exit`'s orphan branch with `entry_price=0.0`, `direction=0`,
+`strategy=""` and — the part that moved money-shaped numbers —
+`entry_fee_usd=0.0`. `net_pnl_usd` subtracts that field, so each
+restart-straddling trade understated its cost by roughly one taker fee (26bps
+at Kraken) and the ledger read more profitable than the account.
+
+A 2026-04-28 comment at `core/execution_service.py:3743` had diagnosed this as
+a swallowed exception in `record_entry` and added logging to catch it. Wrong
+suspect: the call succeeded, its result was never written down. *Instrumenting
+the caller cannot find a bug in the writer.*
+
+Fixes: an atomic `data/trade_attribution_open.json` sidecar written on every
+mutation of `_open_trades` (entry, funding, exit, backfill) and restored in
+`__init__`; `TradeRecord.entry_recorded: bool` so an orphan is *marked* rather
+than inferred from `entry_time == ""` (a legal value — the same shape as P170,
+in a second file); `entry_coverage()` returning the ratio, and a WARNING at
+construction naming it. Two smaller losses fixed in passing: `record_entry`'s
+force-close branch closed a trade and never persisted it, so the in-memory
+report and the JSONL disagreed about the set of closed trades; and
+`_load_persisted` carried its own hand-written field list that had already
+dropped `funding_payments` — both readers now share `_record_from_dict`.
+
+The DRL counterfactual filters on the flag and prints orphans separately from
+unparseable timestamps, because those have different causes and different
+fixes.
+
+**P186 — `make drl` invoked a script that does not exist.** `training/Makefile`
+advertised `make drl   DRL v5.5 (~6-12h)` and ran `drl/train_drl_v55.py`, which
+is not in the tree. The documented path to retrain DRL had been failing with
+"can't open file" for as long as anyone ran it. It also passed only
+`SOL_60m.parquet` while v5.5 is documented as Cross-Asset BTC/ETH/SOL, and
+`make check` in the same file verifies data for all three — so the two targets
+disagreed about the asset set and neither said so. Rewritten against
+`train_drl_full.py` (the only DRL trainer in the tree, and the one carrying the
+P179–P184 fixes), looping `DRL_ASSETS`, with `--venue`/`--fee-side` stated
+explicitly: after P179 the env charges real fees, and a model trained at Kraken
+26bps is not interchangeable with one trained for the Coinbase nano sleeve at
+3bps.
+
+**Also in this pass — the test suite was writing into the repo.** 36 audit
+records had accumulated in `analytics/promotion_gate/applied/`, one per run of
+`test_main_confirm_executes_atomic_archive`, which drove `main(--confirm)`
+without redirecting `APPLIED_DIR`. Every one was a valid-looking operator audit
+log; you could only tell them from real applications by reading
+`input_plan_path` and noticing it pointed at `/var/folders`. Fixed with an
+autouse fixture, plus a `pytest_sessionfinish` guard in `tests/conftest.py` that
+fails the run if anything appears in `configs/` or the applied directory —
+`data/` and `logs/` are deliberately excluded because the live system writes
+there and a guard that names the wrong culprit gets disabled. Three
+early-bound `= DECISIONS_PATH` defaults in `apply_promotion_plan.py` were made
+late-binding: monkeypatching the module global did nothing, so a test that
+omitted `decisions_path` would have archived strategies in the live config.
+
+**Tests:** `tests/test_trade_attributor_open_durability.py` (15),
+`tests/test_training_makefile_targets.py` (7). 10 gates verified
+red-on-regression before being trusted, including the repo-write guard, which
+was confirmed to exit non-zero — the first measurement said exit 0 because the
+shell reported `tail`'s status through a pipeline, not pytest's.
+
+**Consequence to carry forward:** realized-PnL totals taken from
+`data/trade_attribution.jsonl` for the period before this fix are biased
+favourably by the missing entry fees on the 38 orphans, and every per-strategy
+or per-regime figure derived from that file covers 52 of 90 trades. Do not
+compare a post-fix number to a pre-fix one without saying which is which.
+
+### P179–P184. [FIXED 2026-08-05] The DRL was trained and selected against five numbers that were not measurements — and every model currently deployed was validated that way
+
+Operator instruction was five specific items in the training harness. All five
+were real; a sixth (P184) fell out of probing the second. They share one shape,
+the same one as P155-L5/P156/P158–P160/P164/P166/P169–P171/P174/P175/P177/P178:
+**a quantity that looked like an observation and was structurally incapable of
+being one.** Taken together they mean the reported per-fold validation Sharpes
+(header table: BTC +9.22 / ETH +7.32 / SOL +10.29) are not evidence of edge —
+this compounds P164, which already established the features were leaked.
+
+**Nothing here retrains anything.** The parquets and the training data are
+server-side. These fixes stop the *next* run from being meaningless; the
+deployed models are still the ones selected under all six defects.
+
+#### P179. `KRAKEN_PRO_FEES` was defined, never read, and the fee it described was hardcoded to zero
+`TradingEnvFull._compute_trade_cost_bps` had `fee_bps = 0.0  # within free tier
+($10K/mo)`. `grep -rn KRAKEN_PRO_FEES` returned **one line — its own
+definition**; the constant that was supposed to price the trade had no reader,
+and the comment justifying the zero cited the free-tier branch of the table
+nobody was reading. So the DRL was validated on slippage and impact alone (3–10
+bps/side) against a live Kraken taker fee of **26 bps** — roughly half the real
+friction, on a strategy whose measured defect (P142) is over-trading.
+
+Fixed with `VENUE_FEES_BPS`, venue-aware and sourced from the live table, plus
+`--venue` / `--fee-side` / `--assume-free-tier`. The free-tier assumption is now
+an explicit opt-in, because it holds only below $10K monthly volume and nothing
+in the trainer ever checked that. Unknown venue or bad fee side **raises**
+rather than defaulting to zero. `KRAKEN_PRO_FEES` was deleted: a second unread
+fee table is how the first one got ignored.
+
+**The fix shipped with the same bug and the test caught it.** `_load_venue_fees`
+imported `_VENUE_FEES`; the live symbol is `VENUE_FEE_STD`. `except Exception`
+swallowed the ImportError and returned the hardcoded fallback — and because the
+fallback is a *correct copy*, the numbers were right and the source was wrong,
+which is undetectable by value. The loader now returns `(table, source)` and
+logs loudly on fallback. **When a fallback is a correct copy of the thing it
+falls back from, agreement proves nothing; you must record which one you read.**
+
+#### P180. Fold selection ran on the shaped reward, which paid for agreeing with the GMM
+`best_fold = max(mean_reward)`. `mean_reward` included a bonus for holding a
+position aligned with `POSITION_BIAS[regime]` **whether or not it made money** —
+a reward for agreeing with the regime label, not for being right. It is
+unfalsifiable inside the training loop (the agent can raise it without earning
+anything), and it was then the selection metric, so the choice of fold was
+partly a statement about the reward function. Worse in the "classic" branch,
+which added it to the raw reward with no `quality_weight`, so a 0.5 alignment
+bonus outweighed a 0.4% bar move.
+
+The bonus is now `regime_alignment_bonus=False` by default in **both** copies
+(`EnhancedRewardCalculator.compute` and `step()`); `bull_mult`/`bear_mult` stay,
+because those scale *realized* pnl, so a wrong label scales a loss. Selection is
+`mean_pnl_after_cost`, with `selection_metric` recorded in the summary. The
+mean_reward path survives only as a guarded fallback for folds restored from
+cache with no after-cost figure, and it logs that the choice is not grounded in
+realized money.
+
+#### P181. `std_reward` was exactly 0.0 on every fold, of every asset, of every run
+`_evaluate` ran ten `deterministic=True` rollouts over one fixed validation
+window. A deterministic policy on a fixed window is a pure function — all ten
+episodes were byte-identical by construction. **A dispersion figure that cannot
+be non-zero is not a measurement**, and it sat next to a Sharpe as if it
+qualified it. Replaced by `evaluate_policy_full`: stochastic rollouts, after-cost
+PnL, an annualized Sharpe off the **median** episode (bootstrapping the best of N
+would put a confidence interval around a max-order statistic), and a percentile
+bootstrap CI. `degenerate_spread` is still computed from the actual spread, so
+the old condition remains *observable* rather than merely absent. Optuna's
+`_eval_nav` had the identical defect — 5 identical episodes averaged into one
+number that ranked trials — and is fixed the same way.
+
+#### P182. "Under-performs buy-and-hold" was not an outcome the harness could produce
+No baseline had ever been run through this environment, so the promotion
+criterion was `Sharpe > X` — an absolute number with nothing to be worse than.
+Added `buy_and_hold` and `sma_200bar` as `ScriptedPolicy` objects that duck-type
+`model.predict`, so they run the **same** eval path at the **same** fees on the
+**same** fold. Promotion now needs two gates: beat **every** baseline on
+after-cost PnL, and a bootstrap Sharpe CI excluding zero. **No baselines means
+NO PASS** — `_evaluate_baselines` returns `{}` rather than a partial dict on any
+failure, because a model that "beat" one of two baselines because the other
+crashed is exactly the reassuring-looking artifact this replaces. An unmeasured
+comparison is not a favourable one.
+
+#### P183. The DRL counterfactual read nothing and reported that DRL contributed nothing
+`analytics/drl_realized/drl_counterfactual_sharpe.py` globbed `logs/attribution/`
+for `signals_*.jsonl`. The directory is not in the repo, and the path was
+hardcoded to the repo root while the container writes to the `hmats-logs` volume
+(`HMATS_LOG_DIR`). With no files to read, every trade fell into `no_signal`, the
+aligned/opposed/silent rows printed `(empty)`, and the **ALL TRADES row still
+printed real numbers underneath** — so the report looked like it ran and looked
+like it found no DRL contribution. It found nothing because it read nothing.
+Now honours `HMATS_LOG_DIR`, `logs/attribution/.gitkeep` is tracked, and the
+script **exits non-zero** on a missing/empty/all-empty directory rather than
+producing a report. It also prints a COVERAGE line, which immediately surfaced
+something invisible before: of 90 closed trades, **38 have no usable
+`entry_time`** and were being silently dropped before bucketing.
+
+#### P184. A regime id read as a float disabled every regime-conditional reward term
+Found while probing P180: with the bonus flag on and off, the reward was
+*identical*. Not a bug in the flag — `_regime_to_name` was returning the string
+`"2.0"`. `_get_regime` reads the regime out of `df.iloc[step]`, which builds a
+Series over the whole row; if every column in that row is numeric, pandas upcasts
+the int64 regime to float64, `isinstance(2.0, np.integer)` is False, and the
+name comes back as `"2.0"`. That string is not in `POSITION_BIAS`, not in
+`BULL_REGIMES`, not in `BEAR_REGIMES`, not in `regime_weights` — so every
+regime-conditional term quietly took its no-op branch and the environment
+trained **regime-blind**, with nothing raised.
+
+Verified directly:
+
+    df[timestamp, close, regime].iloc[2]["regime"] -> np.int64(2)
+    df[close, regime].iloc[2]["regime"]            -> np.float64(2.0)
+
+**Latent today, not live**: the production parquets carry a `timestamp`
+datetime64 column, which forces the row Series to dtype object and preserves the
+int. So the correctness of the reward function depends on an unrelated column
+being present — drop `timestamp` in any preprocessing step and the regime logic
+silently evaporates. `_regime_to_name` now accepts integral floats, and
+`_assert_regimes_resolve()` warns at construction if any id fails to map. A test
+pins the pandas upcast itself, so if that behaviour ever changes the explanation
+in the code is flagged rather than left quietly wrong.
+
+#### Tests and method
+`tests/test_drl_cost_realism.py` (36). Two layers, deliberately: source-level
+gates that run everywhere, and behavioural tests gated on
+`pytest.importorskip("gymnasium")` — the training stack is not installed on most
+machines, so behavioural tests alone would skip silently and guard nothing.
+**All 13 source gates were verified red-on-regression by injecting the
+corresponding defect into a scratch copy** (never the shared working tree) and
+confirming each predicate flips. Behavioural verification ran against minimal
+gymnasium/sb3 stubs. Measured after the fixes: kraken/taker `fee_bps=26.00`
+(coinbase `3.00`, free tier `0.00`); deterministic `std_reward=0.000000
+degenerate=True` vs stochastic `260.670062 degenerate=False`; `buy_and_hold
+pnl=-$46,245.68`, `sma_200bar pnl=-$23,977.47`.
+
+`tests/_source_scan.py` is new and shared. P177's scanner blanked `#` comments
+but kept string literals, which is correct for asserting a *log line* is gone
+and wrong for asserting a *statement* is gone — the P179 fix documents the
+removed `fee_bps = 0.0` inside a docstring, so a comments-only scan matched its
+own explanation. Hence `strip_docstrings`. It returns the raw source unchanged
+on a parse failure, because a scanner that returns `""` would make every
+"X is absent" assertion pass vacuously.
+
+#### Consequence to carry forward
+**Every DRL run predating this is invalid for promotion purposes** — validated
+at roughly half the real friction, selected on a shaped reward that paid for
+agreeing with a label, with an error bar that was zero by construction, against
+no baseline, on an environment that was regime-blind whenever the frame was
+all-numeric. Retraining is server-side and is a prerequisite for any promotion
+decision, not an optimisation.
+
+### P178. [FIXED 2026-08-05] The DRL scored an all-zero state vector and returned it as a signal; and main.py named a DEPRECATED file as the canonical main loop
+
+`DRLAgent.generate_signal` takes 8 args; the 3 that carry state
+(`position_state`, `market_data`, `agent_signals`) default to `None`. A caller
+passing only asset/price/regime reached `build_state()` with three empty dicts.
+`build_state()` does not object — it fills the vector with zeros and defaults,
+`get_action()` scores it, and the payload came back `is_valid=True` with a real
+direction and confidence. The only trace was `data_quality=0.20` on a field with
+no consumer outside `to_dict()`. Measured, mode=SHADOW, no state args:
+
+    is_valid=True  data_quality=0.20
+    issues=['position_state_empty','regime_result_none',
+            'market_data_empty','agent_signals_empty']
+
+`core/runtime_spine.py:~878` is that call verbatim — 3 of 8 arguments.
+
+**It is latent, not live, and the reason matters.** `RuntimeSpine` has no
+production constructor (only its own factory and
+`tests/test_runtime_singleton_refresh_advanced.py`); main.py owns the tick; and
+production DRL is the TQC ensemble in `main.py` (`_drl_ensembles`, :3697/:7795),
+not this wrapper — `agents/drl_agent.py:172` already calls itself legacy. So the
+spine's DRL path is dead code calling a legacy wrapper.
+
+Fixed by refusing, not by rewiring: `generate_signal` now returns
+`is_valid=False, direction=0.0, reason="no_state_inputs"` when **all three**
+state dicts are absent, carrying `price`/`regime`/`issues` for diagnosis.
+Zeroing `direction` is the load-bearing half — `is_valid` has no consumer, so
+flagging alone would have changed nothing. Partial input is still permitted and
+merely lowers `data_quality`, so this cannot misfire on a degraded real tick.
+The call site was deliberately NOT corrected: supplying the dicts would put a
+never-exercised DRL path into a file marked NOT USED, on a live system.
+
+Second half: `main.py:11` declared `CANONICAL_MAIN_LOOP: core/runtime_spine.py`
+while that file's own line 2 says `_DEPRECATED (T29) ... NOT used. Actual tick
+processing lives in main.py._process_4h_tick_inner()`. The banner at :19884
+repeated it as `CANONICAL_SPINE`. Both now name
+`main.py::_process_4h_tick_inner`. A reader could not previously tell which of
+the two contradicting claims to believe, which is how the dead spine kept
+looking like something worth maintaining.
+
+Four existing tests in `tests/test_drl_agent.py` called `generate_signal` with
+no state at all — they test the action→direction mapping and used the empty
+path as a convenience. Two were given a minimal `market_data`; the other two
+pass because the refusal now carries `price`/`regime`. Worth noting the suite
+had encoded the empty-input call as legitimate.
+
+Pinned by `tests/test_drl_refuses_empty_state.py` (11 tests), including
+`test_the_spine_has_no_production_constructor` — if `RuntimeSpine` ever gains
+one, the latent path is live and that test says so.
+
+### P177. [FIXED 2026-08-05] A risk controller imported, logged as "loaded", and never once called
+
+`main.py` imported 7 symbols from `risk/short_position_controller.py` and
+`analytics/sota_metrics_calculator.py`, used **none** of them (each name
+appeared exactly once — on its own import line), set `V6_MODULES_AVAILABLE`
+which is read nowhere, and logged on every boot:
+
+    [OK]V6 SOTA modules loaded (short risk + metrics)
+
+`get_short_controller()` has no call site anywhere in the repo, so
+`assess_risk`, `check_stop_loss` and `get_position_size_multiplier` — a
+stop-loss, a daily-loss halt and a squeeze-risk sizer — have never executed in
+production. The log line was literally true and materially false: it reads as
+an assurance that short-side risk is governed.
+
+Live short risk is `defense/short_control.py`, which IS invoked at
+`main.py:10577` under `intent.direction < 0` and reported at :11540.
+`risk/short_position_controller.py` is a second, parallel implementation of the
+same job that lost the race and was never unplugged.
+
+**Deliberately not wired in.** Enabling three untested risk *actuators* on a
+live account to fix a cosmetic log line trades a false reassurance for a real
+hazard, and two controllers clamping the same exposure independently is worse
+than one. The import block and banner were removed; the module keeps a NOT
+WIRED header and its own unit tests.
+
+`tests/test_dead_risk_controller.py` (7 tests) pins all three directions: the
+banner does not return, the dead controller does not silently acquire a caller,
+**and the live path stays live** — the third is the one that matters, since the
+first two would also pass on a system with no short risk control at all. Both
+failure modes were probe-verified by injection.
+
+Method note: the first draft of those tests failed against the fix's own
+comment block, because the comment quotes the removed log line and names
+`get_short_controller()`. A source scanner that cannot distinguish code from
+prose about code is not measuring what it claims to; the helper now blanks `#`
+comments in place (joining tokens with separators instead silently broke every
+regex by turning `self._short_control.evaluate(` into spaced tokens).
+
+### P176. [FIXED 2026-08-05] The gate's headline metric was 100% false positives and 0% recall on the bug it is named for
+
+- **The finding, both halves.** P174 shipped `misrouted_hot_count: 10` as the number a reviewer should read first. **All ten were wrong**: four `market_data.get("data_valid", True)` and six `market_data.get("vpin_source", "synthetic")`, both keys genuinely produced by `data_mgmt/market_data_pipeline.py` and returned into `market_data`. They were flagged only because the classifier tested `written_other` (MISROUTED) *before* `produced_elsewhere`, so a key that is correctly produced **and** relayed into `system_state` (`main.py:6755`) fell into the wrong bucket. Then, checking recall by reconstructing P170's shape synthetically — `agent_signals.get("quant_data_quality", 1.0)` where the pipeline produces the key into *market_data* and nothing copies it across — it came out **PRODUCED_ELSEWHERE**, which is reported but never gated. **The scanner built to catch P170 could not catch P170.** A metric can be noise and blind at the same time; measuring only one of those tells you nothing about the other.
+- **Precision and recall had the same root cause: production was tracked without a destination.** P174 credited "somebody builds this key and returns it" tree-wide, deliberately refusing to guess *which* dict it becomes. That single set cannot separate "produced into the dict you are reading" (correct) from "produced into a different one" (P170). The fix is `PRODUCER_MODULES`, keyed `(module, function) -> dict`, plus a `PRODUCED_HERE` verdict that outranks MISROUTED **only for the dict that producer actually fills**.
+- **The tempting one-line repair is the dangerous one.** Plain "produced beats misrouted" clears all ten false positives — and silences P170, P173's `drl_confidence` and `phase`, and every bug the scanner exists for. The `dname` check is the whole design. `tests/test_producer_attribution.py::test_destination_is_what_distinguishes_the_two` pins it with two reads of the same key with the same default that must return *different* verdicts.
+- **Module-level attribution was too coarse and was caught mid-fix.** Crediting all of `main.py` to one dict handed `market_data` every key main.py ever returns. Function-level precision was needed: `main.py::_get_effective_position_state` (`main.py:6741`) is what makes 11 correct `position_state.get("current_exposure")` reads stop being noise.
+- **Correction to P174, which was itself a correction.** P174's docstring said P171 "blamed the pipeline fills `raw`… that was a guess, and it was wrong about the mechanism." **P171 was right.** `fetch_and_prepare` builds a local literally named `raw` (80 keys) and returns it. The correction was the error, and it sat in a docstring being cited as settled fact. Verify before overturning.
+- **Result:** MISROUTED 26 -> 2, HOT 10 -> 0, PRODUCED_HERE 268. The 2 survivors are real: `agents/drl_agent.py:617` and `risk/short_position_controller.py:222` (the dead controller, see P174).
+- **Latent finding, deliberately NOT fixed — needs an operator decision.** `core/runtime_spine.py:878` calls `DRLAgent.generate_signal(asset, price, regime)` and passes **none** of `position_state`, `market_data`, `agent_signals`. All three default to `None` -> `{}`, so the whole DRL state vector is built from empty dicts and `_validate_build_state_inputs` scores **0.20** every call (`position_state_empty`, `regime_result_none`, `market_data_empty`, `agent_signals_empty`). **This is not the live path** — `runtime_spine` is marked DEPRECATED at `main.py:14439`, has no production constructor call, and live DRL runs through `main.py` (which sets `drl_data_quality` at `:7824` and gates fusion at `integration_v36.py:2300`). Two things still want attention: the module header at `main.py:11` calls `core/runtime_spine.py` the `CANONICAL_MAIN_LOOP` while line 14439 calls it deprecated, and if that path is ever revived it will run a DRL policy on constant inputs.
+
+### P175. [FIXED 2026-08-05] The mypy gate — the largest check in CI — had been skipping every run since P161, under a green OK line
+
+- **The finding.** P161 (2026-08-04) correctly made the mypy baseline analyzer-version-aware: per-code counts are a fingerprint of the mypy release, so diffing across versions reports phantom regressions. On a version mismatch the guard carries the old baseline forward and prints a SKIPPED warning. But the committed baseline was written **2026-06-13** and carried no `mypy_version` key at all, so "no stamp" read as "mismatch" — and from the moment P161 landed, `ci_check_invariants.py` verified **zero type errors across the entire tree** while still printing `OK — no new findings vs baseline` and exiting 0.
+- **Twelfth sighting of the P174 class, and the most expensive one.** The warning *was* printed. It scrolled past on every run, immediately above a green summary, and every session in between read the exit code instead. A check that is skipping and a check that is passing must not produce the same exit code and a near-identical screen. **If a check can self-disable, the disabled state must be loud enough to stop you, or it is not a check.**
+- **Do not re-baseline to make a dead gate green — attribute the delta first.** Baseline said 1080 errors; mypy 2.3.0 said 1076. The total *fell*, which looks harmless, but five per-code counts **rose**: `arg-type` +2, `float` +2, `index` +2, `operator` +1, `var-annotated` +3. `_diff()` only fails on increases, so a blind re-baseline would have permanently accepted those ten as the new floor — laundering real regressions through a version bump. Attribution used `git archive HEAD | tar -x` into scratch (**never `git stash` on this repo**), mypy against both trees with separate cache dirs, line numbers stripped, sets compared:
+  ```
+  HEAD errors: 1139   CURRENT errors: 1139
+  errors present NOW but not at HEAD:   (none)
+  errors present at HEAD but fixed NOW: (none)
+  ```
+  Zero new type errors from the working tree, so the whole delta is the analyzer. Only then was the baseline re-stamped at mypy 2.3.0 / 1076.
+- **Then prove the restored check can fail** (the P174 lesson, applied rather than quoted). A deliberate `x: int = "not an int"` dropped into `core/` produced:
+  ```
+  + mypy.by_code.assignment: count INCREASED 453 -> 454 (+1)
+  + mypy.total_count:        count INCREASED 1076 -> 1077 (+1)
+  ```
+  Probe removed, gate back to exit 0. A restored check is assumed dead until you have watched it fail.
+- **`tests/test_mypy_gate_is_live.py` (new, 8 tests)** pins both halves: the committed baseline must carry a `mypy_version` stamp *and* it must match the installed mypy (a mismatch means the gate is skipping **right now**), and the scanner must still count a known error and score clean code zero. Every one was verified to fail when perturbed.
+- **Never run `ci_check_invariants.py --update` to fix this.** `--update` deliberately bypasses the version-carry-forward guard, so it silently re-stamps the mypy baseline along with everything else — the exact blind re-baseline described above. Write the individual baseline file directly.
+- **Standing cost of the fix:** the new baseline accepts the +10 version-shift across those five codes. That was justified by the HEAD-vs-working-tree evidence above, not by the totals looking better.
+
+### P174. [FIXED 2026-08-05] The scanner written to catch "a check that cannot fail" shipped with a check that cannot fail
+
+- **The finding.** P171 gated CI on `orphan_count: 0` and treated the zero as a clean bill of health. It was arithmetically forced. `main.py` copies signal keys in loops (`for k, v in ...: agent_signals[k] = v`), which marks `agent_signals`, `market_data` and `position_state` permanently *dynamic*; every unmatched read of those three is downgraded to `UNPROVABLE` **before** it can be counted. Measured: the ORPHAN check adjudicated **0 of 458** unmatched reads. `system_state` was the only dict it could judge, and it had zero unmatched reads. The gate could not have failed under any code change.
+- **This is the eleventh sighting of the class it was built to detect** (P155-L5, P156, P158, P159, P160, P164, P166, P169, P170, P171). It shipped *inside the tool*, one day after the tool was written, by the same author who wrote the docstring warning about it. Treat that as settled evidence: **vigilance does not fix this class — only a falsifiability test does.** Before baselining any metric, construct the input that makes it fail. If you cannot, the metric is decoration.
+- **The soundness limit is real.** With a dynamic copy in the tree, "nobody writes key K" is genuinely unprovable. So the fix is NOT to make ORPHAN work — that would trade a vacuous check for an unsound one. The fix is to score what the scanner can prove, and to keep the vacuity visible where it remains.
+- **What the rework changed (`tools/lint_orphan_signal_reads.py`):**
+  - `_is_null_coalesce` — `x = x or {}` writes no keys, but was treated as an opaque alias. Eight sites used the idiom and each poisoned a whole dict. Removing that false dynamism took `UNPROVABLE` from **427 → 77**.
+  - `collect_produced_keys` — the real `market_data` producer is `data_mgmt/market_data_pipeline.py`, which builds 51/55/89 keys into a *local* and returns it. 2686 produced keys tree-wide were invisible. P171 had asserted this gap existed and blamed "the pipeline fills `raw`" — **that was a guess, and it was wrong about the mechanism** (the producers build by subscript assignment, not under a variable called `raw`). It excused the right findings for the wrong reason, which is worse than being wrong, because nothing forces it to be checked.
+  - `COPY_ONLY` — a key only ever *relayed* between signal dicts, with no producer anywhere. A copy is downstream of a producer, not a substitute for one; crediting relay writes as evidence hid the exact shape the scanner exists to find. Coercion wrappers are transparent (`int(market_data.get(k, 0))` is still a copy) — missing that cost the detector both its findings on the first run.
+  - `FALLBACK_CHAIN` — `a.get(k, b.get(k, d))` reads both dicts for the same key. It is the hand-rolled `signal_value`, not a misroute. Flagging it would have sent a reviewer to "fix" `main.py:12086`, which is already correct.
+- **The gate now scores** `copy_only_count`, `misrouted_count`, `misrouted_hot_count`, `dynamic_site_count`, `orphan_count`, `parse_failure_count` — each with a test proving it is reachable from clean (`tests/test_orphan_gate_is_falsifiable.py::TestTheGateCanActuallyFail`). **`dynamic_site_count` is not re-baselineable**: every new computed-key write makes more of the tree unprovable, so without it the other counts can always be driven to zero by making the code less analyzable.
+- **`orphan_coverage_lost` is emitted but INERT** — coverage is 0, so it sits at its floor and cannot rise. It is documented and asserted as inert rather than described as protection. Recording a pinned metric as a live guard would repeat this entire pitfall one level up.
+- **MISROUTED is now gated**, reversing P171's call. Crediting hidden producers shrank it to a hand-triaged list, and it is the only metric here that has ever caught a real bug (P170, and all three P173 sites).
+- **What triage of the new output found:** `COPY_ONLY` independently rediscovered `is_4h_bar_close` — the key P173 had triaged *by hand* and deliberately left alone. That agreement is the evidence the detector works. Its other member, `htf_trend_direction`, has **no producer anywhere in the tree**: `main.py:9374` copies `market_data.get(...)` (never written) into `agent_signals`, `integration_v36.py:1410` reads it back, and the `[S11]` authority-fusion input is permanently `0` — which `signals/authority_fusion.py:81` documents as "no data", the fail-safe value. A dead feature, not a loss. **Not fixed**: wiring a real HTF producer is a feature, not a bugfix.
+- **Also surfaced, deliberately not fixed:** `risk/short_position_controller.py` — squeeze protection, funding-rate gates, force-flatten — is **imported but never invoked**. `assess_risk` and `get_short_controller` have zero live callers; the import exists only to set `V6_MODULES_AVAILABLE = True`, which logs `"[OK] V6 SOTA modules loaded (short risk + metrics)"` at startup. **The startup line asserts a risk control that is not running.** Wiring it in would enable an untested risk path in a live system — an operator decision, not an agent one.
+
+### P173. [FIXED 2026-08-05] Triaging P171's "too noisy to gate" list found three more constants wearing the name of a measurement
+
+- **Why triage a metric you chose not to gate.** P171's scanner reported `ORPHAN=0` but `MISROUTED=34`, left ungated because name-based write-tracking under-counts producers (the pipeline fills `raw`, returns it as `market_data`). **"Too noisy to gate" is not "all false positives."** Hand-triaging all 34 found three real bugs — and in all three the *correct* read was sitting a few lines away in the same file.
+
+- **1. `core/execution_service.py:541` — the DRL guard's input was the constant 0.5.** `market_data.get("drl_confidence", 0.5)`, but the producer is `agent_signals['drl_confidence']` (`main.py:7817`) — which **the same function** reads correctly ~3000 lines below when stamping `latest_drl_confidence` onto the position. `ExecutionGuard.can_drl_trade` compares it against `min_confidence_volatile = 0.7`, so in every VOLATILE regime it failed and stamped `drl_blocked_reason` onto every execution. That branch *records* rather than blocks, so the cost is diagnostic, not blocking — **but a diagnostic that always fires is exactly as uninformative as P170's guard that never fired.** Note the `[BUGFIX M7]` comment on the very next line: someone already fixed the *weight* fallback from 0.5 to 0.0 for this reason and left the *confidence* beside it untouched.
+
+- **2. `core/execution_service.py:3606` — every position ever opened recorded `phase_at_entry="UNKNOWN"`.** Read off `market_data`, which nobody writes `phase` into; the producer is `agent_signals['phase']` (`main.py:8522`), the same dict the three `latest_drl_*` fields three lines below read correctly. Any analysis of "which market phase do our winners come from" has been reading a constant.
+
+- **3. `core/smart_beta_controller.py:144` — a leading-underscore typo made a whole branch unreachable.** `market_data.get("phase", agent_signals.get("_phase", "UNKNOWN"))`. *Neither* key exists — `_phase` appears **nowhere else in the tree**. So `phase` was always `"UNKNOWN"` and the `TREND_STRONG` tag (line ~182, requires `phase in ("IGNITION","EXPANSION")`) could never be emitted: in a confirmed bullish regime the controller never applied its `gate_mult 0.90 / size_mult 1.10` trend-participation boost. `smart_beta_config.enabled` is `true` in `configs/live_high_risk.json`, so this one has real behavioural effect — **and fixing it LOOSENS the gate**, within the configured `alpha_gate_mult_min` / `size_mult_max` bounds.
+
+- **Fix: one shared resolver.** `core.market_data_helpers.signal_value(key, agent_signals, market_data, default)` — agent_signals first, then market_data, then the default; `None` counts as absent, falsy values do not (`0.0` is a measurement). This is the code half of P171's CI half; neither is sufficient alone, since the scanner cannot see through a helper it does not know about. **The `ImportError` fallback stub in `execution_service.py` must read both dicts too** — a stub that quietly reads only `market_data` would restore the exact bug, on the one path nobody tests.
+
+- **Triaged and deliberately NOT changed: `is_4h_bar_close`.** `main.py:6759` defaults it to `True` with nothing writing the key, which permanently satisfies the T1→T2 tranche escalation gate (`risk/tranche_manager.py:297`, `defense/constitution.py:1817`). That default is load-bearing and documented in place: `_process_4h_tick_inner` is reached only from loops that sleep to the 4H candle boundary, so the tick IS a bar close by construction. **Fragile, not broken** — a new caller on a faster cadence would silently unlock the gate, so `tests/test_signal_value_resolution.py` pins the caller count at 4.
+
+- **Tests:** `tests/test_signal_value_resolution.py` (32).
+
+### P172. [FIXED 2026-08-05] The alpha gate priced the asset at 3bps and everything downstream priced the same asset at 26bps, on the same tick
+
+- **Two blocks, sixty lines apart, pricing the same friction.** P155e made the alpha-gate friction block (`main.py:8534`) venue-aware behind `coinbase_venue_aware_fees`, and P165 **turned that flag ON in `configs/live_high_risk.json` on 2026-08-04** by explicit operator instruction. But the `_fee_context` dict built ~60 lines later in the *same method* still hardcoded `_fc.blender.apply(0.0016/0.0026, monthly_vol)` and stamped itself `"fee_source": "kraken_plus_fee_blender"`. So for a Coinbase-routed asset the gate charged 0/3bps while every `fee_context` consumer charged 16/26bps.
+
+- **Three consumers, and the worst is the telemetry.** `main.py:12793` is a *second* pre-trade veto (`alpha_estimated_bps < friction * 1.5`) — it kept blocking on Kraken pricing after the alpha gate had already cleared the trade on Coinbase pricing, so half the P165 loosening never took effect. `main.py:18997` accrues the paper exit fee at the wrong venue's rate. And `main.py:15827` sets `friction_fee_bps` from `fee_context`, **overriding `alpha_result.friction_fee_bps`** — meaning the dashboard reported Kraken friction for a decision that was actually made on Coinbase friction. Diagnosing from that export would have pointed at the wrong number.
+
+- **Fix.** One pure resolver, `core/execution_service.resolve_venue_fee_bps(...) -> (maker_bps, taker_bps, venue, fee_source)`, called **once per tick** in the alpha-gate block; the `_fee_context` builder reuses the result instead of re-deriving it. `fee_context` now also carries `"venue"`, and the friction export carries `friction_venue`.
+
+- **Two things to keep right when touching this:**
+  - **The fallback direction is deliberate and asymmetric.** Flag off, RoutingPolicy says Kraken, or any exception → Kraken tier. Over-charging friction costs opportunity; under-charging spends money. Never "simplify" this into a symmetric default.
+  - **It is a per-tick local (`_venue_fee_resolved`), not `self.`** `asset` is a *parameter* of `_process_4h_tick_inner`, so an instance field would carry one asset's venue pricing into the next asset's tick whenever the guarded block is skipped. Initialise it to `None` *above* the `if self._fee_blending_enabled and hasattr(...)` guard — the fee_context builder is reachable when that guard is false.
+
+- **Missing is not Kraken.** `friction_venue` defaults to `"UNKNOWN"`, not `"kraken"`, when no `fee_context` was built. Collapsing those two is the same missing-vs-neutral mistake as P170/P171.
+
+- **Tests:** `tests/test_venue_fee_context.py` (23). The load-bearing ones are negative: no Kraken number may ever be labelled `coinbase_venue_schedule` and vice versa, and no fallback may price below the Kraken tier.
+
+### P171. [FIXED 2026-08-05] The reader/writer-drift class now has a scanner — and the scanner's first version reproduced the exact bug it was written to detect
+
+- **Why a scanner.** P170 was the twelfth sighting of one bug: a consumer reads a key off one signal dict, the producer writes it into a different one, and the `.get()` default — always chosen to look reassuring — becomes the only value that key ever holds. P2, P15, P16, P23, P85, P138, P139, P140, P147, P152, P155d, P170. Twelve hand-fixes and no gate. `lint_signal_freshness.py` (P120) **cannot** catch it: it inventories agent_signals *writes* and classifies their freshness guards, so a key with no writer at all is structurally invisible to a writer census. `tools/lint_orphan_signal_reads.py` is the complement — reads with no writer anywhere in the tree.
+
+- **Severities, and why the distinction matters.** `ORPHAN-HOT` is a read with a *non-falsy* default: the key never arrives, so the default IS the value on every call, and it asserts something positive (healthy / confident / large) that nobody measured. Both P170 defaults were this shape (`quant_data_quality` → `1.0`, `signal_edge_bps` → `50.0`). `ORPHAN-COLD` is a falsy default — still drift, but absence degrades to "nothing", usually the fail-safe direction.
+
+- **The scanner caught itself first.** Its first run reported `ORPHAN=36` with confident-looking findings. They were all false. `main.py` starts with a UTF-8 BOM, so `read_text(encoding="utf-8")` → `ast.parse` raised `SyntaxError: invalid non-printable character U+FEFF`, and the handler was `except (SyntaxError, OSError): return [], set(), set()`. **The tree's dominant producer vanished from the scan, and a parse failure was indistinguishable from a clean file** — the same "a check that cannot fail looks exactly like a check that passed" shape as P155-L5/P156/P158/P159/P160/P164/P166/P169/P170. Fixed twice over: `encoding="utf-8-sig"` (a BOM is an encoding detail, not a syntax error), **and** a `PARSE_FAILURES` list that makes the scanner *refuse to report* (exit 2) rather than emit findings computed from a partial parse. After the fix: `ORPHAN=0`, `parse_failures=[]`. **If you add a scanner to this repo, make "I could not read the code" a distinct, loud outcome from "I found nothing."**
+
+- **The live bug it found.** `agents/model_alpha_agent.py` read `lob_imbalance` and `spread_bps` straight off `agent_signals`. Both keys only ever exist in `market_data` (written at `market_data_pipeline.py:1888/1900`; nothing copies them across), so both resolved to `0.0` on every call — **a perfectly balanced book and a zero spread, i.e. free trading**, fed into the alpha model. Worse, because they bypassed the module's `_get` helper they never landed in `missing` either, so the coverage instrumentation built to catch exactly this reported full coverage. `main.py:7407` already carries a `[PATCH-6] Bridge micro key mismatch` comment for a neighbouring key; these two were left behind. Fixed with a `_get_either` helper: `market_data` first, then `agent_signals`, and **record a miss when neither has it**.
+
+- **What the gate scores, and what it deliberately does not.** `ORPHAN_READS_BASELINE` locks `orphan_count`, `orphan_hot_count`, `parse_failure_count`. `MISROUTED` (written to a *different* signal dict) and `UNPROVABLE` (the dict has computed-key writes in some file, so absence cannot be proven) are **reported but not gated**. Reason: the scanner tracks writes by variable *name*, and producers legitimately build these dicts under other names — the pipeline fills `raw` and returns it as `market_data` — so most MISROUTED entries are that naming gap rather than a defect. Gating a noisy metric trains people to re-baseline it, which is how a check stops being a check. `UNPROVABLE` is surfaced in `dynamic_write_sites` so the blind spot stays visible instead of silently shrinking the finding count. **A rise in `parse_failure_count` is never re-baselineable** — it means the scan could not read part of the tree.
+
+- **Sharp edge found while wiring this up:** `ci_check_invariants.py --update` re-seeds *all seven* baselines, and the mypy version-mismatch carry-forward is explicitly disabled under `--update` (`tools/ci_check_invariants.py:332`). So running `--update` to seed one new scanner also silently re-arms the mypy gate with the local mypy release's numbers. Check `git diff tools/scanner_baselines/` after every `--update` and revert anything you did not mean to move.
+
+- **Tests:** `tests/test_orphan_signal_reads.py` (43). The load-bearing ones are the parse-failure tests: an unparseable file must make the scanner exit 2, a BOM must not be a parse failure, and the real `main.py` must contribute >50 writes to a scan.
+
+### P170. [FIXED 2026-08-05] P126's staleness guard has never fired once — the producer never wrote the key, and the consumer's default said "healthy"
+
+- **A guard with no producer.** `integration_v36.decide()` read `agent_signals.get("quant_data_quality", 1.0)` and zeroed quant confidence when it fell below 0.5. The pipeline dutifully sets `quant_data_quality` on *every* path — `setdefault(0.0)` at `market_data_pipeline.py:664` covers early returns, `1.0` at `:1314` on Best-of-N success. But it sets it in **`market_data`**, and the consumer reads **`agent_signals`** — a separate dict built as a literal at `main.py:6420` that never copied the key across. So the read always missed, the default always won, and the default was `1.0`: healthy. **P126 was written 2026-04-27 and has not excluded a single stale quant signal since.**
+
+- **Why this keeps happening.** The guard did not fail. It *could not* fail — and from the logs those are indistinguishable, because a check that always passes emits exactly what a healthy system emits. Same shape as P155-L5, P156, P158, P159, P160, P164, P166, and the `_coinbase_fee_model_warning` in P169. The reader/writer half is the P2/P15/P16/P23/P85/P138/P139/P140/P147/P152/P155d family: **two dicts, one key, nobody checking that the writer and the reader agree.**
+
+- **The second half: a fabricated constant on an unexercised path.** Three deadlock call sites used `agent_signals.get("signal_edge_bps", 50.0)`. Unlike the above, this key *is* always present on the live path (`main.py:6435` copies it from market_data), so **the 50.0 has not been firing and did not cause the losses under investigation** — an earlier read of mine that said otherwise was wrong. What makes it worth fixing is that it is a loaded default sitting where nothing tests it. Under the pipeline's own calibration (`signal_edge_bps = abs(quant_dir) * 65`, `market_data_pipeline.py:1318`, whose comment records avg `|quant_dir| ≈ 0.3` → ~19.5bps typical), 50.0bps implies `|quant_dir| = 0.77`. In `TrancheAwareDeadlockResolver` (`MIN_EDGE_FOR_FORCE = 1.5`, `EDGE_DECAY_PER_BAR = 0.15`) at T1 after two stuck bars against 15bps friction:
+
+  | edge | decayed | edge/friction | resolution |
+  |---|---|---|---|
+  | 50.0 (fabricated) | 35.0 | 2.33x | **FORCE_AGGRESSIVE** |
+  | 19.5 (typical real) | 13.6 | 0.91x | **ABORT_OPPORTUNITY** |
+
+  Break-even is `|quant_dir| ≥ 0.494`. `FORCE_AGGRESSIVE` sets `force_execution` and switches to taker execution, so the constant would buy its way out of the patience the system was trying to exercise — on the first caller that ever builds `agent_signals` differently.
+
+- **Fix.**
+  - `main.py:6420` now propagates `quant_data_quality` into `agent_signals`, defaulting to **0.0** (unverified) rather than 1.0.
+  - The consumer distinguishes **absent** from **failed** and fails closed on both: if nobody told us the quant signal was fresh, we do not assume it was. Non-numeric values fail closed too.
+  - `resolve_signal_edge_bps(agent_signals, market_data)` resolves the edge **once**, with provenance (`agent_signals` | `market_data` | `ABSENT`), and never fabricates — an unresolvable edge is `0.0`, which can never clear `MIN_EDGE_FOR_FORCE`, so absence declines to force. A malformed value logs rather than falling through in silence.
+  - `0.0` (flat signal — a real observation) stays distinguishable from `ABSENT` (no data) via the source field, not the number.
+
+- **This is a behaviour change in both directions, not a pure tightening.** More `ABORT_OPPORTUNITY` is not simply "do less": that branch force-closes an existing position aggressively when `direction != 0` and `target_exposure > 0.001` (`integration_v36.py`, `ABORT+CLOSE`). Failing the dq guard closed also means a pipeline hiccup now zeroes quant confidence instead of passing it through as fresh — correct, but it will reduce exposure on ticks that previously traded. Watch `[P170]` and `[P126]` log lines after deploy to see how often either path is actually reached; if `quant_data_quality` turns out to be 0.0 more often than expected, the bug is in the pipeline's selector, and it has been invisible until now.
+
+- **Tests.** `tests/test_signal_absence_provenance.py`, 34 tests. Two of them read `main.py` and `integration_v36.py` as text to assert the producer still emits the key and that neither fabricated default (`50.0`, `1.0`) has resurfaced — the reader/writer contract is what breaks, so the contract is what gets pinned.
+
+### P169. [FIXED 2026-08-05] The venue told us what it charged and we threw the number away — every fee in the attribution log is modelled, and the model was priced on the wrong exchange
+
+- **The fee column was never an observation.** `execution/execution_manager.py:1462` parses the fee straight out of the ccxt order response into `OrderResult.fee`. Nothing downstream read it. `paper_fee_service.build_execution_fee_result` computed its own number from a schedule and wrote *that* into `data/trade_attribution.jsonl`. So the file that answers "what did trading actually cost us" contained no measured cost at all.
+
+- **The fingerprint.** A modelled constant does not look like real fills, and the data says so plainly:
+
+  | leg | records | median | at *exactly* 16.0bps |
+  |---|---|---|---|
+  | entry | 52 | 16.0bps | 32 / 52 (62%) |
+  | exit | 90 | 16.0bps | 59 / 90 (66%) |
+
+  Round trip 32.0bps. Real fills scatter; two thirds of them landing on the same round number is a constant wearing a measurement's clothes.
+
+- **Why 16.0 specifically — two bugs multiplying.**
+  1. `fee_std` was hardcoded to Kraken's `0.0016 / 0.0026` regardless of where the order executed, and the Kraken+ blender was called with `exchange="kraken"` hardcoded too. Post-cutover (2026-06-13) that prices Coinbase-routed fills on the wrong exchange — Coinbase nano perps are 0/3bps against Kraken's 16/26. It also fed Coinbase fills into Kraken's monthly-volume tracker, earning them free-tier discounts they never qualified for (the blender gates on `exchange.lower() != "kraken"` at `kraken_plus_fee_blender.py:454`, so passing the real venue makes it correctly decline).
+  2. `is_maker = order_type == "LIMIT"` — that is the **order** type, not the **fill** type. A limit order that crosses the spread is filled as a taker and charged as one. **This is the third sighting of this exact conflation**: P166 found it in `review_aggregator.maker_fee_ratio` (`n_limit / n_classified`), and it is the same shape as the reader/writer drift class. An intent is not an outcome.
+
+  Together: every LIMIT order booked Kraken's *maker* rate, 16.0bps, whichever venue it hit and whether or not it actually made.
+
+- **What could not be established from the laptop, and is not claimed.** Over those trades: gross_alpha **−$220.74**, recorded fees **$708.57**, net **−$929.31**. At Coinbase's 3bps/leg the same volume would be ~$81.76. That ~8.7x is **conditional on those fills having been Coinbase-routed, which cannot be determined from this machine** — `data/coinbase_sleeve_pnl.jsonl` is server-side only. What *is* established is that $708.57 is modelled rather than measured. Note also that **gross_alpha is negative before any fee at all**, so this changes the magnitude of the loss, not its sign, and does not weaken P166's or P167's conclusions.
+
+- **The pre-existing warning nobody acted on.** `_coinbase_fee_model_warning()` in `core/execution_service.py` already printed that the Kraken fee model over-charges Coinbase-routed assets, ending with "NOT auto-corrected". A warning that fires into a log and changes no behaviour is the same failure mode as P155-L5/P156/P158/P160/P164/P166: a check that cannot act is indistinguishable from no check.
+
+- **Fix.**
+  - `OrderResult.to_dict()` now emits `fee_currency`. A fee without its denomination is not a fee — `0.0031` means something very different in USD and in ETH.
+  - New `resolve_trade_fee_usd()`: the venue's number wins when usable, and every rejection records **why** in `fee_source_reason`. Rejected: `None`, non-numeric, NaN/inf, negative, non-USD denomination (deliberately **not** converted — a wrong FX rate is worse than a model, because it carries the authority of an observation), and **`0.0`**. That last one matters: `OrderResult.fee` is `float((order_status.get('fee') or {}).get('cost', 0) or 0)`, which collapses *missing* and *genuinely zero* into the same value, so a zero cannot be trusted to mean a free trade. Missing-vs-neutral again (P2/P15/P23/P138/P147/P152).
+  - `venue_fee_std(venue, is_maker)` replaces the hardcode. Unknown venue falls back to **Kraken**, the expensive one, because over-charging fails toward not trading.
+  - Provenance travels with the number: `fee_source` ∈ `venue` | `model` | `disabled`, plus `modelled_fee_usd` kept alongside the measured one so model error becomes measurable after the fact. `disabled` is distinct from `model` so that $0.00-because-off is readable apart from $0.00-because-free.
+  - `is_maker_assumed: True` is set unconditionally. The assumption is retained as the model's best guess but is no longer passed off as fact.
+  - New `[FILL_VS_MID]` log: realised slippage (fill vs decision price, signed by direction) against the assumed spread. When the friction object is unreachable it prints `assumed_spread=UNAVAILABLE` rather than substituting a default — a substituted constant is how the original bug got its authority.
+
+- **Still wrong, deliberately out of scope.** `main.py:8593` builds `fee_context` from the same hardcoded `0.0016/0.0026` and labels it `fee_source: "kraken_plus_fee_blender"`. That context feeds the **exit** leg and the alpha gate's friction, so both are still Kraken-priced on every venue. Making it venue-aware needs the routing decision, which happens after `fee_context` is built — an architectural change, not a bug fix, and not something to bundle into a fee-provenance pass. It fails toward over-charging (fewer trades), so it is safe to leave pending.
+
+- **Tests.** `tests/test_venue_fee_provenance.py`, 82 tests. The load-bearing ones are negative: a modelled number must never be labelled `fee_source="venue"`, no rejected value may be smuggled into `venue_fee_usd`, and no venue may price *above* the pre-P169 Kraken model (so this fix cannot manufacture losses that were not already booked).
+
+### P168. [FIXED 2026-08-05] The rebuild cooldown exempted direction flips — it waived the churn that costs the most, on the path it fired most often
+- **The carve-out.** `execute_intent_v2` (`core/execution_service.py`) set an 8h cooldown after every close and blocked new entries during it, *except* an entry opposite to the closed position:
+  ```
+  # Cooldown is designed to prevent same-direction re-entry churn.
+  # Opposite-direction entry is a signal-aligned reversal, allow it.
+  ```
+- **It has the cost backwards.** A reversal pays a full round trip to close and commits another to open (**P167**). Inside a cooldown window it is the *most* expensive thing that can happen, not the natural exception.
+- **It swallowed its own dominant case.** A close is usually *caused* by the signal turning, so the next entry is opposite **by construction** — that is what "reversal" means. The exemption therefore fired on the common path and left the cooldown binding only when the signal reversed and then reversed *back* inside 8h. Measured over the 52 timestamped closed trades in `data/trade_attribution.jsonl` (total net **−$540.07**):
+
+  | re-entry after a close | inside 8h | outside |
+  |---|---|---|
+  | FLIP (was exempt) | **10** | 17 |
+  | SAME-DIR (was blocked) | 5 | 17 |
+
+  **10/15 = 67%** of in-window re-entries took the exemption. Those 10 flips: **8 losers, net −$94.45**, mean −$9.45. **Six of the 10 opened at 0.0h** — the exit and its reversal landed in the same 4H bar, two round trips of friction inside one candle. One ETH sequence ran +$8.46 → flip +$2.18 → flip **−$31.54**.
+- **A narrower carve-out is not supported either.** Splitting by whether the *closed* trade won: after-loser **7 trades, 7 losers, −$67.75**; after-winner **3 trades, −$26.70**. Neither subgroup is profitable, and n=3 is not a rule. So the exemption is **off entirely** (`REBUILD_COOLDOWN_EXEMPT_FLIP = False`) rather than conditioned. Restoring it is a one-line config change; the add-on exemption (`REBUILD_COOLDOWN_EXEMPT_ADDON`) is **untouched**, since a pyramid adds to a position that is already winning and is not a re-entry at all.
+- **This delays a reversal, it does not forbid one** — and it can never block an exit, because the cooldown check is gated on `is_new_entry or is_adding`. The worst case is staying flat for up to 8h. 17 of the 27 observed flips were already outside the window and are unaffected.
+- **Why it was never caught: it was unreachable from a test.** The decision sat inline in a ~2000-line async function needing a full runner, positions, market data and an event loop. Extracted to a pure `rebuild_cooldown_decision(...)`; `tests/test_rebuild_cooldown_flip.py` (92 tests) now pins the grid, including a property test that the change **only ever tightens** and that every old-vs-new disagreement is exactly an in-window flip. **If a branch has no reachable test, assume nobody has ever checked whether it is right.**
+- **Missing direction must block, not exempt.** Cooldown entries written before the closed-direction field existed are 2-tuples; absent direction reads as `0`, which cannot be a flip and therefore blocks. Same family as P2/P15/P138/P152 — *do not let unknown collapse into permissive*.
+- **Latent bug preserved on the legacy path, deliberately.** The exempt branch does `del ctx.rebuild_cooldown[asset]` on a **check** path, before the trade is known to execute. A flip later rejected by the AC-0 restart guard has still consumed the cooldown, so the next tick's same-direction entry sails through. Left as-is because that branch exists to reproduce pre-P168 behaviour exactly — and it is a further reason not to switch it back on.
+
+### P167. [FIXED 2026-08-04] The alpha gate charged **one leg** of friction against a **round-trip** alpha estimate — it could not reject a trade whose only problem was that it has to be closed
+- **The arithmetic.** `AlphaThresholdCalculator.check_alpha_gate` (`defense/constitution.py`) computed `friction = fee + slippage + latency + margin` and required `alpha >= friction × multiplier`. With `NORMAL_MULTIPLIER = 1.10` that demands **1.10 legs** of cost from a position that pays **2** — entry and exit. Every trade the system has ever placed was priced as if it were half a trade.
+- **What it let through.** At Coinbase taker (3bps) with the live pipeline's own calibration (`data_mgmt/market_data_pipeline.py:1318` sets `signal_edge_bps = |quant_dir| × 65`, and the comment next to it puts average `|quant_dir|` at **~0.3** → 19.5bps raw, **14.6bps** after the 0.75 ALPHA-FEEDBACK haircut):
+
+  | asset | old friction / threshold / passes | new friction / threshold / passes |
+  |---|---|---|
+  | BTC | 8.0 / 8.8 / **True** | 16.0 / 17.6 / False |
+  | ETH | 10.0 / 11.0 / **True** | 20.0 / 22.0 / False |
+  | SOL | 15.0 / 16.5 / False | 30.0 / 33.0 / False |
+
+  The *typical* live signal cleared the BTC and ETH gates while being a guaranteed loser. This is a direct arithmetic explanation for the P166 attribution numbers — gross_alpha **−$179.51** against **$689.77** of fees over 85 closed trades. The gate was not leaking; it was correctly enforcing the wrong inequality.
+- **New minimum `|quant_dir|` to clear the gate:** BTC **0.37**, ETH **0.46**, SOL **0.68** (was 0.18 / 0.23 / 0.34).
+- **The fix.** `FrictionComponents` gained `per_leg_bps(is_maker)` and `round_trip_bps(is_maker, legs=2.0)`; `check_alpha_gate` now charges `ROUND_TRIP_LEGS × (fee + spread + latency) + margin`. `AlphaGatingResult.friction_legs` reports which arithmetic produced the decision — it defaults to **0.0**, not 1.0, so the early-return paths read as "no friction was priced" rather than silently claiming one leg. The REJECT_EV reason string now spells out `2x8.0bps/leg`.
+- **Margin/funding is deliberately NOT doubled.** `_margin_cost_bps` is `opening_fee + rollover × expected_hold_periods_4h` — it is a per-HOLD cost already integrated over the hold, not a per-ORDER cost. Doubling it would charge a 24h position as if it were held 48h: a second, unrelated bug wearing this fix's clothes. `tests/test_round_trip_friction.py::test_margin_is_charged_once_not_twice` pins this.
+- **Kill switch:** `HMATS_ROUND_TRIP_FRICTION=0` restores the one-leg arithmetic. Default is **ON** because the safe failure direction is charging too much, not too little; parsing is fail-safe (only the literal `"0"` disables it) and it is read at construction, so it is not a hot toggle.
+- **Why the existing tests did not catch it.** Sixteen tests encoded the one-leg number as a literal (`7.7`, `36.3`, `friction 7.0bps`) — they pinned the bug rather than the contract. Updating them required *rescaling inputs*, not relaxing assertions: several `min_alpha_bps` floors (10.0) had been chosen to sit above a one-leg EV gate and now sat below the two-leg one, so those tests would have kept passing while silently no longer exercising the branch they were named after. **When a threshold moves, check that each test's inputs still reach the code path in its own name.**
+- **What this does not fix.** The gate is only as good as `signal_edge_bps`, which is still a hand-calibrated `|quant_dir| × 65` rather than a measured forward return. And `integration/integration_v36.py:1254` never passes `is_maker`, so every gate decision assumes taker — correct today (P155/P156 confirmed the venue is taker-dominated), but it is an assumption, not an observation.
+
+### P166. [FIXED 2026-08-04] The shadow promotion gate had no cost term, no significance term, and `abs()` on the promote branch — its pass mark sat *below* break-even
+- **The gate was one line:** `if min(|IC|) > 0.05 and sharpe > 0.5: return PROMOTE` (`analytics/shadow_ic/compute_shadow_ic.py`). `promotion_gate/promotion_plan.py:127` maps PROMOTE straight to `PROMOTE_TO_FUSION`. So this line decides what gets to trade real money, and each of the three defects below is on its own sufficient to promote a strategy that is arithmetically certain to lose.
+- **Defect 1 — no cost term, at all.** IC is dimensionless; fees are in bps; the function never converted between them, so `IC > 0.05` could not possibly know what it was clearing. Priced: expected edge = `E|z| · r_pearson · sigma_fwd` = `0.7979 · 2sin(pi·rho/6) · sigma`. At the ~107bps of 16h forward vol these assets show, **IC 0.05 is worth 4.5bps** — against **6bps** of Coinbase taker fee (3bps × 2 sides) before any spread. Break-even needs **IC 0.134**. The old bar was 2.7× too low at the shortest horizon.
+- **The cost number the system believed was ~400× wrong.** `training/backtest_framework.FeeSchedule` defaults to `maker_pct=0.987`/`maker_bps=0.0`, giving `round_trip_bps() = 0.078`. Measured over the 85 closed trades in `data/trade_attribution.jsonl`: **median 31.1bps, mean 33.0bps** round trip (min 16.0, max 184.7). Sum gross_alpha **−$179.51** vs sum fees **$689.77**. And the `maker_fee_ratio = 0.994` "PASS" in `sixty_day_review/review_aggregator.py:376` does **not** support the 98.7% assumption — it is `n_limit / n_classified`, i.e. **order type, not fill type**. A limit order that crosses the spread pays taker and still counts as maker here. The new gate assumes **100% taker**, deliberately.
+- **Defect 2 — no significance term, and `min_samples=30` made it worse.** `SE(IC) ≈ 1/sqrt(n−1)`, so at n=30 an IC of 0.05 is **0.27 standard errors from zero**. Thirty 4H samples is about five days. The gate could not distinguish an edge from a coin flip and was reachable within one shadow week. Getting IC 0.05 to |t| ≥ 2 needs **n ≈ 1600**.
+- **Defect 3 — `abs()` on the promote branch, with nothing downstream to flip the sign.** `valid_ics = [abs(ic_per_h[h]) ...]` fed the promote comparison, and `decide_strategy_action` has no sign handling anywhere. P143 measured `model_alpha` at IC **−0.160** and `llm_sentiment` at **−0.053**. Under the old gate a strongly anti-predictive strategy was *more* promotable than a weak one, and fusion would then have traded it in the direction it predicts against.
+- **The fix.** New `assess_promotion()` requires, at **every** horizon with enough samples: IC positive; `|IC| > 0.05` floor; `|t| = |IC|·sqrt(n−1) >= 2.0`; and `expected_edge_bps >= 6.0bps × 2.0 margin` priced off the **measured** forward-return volatility. The margin covers spread/impact (absent from the fee number) and the optimism of the linear edge model. `determine_verdict()` is kept as a thin wrapper so existing callers are unchanged.
+- **Fail closed on the new bar.** `compute_per_strategy_ic` now emits `fwd_vol_bps_per_horizon`, measured from the *same* joined pairs the IC is computed on. A horizon with <2 pairs gets **no entry at all** rather than `0.0` — and a missing/zero/NaN vol is a **refusal to promote**, not a skipped check. Same lesson as P159/P164: a check that could not run must never read as a check that passed. Reports written before this change have no vol key, so they degrade to "cannot verify", never to "verified".
+- **KILL and INSUFFICIENT_SAMPLES semantics are byte-identical to the old gate**, and KILL still uses `|IC|` (a strongly negative IC is informative, not weak). Every new condition only ever *removes* a PROMOTE, so the gate cannot have become looser — `tests/test_promotion_gate_cost_aware.py` pins that property parametrically against the old implementation.
+- **Two call sites had been deriving the verdict independently** (`render_summary` and the JSON report each called `determine_verdict` with their own arguments) — a console PROMOTE and a report HOLD from one run was a live possibility. Both now route through `assess_record()`. The summary also prints the arithmetic per horizon (`edge= 5.54bps need= 12.00bps vol= 107.0bps IC=+0.0620 (req 0.1343) t=1.84`) and every blocker, because a HOLD that does not say which bar was missed cannot tell an operator whether to wait or to archive.
+- **What this does not do:** it does not create edge. Applied to the ICs actually observed, essentially everything currently in shadow now returns HOLD with an explicit shortfall. That is the correct reading, and it is the point — the previous gate was reporting these same strategies as promotable.
+
 ### P165. [FIXED 2026-08-04] `core.canonical_imports` has never been importable, so `activate_runtime_mode()` never ran — plus a stale-test sweep in which one test was silently issuing real billed Anthropic API calls and another was corrupting `place_stop_loss` for every test after it
 - **The load-bearing one: an import that could never succeed, swallowed by an `except ImportError` five lines below it.** `core/canonical_imports.py:229` imported the four sentiment-contract symbols from `engine.compute.vllm_inference_wrapper`, a module that lives in `archive/engine/compute/` and is not on the production path. So the import raised `ModuleNotFoundError` and made **the entire `core.canonical_imports` module unimportable** — for the whole history of this repo. `main.py:19861` wraps its runtime-protection block in `except ImportError: logger.warning(...)`, so **`activate_runtime_mode()` has never run in any process**: the canonical-import enforcement it turns on was silently off in production, and the `[STARTUP] SENTIMENT_MODE=` line an operator greps for was never emitted. Same family as **P152** (a guard defined, unit-tested, and never called) and **P155d** (an Iron Law with no production caller) — except here the swallow sat five lines from the only statement that could raise.
 - **Fix:** new `core/sentiment_config.py` is the live home for the contract, and `canonical_imports` points at it. The semantics of `is_sentiment_mock` changed **deliberately**: the archived `IS_MOCK` was `not (VLLM_AVAILABLE or TRANSFORMERS_AVAILABLE)`, describing a local-vLLM inference architecture this system no longer has. Live LLM sentiment is Haiku over an HTTP API, so mock-ness is now a property of whether an API key is configured.
@@ -310,9 +1117,35 @@ discipline + the grep habit.
   - `coinbase_venue_aware_fees` **absent → true** (it had no entry in the live profile, so it took the `False` default). Post-Phase-B every routed asset executes on Coinbase (~3/0bps) while alpha-gate friction was priced off Kraken's fee tier (~26/16bps), systematically shrinking `target_exposure` — P155e's leading candidate for the `ZERO_EXPOSURE` blocker. This makes the gate price the venue that actually executes, which is the *correct* number, but it is still a real loosening and it was **not** confirmed as the blocker first (`scripts/why_no_trade.py` needs the server). Wrong-way failures fall back to the Kraken tier and log `[VENUE-FEE]`.
 - **Mitigation pattern (the through-line of P158/P159/P160/P162/P164 and this entry):** a check that cannot fail, a tool that is not installed, a writer that stopped writing, and a test whose premise no longer holds all produce output *indistinguishable from success*. Before trusting a green test, confirm it can still go red — the fastest way is to break the thing it claims to guard and watch it fail.
 
+### P164. [FIXED 2026-08-04] Two lookahead leaks in the training pipeline — the wavelet denoise was non-causal, and the GMM fit on 100% of history because of a one-character path typo
+- **Why this is the most consequential entry in the recent set:** it means the DRL's reported per-fold validation Sharpe (BTC +9.22 / ETH +7.32 / SOL +10.29, header table) is **not evidence of edge**. Measured directly: applying `wavelet_denoise` to a whole column of a **pure random walk** — zero predictability by construction — yields **IC +0.41 vs the next-bar return** (Sharpe ~+16). The reported backtest Sharpes sit *inside the range the leak produces on noise*, against a live DRL IC of **+0.052** (P143). This is the mechanism behind the P40/P41 "backtest-IC vs live-alpha gap", and it explains why CSCV-PBO reported ROBUST_SELECTION while the account lost money: **no date-based split removes it, because the contamination is in every row.**
+- **Leak 1 — `training/scripts/wavelet_denoise.py` is not causal.** VisuShrink computes `sigma = median(|coeffs[-1]|)/0.6745` and `threshold = sigma*sqrt(2*ln(N))` over the **whole array**, and the inverse transform reconstructs every sample from every coefficient. `rebuild_pipeline.py` called it on the full history, so each training row was a function of all future rows. **Live does something different**: `data_mgmt/market_data_pipeline.py:853-866` applies it to a trailing 256-bar deque and takes the last value. Two different transforms, silently — a train/serve skew on top of the leak.
+- **Fix:** added `wavelet_denoise_causal()` (rolling `RUNTIME_WINDOW=256` / `RUNTIME_MIN_SAMPLES=8`, output[i] depends only on signal[:i+1]) and pointed `rebuild_pipeline.py` at it. The leaky function is **kept, not deleted** — it is the right transform for offline visualisation — with a loud docstring warning. ~11s to rebuild, so there is no performance argument for reverting.
+- **Leak 2 — `train_per_asset_gmm.py:load_split_manifest` read `config/split_manifest.json`; `generate_split_manifest.py` writes `configs/` (plural).** `config/` exists (it holds `optuna_winner.json`), so the path resolved without error and simply never matched. The loader then **returned `{}`**, `train_end` arrived as `None`, and `train_gmm_for_asset` logged "Using ALL data for GMM fit" — fitting the scaler, the GaussianMixture, the BIC k-selection and the cluster naming on 100% of history, then emitting `regime_proba_0..7` for every bar. **Iron Rule #12 has never been enforced by this script.** Eight contaminated features on every run it ever had.
+- **The typo is the small half. The dangerous half is the fallback** that treated "I could not find the boundaries" as "proceed without boundaries". `load_split_manifest` now **fails closed** (`FileNotFoundError` / `ValueError`), which is safe because `--no-split` already exists as the explicit way to ask for a full-sample fit.
+- **`scripts/runtime_parity_check.py` was supposed to cover exactly this and only asserted the five denoised column *names* exist in the manifest** — a shape check reading as a value check. Same family as P158 (a pattern that matched nothing) and P159 (a missing tool recorded as a pass): **a check that cannot fail is indistinguishable from a check that passed.**
+- **Tests:** `tests/test_wavelet_causality.py` (10) — asserts causality *directly* by mutating the future and requiring the past not to move; pins the old transform's leak as a characterisation test; asserts the causal form reproduces the live deque recurrence **exactly**, bar for bar; guards the call site, not just the function. `tests/test_gmm_split_manifest_failclosed.py` (6).
+- **NOT done here (server-side, needs `training/training_data/`):** rebuilding the parquets and retraining. **Until that happens the deployed models are still the contaminated ones** — this fix only stops the next build from being poisoned. Expect the honest Sharpe to be far below the reported one; that is the point.
+- **Mitigation pattern:** any feature transform must be verified causal by *construction test*, not by inspection — perturb a future sample and assert nothing earlier moves. And when training and serving compute "the same" feature through different code paths, assert the two agree numerically on a shared series, not that the column names match.
+
+### P163. [FIXED 2026-08-04] `_current_drawdown_pct` had exactly one writer and it was inside `run_paper` — every drawdown-scaled risk control read a permanent 0.0 in LIVE
+- **The whole de-risking ladder was disarmed in the only mode that risks real money.** Consumers: `main.py:11797` regime-leverage reducer (DD>22% → force 1x), the DD halt, and `main.py:19448` the **DRL's own observation vector** (`drawdown` is one of the 4 env-state dims of the 126-dim space). All three read `getattr(self, '_current_drawdown_pct', 0.0)`. `run_live` never assigned it. So the system believed it was at its all-time high no matter how far equity had fallen — and the DRL was served a state it was never trained on.
+- **Invisible by construction, which is why it survived:** a defaulted `getattr` makes "never written" and "zero drawdown" the *same reading*. Nothing could observe the gap. Same missing-vs-neutral collapse as P2/P15/P16/P23/P85/P138/P139/P140/P147/P152/P155d — the most common bug class in this repo.
+- **Fix:** extracted the inline `run_paper` block into `HMATSProductionRunner._update_drawdown_snapshot()` (one writer, both callers), and called it in `run_live` **at the top of the tick, before any decision** — a post-trade update would gate the *next* tick, not the one it is meant to gate. Equity-fetch failure **holds the last known drawdown** rather than recomputing from `initial_capital`: falling back to notional would report "no drawdown" precisely when the venue is unhealthy, i.e. switch de-risking off at the worst moment. **A stale drawdown is conservative; a fabricated zero is not.**
+- **Tests:** `tests/test_live_drawdown_tracking.py` (11) — peak ratchets and never falls back, pipeline kept in sync, the fetch-failure hold, and three wiring tests that are the actual regression: both loops call the snapshot (parametrized over `run_live`/`run_paper` via `inspect.getsource`), LIVE calls it *before* `process_4h_tick`, and a regex count asserting **exactly one** writer of `_current_drawdown_pct` so a second inline copy cannot reappear and drift.
+- **Mitigation pattern:** when a value is read with `getattr(self, X, <neutral>)` in three places, grep for its **writers** before trusting any of the readers. If there is exactly one and it sits inside a mode-specific branch, the other modes are running on the default — silently, forever.
+
+### P162. [FIXED 2026-08-04] The phantom "312 consecutive blocked ticks" was manufactured by the alert's own code path — a P152 routing skip was being stamped as a veto *after* execution
+- **Closes the loop on P155.** `_process_4h_tick_inner` treated **any** non-fill from `execute_intent_v2` as a veto: `veto_active=True`, `veto_reason="[EXECUTION] …"`, `target_exposure=0.0`. Since the 2026-06-13 cutover every asset is Coinbase-routed and Kraken-flat, so P152 makes `execute_intent_v2` return `{"status":"SKIPPED","reason":"coinbase_routed_no_kraken_entry"}` on **every tick by design**. The stamp therefore flipped an intent that had passed all seven gate layers into a non-actionable one, and `PerTickInvariantChecker._t3_intent_actionable` dutifully counted it as blocked. **312/312.** HEALTH_T3 was measuring a retired code path, and P155/P155b/P155c were three rounds of diagnostics spent on a blocker that did not exist.
+- **The distinction the fix encodes: "this path had nothing to do" ≠ "this trade was blocked."** `core/execution_service.is_benign_exec_skip()` + `BENIGN_EXEC_SKIP_REASONS` (exactly two: `coinbase_routed_no_kraken_entry`, `No active position to close`). Benign → record `TradeIntentV36.execution_skip_reason` for observability and **do not** touch `veto_active`/`target_exposure`; it deliberately feeds neither `is_actionable` nor any health counter. Everything else still latches, still zeroes exposure — the fix must not disarm a genuine safety response.
+- **Deliberately placed in the producing module, not in `main.py`.** The classifier lives next to the three `return {"status":"SKIPPED"}` sites it classifies, so the reason strings have one home. Duplicating them at the consumer is exactly the reader/writer drift that produces P2-family bugs.
+- **The real veto branch is now `logger.warning("[EXECUTION-VETO] …")`.** The old line was `INFO` and tagged `[EXECUTION]` — indistinguishable from routine execution logging, which is a large part of why a 312-tick streak went unexplained for ~7.5 weeks. A genuine execution veto is now greppable.
+- **Tests:** `tests/test_benign_exec_skip_not_veto.py` (12) — the classifier fails **closed** (a benign reason on a non-`SKIPPED` status is still a real failure), the benign set is pinned so it cannot quietly grow into blanket suppression, and two end-to-end streak tests against the real `PerTickInvariantChecker`: 312 routing skips leave the streak at **0**, while 12 real vetoes still escalate to **CRITICAL**.
+- **Mitigation pattern:** a health counter must be derived from state that exists *before* the thing it measures. Stamping a decision field after execution and then alarming on that field means the alarm can only ever describe its own side effect.
+
 ### P161. [FIXED 2026-08-04] Installing the missing tools revealed two more "the check never ran" bugs — the mypy baseline is analyzer-version-specific, and ~30 async tests were failing purely because a declared dev dep wasn't installed
 - **Direct consequence of P159.** Once `pip install mypy` restored the check, the deploy gate immediately failed with **10 "NEW findings"** — `arg-type +2`, `float +2`, `index +2`, `operator +1`, `var-annotated +3` — with **no code change behind any of them**. The total had gone *DOWN* (1080 → 1073); mypy 2.3.0 simply **reclassifies errors between codes** versus the 1.x that produced the baseline, and `_diff` only flags increases, so the redistribution surfaced as pure phantom regressions.
-- **The baseline is a fingerprint of the analyzer, not only of the code.** A cross-version comparison is neither a pass nor a fail — it is a check that *cannot be made*. Fixed by stamping `mypy_version` into the baseline payload (`tools/lint_mypy_baseline.py:mypy_version`) and having `ci_check_invariants` carry the baseline forward + print a loud `mypy check SKIPPED (analyzer version differs)` banner on mismatch, the same shape as the P159 unavailable path. **The committed baseline is currently `<unstamped>`, so every machine gets that banner** until someone re-baselines deliberately on a clean tree (`--update`, then commit `tools/scanner_baselines/mypy_baseline.json`) — the honest state, not a silent pass.
+- **The baseline is a fingerprint of the analyzer, not only of the code.** A cross-version comparison is neither a pass nor a fail — it is a check that *cannot be made*. Fixed by stamping `mypy_version` into the baseline payload (`tools/lint_mypy_baseline.py:mypy_version`) and having `ci_check_invariants` carry the baseline forward + print a loud `mypy check SKIPPED (analyzer version differs)` banner on mismatch, the same shape as the P159 unavailable path. **[Corrected P188 2026-08-05]** This paragraph used to end "the committed baseline is currently `<unstamped>`, so every machine gets that banner." That has not been true since the re-baseline: `tools/scanner_baselines/mypy_baseline.json` carries `"mypy_version": "2.3.0"` alongside its 1076 findings, and CI now installs exactly that release by reading it out of the baseline file (P187). A machine on a different mypy still gets the version-mismatch banner, which is the honest state rather than a silent pass — and under `--require-all-gates` that banner is now a failure, not a note.
 - **`mypy>=1.5.0` (`requirements-train.txt:59`) is too loose for a count-locked baseline.** Pin it to whatever version the baseline is stamped with, or the gate oscillates between real and skipped as environments drift.
 - **The mypy check has never gated anything in CI either.** `.github/workflows/codebase-invariants.yml:40` states *"Scanners depend only on stdlib + git. No requirements install needed"* — so mypy is absent in the job that runs the scanners, and P159's SKIPPED path fires there on every run. `test-suite.yml:41` installs mypy but unpinned, and does not run the gate. Enabling it for real means adding a **pinned** mypy to the invariants workflow; not done here because it cannot be validated from this machine.
 - **Second finding, same family: `pytest-asyncio` is declared (`requirements-train.txt:55`) but was not installed**, so every `@pytest.mark.asyncio` test errored with *"async def functions are not natively supported"*. That accounted for **~30 of the 98 local failures** — `test_onchain_solana_agent.py` went 16 failed → 1, `test_sentiment_llm_agent.py` 19 → 4, and `test_http_retry_and_manifest.py` / `test_concurrent_stress.py` went fully green. Full suite: **98 → 51 failures, 2532 passed**. These were never code defects.

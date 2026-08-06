@@ -1,0 +1,9 @@
+{
+  "copy_only_count": 3,
+  "dynamic_site_count": 26,
+  "misrouted_count": 2,
+  "misrouted_hot_count": 0,
+  "orphan_count": 0,
+  "orphan_coverage_lost": 0,
+  "parse_failure_count": 0
+}

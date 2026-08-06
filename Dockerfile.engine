@@ -78,6 +78,21 @@ COPY --chown=hmats:hmats training/sentiment/__init__.py training/sentiment/train
 # Validator outputs — read by risk/exit_drl_promotion_gate.py for Sharpe lift evidence.
 COPY --chown=hmats:hmats data/exit_drl_validation ./data/exit_drl_validation
 
+# [P190] Read-only diagnostics that CLAUDE.md documents as
+# `docker exec hmats-engine python -X utf8 scripts/<x>.py`. They were not in the
+# image, so every one of those documented commands failed with "can't open
+# file" — CLAUDE.md:1118 had already noticed ("scp the script in first —
+# scripts/ isn't baked into the image") without the other entries being fixed.
+#
+# This is an ALLOWLIST, not `COPY scripts/`. scripts/ also holds
+# launch_live.py, coinbase_test_order.py and coinbase_flatten.py; baking those
+# in would put order-placing code inside the live trading container, which P141
+# exists to prevent. Each file below is stdlib-only and reads data/logs.
+#
+# Gate: tests/test_ops_docs_reference_real_commands.py asserts every script
+# named in a documented `docker exec` command appears here.
+COPY --chown=hmats:hmats scripts/why_no_trade.py scripts/kq_strategy_diagnostic.py scripts/agent_audit_16.py ./scripts/
+
 VOLUME ["/opt/hmats/models", "/opt/hmats/data", "/opt/hmats/logs"]
 
 USER hmats

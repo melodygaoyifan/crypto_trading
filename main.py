@@ -8,7 +8,7 @@ Build Date: 2026-02-28
 
 CANONICAL FILES (LOCKED):
     CANONICAL_ENTRYPOINT:       main.py
-    CANONICAL_MAIN_LOOP:        core/runtime_spine.py
+    CANONICAL_MAIN_LOOP:        main.py::_process_4h_tick_inner   [P178]
     CANONICAL_DECISION_ENGINE:  integration/integration_v36.py
     CANONICAL_SOTA_ENHANCEMENT: orchestration/sota_v521_complete_integration.py
     CANONICAL_CONFIG:           configs/cloud_production.json
@@ -539,26 +539,32 @@ except ImportError as e:
 # =============================================================================
 # V6 SOTA MODULES - SHORT RISK & VALIDATION
 # =============================================================================
-
-V6_MODULES_AVAILABLE = False
-try:
-    from risk.short_position_controller import (
-        ShortPositionController,
-        get_short_controller,
-        ShortRiskConfig,
-        ShortRiskAssessment,
-    )
-    from analytics.sota_metrics_calculator import (
-        SOTAMetricsCalculator,
-        SOTAMetrics,
-        SOTATargets,
-        Trade as SOTATrade,
-    )
-    V6_MODULES_AVAILABLE = True
-    logger.info("[OK]V6 SOTA modules loaded (short risk + metrics)")
-except ImportError as e:
-    logger.warning(f"V6 SOTA modules not available: {e}")
-    V6_MODULES_AVAILABLE = False
+#
+# [P177] REMOVED. This block imported seven symbols, used none of them, set
+# V6_MODULES_AVAILABLE (read nowhere), and logged
+#
+#     [OK]V6 SOTA modules loaded (short risk + metrics)
+#
+# on every boot. An operator reading that line concludes short-side risk
+# control is active. It never was: `get_short_controller()` has no call site
+# anywhere in the repo, so `ShortPositionController.assess_risk`,
+# `.check_stop_loss` and `.get_position_size_multiplier` have never run in
+# production. Nor has `SOTAMetricsCalculator`. "Loaded" was true; every
+# inference an operator would draw from it was false.
+#
+# Live short risk is `defense/short_control.py`, which IS invoked, at
+# main.py:10577 (`self._short_control.evaluate(...)` guarded by
+# `intent.direction < 0`) and reported at :11540. `risk/
+# short_position_controller.py` is a second, parallel implementation of the
+# same job that lost the race and was never unplugged.
+#
+# It is deliberately NOT wired in here. Its stop-loss, daily-loss halt and
+# squeeze-risk sizing paths have never executed against real fills; enabling
+# them on a live account to fix a cosmetic log line would trade a false
+# reassurance for a real, untested risk actuator. The module keeps its own
+# unit tests and stays on disk. See tests/test_dead_risk_controller.py, which
+# fails if it acquires a production call site without that decision being
+# revisited.
 
 
 # =============================================================================
@@ -6428,6 +6434,15 @@ class HMATSProductionRunner:
             "vpin_source": market_data.get("vpin_source", "synthetic"),
             "quant_direction": market_data.get("quant_direction", 0.0),
             "quant_confidence": market_data.get("quant_confidence", 0.5),
+            # [P170] The producer half of P126's freshness guard. The pipeline
+            # writes quant_data_quality into market_data on every path
+            # (setdefault 0.0 at market_data_pipeline.py:664, 1.0 at :1314 on
+            # Best-of-N success), but this dict never copied it — so the
+            # consumer at integration_v36.py:2095 read
+            # `agent_signals.get("quant_data_quality", 1.0)` and got 1.0
+            # forever. The guard has never excluded a stale quant signal since
+            # it was written on 2026-04-27. Propagate the real value.
+            "quant_data_quality": market_data.get("quant_data_quality", 0.0),
             "primary_strategy": market_data.get("primary_strategy", "momentum"),
             "lead_lag_edge": market_data.get("lead_lag_edge", 0.0),  # unit: bps
             "lead_lag_confidence": market_data.get("lead_lag_confidence", 0.0),
@@ -8514,6 +8529,13 @@ class HMATSProductionRunner:
         except Exception:
             pass
 
+        # [P172] Per-tick local, NOT instance state: `asset` is a parameter of
+        # this method, so a `self.` field would carry one asset's venue pricing
+        # into the next asset's tick whenever the block below is skipped. None
+        # means "not resolved on this tick" and the fee_context builder falls
+        # back to the Kraken tier, which is the conservative direction.
+        _venue_fee_resolved = None
+
         # Update alpha gate friction + trade gate edge based on monthly volume (Kraken+ fee tier)
         if self._fee_blending_enabled and hasattr(self.engine, 'guarantees'):
             try:
@@ -8528,21 +8550,29 @@ class HMATSProductionRunner:
                 # tier is the default for everything, which over-charges every
                 # Coinbase-routed asset by ~23bps of alpha before sizing.
                 # Gated OFF by default: correcting it loosens the gate.
+                #
+                # [P172] Resolved ONCE per tick and reused by the _fee_context
+                # block below, which used to hardcode the Kraken tier. Two
+                # blocks pricing the same asset's friction independently is how
+                # they came to disagree by ~23bps in production.
                 _venue_fee_applied = False
-                if getattr(self.config, "coinbase_venue_aware_fees", False):
-                    try:
-                        from core.execution_service import (
-                            _coinbase_routed, _COINBASE_MAKER_BPS, _COINBASE_TAKER_BPS,
-                        )
-                        if _coinbase_routed(self, asset):
-                            maker_fee_bps = _COINBASE_MAKER_BPS
-                            taker_fee_bps = _COINBASE_TAKER_BPS
-                            _venue_fee_applied = True
-                    except Exception as _vf_err:
-                        logger.warning(
-                            f"[VENUE-FEE] {asset}: venue-aware fee lookup failed "
-                            f"({_vf_err}) — falling back to Kraken tier (conservative)"
-                        )
+                try:
+                    from core.execution_service import resolve_venue_fee_bps, _coinbase_routed
+                    _vf_enabled = bool(getattr(self.config, "coinbase_venue_aware_fees", False))
+                    _vf_routed = _coinbase_routed(self, asset) if _vf_enabled else False
+                    maker_fee_bps, taker_fee_bps, _vf_venue, _vf_source = resolve_venue_fee_bps(
+                        kraken_maker_bps=maker_fee_bps,
+                        kraken_taker_bps=taker_fee_bps,
+                        venue_aware_enabled=_vf_enabled,
+                        is_coinbase_routed=_vf_routed,
+                    )
+                    _venue_fee_resolved = (maker_fee_bps, taker_fee_bps, _vf_venue, _vf_source)
+                    _venue_fee_applied = (_vf_venue == "coinbase")
+                except Exception as _vf_err:
+                    logger.warning(
+                        f"[VENUE-FEE] {asset}: venue-aware fee lookup failed "
+                        f"({_vf_err}) — falling back to Kraken tier (conservative)"
+                    )
                 if _venue_fee_applied:
                     logger.info(
                         f"[VENUE-FEE] {asset}: alpha-gate friction priced for "
@@ -8599,13 +8629,25 @@ class HMATSProductionRunner:
                 _monthly = _fc.tracker.get_monthly_volume()
                 _maker_fee_bps = _fc.blender.apply(0.0016, _monthly) * 10000.0
                 _taker_fee_bps = _fc.blender.apply(0.0026, _monthly) * 10000.0
+                # [P172] Reuse the venue decision the alpha gate already made
+                # this tick rather than re-deriving it (or, as before, ignoring
+                # it). When it is None the block above did not run, so keep the
+                # Kraken tier and say so — over-charging blocks trades, which
+                # is the failure worth having.
+                if _venue_fee_resolved is not None:
+                    _maker_fee_bps, _taker_fee_bps, _fee_venue, _fee_source = _venue_fee_resolved
+                else:
+                    _fee_venue, _fee_source = "kraken", "kraken_plus_fee_blender"
                 _fee_context = {
                     "in_free_tier": _fc.blender.is_in_free_tier(_monthly),
                     "fee_weight": _fc.blender.compute_weight(_monthly),
                     "monthly_volume_usd": _monthly,
                     "maker_fee_bps": _maker_fee_bps,
                     "taker_fee_bps": _taker_fee_bps,
-                    "fee_source": "kraken_plus_fee_blender",
+                    # Provenance, not decoration: "kraken_plus_fee_blender" now
+                    # only appears on numbers that came from the blender.
+                    "fee_source": _fee_source,
+                    "venue": _fee_venue,
                     "tier_config": self.config.timing_engine_config or {},
                 }
                 agent_signals['fee_context'] = _fee_context
@@ -13417,7 +13459,7 @@ class HMATSProductionRunner:
 
                 # [CUTOVER 2026-04-18] Execute via extracted execution_service.py
                 from core.execution_context import ExecutionContext
-                from core.execution_service import execute_intent_v2
+                from core.execution_service import execute_intent_v2, is_benign_exec_skip
                 _exec_ctx = ExecutionContext.build_from_runner(self)
 
                 # [WIRE-DERIV 2026-04-24] Pre-flight router check: if intent
@@ -13526,16 +13568,35 @@ class HMATSProductionRunner:
                             or _exec_status
                             or "EXECUTION_SKIPPED"
                         )
-                        intent.veto_active = True
-                        intent.veto_reason = (
-                            _exec_reason if _exec_reason.startswith("[")
-                            else f"[EXECUTION] {_exec_reason}"
-                        )
-                        intent.target_exposure = 0.0
-                        logger.info(
-                            f"[EXECUTION] {asset}: non-fill result "
-                            f"status={_exec_status or 'UNKNOWN'} reason={_exec_reason}"
-                        )
+                        # [P162] A venue-routing skip is not a veto. Since the
+                        # 2026-06-13 cutover all three assets are Coinbase-routed
+                        # and Kraken-flat, so execute_intent_v2 returns SKIPPED on
+                        # EVERY tick by design (P152). Latching a veto here zeroed
+                        # target_exposure on intents that had passed every gate and
+                        # made HEALTH_T3 report 312/312 consecutive "blocked" ticks
+                        # for a path that is retired. Record it; do not latch it.
+                        if is_benign_exec_skip(exec_result):
+                            intent.execution_skip_reason = _exec_reason
+                            logger.info(
+                                f"[EXECUTION] {asset}: no-op path "
+                                f"(status={_exec_status or 'UNKNOWN'} "
+                                f"reason={_exec_reason}) - not a veto"
+                            )
+                        else:
+                            intent.veto_active = True
+                            intent.veto_reason = (
+                                _exec_reason if _exec_reason.startswith("[")
+                                else f"[EXECUTION] {_exec_reason}"
+                            )
+                            intent.target_exposure = 0.0
+                            # WARNING, and tagged so a real execution veto is
+                            # greppable. The old INFO/[EXECUTION] line was
+                            # indistinguishable from routine execution logging,
+                            # which is why the 312-tick streak went unexplained.
+                            logger.warning(
+                                f"[EXECUTION-VETO] {asset}: non-fill result "
+                                f"status={_exec_status or 'UNKNOWN'} reason={_exec_reason}"
+                            )
                 else:
                     self._deadlock_bars[asset] = 0  # [PATCH-5] Reset on actual fill
 
@@ -15813,6 +15874,10 @@ class HMATSProductionRunner:
             "friction_margin_bps": margin_bps,
             "friction_total_bps": float(runtime_fee_bps + slippage_bps + latency_bps + margin_bps),
             "friction_fee_source": str((fee_context or {}).get("fee_source", "alpha_gate_or_default")),
+            # [P172] Which venue's schedule priced this decision. Absent means
+            # no fee_context was built on this tick, not "Kraken" — do not
+            # collapse the two when reading the dashboard.
+            "friction_venue": str((fee_context or {}).get("venue", "UNKNOWN")),
             "friction_maker_fee_bps": float((fee_context or {}).get("maker_fee_bps", 0.0) or 0.0),
             "friction_taker_fee_bps": float((fee_context or {}).get("taker_fee_bps", 0.0) or 0.0),
             "friction_fee_weight": float((fee_context or {}).get("fee_weight", 0.0) or 0.0),
@@ -16870,6 +16935,58 @@ class HMATSProductionRunner:
         wait = secs_to_boundary + offset_seconds
         return max(wait, 60.0)  # Minimum 60s to prevent tight loops
 
+    def _update_drawdown_snapshot(self) -> Tuple[float, float]:
+        """Refresh `_current_drawdown_pct` from account equity. Returns (equity, dd).
+
+        [P163] MUST be called by every mode that trades. Before this, the sole
+        writer of `_current_drawdown_pct` lived inline in `run_paper`, so in
+        LIVE the attribute was never assigned at all. Every consumer reads it
+        as `getattr(self, '_current_drawdown_pct', 0.0)` — the regime-leverage
+        de-risking ladder, the DRL observation vector, and the drawdown halt —
+        so in the one mode that risks real money they all read a permanent 0.0
+        and behaved as though the account were sitting at its all-time high, no
+        matter how far it had fallen. Leverage was never reduced and the halt
+        could never fire.
+
+        Note the failure shape: a defaulted `getattr` makes "never written" and
+        "zero drawdown" the same reading, so nothing could observe the gap.
+        That is the same missing-vs-neutral collapse as the `agent_signals`
+        dict, in the risk layer.
+
+        Drawdown is returned as a positive fraction (0.08 == 8% below peak).
+        """
+        current_equity = float(self.config.initial_capital)
+        if self.account_sync:
+            try:
+                current_equity = float(self.account_sync.get_equity())
+            except Exception as err:
+                # FAIL-SAFE: hold the last known drawdown rather than recompute
+                # from notional capital. Falling back to `initial_capital` would
+                # report 0% drawdown whenever the equity read fails — i.e. it
+                # would disarm the de-risking ladder precisely when the exchange
+                # is unhealthy, which is when it is most needed. A stale
+                # drawdown is conservative; a fabricated zero is not.
+                _held = getattr(self, "_current_drawdown_pct", None)
+                logger.warning(
+                    f"[NAV] equity fetch failed ({err}); holding last known "
+                    f"drawdown={_held if _held is not None else 0.0:.2%}"
+                )
+                if _held is not None:
+                    return float(getattr(self, "_peak_equity", current_equity)), float(_held)
+
+        if not hasattr(self, "_peak_equity"):
+            self._peak_equity = current_equity
+        self._peak_equity = max(self._peak_equity, current_equity)
+
+        drawdown_pct = 0.0
+        if self._peak_equity > 0:
+            drawdown_pct = (self._peak_equity - current_equity) / self._peak_equity
+
+        self._current_drawdown_pct = drawdown_pct
+        if getattr(self, "_market_pipeline", None) is not None:
+            self._market_pipeline.current_drawdown_pct = drawdown_pct
+        return current_equity, drawdown_pct
+
     def _warn_regime_throttled(self, asset: str, reason: str, message: str):
         """Emit repetitive regime warnings no more than once per cooldown window."""
         now_ts = time.time()
@@ -17434,24 +17551,8 @@ class HMATSProductionRunner:
 
                 # Periodic NAV/Drawdown snapshot (every round)
                 try:
-                    current_equity = self.config.initial_capital  # FIX3: was hardcoded $100K
-                    if self.account_sync:
-                        try:
-                            current_equity = self.account_sync.get_equity()
-                        except Exception:
-                            pass
-
-                    # Track peak equity for drawdown calculation
-                    if not hasattr(self, '_peak_equity'):
-                        self._peak_equity = current_equity
-                    self._peak_equity = max(self._peak_equity, current_equity)
-
-                    drawdown_pct = 0.0
-                    if self._peak_equity > 0:
-                        drawdown_pct = (self._peak_equity - current_equity) / self._peak_equity
-
-                    self._current_drawdown_pct = drawdown_pct
-                    self._market_pipeline.current_drawdown_pct = drawdown_pct
+                    # [P163] Shared with run_live — see _update_drawdown_snapshot.
+                    current_equity, drawdown_pct = self._update_drawdown_snapshot()
 
                     logger.info(
                         f"[NAV] equity=${current_equity:,.2f} | "
@@ -17873,6 +17974,25 @@ class HMATSProductionRunner:
                 # [GATE-6] Emergency flatten check -touch data/FORCE_FLAT to trigger
                 if await self._check_and_execute_force_flat():
                     break
+
+                # [P163] Refresh drawdown BEFORE any decision this tick.
+                # run_paper computes this at the END of a round, which is
+                # tolerable on paper but not here: every drawdown-scaled control
+                # (regime leverage, DD halt, the DRL observation) must see the
+                # current state before it gates the trades it is meant to gate.
+                # Until this call existed, `_current_drawdown_pct` was never
+                # written in LIVE at all and they all read 0.0 forever.
+                try:
+                    _live_equity, _live_dd = self._update_drawdown_snapshot()
+                    logger.info(
+                        f"[NAV-LIVE] equity=${_live_equity:,.2f} | "
+                        f"peak=${self._peak_equity:,.2f} | drawdown={_live_dd:.2%}"
+                    )
+                except Exception as _nav_err:
+                    # Never let a NAV read kill the trading loop, but do not let
+                    # it pass silently either — a stale drawdown disarms the
+                    # risk ladder, which is exactly the failure this fixes.
+                    logger.error(f"[NAV-LIVE] drawdown snapshot FAILED: {_nav_err}")
 
                 _live_prices = {}
                 _live_intents = {}
@@ -18774,6 +18894,9 @@ class HMATSProductionRunner:
         execution_direction: float,
         regime_leverage: float,
         existing_position: Optional[Dict[str, Any]] = None,
+        venue: str = "kraken",                            # [P169]
+        venue_fee_usd: Optional[float] = None,            # [P169]
+        venue_fee_currency: str = "",                     # [P169]
     ) -> Dict[str, Any]:
         try:
             friction = getattr(self.engine.guarantees.alpha_calculator, "FRICTION", None)
@@ -18796,6 +18919,9 @@ class HMATSProductionRunner:
             default_margin_opening_fee_bps=float(OPEN_FEE_PCT * 10000.0),
             margin_fee_map=margin_fee_map,
             fee_record_fn=_fee_record_fn,
+            venue=venue,                            # [P169]
+            venue_fee_usd=venue_fee_usd,            # [P169]
+            venue_fee_currency=venue_fee_currency,  # [P169]
         )
         if result.get("error"):
             logger.warning(
@@ -19755,7 +19881,7 @@ def main():
     --------------------------------------------------------------------------
     | CANONICAL_ENTRYPOINT = main.py                                         |
     | CANONICAL_CONFIG     = configs/cloud_production.json                   |
-    | CANONICAL_SPINE      = core/runtime_spine.py                           |
+    | CANONICAL_MAIN_LOOP  = main.py::_process_4h_tick_inner          [P178] |
     | CANONICAL_DECISION   = integration/integration_v36.py                  |
     --------------------------------------------------------------------------
 ================================================================================

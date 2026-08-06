@@ -14,14 +14,60 @@ ACTIVE 2026-04-22. So this measures DRL's LATENT alpha during its SHADOW
 period — what we WOULD have made if we had followed DRL signals.
 """
 from __future__ import annotations
-import json, math, statistics
+import json, math, os, statistics, sys
 from collections import defaultdict
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 TRADES = REPO / "data" / "trade_attribution.jsonl"
-SIG_DIR = REPO / "logs" / "attribution"
+
+# [P183] Honour HMATS_LOG_DIR, which is where the container actually writes
+# (the hmats-logs volume). This was hardcoded to the repo path, so running the
+# script anywhere but a dev checkout read an empty directory.
+SIG_DIR = Path(os.environ.get("HMATS_LOG_DIR", REPO / "logs")) / "attribution"
+
+
+def _refuse_to_report_on_no_data() -> None:
+    """[P183] An unread input is not a measured zero.
+
+    This script's whole output is buckets of trades keyed by what DRL said at
+    entry. With no signals_*.jsonl to read, every trade falls into
+    "no_signal", the aligned/opposed/silent rows print "(empty)", and the ALL
+    TRADES row still prints its real numbers underneath — so the report looks
+    like it ran and looks like it found DRL contributed nothing. It found
+    nothing because it read nothing.
+
+    That is what the directory not existing produced for the entire life of
+    this script. Exit non-zero and say so instead.
+    """
+    if not SIG_DIR.exists():
+        sys.exit(
+            f"[P183] {SIG_DIR} does not exist.\n"
+            f"  AttributionTracker writes signals_YYYYMMDD.jsonl there. Set "
+            f"HMATS_LOG_DIR to the volume the bot writes to, or copy the "
+            f"files down:\n"
+            f"    ssh hmats 'cat /var/lib/docker/volumes/hmats-logs/_data/"
+            f"attribution/signals_*.jsonl' > {SIG_DIR}/signals_merged.jsonl\n"
+            f"  Refusing to print all-empty buckets, which read as 'DRL "
+            f"contributed nothing' rather than 'no data was read'."
+        )
+    files = sorted(SIG_DIR.glob("signals_*.jsonl"))
+    if not files:
+        sys.exit(
+            f"[P183] {SIG_DIR} exists but contains no signals_*.jsonl.\n"
+            f"  Same reason as above: with no input every bucket is empty and "
+            f"the report is indistinguishable from a real negative result."
+        )
+    non_empty = [f for f in files if f.stat().st_size > 0]
+    if not non_empty:
+        sys.exit(
+            f"[P183] all {len(files)} signals_*.jsonl file(s) in {SIG_DIR} "
+            f"are empty."
+        )
+
+
+_refuse_to_report_on_no_data()
 
 def parse_ts(s):
     if not s: raise ValueError("empty ts")
@@ -102,7 +148,18 @@ buckets = {"aligned": [], "opposed": [], "silent": [], "no_signal": []}
 authority_seen = defaultdict(int)
 
 _skipped_no_ts = 0
+_skipped_orphan = 0
 for t in trades:
+    # [P185] `entry_recorded is False` marks a trade whose exit arrived with no
+    # matching record_entry — the entry_* fields are defaults, not
+    # measurements. Counted separately from an unparseable timestamp because
+    # they have different causes and different fixes: an orphan means the
+    # position straddled a restart (TradeAttributor now persists open trades),
+    # a parse failure means the writer emitted a timestamp nothing can read.
+    # Legacy records predate the flag; there, an empty entry_time is the tell.
+    if t.get("entry_recorded") is False:
+        _skipped_orphan += 1
+        continue
     if not t.get("entry_time"):
         _skipped_no_ts += 1
         continue
@@ -148,6 +205,27 @@ def stats(bucket_data):
             "total_pnl": total_pnl, "mean_pnl": mean_pnl, "std_pnl": std_pnl,
             "sharpe_annualized": sharpe, "mean_pnl_bps": mean_bps}
 
+# [P183] Coverage, printed before the buckets. The bucket table alone cannot
+# distinguish "DRL had no view on these trades" from "the signal files do not
+# overlap the trade window", and those call for opposite next actions.
+_matched = sum(len(buckets[b]) for b in ("aligned", "opposed", "silent"))
+_unmatched = len(buckets["no_signal"])
+print("="*78)
+print(f"COVERAGE: {_matched}/{len(trades)} closed trades matched a DRL signal "
+      f"within +/-4h of entry "
+      f"({_unmatched} had no nearby signal, {_skipped_orphan} were orphans "
+      f"[P185: exit with no recorded entry], {_skipped_no_ts} had an "
+      f"unparseable entry_time; all dropped before bucketing. {len(sig_idx)} "
+      f"asset-days indexed from "
+      f"{len(sorted(SIG_DIR.glob('signals_*.jsonl')))} file(s))")
+if _skipped_orphan:
+    print(f"  NOTE: those {_skipped_orphan} orphans also carry entry_fee_usd="
+          f"0.0, so their net_pnl_usd understates cost by roughly one taker "
+          f"fee. Realized-PnL totals taken from this file inherit that.")
+if _matched == 0:
+    print("  WARNING: zero matches. Every number below is about the absence "
+          "of overlap between the signal files and the trade window, NOT "
+          "about DRL's contribution. Check the date ranges before reading on.")
 print("="*78)
 print("DRL counterfactual analysis — pre-ACTIVE shadow period")
 print(f"Universe: 90 closed trades, 2026-02-17 → 2026-04-04")
@@ -178,6 +256,7 @@ print("="*78)
 hi_aligned = []; hi_opposed = []
 lo_aligned = []; lo_opposed = []
 for t in trades:
+    if t.get("entry_recorded") is False: continue  # [P185] same filter as above
     if not t.get("entry_time"): continue
     try:
         entry_ts = parse_ts(t["entry_time"])

@@ -19,103 +19,143 @@
 
 ## 日常运维
 
+> **[P190 2026-08-05] 本节此前记录的命令没有一条可以运行。**
+> 两个独立的问题:
+>
+> 1. **14 个 `/opt/hmats/scripts/*.py` 脚本从未存在过** —— `git log --all
+>    --diff-filter=A` 在任何提交中都找不到它们。日常/周度/月度清单、
+>    紧急平仓程序、Fuse 复位程序全部指向不存在的文件。
+> 2. **部署不是 systemd** —— `sudo systemctl stop hmats` /
+>    `journalctl -u hmats` 描述的是 v5.1.0 时代的 venv 部署
+>    (`deploy/systemd/hmats.service`, 跑的还是 `main.py --mode paper`)。
+>    实际线上是 `docker-compose.hetzner.yml`: 容器 `hmats-engine` (v6.8.0)
+>    + `hmats-api`。日志/状态在 docker volume 里, 不在 `/var/log/hmats`
+>    和 `/var/lib/hmats`。
+>
+> 下面的命令是按仓库里**实际存在**的东西重写的。没有实现的能力标为
+> **[未实现]** —— 事故当中发现一条命令不存在, 比一开始就知道它不存在要贵。
+> 这与 [P186] (`make drl` 指向不存在的脚本) 和 [P189]
+> (`run_training.py` 同样的毛病) 是同一类缺陷。
+
 ### 每日检查清单
 
 ```bash
 # 1. 检查服务状态
-sudo systemctl status hmats
+ssh hmats "cd /home/hmats/hmats/app && docker compose -f docker-compose.hetzner.yml ps"
 
 # 2. 审查过夜日志
-sudo journalctl -u hmats --since "24 hours ago" | grep -i error
+ssh hmats "docker logs hmats-engine --since 24h 2>&1 | grep -iE 'error|traceback'"
 
-# 3. 检查 ShadowLedger 报告
-cat /var/log/hmats/shadow_ledger/$(date +%Y-%m-%d).json
+# 3. 权益 / 回撤 / 仓位 —— 都在 dashboard_state.json 里
+#    (main.py:_export_dashboard_state 是它唯一的写入者)
+ssh hmats "docker exec hmats-engine python -X utf8 -c \"
+import json;d=json.load(open('/opt/hmats/data/dashboard_state.json'));
+eq,pk=d['equity'],d['peak_equity'];
+print('updated_at', d['updated_at'], 'mode', d['mode']);
+print('equity %.2f peak %.2f drawdown %.2f%%' % (eq, pk, 100*(1-eq/pk) if pk else 0));
+print('positions', d['position_count'], d['positions'])\""
+# → 回撤 4 级梯度阈值见下方\"配置参考\": 10% / 15% / 25% / 35%
 
-# 4. 验证仓位与交易所匹配
-python /opt/hmats/scripts/reconcile_positions.py
+# 4. 为什么没交易 (阻塞原因, 不用等 4H tick)
+ssh hmats "docker exec hmats-engine python -X utf8 scripts/why_no_trade.py"
 
-# 5. 检查 Drawdown 级别 (4级梯度)
-python /opt/hmats/scripts/check_drawdown.py
+# 5. 审查 Fill Quality
+ssh hmats "docker exec hmats-engine tail -20 /opt/hmats/logs/fill_quality.jsonl" | jq .
 
-# 6. 检查 ExistenceFuse 状态
-python /opt/hmats/scripts/check_fuse_status.py
-# → consecutive_loss, weekly_loss, monthly_loss
-
-# 7. 检查 BullTransition 状态
-python /opt/hmats/scripts/check_bull_transition.py
-# → INACTIVE/POTENTIAL/ACTIVE/CONFIRMED + 4条件状态
-
-# 8. 审查 Fill Quality (v10)
-tail -20 /var/log/hmats/fill_quality.jsonl | jq .
+# 6. ExistenceFuse 状态 (consecutive/weekly/monthly loss)   [未实现]
+# 7. BullTransition 4 条件状态                              [未实现]
+#    两者都没有 CLI。现状只能读引擎日志:
+ssh hmats "docker logs hmats-engine --since 24h 2>&1 | grep -iE 'fuse|bulltransition'"
 ```
 
 ### 周度运维
 
 ```bash
-# 1. Fill Rate 周报 (v10)
-python /opt/hmats/scripts/fill_quality_weekly.py
-# → maker_ratio, avg_slippage, timeout_rate
+# 1. 执行质量周报 (maker_ratio, slippage, timeout)
+python -X utf8 scripts/execution_quality_report.py
 
-# 2. 审查周度性能
-python /opt/hmats/scripts/weekly_performance.py
+# 2. 周度性能回顾
+python -X utf8 scripts/reflect_weekly.py
+python -X utf8 scripts/weekly_agent_report.py
 
-# 3. 检查 DRL drift (如果 DRL 活跃)
-python /opt/hmats/scripts/check_drl_drift.py --window 7d
+# 3. Agent 归因审计 (16 agent 信号是否真的被消费)
+ssh hmats "docker exec hmats-engine python -X utf8 scripts/agent_audit_16.py"
 
-# 4. 清理旧日志 (保留 30 天)
-find /var/log/hmats -type f -mtime +30 -delete
+# 4. 策略诊断
+ssh hmats "docker exec hmats-engine python -X utf8 scripts/kq_strategy_diagnostic.py"
 
-# 5. 数据库维护
-sqlite3 /var/lib/hmats/state.db "VACUUM; ANALYZE;"
+# 5. 清理旧日志 (docker 已做 rotation: json-file, max-size 50m x 5)
+#    见 docker-compose.hetzner.yml 的 logging 段, 无需手工 find -delete
 
-# 6. 重启服务 (如果无开放仓位)
-python /opt/hmats/scripts/check_positions.py
-# 如果 flat:
-sudo systemctl restart hmats
+# 6. 重启 (仅在 flat 时): position_count 见每日检查第 3 项
+ssh hmats "cd /home/hmats/hmats/app && docker compose -f docker-compose.hetzner.yml restart hmats-engine"
+
+# DRL drift 检查                                            [未实现]
+#   最接近的是 scripts/validate_drl_oos.py (离线 OOS 验证, 不是 drift 监控)
 ```
 
 ### 月度运维
 
 ```bash
-# 1. DRL 晋升审查 (30天 shadow 后)
-python /opt/hmats/scripts/drl_promotion_gate.py --review
+# 1. DRL 晋升状态 (晋升逻辑在 risk/ 的 promotion gate 里, 由引擎自己写状态)
+ssh hmats "docker exec hmats-engine cat /opt/hmats/data/drl_promotion_state.json"
+ssh hmats "docker exec hmats-engine cat /opt/hmats/data/exit_drl_promotion_state.json"
 
 # 2. 策略 PnL 归因
-python /opt/hmats/scripts/pnl_attribution.py --month $(date +%Y-%m)
+python -X utf8 scripts/agent_attribution_validate.py
 
-# 3. 费用效率分析
-python /opt/hmats/scripts/fee_analysis.py --month $(date +%Y-%m)
-# → 检查 $10K/月 Kraken Pro 免费额度使用情况
+# 3. 费用效率分析 (现货 vs 永续 两个 sleeve 的费率)
+python -X utf8 scripts/futures_vs_spot_fee_analysis.py
+# → Kraken Pro $10K/月免费额度: data/kraken_plus_monthly_volume.json
 
-# 4. AssetAlphaTilt 审查 (v10)
-# → 检查 per-asset Sortino multipliers 是否合理
+# 4. AssetAlphaTilt 审查
+# → 检查 per-asset Sortino multipliers 是否合理 (无 CLI, 读配置 + 日志)
 
 # 5. ExistenceFuse 月度重置确认
 # → monthly_loss 计数器自动重置
 
-# 6. 归档旧备份
-tar -czf /var/lib/hmats/archives/$(date +%Y-%m).tar.gz \
-    /var/lib/hmats/backups/state_$(date +%Y%m)*.db
+# 6. 备份 docker volume
+ssh hmats "docker run --rm -v hmats-data:/d -v ~/backups:/b alpine \
+    tar -czf /b/hmats-data-\$(date +%Y-%m).tar.gz -C /d ."
 ```
 
 ---
 
 ## 紧急程序
 
+> **[P190] 本节的 5 个 `emergency_flatten.py` / `remote_emergency_flatten.py`
+> / `check_positions.py` / `check_fuse_status.py` / `fuse_reset.py` /
+> `check_bull_transition.py` 全部不存在。** 事故当中才发现首选平仓命令是
+> "can't open file", 是这份文档能造成的最贵的一种错误。下面按实际存在的
+> 东西重写, 并明确标出没有实现的部分。
+
 ### 程序 1: 紧急平仓
 
+**没有通用的一键平仓命令。** 现有的三条路径:
+
 ```bash
-# 方法1: 通过系统命令 (首选)
-sudo systemctl stop hmats
-python /opt/hmats/scripts/emergency_flatten.py --confirm
+# 方法1 (首选): 先停引擎, 再从 Kraken Pro UI 手工市价平掉 BTC/ETH/SOL
+ssh hmats "cd /home/hmats/hmats/app && docker compose -f docker-compose.hetzner.yml stop hmats-engine"
+# 1. 登录 Kraken Pro, 市价平掉所有 BTC/ETH/SOL 仓位 (含保证金空头)
+# 2. 回到本地验证 flat:
+#    python -X utf8 scripts/kraken_credentials_check.py
 
-# 方法2: 通过 Kraken UI (系统无响应时)
-# 1. 登录 Kraken Pro
-# 2. 市价卖出所有 BTC/ETH/SOL 仓位
-# 3. API 验证 flat
+# 方法2: Coinbase sleeve 平仓 (仅 Coinbase nano 永续, 不含 Kraken)
+python -X utf8 scripts/coinbase_flatten.py          # 先看 dry-run 输出
 
-# 方法3: REST API 脚本 (SSH 不可用时)
-python /opt/hmats/scripts/remote_emergency_flatten.py --api-key $KEY
+# 方法3: Kraken 现货多头平仓 —— scripts/reconcile_flatten_2026_06_12.py
+#   这是 2026-06-12 事故时写的一次性脚本, 默认 dry-run, 只 SELL
+#   BTC/ETH/SOL 现货, 从不买入、从不用杠杆。它**不平保证金空头**。
+#   scripts/ 没有打进镜像 (见下方"已知缺口"), 需要先 scp 进去:
+#   scp scripts/reconcile_flatten_2026_06_12.py hmats:/tmp/
+#   ssh hmats "docker cp /tmp/reconcile_flatten_2026_06_12.py hmats-engine:/tmp/"
+#   ssh hmats "docker exec hmats-engine python3 -X utf8 /tmp/reconcile_flatten_2026_06_12.py"
+#   加 --execute 才会真的下单。
+
+# [未实现] 统一的 emergency_flatten (现货 + 保证金 + Coinbase, 一条命令)。
+# [未实现] SSH 不可用时的 REST 兜底 (remote_emergency_flatten)。
+# 引擎内部的 trigger_emergency_flatten() (main.py:14906) 只由 DEAD_MAN_SWITCH
+# 触发, 没有对外的 CLI 入口。
 ```
 
 ### 程序 2: Dead Man Switch 触发
@@ -123,35 +163,36 @@ python /opt/hmats/scripts/remote_emergency_flatten.py --api-key $KEY
 ```bash
 # DMS 检测到心跳超时 → 自动撤单
 # 1. 检查原因
-sudo journalctl -u hmats --since "10 min ago" | grep -i "dead man"
-# 2. 验证仓位已平仓
-python /opt/hmats/scripts/check_positions.py
+ssh hmats "docker logs hmats-engine --since 10m 2>&1 | grep -i 'dead man'"
+# 2. 验证仓位已平仓 (position_count 见"每日检查清单"第 3 项)
 # 3. 调查根本原因 (网络/OOM/异常)
+ssh hmats "docker inspect hmats-engine --format '{{.State.OOMKilled}} {{.State.ExitCode}}'"
 # 4. 修复后重启
-sudo systemctl restart hmats
+ssh hmats "cd /home/hmats/hmats/app && docker compose -f docker-compose.hetzner.yml restart hmats-engine"
 ```
 
 ### 程序 3: ExistenceFuse HALT/KILL 触发
 
 ```bash
 # Fuse 触发: consecutive-5 或 weekly-8% 或 monthly-10%
-# 1. 检查 Fuse 状态
-python /opt/hmats/scripts/check_fuse_status.py --detailed
+# 1. 检查 Fuse 状态  [未实现 —— 没有 check_fuse_status CLI]
+ssh hmats "docker logs hmats-engine --since 24h 2>&1 | grep -iE 'existencefuse|fuse.*(halt|kill)'"
 # 2. HALT: 暂停交易, 允许平仓, 自动恢复
 # 3. KILL: 系统停机, 全部平仓, 需要手动批准重启
 # 4. 审查亏损原因
-cat /var/log/hmats/shadow_ledger/recent_trades.json | jq '.[] | select(.pnl < 0)'
-# 5. KILL 恢复: 确认问题已解决后
-python /opt/hmats/scripts/fuse_reset.py --confirm --reason "问题已修复"
+python -X utf8 scripts/analyze_shadow_ledger.py
+python -X utf8 scripts/shadow_ledger_report.py
+# 5. KILL 恢复  [未实现 —— 没有 fuse_reset CLI]
+#    目前只能停容器、确认原因、再 up -d 重启。
 ```
 
 ### 程序 4: BullTransition CONFIRMED
 
 ```bash
 # BullTransition 达到 CONFIRMED → BLOCK_NAKED_SHORT
-# 1. 检查 4 条件状态
-python /opt/hmats/scripts/check_bull_transition.py --detailed
-# → Golden Cross, SOL/BTC RS, Funding, OI
+# 1. 检查 4 条件状态  [未实现 —— 没有 check_bull_transition CLI]
+#    → Golden Cross, SOL/BTC RS, Funding, OI; 只能读日志:
+ssh hmats "docker logs hmats-engine --since 24h 2>&1 | grep -i bulltransition"
 # 2. 现有空头: 加速止损 (自动)
 # 3. 新空仓: 被阻止 (自动)
 # 4. 考虑: 是否需要手动切换到做多策略

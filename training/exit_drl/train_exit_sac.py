@@ -34,9 +34,16 @@ except ImportError:
     print("[FATAL] torch not installed. Run `pip install torch`.", file=sys.stderr)
     sys.exit(1)
 
-# Must match generate_expert_trajectories.py
-STATE_DIM = 40
-ACTION_DIM = 4
+# [P188] Imported, not restated. The comment below used to read "Must match
+# generate_expert_trajectories.py" above two literals that nothing checked —
+# the reader/writer-drift shape this codebase keeps paying for (P2, P15, P23,
+# P85, P138-P140, P147, P152, P170, P171, P173, P176, P185). One definition,
+# in the torch-free module, so a consumer that only needs the dimensions does
+# not have to import a file that cannot load without torch.
+from training.exit_drl.generate_expert_trajectories import (  # noqa: E402
+    STATE_DIM, ACTION_DIM,
+)
+
 ACTION_NAMES = ['HOLD', 'PARTIAL_EXIT', 'RELEASE_RUNNER', 'EXIT_ALL']
 
 

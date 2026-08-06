@@ -421,8 +421,9 @@ OOD Detector:
 3. StatisticalPromotionGate 通过
 4. backup/ ← current/ (备份)
 5. current/ ← shadow/ (部署)
-6. systemctl restart hmats
-7. 监控 journalctl -u hmats -f
+6. [P190] docker compose -f docker-compose.hetzner.yml restart hmats-engine
+   (原文是 systemd 命令 — 线上不是 systemd 部署，见部署指南第 7 节)
+7. 监控 docker logs -f hmats-engine
 ```
 
 ---

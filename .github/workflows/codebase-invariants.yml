@@ -37,10 +37,48 @@ jobs:
         with:
           python-version: "3.12"
 
-      # Scanners depend only on stdlib + git. No requirements install needed.
+      # [P187] Seven of the eight scanners need only stdlib + git. The eighth
+      # is mypy, and this job used to install nothing — so the type gate
+      # printed "mypy check SKIPPED (mypy not installed)" on every single CI
+      # run and exited 0. It had never executed here. P159/P161/P175 each made
+      # that state louder; none of them made it fail, and a warning in a green
+      # job's log is not a gate.
+      #
+      # The version is READ FROM THE BASELINE rather than pinned here. Per-code
+      # counts fingerprint the mypy release, so a pin that drifts from the
+      # baseline re-creates P161 exactly — the gate would install a version the
+      # baseline does not match, hit the version-mismatch carry-forward, and
+      # (with --require-all-gates) fail with a message pointing at the right
+      # fix. One source of truth, not two.
+      # [P188] The runtime deps are installed too, and that is not incidental.
+      # The first CI run that actually executed this gate failed with
+      # `no-redef 7 -> 8` on a commit that changed no scanned code. Cause: the
+      # baseline fingerprints the analyzer's ENVIRONMENT, not only its version.
+      # With numpy/pandas absent, --ignore-missing-imports turns those modules
+      # into Any and mypy reports a different set of errors — the counts move
+      # with the installed package list. Installing requirements.txt reproduces
+      # the baseline exactly (verified: bare mypy diverges on `operator` +3,
+      # requirements.txt + mypy 2.3.0 matches). torch is deliberately NOT
+      # installed: the one finding that depended on it was fixed at the source
+      # in infra/safe_torch_load.py rather than papered over with an 800MB
+      # download.
+      - name: Install the analysis environment the baseline was built in
+        run: |
+          set -euo pipefail
+          V=$(python -c "import json;print(json.load(open('tools/scanner_baselines/mypy_baseline.json')).get('mypy_version',''))")
+          if [ -z "$V" ]; then
+            echo "::error::mypy_baseline.json carries no mypy_version. Re-baseline"
+            echo "::error::deliberately on a clean tree and commit the stamped file."
+            exit 1
+          fi
+          echo "installing mypy==$V (from tools/scanner_baselines/mypy_baseline.json)"
+          python -m pip install --disable-pip-version-check -r requirements.txt "mypy==$V"
+
+      # --require-all-gates: an unrunnable gate fails the build instead of
+      # warning. See tools/ci_check_invariants.py [P187].
       - name: Run codebase invariants gate
         run: |
-          python -X utf8 tools/ci_check_invariants.py
+          python -X utf8 tools/ci_check_invariants.py --require-all-gates
 
       - name: Upload baseline diff (on failure)
         if: failure()

@@ -37,6 +37,67 @@ logger = logging.getLogger(__name__)
 
 VERSION = "3.6.1-PROD"  # Production reliability patches applied
 
+
+# [P170] Absence must not read as opportunity.
+#
+# Three deadlock call sites used `agent_signals.get("signal_edge_bps", 50.0)`.
+# On the live path that default is unreachable — main.py's agent_signals literal
+# always sets the key (from market_data, itself always set by the pipeline) — so
+# it has not been firing. That is exactly what makes it dangerous: a fabricated
+# constant that looks like policy, sitting on a path where nothing exercises it.
+#
+# 50.0bps corresponds to |quant_direction| = 50/65 = 0.77 under the pipeline's
+# own calibration (`signal_edge_bps = abs(quant_dir) * 65`,
+# market_data_pipeline.py:1318, whose comment records avg |quant_dir| ~= 0.3,
+# i.e. a typical edge near 19.5bps). Any caller that omitted the key would
+# therefore have every deadlocked trade evaluated as though it carried a
+# near-maximum-conviction signal. In TrancheAwareDeadlockResolver
+# (MIN_EDGE_FOR_FORCE = 1.5, EDGE_DECAY_PER_BAR = 0.15) at T1 after 2 stuck
+# bars against 15bps friction that inverts the outcome:
+#
+#     edge 50.0 -> decayed 35.0 -> ratio 2.33 -> FORCE_AGGRESSIVE
+#     edge 19.5 -> decayed 13.6 -> ratio 0.91 -> ABORT_OPPORTUNITY
+#
+# FORCE_AGGRESSIVE sets force_execution and switches to aggressive (taker)
+# execution, so the fabricated value would buy its way out of the patience the
+# system was trying to exercise.
+#
+# Fail-safe direction: an unknown edge is 0.0, not 50.0. Zero edge can never
+# clear MIN_EDGE_FOR_FORCE, so absence declines to force rather than forcing on
+# a number nobody measured.
+EDGE_ABSENT_BPS = 0.0
+
+
+def resolve_signal_edge_bps(agent_signals, market_data):
+    """[P170] Resolve the signal edge with its provenance.
+
+    Returns (edge_bps, source) where source is "agent_signals", "market_data",
+    or "ABSENT". Never fabricates: an unresolvable edge is EDGE_ABSENT_BPS and
+    says so, so a caller can tell "no edge" from "no data".
+    """
+    for name, src in (("agent_signals", agent_signals), ("market_data", market_data)):
+        if not isinstance(src, dict):
+            continue
+        raw = src.get("signal_edge_bps", None)
+        if raw is None:
+            continue
+        try:
+            edge = float(raw)
+        except (TypeError, ValueError):
+            # Not silent: a malformed edge is a producer bug worth seeing, and
+            # falling through to the next source without saying so is how the
+            # original 50.0 stayed invisible for so long.
+            logger.warning(
+                f"[P170] signal_edge_bps in {name} is non-numeric ({raw!r}); "
+                f"ignoring this source."
+            )
+            continue
+        if edge != edge:  # NaN
+            logger.warning(f"[P170] signal_edge_bps in {name} is NaN; ignoring this source.")
+            continue
+        return max(0.0, edge), name
+    return EDGE_ABSENT_BPS, "ABSENT"
+
 # =============================================================================
 # v3.6.1: IMPORT CONSTITUTION GUARANTEES (v3.3-STABILIZED RESTORATION)
 # =============================================================================
@@ -181,6 +242,12 @@ class TradeIntentV36:
     # Veto
     veto_active: bool = False
     veto_reason: str = ""
+
+    # [P162] Non-fill that is NOT a veto: the execution path had nothing to do
+    # (e.g. the asset is Coinbase-routed, so the Kraken path declines the entry
+    # by design). Recorded for observability; deliberately does NOT feed
+    # is_actionable or any health counter, because a no-op path is not a block.
+    execution_skip_reason: str = ""
     
     # Mode
     system_mode: str = "NORMAL"
@@ -1513,10 +1580,22 @@ class HMATSv36Engine:
         # STEP 10: [PROD] Fusion Patience + Deadlock Resolution (Patch 5)
         # =====================================================================
         
+        # [P170] Resolve the edge ONCE, with provenance, instead of repeating a
+        # fabricated 50.0 default at three call sites. See
+        # resolve_signal_edge_bps() at module scope for why 50.0 was unsafe.
+        _edge_bps, _edge_src = resolve_signal_edge_bps(agent_signals, market_data)
+        if _edge_src == "ABSENT":
+            logger.warning(
+                f"[P170] {asset}: signal_edge_bps ABSENT from both agent_signals "
+                f"and market_data — deadlock resolution will use "
+                f"{EDGE_ABSENT_BPS:.1f}bps and therefore decline to force. "
+                f"Previously this fabricated 50.0bps."
+            )
+
         # Original v3.5 patience manager check
         deadlock_result = self.patience_manager.check_deadlock(
             asset=asset,
-            current_edge_bps=agent_signals.get("signal_edge_bps", 50.0),
+            current_edge_bps=_edge_bps,
             current_friction_bps=market_data.get("estimated_friction_bps", 15.0),
         )
         
@@ -1532,7 +1611,7 @@ class HMATSv36Engine:
         tranche_deadlock = self.deadlock_resolver.resolve(
             asset=asset,
             tranche_level=current_tranche,
-            current_edge_bps=agent_signals.get("signal_edge_bps", 50.0),
+            current_edge_bps=_edge_bps,  # [P170] resolved above, never fabricated
             friction_bps=market_data.get("estimated_friction_bps", 15.0),
             is_stuck=is_stuck,
             mode=self._current_mode.name,
@@ -1668,7 +1747,7 @@ class HMATSv36Engine:
                     timing_score=timing_score.total_score,
                     estimated_friction_bps=market_data.get("estimated_friction_bps", 15.0),
                     signal_direction=intent.direction,
-                    signal_edge_bps=agent_signals.get("signal_edge_bps", 50.0),
+                    signal_edge_bps=_edge_bps,  # [P170] resolved above, never fabricated
                 )
                 intent.delay_bars = 1
         else:
@@ -2086,7 +2165,31 @@ class HMATSv36Engine:
         # when Best-of-N strategy selection succeeded; setdefault(0.0) at
         # line 660 covers all early-return failure paths. If dq<0.5,
         # zero confidence so fusion downweights the stale quant_direction.
-        quant_dq = float(agent_signals.get("quant_data_quality", 1.0))
+        # [P170] The default was 1.0 — "healthy". The key was never present
+        # (main.py's agent_signals literal did not copy it), so this read
+        # returned 1.0 on every tick and the guard below could not fire even
+        # once. A default that means "fine" turns a missing producer into a
+        # passing check, which is indistinguishable from a check that ran.
+        # Absence is now its own case and fails closed, same as a real failure:
+        # if nobody told us the quant signal was fresh, we do not assume it was.
+        _raw_dq = agent_signals.get("quant_data_quality", None)
+        if _raw_dq is None:
+            logger.warning(
+                "[P170] quant excluded from fusion: quant_data_quality ABSENT "
+                "from agent_signals. The pipeline sets it on every path, so a "
+                "missing key means the producer did not propagate it — treat as "
+                "unverified, not as healthy."
+            )
+            quant_dq = 0.0
+        else:
+            try:
+                quant_dq = float(_raw_dq)
+            except (TypeError, ValueError):
+                logger.warning(
+                    f"[P170] quant excluded from fusion: quant_data_quality "
+                    f"non-numeric ({_raw_dq!r})."
+                )
+                quant_dq = 0.0
         if quant_dq < 0.5:
             logger.warning(
                 f"[P126] quant excluded from fusion: data_quality={quant_dq:.2f} "

@@ -269,15 +269,29 @@ def test_account_sync_dry_run():
 
 def test_account_sync_stale_detection():
     """Test: Stale equity -> rejected."""
-    from core.account_sync import AccountSyncManager
+    from core.account_sync import AccountSyncManager, MAX_EQUITY_AGE_SECONDS
     import asyncio
-    
+
     sync = AccountSyncManager(dry_run=True)
     asyncio.run(sync.refresh())
-    
-    # Manually age the state
-    sync._state.timestamp = time.time() - 120  # 2 minutes old
-    
+
+    # [P188] Age past the threshold, not exactly to it, and read the threshold
+    # from the module instead of restating it.
+    #
+    # This was `time.time() - 120`, and MAX_EQUITY_AGE_SECONDS is 120.0. The
+    # predicate is `age > MAX`, so age was 120.0 + (the microseconds between
+    # this line and the get_equity() call below) and the test passed only
+    # because that gap happened to survive float64 rounding at epoch magnitude
+    # (~240ns of resolution near 1.7e9). It failed roughly one full-suite run
+    # in two on this machine. A test that passes on the strength of how long
+    # the interpreter took to reach the next statement is not testing the
+    # staleness rule; it is racing it.
+    #
+    # The literal was also wrong twice over: it read as "2 minutes old, well
+    # past a 60s limit", which is what core/account_sync.py:299 still claims
+    # the limit is. The limit is 120s.
+    sync._state.timestamp = time.time() - (MAX_EQUITY_AGE_SECONDS * 2)
+
     try:
         sync.get_equity()
         assert False, "Should raise error for stale equity"

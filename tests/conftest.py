@@ -17,6 +17,84 @@ sys.path.insert(0, str(ROOT))
 
 
 # =============================================================================
+# [P186] REPO WRITE GUARD
+# =============================================================================
+# The test suite deposited 36 audit records into analytics/promotion_gate/applied/
+# — one per run of test_main_confirm_executes_atomic_archive, which drove
+# `main(--confirm)` without redirecting APPLIED_DIR. Every one was a valid-looking
+# operator audit log. You could only tell them from real applications by reading
+# input_plan_path and noticing it pointed at /var/folders.
+#
+# The per-file fix (an autouse fixture in tests/test_apply_promotion_plan.py)
+# stops that one leak. This stops the class: any test, anywhere, that writes into
+# a directory holding live configuration or audit history fails the run.
+#
+# Guarded dirs are deliberately limited to ones NO live process writes:
+#   configs/   is read by the running engine and written only by the operator-run
+#              applier — a test mutating it changes what the system trades.
+#   analytics/promotion_gate/applied/  is append-only audit history.
+# data/ and logs/ are excluded on purpose: the live system and a concurrent
+# session write there, so a diff could not attribute the change to a test. A
+# guard that reports the wrong culprit gets disabled, and then guards nothing.
+
+_GUARDED_DIRS = (
+    ROOT / "configs",
+    ROOT / "analytics" / "promotion_gate" / "applied",
+)
+
+
+def _snapshot_guarded():
+    """path -> (size, mtime_ns) for every file under the guarded dirs."""
+    snap = {}
+    for d in _GUARDED_DIRS:
+        if not d.is_dir():
+            continue
+        for p in d.rglob("*"):
+            if p.is_dir() or "__pycache__" in p.parts:
+                continue
+            try:
+                st = p.stat()
+            except OSError:
+                continue
+            snap[str(p)] = (st.st_size, st.st_mtime_ns)
+    return snap
+
+
+def pytest_configure(config):
+    config._hmats_repo_snapshot = _snapshot_guarded()
+
+
+def pytest_sessionfinish(session, exitstatus):
+    before = getattr(session.config, "_hmats_repo_snapshot", None)
+    if before is None:
+        return
+    after = _snapshot_guarded()
+    created = sorted(set(after) - set(before))
+    modified = sorted(k for k in set(after) & set(before) if after[k] != before[k])
+    deleted = sorted(set(before) - set(after))
+    if not (created or modified or deleted):
+        return
+
+    tw = session.config.get_terminal_writer()
+    tw.line("")
+    tw.line("=" * 78, red=True)
+    tw.line("[P186] TESTS WROTE INTO THE REPO", red=True, bold=True)
+    tw.line("=" * 78, red=True)
+    for label, paths in (("created", created), ("modified", modified),
+                         ("deleted", deleted)):
+        for p in paths:
+            tw.line(f"  {label}: {Path(p).relative_to(ROOT)}", red=True)
+    tw.line("")
+    tw.line("  These directories hold live configuration and audit history. A", red=True)
+    tw.line("  test that writes here leaves artifacts indistinguishable from", red=True)
+    tw.line("  real operator actions. Redirect the module's path global to", red=True)
+    tw.line("  tmp_path (see tests/test_apply_promotion_plan.py's autouse", red=True)
+    tw.line("  fixture), then delete the artifacts this run left behind.", red=True)
+    tw.line("=" * 78, red=True)
+    session.exitstatus = 1
+
+
+# =============================================================================
 # MARKET DATA FIXTURES
 # =============================================================================
 

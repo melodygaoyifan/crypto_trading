@@ -39,6 +39,7 @@ NAIVE_DT_BASELINE = BASELINES_DIR / "naive_datetime_baseline.json"  # [P111]
 SELF_CONFIG_BASELINE = BASELINES_DIR / "self_config_undefined_baseline.json"  # [P111]
 MYPY_BASELINE = BASELINES_DIR / "mypy_baseline.json"  # [P113 (4/6)]
 FRESHNESS_BASELINE = BASELINES_DIR / "signal_freshness_baseline.json"  # [P120]
+ORPHAN_READS_BASELINE = BASELINES_DIR / "orphan_signal_reads_baseline.json"  # [P171]
 
 
 def _run_scanner(args: List[str]) -> Dict[str, Any]:
@@ -254,6 +255,14 @@ def main() -> int:
         action="store_true",
         help="Print diff but always exit 0 (dev/inspection mode).",
     )
+    ap.add_argument(
+        "--require-all-gates",
+        action="store_true",
+        help="Fail if any gate could not run (e.g. mypy not installed, or a "
+             "different mypy release than the baseline's). Intended for CI. "
+             "Locally the default warns instead, so a dev without mypy is not "
+             "blocked.",
+    )
     args = ap.parse_args()
 
     BASELINES_DIR.mkdir(parents=True, exist_ok=True)
@@ -344,6 +353,30 @@ def main() -> int:
     ])
     freshness_norm = freshness_raw
 
+    # [P171 2026-08-05] orphan-read baseline — locks the number of signal-dict
+    # keys that are READ but written nowhere. lint_signal_freshness (P120)
+    # inventories writes, so by construction it cannot see a key with no
+    # writer at all; that is exactly the shape of P126/P170, where the
+    # consumer read `agent_signals["quant_data_quality"]`, the producer only
+    # ever wrote it into market_data, and the reassuring default won for
+    # fifteen months.
+    #
+    # [P174 2026-08-05] The metric set changed, because the original one could
+    # not fail. P171 gated `orphan_count: 0`, but main.py copies signal keys in
+    # loops, which makes absence unprovable for agent_signals, market_data and
+    # position_state — every candidate was downgraded to UNPROVABLE before it
+    # could be counted. The check adjudicated 0 of 458 unmatched reads and its
+    # green was arithmetic, not evidence. What is scored now is what the scanner
+    # can prove and what has actually caught bugs: COPY_ONLY, MISROUTED,
+    # dynamic_site_count (the blind spot must not grow) and parse failures.
+    # See the scanner's --baseline-format branch for the per-metric reasoning.
+    print("[ci_check] running lint_orphan_signal_reads...", file=sys.stderr)
+    orphan_raw = _run_scanner([
+        "tools/lint_orphan_signal_reads.py",
+        "--baseline-format",
+    ])
+    orphan_norm = orphan_raw
+
     if mypy_unavailable:
         print(
             "=" * 70 + "\n"
@@ -373,6 +406,34 @@ def main() -> int:
             file=sys.stderr,
         )
 
+    # [P187] A gate that could not run is not a gate that passed.
+    #
+    # P159 made the unavailable path emit data instead of a zero count, and
+    # P161/P175 added the version-mismatch carry-forward. Both print a loud
+    # banner and exit 0 — correct for a developer without mypy, wrong for CI,
+    # where the banner scrolls past in a log nobody reads and the job goes
+    # green. .github/workflows/codebase-invariants.yml installed nothing at
+    # all ("Scanners depend only on stdlib + git"), so mypy was absent on
+    # every CI run and the type gate had never once executed there.
+    #
+    # --require-all-gates makes that state a failure. The workflow now
+    # installs the baseline's exact mypy version and passes this flag, so the
+    # gate either runs or the build goes red — there is no third outcome that
+    # looks like success.
+    if args.require_all_gates and (mypy_unavailable or mypy_version_mismatch):
+        print(
+            "=" * 70 + "\n"
+            "[ci_check] FAIL — --require-all-gates and the mypy gate did not\n"
+            "  run (see the banner above). This job cannot report the type\n"
+            "  check as passing, because it did not perform one.\n"
+            "  Fix the environment, not this flag: install mypy "
+            f"{_base_ver or '<baseline unstamped>'}, the release that produced\n"
+            "  tools/scanner_baselines/mypy_baseline.json.\n"
+            + "=" * 70,
+            file=sys.stderr,
+        )
+        return 1
+
     if args.update:
         AUTHORITY_BASELINE.write_text(
             json.dumps(auth_norm, indent=2, sort_keys=True), encoding="utf-8"
@@ -395,6 +456,9 @@ def main() -> int:
         FRESHNESS_BASELINE.write_text(
             json.dumps(freshness_norm, indent=2, sort_keys=True), encoding="utf-8"
         )
+        ORPHAN_READS_BASELINE.write_text(
+            json.dumps(orphan_norm, indent=2, sort_keys=True), encoding="utf-8"
+        )
         print(
             f"[ci_check] baselines updated:\n"
             f"  - {AUTHORITY_BASELINE.relative_to(REPO_ROOT)}\n"
@@ -403,7 +467,8 @@ def main() -> int:
             f"  - {NAIVE_DT_BASELINE.relative_to(REPO_ROOT)}\n"
             f"  - {SELF_CONFIG_BASELINE.relative_to(REPO_ROOT)}\n"
             f"  - {MYPY_BASELINE.relative_to(REPO_ROOT)}\n"
-            f"  - {FRESHNESS_BASELINE.relative_to(REPO_ROOT)}",
+            f"  - {FRESHNESS_BASELINE.relative_to(REPO_ROOT)}\n"
+            f"  - {ORPHAN_READS_BASELINE.relative_to(REPO_ROOT)}",
             file=sys.stderr,
         )
         return 0
@@ -412,7 +477,7 @@ def main() -> int:
         p.name for p in (AUTHORITY_BASELINE, SILENT_BASELINE,
                          SWALLOW_BASELINE, NAIVE_DT_BASELINE,
                          SELF_CONFIG_BASELINE, MYPY_BASELINE,
-                         FRESHNESS_BASELINE)
+                         FRESHNESS_BASELINE, ORPHAN_READS_BASELINE)
         if not p.exists()
     ]
     if missing:
@@ -430,6 +495,7 @@ def main() -> int:
     self_config_baseline = json.loads(SELF_CONFIG_BASELINE.read_text(encoding="utf-8"))
     mypy_baseline = json.loads(MYPY_BASELINE.read_text(encoding="utf-8"))
     freshness_baseline = json.loads(FRESHNESS_BASELINE.read_text(encoding="utf-8"))
+    orphan_baseline = json.loads(ORPHAN_READS_BASELINE.read_text(encoding="utf-8"))
 
     auth_diffs = _diff("authority", auth_baseline, auth_norm)
     silent_diffs = _diff("silent", silent_baseline, silent_norm)
@@ -438,10 +504,12 @@ def main() -> int:
     self_config_diffs = _diff("self_config", self_config_baseline, self_config_norm)
     mypy_diffs = _diff("mypy", mypy_baseline, mypy_norm)
     freshness_diffs = _diff("freshness", freshness_baseline, freshness_norm)
+    orphan_diffs = _diff("orphan_reads", orphan_baseline, orphan_norm)
 
     if (not auth_diffs and not silent_diffs and not swallow_diffs
             and not naive_dt_diffs and not self_config_diffs
-            and not mypy_diffs and not freshness_diffs):
+            and not mypy_diffs and not freshness_diffs
+            and not orphan_diffs):
         print("[ci_check] OK — no new findings vs baseline.", file=sys.stderr)
         return 0
 
@@ -462,6 +530,8 @@ def main() -> int:
         print(f"  {d}")
     for d in freshness_diffs:
         print(f"  {d}")
+    for d in orphan_diffs:
+        print(f"  {d}")
     print("=" * 70)
     print(
         "If these are intentional, re-baseline:\n"
@@ -470,7 +540,20 @@ def main() -> int:
         "\n"
         "If new silent-swallow findings: either annotate with\n"
         "`# noqa: silent-swallow` (intentional) or convert the swallow into\n"
-        "a logger.warning/error call with type(e).__name__ + context."
+        "a logger.warning/error call with type(e).__name__ + context.\n"
+        "\n"
+        "If new orphan-read findings: a signal-dict key is being read that no\n"
+        "producer writes, so the .get() default is the only value it will ever\n"
+        "have. Run `python -X utf8 tools/lint_orphan_signal_reads.py` for the\n"
+        "sites. Two of these metrics are NOT re-baselineable:\n"
+        "  parse_failure_count  — the scan could not read part of the tree, so\n"
+        "                         every other number in this block is unfounded.\n"
+        "  dynamic_site_count   — [P174] a new computed-key write makes more of\n"
+        "                         the tree unprovable. Accepting a rise here is\n"
+        "                         how the check goes quiet: the other counts can\n"
+        "                         always be driven to zero by making the code\n"
+        "                         less analyzable. Route the write through an\n"
+        "                         explicit key, or say in the PR why not."
     )
 
     return 0 if args.diff_only else 1

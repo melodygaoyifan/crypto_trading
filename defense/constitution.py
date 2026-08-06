@@ -1019,11 +1019,35 @@ class FrictionComponents:
 
     @property
     def total_taker(self) -> float:
+        """ONE LEG of friction. See `round_trip_bps` — a position pays this twice."""
         return self.taker_fee_bps + self.slippage_bps + self.latency_cost_bps + self._margin_cost_bps
 
     @property
     def total_maker(self) -> float:
+        """ONE LEG of friction. See `round_trip_bps` — a position pays this twice."""
         return self.maker_fee_bps + self.slippage_bps + self.latency_cost_bps + self._margin_cost_bps
+
+    def per_leg_bps(self, is_maker: bool = False) -> float:
+        """[P167] Costs paid once per ORDER: exchange fee, spread crossed,
+        latency slip. Excludes margin/funding, which is charged per HOLD."""
+        fee = self.maker_fee_bps if is_maker else self.taker_fee_bps
+        return fee + self.slippage_bps + self.latency_cost_bps
+
+    def round_trip_bps(self, is_maker: bool = False, legs: float = 2.0) -> float:
+        """[P167] What a position actually costs, entry through exit.
+
+        The alpha gate compared a ROUND-TRIP alpha estimate against ONE LEG of
+        friction. `signal_edge_bps = |quant_dir| * 65` was calibrated (see
+        `data_mgmt/market_data_pipeline.py:1318`) from realized per-trade alpha
+        — "+41bps avg win, 50% win rate -> effective ~20bps" — which is an
+        entry-to-exit number. But `friction` summed a single fee and a single
+        spread crossing, so the exit leg was free.
+
+        Margin/funding is deliberately NOT multiplied: `_margin_cost_bps` is
+        already opening_fee + rollover x expected_hold_periods_4h, i.e. the
+        whole holding cost. Doubling it would overcharge.
+        """
+        return float(legs) * self.per_leg_bps(is_maker) + self._margin_cost_bps
 
 
 @dataclass
@@ -1041,6 +1065,12 @@ class AlphaGatingResult:
     friction_latency_bps: float = 0.0
     friction_margin_bps: float = 0.0
     friction_total_bps: float = 0.0
+    # [P167] How many order legs `friction_total_bps` charges for. 2.0 = entry
+    # and exit, which is what a round-trip alpha estimate must be compared
+    # against. Defaults to 0.0, not 1.0, so the early-return paths (NO_TRADE,
+    # QUIET_ACCUMULATION) read as "no friction was priced here" rather than
+    # "one leg was priced" — absent must not look like a value.
+    friction_legs: float = 0.0
     min_alpha_bps_used: float = 0.0
     ev_threshold_bps: float = 0.0       # friction * multiplier (before min_alpha floor)
     gate_decision: str = ""              # ALLOW / REJECT_MIN_ALPHA / REJECT_EV
@@ -1068,6 +1098,10 @@ class AlphaThresholdCalculator:
     
     # Alpha estimation
     MAX_ALPHA_BPS = 200
+
+    # [P167] A position is opened AND closed. Both legs pay fee + spread +
+    # latency, so a round-trip alpha estimate must be charged for both.
+    ROUND_TRIP_LEGS = 2.0
     
     def __init__(self):
         self._rolling_hit_rate = 0.5
@@ -1076,6 +1110,14 @@ class AlphaThresholdCalculator:
         # the override path (see check_alpha_gate). Default ON; disable with
         # HMATS_ALPHA_FEEDBACK=0 in .env + restart. Reversible escape hatch.
         self._alpha_feedback_enabled = os.environ.get("HMATS_ALPHA_FEEDBACK", "1") != "0"
+        # [P167] Charge entry AND exit friction. Default ON: this TIGHTENS the
+        # gate, and undercharging cost is the failure being corrected. The
+        # escape hatch exists to restore the old arithmetic in one restart if
+        # the tightening proves to have starved trading, not because the old
+        # arithmetic was defensible.
+        self._round_trip_friction_enabled = (
+            os.environ.get("HMATS_ROUND_TRIP_FRICTION", "1") != "0"
+        )
     
     def check_alpha_gate(
         self,
@@ -1166,7 +1208,16 @@ class AlphaThresholdCalculator:
         slippage_bps = self.FRICTION.slippage_bps
         latency_bps = self.FRICTION.latency_cost_bps
         margin_bps = float(self.FRICTION._margin_cost_bps or 0.0)
-        friction = fee_bps + slippage_bps + latency_bps + margin_bps
+        # [P167] Charge BOTH legs. `estimated_alpha` is a round-trip number
+        # (see FrictionComponents.round_trip_bps), so pricing a single fee and
+        # a single spread crossing let every trade in on the assumption that
+        # exiting is free. On SOL (10bps spread) that understated the true cost
+        # by ~13bps against a threshold of 1.10x friction — the gate demanded
+        # 1.10 legs where the position pays 2. Measured over the 85 closed
+        # trades in data/trade_attribution.jsonl: gross_alpha -$179.51 vs fees
+        # $689.77. Escape hatch: HMATS_ROUND_TRIP_FRICTION=0 (+ restart).
+        friction_legs = self.ROUND_TRIP_LEGS if self._round_trip_friction_enabled else 1.0
+        friction = friction_legs * (fee_bps + slippage_bps + latency_bps) + margin_bps
 
         # EV gate threshold = friction × multiplier
         ev_threshold_bps = friction * multiplier
@@ -1241,8 +1292,13 @@ class AlphaThresholdCalculator:
                           f"{min_alpha_bps:.0f}bps (EV threshold={ev_threshold_bps:.0f}bps)")
             else:
                 gate_decision = "REJECT_EV"
+                # [P167] Name the leg count: a rejection at 15bps reads very
+                # differently depending on whether the exit was priced.
                 reason = (f"Alpha {estimated_alpha:.0f}bps < threshold "
-                          f"{effective_threshold:.0f}bps ({multiplier}x friction)")
+                          f"{effective_threshold:.0f}bps ({multiplier}x friction "
+                          f"{friction:.1f}bps = {friction_legs:.0f}x"
+                          f"{fee_bps + slippage_bps + latency_bps:.1f}bps/leg"
+                          f"{f' + {margin_bps:.1f}bps hold' if margin_bps else ''})")
         elif margin < 0 and _borderline_epsilon > 0:
             gate_decision = "ALLOW_EPSILON"
 
@@ -1258,6 +1314,7 @@ class AlphaThresholdCalculator:
             friction_latency_bps=latency_bps,
             friction_margin_bps=margin_bps,
             friction_total_bps=friction,
+            friction_legs=friction_legs,  # [P167]
             min_alpha_bps_used=min_alpha_bps,
             ev_threshold_bps=ev_threshold_bps,
             gate_decision=gate_decision,

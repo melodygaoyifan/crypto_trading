@@ -350,11 +350,29 @@ def train_gmm_for_asset(asset: str, train_end: int = None, max_k: int = 8):
 
 
 def load_split_manifest(fold: int = 1) -> dict:
-    """Load split manifest to get fold_N train_end per asset."""
-    manifest_path = PROJECT_ROOT / "config" / "split_manifest.json"
+    """Load split manifest to get fold_N train_end per asset.
+
+    [P164] This read was pointed at `config/` while `generate_split_manifest.py`
+    writes `configs/` (and `config/` holds only optuna_winner.json). The lookup
+    therefore ALWAYS missed, returned `{}`, and `train_end` came through as
+    None — at which point `train_gmm_for_asset` logs "Using ALL data for GMM
+    fit" and fits the regime model on 100% of history. Iron Rule #12 was a
+    silent no-op inside the script written to enforce it, for every run this
+    script has ever had.
+
+    Now fail-closed. A missing or unusable manifest raises rather than quietly
+    degrading to the leaky path; `--no-split` remains the explicit, visible way
+    to ask for a full-sample fit.
+    """
+    manifest_path = PROJECT_ROOT / "configs" / "split_manifest.json"
     if not manifest_path.exists():
-        logger.warning(f"  No split manifest found at {manifest_path}")
-        return {}
+        raise FileNotFoundError(
+            f"Split manifest not found at {manifest_path}. Generate it with "
+            f"`python training/scripts/generate_split_manifest.py`. Refusing to "
+            f"fall back to a full-sample GMM fit, which leaks the validation "
+            f"and test windows into the regime features (Iron Rule #12). Pass "
+            f"--no-split if a full-sample fit is genuinely what you want."
+        )
 
     with open(manifest_path) as f:
         manifest = json.load(f)
@@ -366,8 +384,14 @@ def load_split_manifest(fold: int = 1) -> dict:
                 train_ends[asset] = f_info["train_end"]
                 break
 
-    if train_ends:
-        logger.info(f"  Split manifest fold_{fold} train_ends: {train_ends}")
+    if not train_ends:
+        raise ValueError(
+            f"Split manifest {manifest_path} contains no fold_{fold} boundaries "
+            f"(assets present: {sorted(manifest.get('assets', {}))}). Refusing "
+            f"to fit the GMM on all data — see Iron Rule #12."
+        )
+
+    logger.info(f"  Split manifest fold_{fold} train_ends: {train_ends}")
     return train_ends
 
 

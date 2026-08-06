@@ -1,4 +1,23 @@
 """
+[P177] NOT WIRED. Nothing in this module has ever run in production.
+
+`get_short_controller()` has no production call site. Live short-side risk is
+`defense/short_control.py`, invoked at main.py:10577 under
+`intent.direction < 0` and reported at main.py:11540. This file is a parallel
+implementation of the same responsibility that was written, imported by
+main.py, logged as "[OK]V6 SOTA modules loaded (short risk + metrics)", and
+then never called. That import and that log line were removed in P177 because
+they read as an assurance that short risk was governed.
+
+Do not wire this in casually. `assess_risk`, `check_stop_loss` and
+`get_position_size_multiplier` are risk *actuators* — they halt trading, force
+exits and scale size — and none has executed against a real fill. Turning them
+on is a live-system change, not a cleanup. If you do wire it, reconcile it
+with `defense/short_control.py` first: two controllers clamping the same
+exposure independently is worse than one, and
+tests/test_dead_risk_controller.py will fail until that reconciliation is
+recorded.
+
 ================================================================================
 HMATS v6.0.0 - Short Position Risk Controller
 ================================================================================

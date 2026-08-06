@@ -161,53 +161,57 @@ mkdir -p ~/hmats/{models,logs,data,backups}
 
 ## 4. 部署 HMATS
 
-有两种方式：**Docker（推荐）** 或 **直接部署**。
+> **[P190 2026-08-06] 生产部署的唯一权威是 `scripts/hetzner_deploy.sh`。**
+> 它做的事: `cd /home/hmats/hmats/app` → `git pull origin main` → 检查 `.env`
+> → `docker compose -f docker-compose.hetzner.yml build` → 把 models 灌进
+> `hmats-models` volume → `docker compose ... up -d`。起来的是两个容器:
+> **`hmats-engine`** (由 `Dockerfile.engine` 构建) 和 **`hmats-api`**。
+> 所有运维文档里的 `docker exec hmats-engine ...` 指的就是它。
+>
+> 本节原来的"方式 A"是手工 `docker build .` 单容器 —— 构建的是根目录那份
+> v5.1.0 的 `Dockerfile`，容器名 `hmats-paper`，既不是线上跑的镜像也不是
+> 线上跑的容器名。"方式 B"(venv) 与第 7 节 systemd 是**非 Docker 的历史
+> 路径**，线上没有在用；`deploy/systemd/hmats.service` 至今还写着
+> `main.py --mode paper`。保留它们作为参考，但不要照着上生产。
 
-### 方式 A: Docker 部署（推荐）
+### 方式 A: Docker Compose 部署（生产路径）
 
 ```bash
 # 以 hmats 用户操作
 su - hmats
 
-# 克隆代码
+# 克隆代码（APP_DIR 必须是这个路径，hetzner_deploy.sh 写死了）
 git clone https://github.com/melodygaoyifan/crypto_trading.git ~/hmats/app
 cd ~/hmats/app
 
 # 创建 .env 文件
-cp .env.example .env
+cp env/.env.template .env
 nano .env    # 填入真实 API keys
-
-# 确保 .env 权限安全
 chmod 600 .env
 
-# 更新 Dockerfile 版本号（可选）
-# Dockerfile 目前引用的是 v5.1.0，可以直接用，不影响运行
+# 构建 + 启动（engine + api）
+docker compose -f docker-compose.hetzner.yml build
+docker compose -f docker-compose.hetzner.yml up -d
 
-# 构建镜像
-docker build -t hmats:6.8.0 .
-
-# 验证模式测试
-docker run --rm \
-  --env-file .env \
-  -v ~/hmats/models:/opt/hmats/models:ro \
-  -v ~/hmats/logs:/var/log/hmats \
-  -v ~/hmats/data:/var/lib/hmats \
-  hmats:6.8.0 --mode verify
-
-# Paper trading
-docker run -d --name hmats-paper \
-  --restart unless-stopped \
-  --env-file .env \
-  -v ~/hmats/models:/opt/hmats/models:ro \
-  -v ~/hmats/logs:/var/log/hmats \
-  -v ~/hmats/data:/var/lib/hmats \
-  hmats:6.8.0 --mode paper
-
-# 查看日志
-docker logs -f hmats-paper
+# 查看状态与日志
+docker compose -f docker-compose.hetzner.yml ps
+docker logs -f hmats-engine
 ```
 
-### 方式 B: 直接部署（更灵活，推荐调试期使用）
+之后的每次部署都从本地跑一条命令即可，不要在服务器上手工 build：
+
+```bash
+# 本地
+bash scripts/hetzner_deploy.sh hmats
+```
+
+注意 volume：engine 的状态与日志在 `/opt/hmats/data` 和 `/opt/hmats/logs`
+（`docker-compose.hetzner.yml` 里挂的是 named volume `hmats-data` /
+`hmats-logs`），**不是** `/var/log/hmats` 和 `/var/lib/hmats` —— 那是根目录
+那份 v5.1.0 `Dockerfile` 的布局。挂错位置的话容器照常运行，数据却写在镜像
+层里，容器重建即丢失。
+
+### 方式 B: 直接部署（历史路径，非生产）
 
 ```bash
 su - hmats
@@ -315,7 +319,21 @@ streamlit run dashboard/app.py --server.port 8501 --server.address 0.0.0.0
 
 ---
 
-## 7. Systemd 守护进程
+## 7. Systemd 守护进程（历史路径，线上未使用）
+
+> **[P190] 线上不是 systemd。** 引擎是 `docker-compose.hetzner.yml` 里的
+> `hmats-engine`，`restart: unless-stopped` 已经提供开机自启 + 崩溃重启。
+> 本节对应的是方式 B 的 venv 安装；仓库里的 `deploy/systemd/hmats.service`
+> 至今仍是 `main.py --mode paper`。**事故当中不要用
+> `sudo systemctl stop hmats` 停引擎 —— 它什么都不会停。** 对应命令见下表。
+>
+> | 本节 (systemd) | 线上等价命令 |
+> |---|---|
+> | `systemctl status hmats` | `cd /home/hmats/hmats/app && docker compose -f docker-compose.hetzner.yml ps` |
+> | `systemctl start hmats` | `docker compose -f docker-compose.hetzner.yml up -d` |
+> | `systemctl stop hmats` | `docker compose -f docker-compose.hetzner.yml stop hmats-engine` |
+> | `systemctl restart hmats` | `docker compose -f docker-compose.hetzner.yml restart hmats-engine` |
+> | `journalctl -u hmats -f` | `docker logs -f hmats-engine` |
 
 用 systemd 管理 HMATS，实现开机自启 + 崩溃自动重启。
 
@@ -398,7 +416,9 @@ LOG_DIR="/home/hmats/hmats/logs"
 ALERT_FILE="/tmp/hmats_alert_sent"
 
 # 检查进程是否运行
-if ! systemctl is-active --quiet hmats; then
+# [P191] 原文用的是 systemd 判断，线上是 docker。对一个不存在的 unit，
+# systemd 永远返回 inactive —— 于是健康检查会在引擎完全正常时每分钟报一次 DOWN。
+if ! docker inspect -f '{{.State.Running}}' hmats-engine 2>/dev/null | grep -q true; then
     echo "$(date): HMATS is DOWN!" >> $LOG_DIR/health.log
     # 如果配置了 Telegram，发送告警
     if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID" ]; then
@@ -464,37 +484,53 @@ sudo nano /etc/logrotate.d/hmats
 
 ### 9.1 更新代码
 
+> **[P191]** 本节原文全部走 systemd。线上是 docker compose，下面已改成
+> 实际生效的命令。`scripts/hetzner_deploy.sh` 把这一整套自动化了 ——
+> 平时直接在本地跑 `bash scripts/hetzner_deploy.sh hmats` 即可。
+
 ```bash
 ssh hmats
-cd ~/hmats/app
+cd /home/hmats/hmats/app
 
 # 拉取最新代码
 git pull origin main
 
-# 重启服务
-sudo systemctl restart hmats
+# 重建镜像并重启（代码变了必须 build，不能只 restart）
+docker compose -f docker-compose.hetzner.yml build hmats-engine
+docker compose -f docker-compose.hetzner.yml up -d
 
 # 确认正常
-sudo systemctl status hmats
-journalctl -u hmats --since "1 min ago"
+docker compose -f docker-compose.hetzner.yml ps
+docker logs --since 1m hmats-engine
 ```
 
 ### 9.2 更新模型
 
 从本地传输新模型后：
 
+> **[P191]** 引擎从**命名卷** `hmats-models`（只读挂载到
+> `/opt/hmats/models`）读模型，不是从 `~/hmats/models` 直接读。只把文件 scp 到
+> `~/hmats/models/` 而不同步进卷，引擎看到的还是旧模型 —— 这正是 2026-04-22
+> 那次 `models_ready=0`、DRL 卡在 SHADOW 的成因（见 compose 文件里的注释）。
+
 ```bash
+# 从本地 scp 新模型（在本地执行）
+# scp -r models/retrained hmats:~/hmats/models/
+
 # 在服务器上
-sudo systemctl stop hmats
+cd /home/hmats/hmats/app
+docker compose -f docker-compose.hetzner.yml stop hmats-engine
 
 # 备份旧模型
 cp -r ~/hmats/models ~/hmats/backups/models_$(date +%Y%m%d)
 
-# 从本地 scp 新模型（在本地执行）
-# scp -r models/retrained hmats:~/hmats/models/
+# 同步进命名卷（与 scripts/hetzner_deploy.sh 第 4 步同一条命令）
+docker volume create hmats-models 2>/dev/null || true
+docker run --rm -v hmats-models:/models -v /home/hmats/hmats/models:/src:ro alpine \
+    sh -c "cp -r /src/* /models/ 2>/dev/null || true"
 
 # 重启
-sudo systemctl start hmats
+docker compose -f docker-compose.hetzner.yml up -d hmats-engine
 ```
 
 ### 9.3 备份
@@ -552,17 +588,18 @@ scp -r hmats:~/hmats/app/data/shadow_ledger/ C:\Users\melod\Downloads\hmats_shad
 # SSH 连接
 ssh hmats
 
-# 查看 HMATS 状态
-sudo systemctl status hmats
+# 查看 HMATS 状态  [P191] 线上是 docker，不是 systemd
+cd /home/hmats/hmats/app
+docker compose -f docker-compose.hetzner.yml ps
 
 # 查看实时日志
-journalctl -u hmats -f
+docker logs -f hmats-engine
 
 # 重启
-sudo systemctl restart hmats
+docker compose -f docker-compose.hetzner.yml restart hmats-engine
 
 # 停止
-sudo systemctl stop hmats
+docker compose -f docker-compose.hetzner.yml stop hmats-engine
 
 # 磁盘使用
 df -h
@@ -570,8 +607,8 @@ df -h
 # 内存使用
 free -h
 
-# 进程
-ps aux | grep main.py
+# 容器资源占用
+docker stats --no-stream hmats-engine hmats-api
 ```
 
 ---
@@ -580,10 +617,15 @@ ps aux | grep main.py
 
 当 paper trading 验证通过后：
 
-1. 编辑 systemd service：`ExecStart=... --mode live --confirm-live`
+> **[P191]** 模式写在 `docker-compose.hetzner.yml` 的 `command:` 里，不在 systemd
+> unit 里。**线上当前已经是 live**：
+> `command: ["--mode", "live", "--config", "configs/live_high_risk.json", "--confirm-live"]`。
+
+1. 编辑 `docker-compose.hetzner.yml` 中 `hmats-engine` 的 `command:` 数组
 2. 确保 `.env` 中 `HMATS_RUNTIME_MODE=PROD`
 3. 确认 Kraken API key 有交易权限
-4. `sudo systemctl restart hmats`
+4. `docker compose -f docker-compose.hetzner.yml up -d hmats-engine`（改 `command:`
+   后必须 `up -d` 重建容器，`restart` 不会应用新的 command）
 
 > ⚠️ 建议先用 `live_phase1.json`（半仓位，2x 杠杆）运行 7 天，再切 `live_phase2.json`（全仓位，3x）。
 

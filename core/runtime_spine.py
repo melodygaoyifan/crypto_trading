@@ -875,6 +875,22 @@ class RuntimeSpine:
             # DRL signal - authority level determines forwarding (v6.7)
             if self._drl_agent:
                 try:
+                    # [P178] Three of eight arguments. position_state,
+                    # market_data and agent_signals are omitted, so every
+                    # state-bearing input to build_state() is empty and the
+                    # DRL would score a zeroed vector. As of P178
+                    # generate_signal refuses that case and returns
+                    # is_valid=False / direction=0.0, so the branches below
+                    # cannot forward a fabricated signal.
+                    #
+                    # Left uncorrected on purpose: supplying the three dicts
+                    # here would put a never-exercised DRL path into a file
+                    # this module's own docstring marks NOT USED, on a live
+                    # trading system. Production DRL is the TQC ensemble in
+                    # main.py (`_drl_ensembles`, :3697/:7795); this DRLAgent
+                    # wrapper is itself legacy (agents/drl_agent.py:172).
+                    # Fixing the caller is only worth doing as part of
+                    # deleting or reviving this spine deliberately.
                     drl_result = self._drl_agent.generate_signal(
                         asset=asset,
                         price=snapshot.current_price,

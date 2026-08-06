@@ -40,14 +40,69 @@ class TrainingOrchestrator:
 
     ASSETS = ["BTC", "ETH", "SOL"]
 
-    def __init__(self, data_dir: str = './training_data', output_dir: str = './models'):
+    def __init__(self, data_dir: str = './training_data', output_dir: str = './models',
+                 venue: str = 'kraken', fee_side: str = 'taker'):
         self.data_dir = Path(data_dir)
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        # [P189] Passed through to train_drl_full.py. Same defaults as
+        # training/Makefile's DRL_VENUE/DRL_FEE_SIDE.
+        self.venue = venue
+        self.fee_side = fee_side
 
         self.script_dir = Path(__file__).parent
         # Root dir is one level up from training/
         self.root_dir = self.script_dir.parent
+
+    # [P189] Every script this launcher can invoke, resolved once, in one place.
+    #
+    # Two of these were wrong and had been for as long as the file has existed:
+    #   run_gmm -> root_dir/scripts/retrain_gmm.py   (only copy is in
+    #              archive/gmm_research/; it trains the GLOBAL 6-component model
+    #              that main.py:3552 treats as the legacy fallback)
+    #   run_drl -> root_dir/train_drl_full.py        (off by one directory —
+    #              the file is in training/, i.e. script_dir)
+    # So `make all`, `make quick` and `make gmm` could not complete. The failure
+    # was a subprocess returncode 2 and a shell "can't open file" line, arriving
+    # after however many hours the preceding steps took. Same shape as [P186],
+    # which found `make drl` pointing at a script that never existed.
+    #
+    # run_gmm now points at training/scripts/train_per_asset_gmm.py, which is
+    # what main.py:3520-3541 loads FIRST ("Try per-asset models first (v7)") and
+    # what [P164] established as the correct, leak-free trainer — it fits on
+    # train folds only, per configs/split_manifest.json.
+    SCRIPTS = {
+        "gmm":       ("script_dir", "scripts/train_per_asset_gmm.py"),
+        "dt":        ("script_dir", "drl/train_decision_transformer_v32.py"),
+        "drl":       ("script_dir", "train_drl_full.py"),
+        "sentiment": ("script_dir", "sentiment/train_sentiment_agent_v22.py"),
+    }
+
+    def _script(self, key: str) -> Path:
+        base, rel = self.SCRIPTS[key]
+        return (getattr(self, base) / rel).resolve()
+
+    def preflight(self) -> bool:
+        """[P189] Verify every script exists BEFORE running any of them.
+
+        A pipeline that discovers a bad path in step 3 has already spent the
+        cost of steps 1 and 2. This is a second's work and turns "can't open
+        file" into a message that names the key, the resolved path, and the
+        fact that nothing has run yet.
+        """
+        missing = [(k, self._script(k)) for k in self.SCRIPTS
+                   if not self._script(k).exists()]
+        if missing:
+            logger.error("=" * 60)
+            logger.error("[preflight] Refusing to start: %d training script(s) "
+                         "do not exist.", len(missing))
+            for k, p in missing:
+                logger.error("  %-10s -> %s", k, p)
+            logger.error("Nothing has been trained. Fix TrainingOrchestrator.SCRIPTS or "
+                         "restore the file; do not comment out the step.")
+            logger.error("=" * 60)
+            return False
+        return True
 
     def check_data(self) -> bool:
         """检查数据是否存在 (4H full parquets for DRL v7)"""
@@ -73,14 +128,18 @@ class TrainingOrchestrator:
         return len(missing) == 0
     
     def run_gmm(self):
-        """GMM 6-Regime 预训练 (scripts/retrain_gmm.py)"""
+        """Per-asset GMM (training/scripts/train_per_asset_gmm.py).
+
+        [P189] Was scripts/retrain_gmm.py, which is not in the tree. See
+        TrainingOrchestrator.SCRIPTS for why this is the per-asset trainer and not the
+        archived global one.
+        """
         logger.info("="*60)
-        logger.info("[Step 1] 6-Regime GMM Retrain")
+        logger.info("[Step 1] Per-asset GMM (BIC k=3-8, train folds only)")
         logger.info("="*60)
 
-        cmd = [sys.executable, '-X', 'utf8',
-               str(self.root_dir / 'scripts' / 'retrain_gmm.py')]
-        return self._run(cmd, "GMM Retrain")
+        cmd = [sys.executable, '-X', 'utf8', str(self._script("gmm"))]
+        return self._run(cmd, "Per-asset GMM")
     
     def run_dt(self, epochs: int = 200, batch_size: int = 256, assets: list = None):
         """Decision Transformer v3.2 (per-asset, aligned with TQC 126-dim obs)"""
@@ -94,7 +153,8 @@ class TrainingOrchestrator:
         for asset in assets:
             logger.info(f"\n  >>> DT v3.2 {asset} Training Starting...")
             cmd = [sys.executable, '-X', 'utf8',
-                   str(self.script_dir / 'drl' / 'train_decision_transformer_v32.py'),
+                   str(self._script("dt")),  # [P189] via SCRIPTS, so preflight
+                                             # checks the path that is used
                    '--asset', asset,
                    '--epochs', str(epochs), '--batch-size', str(batch_size)]
             results[asset] = self._run(cmd, f"DT v3.2 {asset}")
@@ -118,10 +178,16 @@ class TrainingOrchestrator:
             logger.info(f"\n  >>> {asset} Training Starting...")
             cmd = [
                 sys.executable, '-X', 'utf8', '-u',
-                str(self.root_dir / 'train_drl_full.py'),
+                str(self._script("drl")),   # [P189] was root_dir, file is in training/
                 '--asset', asset,
                 '--folds', '3',
                 '--no-progress-bar',
+                # [P189] Explicit, matching training/Makefile. After [P179] the
+                # env charges real venue fees, so which venue was charged has to
+                # be visible in the command that produced the model rather than
+                # left to a default that can move underneath it.
+                '--venue', self.venue,
+                '--fee-side', self.fee_side,
             ]
             if quick:
                 cmd.extend(['--timesteps', '200000'])
@@ -140,7 +206,7 @@ class TrainingOrchestrator:
         logger.info("[Step 4] Sentiment Agent v2.2")
         logger.info("="*60)
         
-        cmd = [sys.executable, str(self.script_dir / 'sentiment' / 'train_sentiment_agent_v22.py'),
+        cmd = [sys.executable, str(self._script("sentiment")),  # [P189] see run_dt
                '--epochs', str(epochs)]
         if ensemble > 1:
             cmd.extend(['--ensemble', str(ensemble)])
@@ -213,24 +279,43 @@ def main():
                         help='Single asset for DT/DRL (default: all)')
     parser.add_argument('--data-dir', default='./training_data')
     parser.add_argument('--output-dir', default='./models')
+    # [P189] Mirrors training/Makefile DRL_VENUE / DRL_FEE_SIDE.
+    parser.add_argument('--venue', default='kraken',
+                        help='Venue whose fees the DRL env charges (P179)')
+    parser.add_argument('--fee-side', default='taker', choices=['maker', 'taker'])
     args = parser.parse_args()
 
-    orch = TrainingOrchestrator(args.data_dir, args.output_dir)
+    orch = TrainingOrchestrator(args.data_dir, args.output_dir,
+                                venue=args.venue, fee_side=args.fee_side)
 
+    # [P189] Before anything runs, not after step 3 has already burned hours.
+    if not orch.preflight():
+        return 1
+
+    # [P189] These return values used to be discarded and main() returned None,
+    # so the process exited 0 whether the pipeline succeeded or every stage
+    # failed. `make all` reported success either way — a run that cannot fail
+    # tells you nothing about the models it did or did not produce.
+    ok = True
     if args.all or not any([args.gmm, args.dt, args.drl, args.sentiment]):
-        orch.run_all(args.quick)
+        ok = orch.run_all(args.quick)
     else:
         if args.gmm:
-            orch.run_gmm()
+            ok = orch.run_gmm() and ok
         if args.dt:
             assets = [args.asset] if args.asset else None
-            orch.run_dt(30 if args.quick else 200, assets=assets)
+            ok = orch.run_dt(30 if args.quick else 200, assets=assets) and ok
         if args.drl:
             assets = [args.asset] if args.asset else None
-            orch.run_drl(assets=assets, quick=args.quick)
+            ok = orch.run_drl(assets=assets, quick=args.quick) and ok
         if args.sentiment:
-            orch.run_sentiment(5 if args.quick else 15)
+            ok = orch.run_sentiment(5 if args.quick else 15) and ok
+
+    if not ok:
+        logger.error("Training pipeline FAILED — see the per-stage results "
+                     "above. Exiting 1.")
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

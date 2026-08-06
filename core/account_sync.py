@@ -296,8 +296,9 @@ class AccountSyncManager:
                 # ALL execution via [P0_FAIL_CLOSED] when the cached value
                 # was perfectly usable. Same shape as the parse-exception
                 # branch's existing guard at line 361 — applying here too.
-                # The staleness threshold (MAX_EQUITY_AGE_SECONDS=60s)
-                # remains the authoritative validity gate.
+                # The staleness threshold (MAX_EQUITY_AGE_SECONDS, 120s —
+                # this comment said 60s until [P188]; the constant at line 42
+                # is the one that decides) remains the authoritative gate.
                 _was_valid = self._state.status == EquityStatus.VALID
                 _age = (
                     time.time() - self._state.timestamp

@@ -37,6 +37,8 @@ import math
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
+from core.market_data_helpers import signal_value
+
 logger = logging.getLogger(__name__)
 
 
@@ -141,7 +143,18 @@ class SmartBetaController:
             regime = str(market_data.get("regime_state", "")).upper()
             hurst = float(market_data.get("hurst_exponent", 0.5))
             mtf_mom = float(market_data.get("mtf_momentum", 0.0))
-            phase = str(market_data.get("phase", agent_signals.get("_phase", "UNKNOWN"))).upper()
+            # [P173] Was `market_data.get("phase", agent_signals.get("_phase",
+            # "UNKNOWN"))`. Neither key exists: nothing writes
+            # market_data["phase"], and `_phase` with the leading underscore
+            # appears nowhere else in the tree — the producer is
+            # `agent_signals['phase']` (main.py:8522). So `phase` was the
+            # constant "UNKNOWN", and the TREND_STRONG branch below (line ~182)
+            # has never been reachable: in a confirmed bullish regime the
+            # controller never applied its gate_mult 0.90 / size_mult 1.10
+            # trend-participation boost. Note this fix LOOSENS the gate in
+            # bullish IGNITION/EXPANSION phases, within the configured
+            # alpha_gate_mult_min/size_mult_max bounds.
+            phase = str(signal_value("phase", agent_signals, market_data, "UNKNOWN")).upper()
             adx = float(market_data.get("adx", 20.0))
 
             # Trend direction from MTF momentum + regime

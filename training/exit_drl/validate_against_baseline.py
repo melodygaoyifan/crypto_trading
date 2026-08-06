@@ -40,11 +40,33 @@ if str(_REPO_ROOT) not in sys.path:
 import numpy as np
 import pandas as pd
 
+# [P188] This used to `sys.exit(1)` right here, at module scope, when torch was
+# missing. That makes the module unimportable rather than unusable: any `from
+# training.exit_drl.validate_against_baseline import TradeOutcome` raises
+# SystemExit, which is not an Exception subclass, so it tears through
+# try/except ImportError guards and, under pytest, fails the test with a
+# traceback pointing at this file's docstring. Two tests in
+# tests/test_exit_drl_close_integration.py did exactly that the first time CI
+# ever ran the suite; they only passed locally because a dev box has torch.
+#
+# Nothing at module scope needs torch — it is used inside make_drl_actor and
+# main() only. So record availability here and refuse at the point of use,
+# where the operator running the validator sees the same clear message as
+# before and a plain import of the dataclasses still works.
 try:
     import torch
-except ImportError:
-    print("[FATAL] torch required for validation.", file=sys.stderr)
-    sys.exit(1)
+    _TORCH_IMPORT_ERROR = None
+except ImportError as _e:      # pragma: no cover - depends on the environment
+    torch = None               # type: ignore[assignment]
+    _TORCH_IMPORT_ERROR = _e
+
+
+def _require_torch() -> None:
+    """[P188] Fail with the old message, at use time instead of import time."""
+    if torch is None:
+        print(f"[FATAL] torch required for validation ({_TORCH_IMPORT_ERROR}).",
+              file=sys.stderr)
+        sys.exit(1)
 
 # ────────────────────────────────────────────────────────────────
 # Local imports — must match training pipeline
@@ -53,9 +75,14 @@ from training.exit_drl.generate_expert_trajectories import (
     ACTION_HOLD, ACTION_PARTIAL_EXIT, ACTION_RELEASE_RUNNER, ACTION_EXIT_ALL,
     LOOKAHEAD_BARS, MIN_BARS_HELD, MAX_BARS_HELD, ENTRY_STRIDE,
     PARTIAL_PROFIT_MIN_BPS, POST_PEAK_DRAWDOWN_PCT, STOP_ATR_MULT,
+    STATE_DIM, ACTION_DIM,
     build_state,
 )
-from training.exit_drl.train_exit_sac import DiscreteActor, STATE_DIM, ACTION_DIM
+# [P188] DiscreteActor is a torch nn.Module, so train_exit_sac cannot be
+# imported without torch. It is needed only inside make_drl_actor; importing it
+# here made the whole module — including the plain dataclasses two tests
+# assert on — unimportable on any machine without the training extras.
+# STATE_DIM/ACTION_DIM now come from the torch-free module above.
 
 
 # ────────────────────────────────────────────────────────────────
@@ -253,7 +280,9 @@ def make_baseline_actor(cfg: BaselineConfig):
 
 
 def make_drl_actor(checkpoint_path: Path, device: str, extra_roots=None):
+    _require_torch()  # [P188] the check the module-scope sys.exit used to do
     from infra.safe_torch_load import safe_torch_load
+    from training.exit_drl.train_exit_sac import DiscreteActor
     ckpt = safe_torch_load(
         checkpoint_path, map_location=device, weights_only=False,
         extra_allowed_roots=extra_roots,
@@ -350,6 +379,7 @@ def main():
     entry_indices = [i for i in range(val_start, n - LOOKAHEAD_BARS, ENTRY_STRIDE)]
     print(f"  {len(entry_indices)} entry points × 2 directions = {len(entry_indices)*2} trades")
 
+    _require_torch()  # [P188] before the first torch attribute access
     device = "cuda" if torch.cuda.is_available() else "cpu"
     ckpt_path = Path(args.models_dir) / args.asset / "exit_sac_best.pt"
     if not ckpt_path.exists():

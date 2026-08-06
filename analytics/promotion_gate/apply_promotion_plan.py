@@ -83,7 +83,12 @@ def load_plan(path: Path) -> Optional[Dict[str, Any]]:
         return None
 
 
-def load_decisions(path: Path = DECISIONS_PATH) -> Optional[Dict[str, Any]]:
+def load_decisions(path: Optional[Path] = None) -> Optional[Dict[str, Any]]:
+    # Resolved at call time, not def time: `path=DECISIONS_PATH` binds the
+    # module global once at import, so a test that redirects DECISIONS_PATH
+    # away from the repo is silently ignored and the live decisions file is
+    # read (or, in apply_archive_actions/execute_confirm below, WRITTEN).
+    path = DECISIONS_PATH if path is None else path
     if not path.exists():
         return None
     try:
@@ -291,13 +296,18 @@ def atomic_write(path: Path, data: Dict[str, Any]) -> None:
 
 def apply_archive_actions(
     archive_actions: List[Dict[str, Any]],
-    decisions_path: Path = DECISIONS_PATH,
+    decisions_path: Optional[Path] = None,
 ) -> Tuple[List[Dict[str, Any]], Optional[str]]:
     """Mutate decisions JSON by setting archived=true on listed strategies.
 
     Iron Law 6 enforced: refuses if post-apply active count < MIN_ACTIVE_STRATEGIES.
     Returns (per-action results list, error_msg_or_None).
+
+    `decisions_path` resolves at call time — see load_decisions. This function
+    writes, so an early-bound default meant a redirect could not take effect
+    and the live file would be archived instead.
     """
+    decisions_path = DECISIONS_PATH if decisions_path is None else decisions_path
     results: List[Dict[str, Any]] = []
     if not decisions_path.exists():
         return results, f"decisions file missing: {decisions_path}"
@@ -467,9 +477,13 @@ def write_audit_log(
 def execute_confirm(
     plan: Dict[str, Any],
     plan_path: Path,
-    decisions_path: Path = DECISIONS_PATH,
+    decisions_path: Optional[Path] = None,
 ) -> Tuple[List[Dict[str, Any]], Path, int]:
-    """Run --confirm execution. Returns (actions_attempted, audit_path, exit_code)."""
+    """Run --confirm execution. Returns (actions_attempted, audit_path, exit_code).
+
+    `decisions_path` resolves at call time — see load_decisions.
+    """
+    decisions_path = DECISIONS_PATH if decisions_path is None else decisions_path
     ts = datetime.now(timezone.utc)
     all_actions: List[Dict[str, Any]] = []
 
