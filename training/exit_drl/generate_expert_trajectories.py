@@ -286,7 +286,12 @@ def generate_trajectories(df: pd.DataFrame, asset: str) -> Dict[str, np.ndarray]
                 else:
                     skipped_short += 1
 
-    out = {
+    # [P188] Annotated so the values are each checked against the declared
+    # return type. Without it mypy joins the five differently-dtyped asarray
+    # results to `object` and reports the return as incompatible. The error was
+    # pre-existing and invisible: this module only entered mypy's import graph
+    # once train_exit_sac started importing STATE_DIM/ACTION_DIM from it.
+    out: Dict[str, np.ndarray] = {
         'observations': np.asarray(observations, dtype=np.float32),
         'actions': np.asarray(actions, dtype=np.int64),
         'rewards': np.asarray(rewards, dtype=np.float32),

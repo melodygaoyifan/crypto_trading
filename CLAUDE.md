@@ -358,12 +358,48 @@ had simply never executed:
 - The parquet backtest tests could not run at all — pyarrow was in no
   requirements file.
 
+**Then the first real CI run failed, and that was the point.** Both jobs went red
+on the push that fixed them — locally everything was green. Three more defects,
+none of which any amount of local testing would have surfaced:
+
+- **The scanner baseline fingerprints mypy's *environment*, not just its
+  version.** P161 established that the baseline is version-specific and stamped
+  the version. This is that lesson one level deeper: with numpy and pandas
+  absent, `--ignore-missing-imports` turns them into `Any` and mypy reports a
+  *different set of errors on identical code*. The gate installed bare mypy and
+  failed with `no-redef 7 → 8` against a baseline built on a dev box. Verified by
+  reproducing all three environments locally: bare mypy diverges, `requirements.txt`
+  + mypy 2.3.0 matches the baseline exactly. **`--update` would have "fixed" this
+  by baking a CI-shaped number into a file that dev boxes then disagree with.**
+  The workflow now installs `requirements.txt`, and the divergent finding was
+  fixed at the source instead.
+- `infra/safe_torch_load.py` did `import torch as torch_module` — rebinding its
+  own parameter with an import statement, which mypy flags as `no-redef` *only
+  where torch is missing*. Same pattern in the joblib and pickle wrappers. Fixed
+  all three; both environments now agree.
+- `training/exit_drl/validate_against_baseline.py` called `sys.exit(1)` at module
+  scope when torch was missing. `SystemExit` is not an `Exception` subclass, so
+  it tears straight through `try/except ImportError` guards; two tests that only
+  import dataclasses from that module died with it. Availability is now recorded
+  at import and enforced at use. That in turn required `STATE_DIM`/`ACTION_DIM`
+  to move to the torch-free module — they had been *restated* in
+  `train_exit_sac.py` under a comment reading "Must match
+  generate_expert_trajectories.py", which nothing checked. Another instance of
+  the drift class, found only because the module had to become importable.
+
 **The lesson is one step further out than the usual one.** The recurring finding
 in this file is "a check that cannot fail is indistinguishable from a check that
 passed." P187/P188 are its parent case: *the harness that runs the checks is
 itself a check, and nobody had falsified it.* Every gate in this document was
-green in CI for the same reason a deleted test file is green. Before trusting any
-CI signal, make the job fail on purpose and confirm you can see it.
+green in CI for the same reason a deleted test file is green.
+
+And the corollary, which cost two round trips here: **a gate verified only on
+your own machine has been verified in one environment, which is not the one it
+runs in.** Local green told me nothing about numpy-less mypy or torch-less
+imports. Push it, watch it fail, read `gh run view --log-failed`, fix the real
+cause — and specifically *do not* reach for `--update` when a baseline gate goes
+red in CI. That converts an environment discrepancy into a permanently wrong
+number.
 
 ### P185–P186. [FIXED 2026-08-05] Two ledgers and one build target that had been failing quietly for months
 

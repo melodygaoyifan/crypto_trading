@@ -50,7 +50,19 @@ jobs:
       # baseline does not match, hit the version-mismatch carry-forward, and
       # (with --require-all-gates) fail with a message pointing at the right
       # fix. One source of truth, not two.
-      - name: Install the mypy release the baseline was built with
+      # [P188] The runtime deps are installed too, and that is not incidental.
+      # The first CI run that actually executed this gate failed with
+      # `no-redef 7 -> 8` on a commit that changed no scanned code. Cause: the
+      # baseline fingerprints the analyzer's ENVIRONMENT, not only its version.
+      # With numpy/pandas absent, --ignore-missing-imports turns those modules
+      # into Any and mypy reports a different set of errors — the counts move
+      # with the installed package list. Installing requirements.txt reproduces
+      # the baseline exactly (verified: bare mypy diverges on `operator` +3,
+      # requirements.txt + mypy 2.3.0 matches). torch is deliberately NOT
+      # installed: the one finding that depended on it was fixed at the source
+      # in infra/safe_torch_load.py rather than papered over with an 800MB
+      # download.
+      - name: Install the analysis environment the baseline was built in
         run: |
           set -euo pipefail
           V=$(python -c "import json;print(json.load(open('tools/scanner_baselines/mypy_baseline.json')).get('mypy_version',''))")
@@ -60,7 +72,7 @@ jobs:
             exit 1
           fi
           echo "installing mypy==$V (from tools/scanner_baselines/mypy_baseline.json)"
-          python -m pip install --disable-pip-version-check "mypy==$V"
+          python -m pip install --disable-pip-version-check -r requirements.txt "mypy==$V"
 
       # --require-all-gates: an unrunnable gate fails the build instead of
       # warning. See tools/ci_check_invariants.py [P187].
