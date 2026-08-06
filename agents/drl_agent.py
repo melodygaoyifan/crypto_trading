@@ -156,16 +156,29 @@ class DRLAgentPayload:
         }
 
 
-def _neutral_payload(asset: str = "") -> DRLAgentPayload:
-    """Return a safe neutral payload (no recommendation)."""
+def _neutral_payload(
+    asset: str = "",
+    *,
+    is_valid: bool = True,
+    reason: str = "neutral_default",
+    data_quality: float = 1.0,
+    issues: Optional[List[str]] = None,
+) -> DRLAgentPayload:
+    """Return a safe neutral payload (no recommendation).
+
+    [P178] `is_valid` is now settable. It used to be hardcoded True, which
+    meant the neutral payload asserted "I evaluated this and have no view" in
+    the one case where the truth was "I was never given anything to evaluate".
+    """
     return DRLAgentPayload(
         asset=asset,
         direction=0.0,
         confidence=0.0,
         action="HOLD",
         entropy=1.0,
-        is_valid=True,
-        meta={"reason": "neutral_default"},
+        is_valid=is_valid,
+        data_quality=data_quality,
+        meta={"reason": reason, "issues": list(issues or [])},
     )
 
 
@@ -903,6 +916,53 @@ class DRLAgent:
             data_quality, issues = self._validate_build_state_inputs(
                 pos, None, mkt, sigs, system_mode,
             )
+
+            # [P178] Refuse to invent a view from nothing.
+            #
+            # All three state-bearing arguments default to None, so a caller
+            # that passes only asset/price/regime reaches build_state() with
+            # three empty dicts. build_state() does not fail on that — it
+            # fills the vector with zeros and defaults, get_action() runs on
+            # it, and the result was returned as a signal with is_valid=True
+            # and a real direction/confidence. The only trace was
+            # data_quality=0.20 on a field nothing gates.
+            #
+            # core/runtime_spine.py:878 is exactly this call:
+            #
+            #     self._drl_agent.generate_signal(
+            #         asset=asset, price=..., regime=...)   # 3 of 8 args
+            #
+            # It is not live — runtime_spine has no production constructor and
+            # its own docstring says main.py owns the tick — so this fixes a
+            # latent path, not a bleeding one. It is still worth closing: the
+            # defect is that a zeroed state vector is indistinguishable from a
+            # measured one downstream, which is the P170/P174 shape again.
+            #
+            # Partial input stays permitted and merely lowers data_quality;
+            # only the all-absent case is refused, so this cannot misfire on a
+            # degraded-but-real tick.
+            if not pos and not mkt and not sigs:
+                p = _neutral_payload(
+                    asset,
+                    is_valid=False,
+                    reason="no_state_inputs",
+                    data_quality=data_quality,
+                    issues=issues,
+                )
+                p.mode = self.mode.value
+                # Carry the context we WERE given. A refusal that drops price
+                # and regime is harder to diagnose than one that keeps them,
+                # and every other exit from this method reports them.
+                p.meta["price"] = price
+                p.meta["regime"] = regime
+                logger.warning(
+                    "[P178] DRL generate_signal(%s) received no position_state, "
+                    "market_data or agent_signals; returning invalid neutral "
+                    "instead of a signal built from a zeroed state vector. "
+                    "issues=%s", asset, issues,
+                )
+                self._last_payloads[asset] = p
+                return p
 
             # Store observation in ring buffer
             obs_buf = self._get_obs_buffer(asset)

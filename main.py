@@ -8,7 +8,7 @@ Build Date: 2026-02-28
 
 CANONICAL FILES (LOCKED):
     CANONICAL_ENTRYPOINT:       main.py
-    CANONICAL_MAIN_LOOP:        core/runtime_spine.py
+    CANONICAL_MAIN_LOOP:        main.py::_process_4h_tick_inner   [P178]
     CANONICAL_DECISION_ENGINE:  integration/integration_v36.py
     CANONICAL_SOTA_ENHANCEMENT: orchestration/sota_v521_complete_integration.py
     CANONICAL_CONFIG:           configs/cloud_production.json
@@ -539,26 +539,32 @@ except ImportError as e:
 # =============================================================================
 # V6 SOTA MODULES - SHORT RISK & VALIDATION
 # =============================================================================
-
-V6_MODULES_AVAILABLE = False
-try:
-    from risk.short_position_controller import (
-        ShortPositionController,
-        get_short_controller,
-        ShortRiskConfig,
-        ShortRiskAssessment,
-    )
-    from analytics.sota_metrics_calculator import (
-        SOTAMetricsCalculator,
-        SOTAMetrics,
-        SOTATargets,
-        Trade as SOTATrade,
-    )
-    V6_MODULES_AVAILABLE = True
-    logger.info("[OK]V6 SOTA modules loaded (short risk + metrics)")
-except ImportError as e:
-    logger.warning(f"V6 SOTA modules not available: {e}")
-    V6_MODULES_AVAILABLE = False
+#
+# [P177] REMOVED. This block imported seven symbols, used none of them, set
+# V6_MODULES_AVAILABLE (read nowhere), and logged
+#
+#     [OK]V6 SOTA modules loaded (short risk + metrics)
+#
+# on every boot. An operator reading that line concludes short-side risk
+# control is active. It never was: `get_short_controller()` has no call site
+# anywhere in the repo, so `ShortPositionController.assess_risk`,
+# `.check_stop_loss` and `.get_position_size_multiplier` have never run in
+# production. Nor has `SOTAMetricsCalculator`. "Loaded" was true; every
+# inference an operator would draw from it was false.
+#
+# Live short risk is `defense/short_control.py`, which IS invoked, at
+# main.py:10577 (`self._short_control.evaluate(...)` guarded by
+# `intent.direction < 0`) and reported at :11540. `risk/
+# short_position_controller.py` is a second, parallel implementation of the
+# same job that lost the race and was never unplugged.
+#
+# It is deliberately NOT wired in here. Its stop-loss, daily-loss halt and
+# squeeze-risk sizing paths have never executed against real fills; enabling
+# them on a live account to fix a cosmetic log line would trade a false
+# reassurance for a real, untested risk actuator. The module keeps its own
+# unit tests and stays on disk. See tests/test_dead_risk_controller.py, which
+# fails if it acquires a production call site without that decision being
+# revisited.
 
 
 # =============================================================================
@@ -19875,7 +19881,7 @@ def main():
     --------------------------------------------------------------------------
     | CANONICAL_ENTRYPOINT = main.py                                         |
     | CANONICAL_CONFIG     = configs/cloud_production.json                   |
-    | CANONICAL_SPINE      = core/runtime_spine.py                           |
+    | CANONICAL_MAIN_LOOP  = main.py::_process_4h_tick_inner          [P178] |
     | CANONICAL_DECISION   = integration/integration_v36.py                  |
     --------------------------------------------------------------------------
 ================================================================================

@@ -288,6 +288,95 @@ discipline + the grep habit.
 
 ### Recent pitfalls (last ~30 days)
 
+### P178. [FIXED 2026-08-05] The DRL scored an all-zero state vector and returned it as a signal; and main.py named a DEPRECATED file as the canonical main loop
+
+`DRLAgent.generate_signal` takes 8 args; the 3 that carry state
+(`position_state`, `market_data`, `agent_signals`) default to `None`. A caller
+passing only asset/price/regime reached `build_state()` with three empty dicts.
+`build_state()` does not object — it fills the vector with zeros and defaults,
+`get_action()` scores it, and the payload came back `is_valid=True` with a real
+direction and confidence. The only trace was `data_quality=0.20` on a field with
+no consumer outside `to_dict()`. Measured, mode=SHADOW, no state args:
+
+    is_valid=True  data_quality=0.20
+    issues=['position_state_empty','regime_result_none',
+            'market_data_empty','agent_signals_empty']
+
+`core/runtime_spine.py:~878` is that call verbatim — 3 of 8 arguments.
+
+**It is latent, not live, and the reason matters.** `RuntimeSpine` has no
+production constructor (only its own factory and
+`tests/test_runtime_singleton_refresh_advanced.py`); main.py owns the tick; and
+production DRL is the TQC ensemble in `main.py` (`_drl_ensembles`, :3697/:7795),
+not this wrapper — `agents/drl_agent.py:172` already calls itself legacy. So the
+spine's DRL path is dead code calling a legacy wrapper.
+
+Fixed by refusing, not by rewiring: `generate_signal` now returns
+`is_valid=False, direction=0.0, reason="no_state_inputs"` when **all three**
+state dicts are absent, carrying `price`/`regime`/`issues` for diagnosis.
+Zeroing `direction` is the load-bearing half — `is_valid` has no consumer, so
+flagging alone would have changed nothing. Partial input is still permitted and
+merely lowers `data_quality`, so this cannot misfire on a degraded real tick.
+The call site was deliberately NOT corrected: supplying the dicts would put a
+never-exercised DRL path into a file marked NOT USED, on a live system.
+
+Second half: `main.py:11` declared `CANONICAL_MAIN_LOOP: core/runtime_spine.py`
+while that file's own line 2 says `_DEPRECATED (T29) ... NOT used. Actual tick
+processing lives in main.py._process_4h_tick_inner()`. The banner at :19884
+repeated it as `CANONICAL_SPINE`. Both now name
+`main.py::_process_4h_tick_inner`. A reader could not previously tell which of
+the two contradicting claims to believe, which is how the dead spine kept
+looking like something worth maintaining.
+
+Four existing tests in `tests/test_drl_agent.py` called `generate_signal` with
+no state at all — they test the action→direction mapping and used the empty
+path as a convenience. Two were given a minimal `market_data`; the other two
+pass because the refusal now carries `price`/`regime`. Worth noting the suite
+had encoded the empty-input call as legitimate.
+
+Pinned by `tests/test_drl_refuses_empty_state.py` (11 tests), including
+`test_the_spine_has_no_production_constructor` — if `RuntimeSpine` ever gains
+one, the latent path is live and that test says so.
+
+### P177. [FIXED 2026-08-05] A risk controller imported, logged as "loaded", and never once called
+
+`main.py` imported 7 symbols from `risk/short_position_controller.py` and
+`analytics/sota_metrics_calculator.py`, used **none** of them (each name
+appeared exactly once — on its own import line), set `V6_MODULES_AVAILABLE`
+which is read nowhere, and logged on every boot:
+
+    [OK]V6 SOTA modules loaded (short risk + metrics)
+
+`get_short_controller()` has no call site anywhere in the repo, so
+`assess_risk`, `check_stop_loss` and `get_position_size_multiplier` — a
+stop-loss, a daily-loss halt and a squeeze-risk sizer — have never executed in
+production. The log line was literally true and materially false: it reads as
+an assurance that short-side risk is governed.
+
+Live short risk is `defense/short_control.py`, which IS invoked at
+`main.py:10577` under `intent.direction < 0` and reported at :11540.
+`risk/short_position_controller.py` is a second, parallel implementation of the
+same job that lost the race and was never unplugged.
+
+**Deliberately not wired in.** Enabling three untested risk *actuators* on a
+live account to fix a cosmetic log line trades a false reassurance for a real
+hazard, and two controllers clamping the same exposure independently is worse
+than one. The import block and banner were removed; the module keeps a NOT
+WIRED header and its own unit tests.
+
+`tests/test_dead_risk_controller.py` (7 tests) pins all three directions: the
+banner does not return, the dead controller does not silently acquire a caller,
+**and the live path stays live** — the third is the one that matters, since the
+first two would also pass on a system with no short risk control at all. Both
+failure modes were probe-verified by injection.
+
+Method note: the first draft of those tests failed against the fix's own
+comment block, because the comment quotes the removed log line and names
+`get_short_controller()`. A source scanner that cannot distinguish code from
+prose about code is not measuring what it claims to; the helper now blanks `#`
+comments in place (joining tokens with separators instead silently broke every
+regex by turning `self._short_control.evaluate(` into spaced tokens).
+
 ### P176. [FIXED 2026-08-05] The gate's headline metric was 100% false positives and 0% recall on the bug it is named for
 
 - **The finding, both halves.** P174 shipped `misrouted_hot_count: 10` as the number a reviewer should read first. **All ten were wrong**: four `market_data.get("data_valid", True)` and six `market_data.get("vpin_source", "synthetic")`, both keys genuinely produced by `data_mgmt/market_data_pipeline.py` and returned into `market_data`. They were flagged only because the classifier tested `written_other` (MISROUTED) *before* `produced_elsewhere`, so a key that is correctly produced **and** relayed into `system_state` (`main.py:6755`) fell into the wrong bucket. Then, checking recall by reconstructing P170's shape synthetically — `agent_signals.get("quant_data_quality", 1.0)` where the pipeline produces the key into *market_data* and nothing copies it across — it came out **PRODUCED_ELSEWHERE**, which is reported but never gated. **The scanner built to catch P170 could not catch P170.** A metric can be noise and blind at the same time; measuring only one of those tells you nothing about the other.
