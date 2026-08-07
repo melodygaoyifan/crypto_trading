@@ -17,7 +17,37 @@ but the perpetuals page says Market and Limit only with "more order types" in
 progress, and notes "different rules for bracket orders on derivatives markets".
 
 This script ANSWERS THAT QUESTION AND NOTHING ELSE. It places no orders, cancels
-nothing, and moves no money — GET endpoints only.
+nothing, and moves no money.
+
+RESULT (run 2026-08-07 against the live account): **STOPS ARE SUPPORTED.**
+A protective stop-limit previews clean on all three contracts —
+`errs: []`, and `order_margin_total = 0`, i.e. the venue recognises them as
+position-REDUCING rather than as new exposure:
+
+    BTC  SELL 1ct stop=57805  limit=57515   accepted, fee 0.64, lev 3.3
+    ETH  SELL 1ct stop=1710.0 limit=1701.0  accepted, fee 0.27, lev 3.0
+    SOL  BUY  1ct stop=79.81  limit=80.20   accepted, fee 0.42, lev 2.7
+
+Endpoint note: product metadata does NOT expose supported order configurations,
+so the question cannot be settled by GET alone. This uses the SDK's **preview**
+endpoint, which validates a payload and returns fees/margin WITHOUT creating an
+order. That is a POST, but it is non-mutating — and it is what the P195 plan
+sanctioned ("metadata or a preview/validate endpoint"); only *submitting* was
+ruled out. This script never calls a non-preview order method.
+
+TWO PAYLOAD FACTS THIS PROBE ESTABLISHED (both cost a round of wrong answers)
+----------------------------------------------------------------------------
+* `base_size` is in **CONTRACTS**, not base currency: `base_increment = 1` and
+  `base_min_size = 1` on all three, with `contract_size` (0.01 / 0.1 / 5) as
+  separate metadata. Passing 0.01 for BTC yields
+  PREVIEW_INVALID_BASE_SIZE_TOO_SMALL. `CoinbaseAdapter.place_order` already
+  converts correctly (`contracts = int(round(size / cs))`) — bypass the adapter
+  and you will get this wrong.
+* Prices must be a **multiple of `price_increment`** (BTC 5, ETH 0.5, SOL 0.01),
+  not merely rounded to its decimal places. `Decimal.quantize(Decimal("5"))`
+  rounds to whole numbers, NOT to multiples of 5, and yields
+  PREVIEW_INVALID_PRICE_PRECISION. Use `(v / inc).to_integral_value() * inc`, or
+  reuse `CoinbaseAdapter._round_to_tick`.
 
 TWO LANDMINES THIS PROBE EXISTS TO DE-RISK
 ------------------------------------------
@@ -44,6 +74,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from decimal import Decimal, ROUND_DOWN
 
 ASSETS = ("BTC", "ETH", "SOL")
 
@@ -61,6 +92,18 @@ STOP_CONFIG_KEYS = (
     "trigger_bracket_gtc",
     "trigger_bracket_gtd",
 )
+
+
+def _to_tick(value: Decimal, inc: Decimal) -> Decimal:
+    """Round DOWN to a MULTIPLE of `inc`.
+
+    Not the same as quantize(): `Decimal.quantize(Decimal("5"))` rounds to whole
+    numbers, not to multiples of 5, and CDE then rejects the price with
+    PREVIEW_INVALID_PRICE_PRECISION. BTC's tick is 5, ETH's is 0.5.
+    """
+    if inc <= 0:
+        return value
+    return (value / inc).to_integral_value(rounding=ROUND_DOWN) * inc
 
 
 def _g(obj, name, default=None):
@@ -141,23 +184,53 @@ def main() -> int:
             print("  supported order cfgs: (not exposed by this endpoint)")
             verdict[asset] = "INCONCLUSIVE from product metadata"
 
-    # --- can we validate an order without submitting it? ---------------------
+    # --- the decisive test: preview a protective stop (creates nothing) ------
     print("\n" + "=" * 72)
-    print("Preview / dry-run capability")
+    print("Protective stop-limit PREVIEW (validates only — no order is created)")
     print("=" * 72)
-    preview_attrs = [a for a in dir(client)
-                     if "preview" in a.lower() and not a.startswith("_")]
-    if preview_attrs:
-        print(f"  SDK exposes: {preview_attrs}")
-        print("  A preview endpoint CAN confirm stop acceptance without submitting.")
-        print("  NOT exercised here: previewing is still a POST, and this script's")
-        print("  contract is GET-only. Run it deliberately as a follow-up once the")
-        print("  payload shape is agreed.")
-    else:
-        print("  No preview/dry-run method on this SDK version.")
-        print("  => Whether a stop is ACCEPTED cannot be settled without submitting")
-        print("     a real order. This script will NOT do that. Decide explicitly")
-        print("     before any live test, and prefer the smallest contract.")
+    if not hasattr(client, "preview_stop_limit_order_gtc_sell"):
+        print("  This SDK has no preview_stop_limit_* method, so acceptance cannot")
+        print("  be settled without submitting a real order. This script will NOT")
+        print("  do that. Upgrade coinbase-advanced-py, or decide explicitly.")
+        return 0
+
+    # Direction matches what each LIVE position would need:
+    #   long  -> protective SELL stop BELOW the mark
+    #   short -> protective BUY  stop ABOVE the mark
+    LIVE_SIDE = {"BTC": "sell", "ETH": "sell", "SOL": "buy"}
+    for asset in ASSETS:
+        pid = EXPECTED_PRODUCTS[asset]
+        side = LIVE_SIDE[asset]
+        try:
+            prod = client.get_product(product_id=pid)
+            inc = Decimal(str(_g(prod, "price_increment") or "0.01"))
+            mid = Decimal(str(_g(prod, "mid_market_price") or _g(prod, "price")))
+            mult = Decimal("0.90") if side == "sell" else Decimal("1.10")
+            stop = _to_tick(mid * mult, inc)
+            limit = _to_tick(
+                stop * (Decimal("0.995") if side == "sell" else Decimal("1.005")), inc)
+            fn = getattr(client, f"preview_stop_limit_order_gtc_{side}")
+            resp = fn(
+                product_id=pid,
+                base_size="1",  # CONTRACTS — see module docstring
+                limit_price=str(limit),
+                stop_price=str(stop),
+                stop_direction=("STOP_DIRECTION_STOP_DOWN" if side == "sell"
+                                else "STOP_DIRECTION_STOP_UP"),
+            )
+            errs = _g(resp, "errs") or []
+            print(f"\n  {asset}: {side.upper()} 1ct  stop={stop} limit={limit} (mid={mid})")
+            print(f"    errs   : {errs}")
+            if errs:
+                verdict[asset] = f"REJECTED {errs}"
+            else:
+                print(f"    margin={_g(resp, 'order_margin_total')} "
+                      f"fee={_g(resp, 'commission_total')} lev={_g(resp, 'leverage')}")
+                # margin 0 => the venue treats it as reducing, not new exposure.
+                verdict[asset] = "STOP SUPPORTED (preview accepted)"
+        except Exception as e:
+            print(f"\n  {asset}: [ERROR] {type(e).__name__}: {str(e)[:300]}")
+            verdict[asset] = "UNKNOWN (preview call failed)"
 
     # --- summary -------------------------------------------------------------
     print("\n" + "=" * 72)
