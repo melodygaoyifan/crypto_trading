@@ -1582,6 +1582,11 @@ class ProductionConfig:
     # a no-op). Default None -> main.py falls back to the historical set, so
     # omitting the key preserves today's behaviour exactly.
     short_bias_skip_regimes: Optional[List[str]] = None
+
+    # [P218] Price funding-carry on the venue that holds the position. Default
+    # False: it is a live data input. Proven inert at current rates (both venues
+    # far below every downstream threshold) but the SIGN differs on BTC/SOL.
+    coinbase_venue_aware_funding: bool = False
     # [P201] P198 shipped these two as JSON keys read via
     # `getattr(self.config, ..., default)` (main.py:7802, :18313) but never
     # declared them here and never parsed them in from_file — so the JSON keys
@@ -1860,6 +1865,8 @@ class ProductionConfig:
             coinbase_protective_stop_assets=list(
                 data.get("coinbase_protective_stop_assets", []) or []),
             # [P216] None (key absent) != [] (explicitly "never skip").
+            coinbase_venue_aware_funding=bool(
+                data.get("coinbase_venue_aware_funding", False)),
             short_bias_skip_regimes=(
                 list(data["short_bias_skip_regimes"])
                 if isinstance(data.get("short_bias_skip_regimes"), list) else None),
@@ -6086,6 +6093,46 @@ class HMATSProductionRunner:
                 market_data["funding_rate"] = _kf_ticker.funding_rate_8h
                 market_data["funding_rate_prediction"] = _kf_ticker.funding_rate_prediction_8h
                 market_data["funding_rate_source"] = "kraken_futures"
+
+                # [P218] The book trades COINBASE perps; this funding comes from
+                # KRAKEN futures. Third instance of the same cross-venue
+                # leftover as P172 (fees priced on Kraken) and P210 (sizing
+                # denominated in Kraken NAV): after Phase B several inputs still
+                # point at the venue that no longer trades.
+                #
+                # Measured live 2026-08-07 (8h rates):
+                #     asset   kraken (used)   coinbase (correct)
+                #     BTC     -0.000077       +0.000040
+                #     ETH     -0.000015       -0.000008
+                #     SOL     -0.000378       +0.000168
+                # Both are far below every downstream threshold (the short-bias
+                # whale proxy needs |funding| > 0.0002; the funding agent's
+                # carry bands are wider still), so enabling this changes NO
+                # behaviour today — but the SIGN differs on BTC and SOL, so if
+                # funding ever becomes material we would be trading the wrong
+                # one. Default OFF: it is a live data input, and P172's
+                # venue-aware fees shipped the same way (build it, prove it
+                # inert, let the operator enable it deliberately).
+                if getattr(self.config, "coinbase_venue_aware_funding", False):
+                    try:
+                        from core.execution_service import _coinbase_routed
+                        if _coinbase_routed(self, asset):
+                            _cb_fr = (getattr(self, "_coinbase_funding_8h", {})
+                                      or {}).get(asset)
+                            if _cb_fr is not None:
+                                market_data["funding_rate"] = float(_cb_fr)
+                                market_data["funding_rate_source"] = "coinbase_cde"
+                                logger.info(
+                                    f"[VENUE-FUNDING] {asset}: funding priced for "
+                                    f"COINBASE ({float(_cb_fr):+.6f}/8h), not "
+                                    f"Kraken ({_kf_ticker.funding_rate_8h:+.6f})")
+                    except Exception as _vf_err:
+                        # Wrong-way failure keeps the Kraken value — the same
+                        # conservative direction P172 chose.
+                        logger.warning(
+                            f"[VENUE-FUNDING] {asset}: venue-aware funding "
+                            f"failed ({type(_vf_err).__name__}: {_vf_err}) — "
+                            f"keeping Kraken rate")
 
                 # Inject OI (was missing entirely before)
                 market_data["open_interest"] = _kf_ticker.open_interest_usd
@@ -18858,6 +18905,20 @@ class HMATSProductionRunner:
                                             if _f_raw is None:
                                                 continue
                                             _f_md = {"funding_rate_8h": float(_f_raw) * 8.0}
+                                            # [P218] Publish the venue's own
+                                            # funding so the next tick's
+                                            # market_data can price carry on the
+                                            # venue that actually holds the
+                                            # position. Cached rather than
+                                            # re-fetched in the hot path: this
+                                            # block already pays for the call,
+                                            # CDE funding updates hourly and the
+                                            # decision loop is 4H, so a one-tick
+                                            # lag is immaterial next to fetching
+                                            # three extra products every tick.
+                                            if not hasattr(self, "_coinbase_funding_8h"):
+                                                self._coinbase_funding_8h = {}
+                                            self._coinbase_funding_8h[_f_a] = float(_f_raw) * 8.0
                                             _f_active = [st.evaluate(_f_a, _f_md) for st in self._funding_strategies]
                                             _f_active = [s for s in _f_active if s.direction != 0.0]
                                             if _f_active:

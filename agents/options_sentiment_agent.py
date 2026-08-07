@@ -43,6 +43,35 @@ class OptionsSentimentAgent:
     """
 
     BASE_URL = "https://open-api-v3.coinglass.com/api"
+
+    # [P218] Endpoints reported dead, warned once each. A 404 on a HARDCODED
+    # url is not a market condition — it is a broken integration — but the
+    # handler below returned None and the caller then used its neutral default
+    # (put_call_ratio = 1.0). "The API path no longer exists" and "options
+    # sentiment is perfectly balanced" produced byte-identical output, which is
+    # why this sat unnoticed. Probed live 2026-08-07: /option/info/max-pain,
+    # /option/info/oi and /option/info/volume ALL return HTTP 404, while the
+    # parent /option/info returns real data — so this is a v3 API path change,
+    # NOT a subscription tier limit (the same key serves funding/OI/liquidations
+    # fine, and I had guessed "tier limit" before checking).
+    _DEAD_ENDPOINTS_WARNED: set = set()
+
+    def _report_http(self, path: str, status: int) -> None:
+        """Warn once per (path, status) when an endpoint answers non-200."""
+        key = f"{path}:{status}"
+        if key in self._DEAD_ENDPOINTS_WARNED:
+            return
+        self._DEAD_ENDPOINTS_WARNED.add(key)
+        if status == 404:
+            logger.warning(
+                f"[OPTIONS-AGENT] {path} -> HTTP 404: this endpoint does not "
+                f"exist. The agent will fall back to put_call_ratio=1.0 "
+                f"(NEUTRAL) forever, which is indistinguishable from a balanced "
+                f"options market. NOT a tier limit — the same CoinGlass key "
+                f"serves funding/OI fine and /option/info returns data."
+            )
+        else:
+            logger.warning(f"[OPTIONS-AGENT] {path} -> HTTP {status}")
     SUPPORTED_ASSETS = ("BTC", "ETH")  # Options data mainly BTC/ETH
 
     def __init__(self, api_key: Optional[str] = None):
@@ -234,6 +263,7 @@ class OptionsSentimentAgent:
                 timeout=__import__("aiohttp").ClientTimeout(total=15),
             ) as resp:
                 if resp.status != 200:
+                    self._report_http(url.rsplit("/api", 1)[-1], resp.status)
                     return None
                 data = await resp.json()
                 if str(data.get("code")) != "0" or not data.get("data"):
@@ -259,6 +289,7 @@ class OptionsSentimentAgent:
                 timeout=__import__("aiohttp").ClientTimeout(total=15),
             ) as resp:
                 if resp.status != 200:
+                    self._report_http(url.rsplit("/api", 1)[-1], resp.status)
                     return None
                 data = await resp.json()
                 if str(data.get("code")) != "0" or not data.get("data"):
@@ -283,6 +314,7 @@ class OptionsSentimentAgent:
                 timeout=__import__("aiohttp").ClientTimeout(total=15),
             ) as resp:
                 if resp.status != 200:
+                    self._report_http(url.rsplit("/api", 1)[-1], resp.status)
                     return None
                 data = await resp.json()
                 if str(data.get("code")) != "0" or not data.get("data"):
