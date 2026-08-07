@@ -64,8 +64,14 @@ class CoinbaseSleeve:
                  protective_stop_pct: float = 0.0,
                  protective_stop_assets=None,
                  flip_persist_ticks: int = 0,
-                 max_net_exposure: Optional[float] = None) -> None:
+                 max_net_exposure: Optional[float] = None,
+                 max_asset_exposure: Optional[Dict[str, float]] = None) -> None:
         self._adapter = adapter
+        # [P210] Per-asset gross cap as a fraction of SLEEVE equity. Wired from
+        # config post_leverage_caps — the same policy the Kraken path applies,
+        # against the equity that actually backs these positions. See can_trade
+        # for why intent.target_exposure is deliberately not reconnected.
+        self._max_asset_exposure: Dict[str, float] = dict(max_asset_exposure or {})
         self._assets = tuple(assets)
         # [P198] Flip-persistence churn control, mirroring the Kraken-side P142
         # guard which never reached this path: the sleeve driver reads
@@ -443,6 +449,50 @@ class CoinbaseSleeve:
                         f"coinbase_net_exposure_cap: |net| {_n_after:.1%} > "
                         f"{_net_budget:.0%} (was {_n_before:.1%}) "
                         f"on ${_after['equity_usd']:,.0f} equity")
+
+        # [P210] PER-ASSET gross exposure, as a fraction of SLEEVE equity.
+        #
+        # This is the control `intent.target_exposure` was supposed to provide
+        # and structurally cannot. That number is converted to a size at
+        # core/unit_system.py:232 as `target_exposure * account_equity`, where
+        # account_equity is Kraken NAV (account_sync is built exchange_name=
+        # "kraken"). So the risk stack sizes Coinbase positions out of KRAKEN
+        # capital: at target_exposure=0.25 on ~$9.8k Kraken NAV that is ~$2,457,
+        # against the ~$643 this sleeve actually holds. "Reconnecting" it would
+        # roughly 4x the book AND denominate one venue's risk in another's
+        # capital — the cross-venue contamination P139/P140 came from. So the
+        # chain is deliberately NOT reconnected; the same policy numbers
+        # (config post_leverage_caps: BTC/ETH 0.25, SOL 0.20) are enforced here
+        # instead, against the equity that actually backs these positions.
+        #
+        # Not vacuous today, which is the test this file's controls have to
+        # pass: contract granularity is FIXED while equity moves. One BTC nano
+        # is ~17% of a $3.8k sleeve but ~34% of a $1.9k one, and nothing else
+        # notices — the contract cap counts contracts, and P208's net budget
+        # aggregates and so passes a single concentrated asset. This binds as
+        # the account shrinks, saying "one contract is now too large for this
+        # account" rather than quietly taking an oversized position.
+        _asset_caps = getattr(self, "_max_asset_exposure", None) or {}
+        _asset_budget = _asset_caps.get(asset)
+        if _asset_budget:
+            _eq = float(self._last_equity_usd or 0.0)
+            _n_cur = abs(self._notional_usd(asset, cur))
+            _n_res = abs(self._notional_usd(asset, resulting_signed))
+            # Unpriceable => fail OPEN, exactly as the net check above does.
+            if _eq > 0 and (_n_res or not resulting):
+                _p_cur = _n_cur / _eq
+                _p_res = _n_res / _eq
+                # Increases only — never block getting back UNDER the cap.
+                if _p_res > _p_cur and _p_res > _asset_budget:
+                    return False, (
+                        f"coinbase_asset_exposure_cap: {asset} {_p_res:.1%} > "
+                        f"{_asset_budget:.0%} of ${_eq:,.0f} sleeve equity "
+                        f"(was {_p_cur:.1%})")
+            elif resulting:
+                logger.warning(
+                    f"[COINBASE_SLEEVE] {asset}: per-asset exposure check "
+                    f"INCONCLUSIVE (eq=${_eq:,.0f}, could not price "
+                    f"{resulting_signed:+.0f}ct); allowing")
         return True, "ok"
 
     def reset_halt(self) -> None:
