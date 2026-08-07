@@ -7,8 +7,12 @@ side effects, NO venue I/O — these are decision functions the operator calls
 before and during cutover.
 
 ⚠️ [P155, 2026-08-04] CALLER REALITY. `validate_drl_active` is called by
-RoutingPolicy.advance_phase() and by execution_service._coinbase_check_iron_law_8
-(log-only). `cutover_invariants()` and `validate_obs_dim`/`validate_maker_first`
+RoutingPolicy.advance_phase() — which has no production callers.
+[P202] Its runtime caller in execution_service has been RETIRED: DRL cannot
+influence a live order post-Phase-B, so "DRL must be ACTIVE during cutover" was
+a CRITICAL nobody could act on. Kept here for advance_phase() only; do not
+re-wire it to the live path without first re-establishing that DRL actually
+reaches an order. `cutover_invariants()` and `validate_obs_dim`/`validate_maker_first`
 still have NO production caller — they are exercised by tests only. Do not read
 this module as evidence that Iron Laws 1/9 are enforced at runtime; they are
 not. The module docstring previously claimed it was "referenced by

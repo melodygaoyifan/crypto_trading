@@ -25,8 +25,13 @@ Iron Laws:
      core.execution_service._coinbase_get_routing() loads the phase by
      assigning `rp.phase` directly from data/coinbase_routing_state.json,
      which bypasses this method and therefore the Iron Law 8 check
-     entirely. _coinbase_check_iron_law_8() now logs (does not block) when
-     the loaded phase is past PRE_PHASE_2 with DRL demoted.
+     entirely.
+     [P202] The runtime hook that used to log this — the DRL-ACTIVE clause —
+     has been RETIRED, not because the wiring gap was fixed but because the
+     clause was vacuous: DRL cannot influence a live order at all post-Phase-B
+     (the sleeve reads `_last_quant_directions`, written before `drl_direction`
+     exists). It is replaced by `_coinbase_check_cutover_guards()`, which
+     reports a routed asset trading with no venue-resting protective stop.
 """
 
 from __future__ import annotations

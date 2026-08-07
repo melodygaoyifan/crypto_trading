@@ -239,72 +239,84 @@ def _coinbase_get_routing():
     return _CB_ROUTING
 
 
-_CB_IRON_LAW_8_WARNED = False
+# [P202] Per-asset latch: report each unprotected routed asset once per process.
+# Was a single global bool for the retired DRL clause, which meant the first
+# asset consumed the one shot for all of them.
+_CB_GUARD_WARNED: set = set()
 
 
-def _resolve_drl_authority_level(ctx) -> str:
-    """[P193] `_coinbase_routed()` is called with two different object shapes.
+# [P202] `_resolve_drl_authority_level` lived here. It was P193's fix for the
+# retired Iron Law 8 clause reading the wrong attribute on one of the two ctx
+# shapes. With the clause retired it has no caller, so it is deleted rather than
+# left as dead code that a future reader would mistake for a live contract.
+# The P193 LESSON survives in the P202 replacement, which reads only
+# `ctx.config` — a field both ctx shapes carry — precisely so the dual-shape
+# hazard cannot recur.
 
-    `execute_intent_v2` passes an ExecutionContext, which exposes
-    `drl_authority_level` (execution_context.py:106). `main.py:8562` — the P172
-    venue-fee resolution — passes the HMATSProductionRunner itself, and the
-    runner names the same value `_drl_authority_level` (main.py:5021).
 
-    Reading only the first name made every runner-path call look like
-    "DRL authority is ''". That is a FALSE Iron Law 8 violation, and because the
-    check latches on its first failure it burned the one-shot on the false
-    alarm — permanently silencing the real check for the life of the process.
-    Observed live 2026-08-06: CRITICAL at 23:04:12 while the promotion gate had
-    logged ACTIVE at 23:03:30 and DECIDE_POOL reported ACTIVE throughout.
+def _coinbase_check_cutover_guards(ctx, rp, asset: str) -> None:
+    """[P202] Replaces Iron Law 8's DRL clause, which had become vacuous.
 
-    Returns "" when neither name carries a value. That is deliberate: an
-    authority level we cannot determine is not ACTIVE, and validate_drl_active
-    fails closed on it (see
-    test_missing_authority_attribute_fails_closed_to_reporting).
+    WHAT WAS HERE AND WHY IT WENT
+    -----------------------------
+    This used to assert "DRL authority must be ACTIVE during cutover" and log
+    CRITICAL when it was not. The assertion is literally true and substantively
+    meaningless: DRL cannot influence a single live order. The sleeve trades
+    `_last_quant_directions`, written at main.py:6480 and :7834, while
+    `drl_direction` is written at :7902 — AFTER both — and no path exists from
+    DRL to that dict or to `market_data["quant_direction"]`. Re-promoting DRL to
+    ACTIVE would satisfy the law and change nothing. So the alert fired on every
+    process start, paged Discord, and instructed the operator to fix a
+    non-cause. An alert nobody can act on is one everybody learns to ignore —
+    the same reasoning that retired the always-red auto-deploy in P196.
+
+    The DRL clause is NOT merely downgraded, it is retired: it guarded an
+    assumption (DRL decides, so demoting it endangers the cutover) that died at
+    Phase B. `exchange/cutover.py::validate_drl_active` is left intact for
+    `advance_phase()`, which production does not call.
+
+    WHAT IT CHECKS NOW
+    ------------------
+    The condition that actually protects a routed asset: it is trading a live
+    perp with **no venue-resting protective stop**. Post-Phase-B the sleeve
+    carries 100% of the directional risk and bypasses the entire core risk stack
+    (P201) — the stop is the only thing that survives the process dying. An
+    asset routed without one is genuinely unprotected, and that is actionable:
+    widen `coinbase_protective_stop_assets`, or decide to accept it.
+
+    Self-extinguishing by design — unlike the DRL clause, fixing the gap stops
+    the alert. Latched per asset so it reports once per process per asset, and
+    reads only `ctx.config`, which both ctx shapes carry (P193).
+
+    OBSERVES, never blocks. Blocking would route the asset back to Kraken, which
+    is structurally flat post-Phase-B, converting a protection gap into a silent
+    total trading stop — the failure P155 was opened to end.
     """
-    for _name in ("drl_authority_level", "_drl_authority_level"):
-        _val = getattr(ctx, _name, None)
-        if _val:
-            return str(_val)
-    return ""
-
-
-def _coinbase_check_iron_law_8(ctx, rp) -> None:
-    """[P155] Iron Law 8 (DRL ACTIVE during cutover) was defined but never
-    enforced — a P152-class defect.
-
-    `RoutingPolicy.advance_phase()` does enforce it, but NOTHING in production
-    calls advance_phase(): `_coinbase_get_routing()` above assigns `rp.phase`
-    straight from data/coinbase_routing_state.json. So the cutover can be
-    advanced by editing a JSON file with DRL demoted to SHADOW, and the guard
-    never runs. Three docstrings claimed this was a "continuous check".
-
-    This OBSERVES rather than blocks, deliberately. Blocking would route the
-    asset back to Kraken, which is structurally flat post-Phase-B, i.e. a
-    fail-closed here converts a DRL-authority problem into a silent total
-    trading stop — the exact failure mode P155 was opened to end. Logged once
-    per process at CRITICAL so it surfaces without per-tick spam.
-    """
-    global _CB_IRON_LAW_8_WARNED
-    if _CB_IRON_LAW_8_WARNED:
-        return
     try:
-        from exchange.cutover import validate_drl_active
         from exchange.routing import CutoverPhase
         if rp.phase == CutoverPhase.PRE_PHASE_2:
-            return  # not in cutover; invariant does not apply
-        ok, reason = validate_drl_active(_resolve_drl_authority_level(ctx))
-        if not ok:
-            _CB_IRON_LAW_8_WARNED = True
+            return  # not in cutover; nothing is being routed
+        if asset in _CB_GUARD_WARNED:
+            return
+        cfg = getattr(ctx, "config", None)
+        pct = float(getattr(cfg, "coinbase_protective_stop_pct", 0.0) or 0.0)
+        only = list(getattr(cfg, "coinbase_protective_stop_assets", []) or [])
+        # empty list == every routed asset; a subset restricts it (P197 rollout)
+        protected = pct > 0 and (not only or asset in only)
+        if not protected:
+            _CB_GUARD_WARNED.add(asset)
             logger.critical(
-                f"[CUTOVER-IRON-LAW-8] {reason} — routing phase is "
-                f"{rp.phase.value} and Coinbase orders ARE being routed. The "
-                f"cutover advanced without the DRL-ACTIVE check because the "
-                f"phase was loaded from coinbase_routing_state.json, not via "
-                f"advance_phase(). Not blocking (see _coinbase_check_iron_law_8)."
+                f"[CUTOVER-GUARDS] {asset}: routed to Coinbase in phase "
+                f"{rp.phase.value} with NO venue-resting protective stop. The "
+                f"sleeve carries 100% of the directional risk and bypasses the "
+                f"alpha gate, veto chain, net-exposure cap and existence fuse "
+                f"(P201), so this position survives the engine dying with "
+                f"nothing at the venue to close it. FIX: add {asset!r} to "
+                f"coinbase_protective_stop_assets (or empty the list to cover "
+                f"all) and set coinbase_protective_stop_pct > 0. Not blocking."
             )
     except Exception as err:
-        logger.warning(f"[CUTOVER-IRON-LAW-8] check failed: {err}")
+        logger.warning(f"[CUTOVER-GUARDS] check failed: {err}")
 
 
 _CB_FEE_MODEL_WARNED = False
@@ -439,9 +451,12 @@ def _coinbase_routed(ctx, asset: str) -> bool:
         rp = _coinbase_get_routing()
         if rp is None:
             return False
-        _coinbase_check_iron_law_8(ctx, rp)
         _routed = rp.venue_for(asset) == "coinbase"
         if _routed:
+            # [P202] Only meaningful for an asset that IS routed — the retired
+            # Iron Law 8 clause ran unconditionally and reported a global
+            # condition, so it fired even for assets going to Kraken.
+            _coinbase_check_cutover_guards(ctx, rp, asset)
             _coinbase_fee_model_warning(ctx)
         return _routed
     except Exception:  # noqa: silent-swallow — intentional fail-closed to Kraken (default venue) on any routing error
