@@ -49,13 +49,19 @@ COST_RT_BPS = 6.0   # coinbase taker 3bps x 2 legs
 HORIZONS = (1, 4)   # 4h, 16h forward
 
 GROUPS = {
-    "ALL": None,  # resolved from manifest
+    "ALL": None,  # resolved from manifest (+ any fv2_* extras present)
     "ta_base": lambda c: not c.endswith("_denoised") and not c.startswith("regime_proba")
-                          and c not in _EXTERNAL and c != "has_external_data",
+                          and c not in _EXTERNAL and c != "has_external_data"
+                          and not c.startswith("fv2_"),
     "denoised": lambda c: c.endswith("_denoised"),
     "external": lambda c: c in _EXTERNAL,
     "regime": lambda c: c.startswith("regime_proba"),
-    "momentum": lambda c: any(k in c for k in ("momentum", "macd", "ema", "sma", "adx", "ret_")),
+    "momentum": lambda c: any(k in c for k in ("momentum", "macd", "ema", "sma", "adx", "ret_"))
+                          and not c.startswith("fv2_"),
+    # [P200-FEATURES] flow-v2: taker flow / activity / illiquidity from the
+    # Binance kline flow columns + seasonality + cross-asset. Full-history,
+    # free — the candidate replacement for the 180d-limited Coinglass group.
+    "flow_v2": lambda c: c.startswith("fv2_"),
 }
 _EXTERNAL = {"funding_rate_zscore", "oi_change_5d", "liq_imbalance",
              "taker_ratio_zscore", "tradecount_zscore", "taker_vol_momentum"}
@@ -118,6 +124,9 @@ def probe_asset(asset: str) -> dict:
     df = pd.read_parquet(DATA_DIR / f"{asset}_4H_full.parquet")
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
     feats = [c for c in manifest["all_features"] if c in df.columns]
+    # fv2_* extras ride along when present (built by build_flow_features.py);
+    # they are NOT manifest members, so obs_dim is unaffected.
+    feats += [c for c in df.columns if c.startswith("fv2_")]
     close = df["close"].to_numpy(dtype=float)
 
     out = {"asset": asset, "n_bars": len(df), "results": []}

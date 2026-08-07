@@ -62,8 +62,16 @@ def download_month(asset: str, year: int, month: int, retries: int = 3) -> pd.Da
             _first = int(df["open_time"].iloc[0])
             _unit = "us" if _first > 1e14 else "ms"
             df["timestamp"] = pd.to_datetime(df["open_time"], unit=_unit)
-            df = df[["timestamp", "open", "high", "low", "close", "volume"]]
-            for c in ("open", "high", "low", "close", "volume"):
+            # [P200-FEATURES] Keep the flow columns. The kline archive carries
+            # taker_buy_base/quote, trade count and quote_volume; the old fetch
+            # discarded them — while the flow/positioning family was the
+            # STRONGEST group in the edge probe and the only one limited to
+            # 180 days of paid Coinglass depth. This is the same signal family,
+            # free, at 1H granularity, for the full history.
+            df = df[["timestamp", "open", "high", "low", "close", "volume",
+                     "quote_volume", "count", "taker_buy_base", "taker_buy_quote"]]
+            for c in ("open", "high", "low", "close", "volume",
+                      "quote_volume", "count", "taker_buy_base", "taker_buy_quote"):
                 df[c] = df[c].astype(float)
             return df
         except Exception as exc:
@@ -103,7 +111,11 @@ def fetch_asset(asset: str, start: datetime, end: datetime) -> pd.DataFrame:
         time.sleep(0.3)
 
     merged = pd.concat(all_frames, ignore_index=True)
-    merged = merged.drop_duplicates("timestamp").sort_values("timestamp").reset_index(drop=True)
+    # keep='last': freshly downloaded frames are appended AFTER the existing
+    # parquet, so on overlap the fresh row wins. Load-bearing since
+    # [P200-FEATURES]: existing parquets predating the flow columns carry NaN
+    # there, and keep='first' would pin those NaNs forever.
+    merged = merged.drop_duplicates("timestamp", keep="last").sort_values("timestamp").reset_index(drop=True)
     merged.to_parquet(existing_path)
     logger.info(f"{asset}: saved {len(merged)} rows to {existing_path}  "
                 f"(hits={hit}, misses={miss})")
