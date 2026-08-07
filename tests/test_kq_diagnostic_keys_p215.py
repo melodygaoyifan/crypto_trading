@@ -134,9 +134,14 @@ class TestEndToEndRender:
         stats = {
             "ts": "2026-08-07T00:00:00Z", "tick": 10, "uptime_sec": 3600,
             "regime_ticks": {"chop": 21},
+            # The agent builds a row for EVERY strategy in the bucket, archived
+            # ones included (they are skipped at invoke time, not at report
+            # time), so the fixture mirrors that.
             "by_regime": {"chop": [
                 {"name": "KalmanCointegrationStrategy", "attempts": 21, "fires": 3},
+                {"name": "OrnsteinUhlenbeckStrategy", "attempts": 0, "fires": 0},
                 {"name": "DarkPoolVolumeStrategy", "attempts": 21, "fires": 0},
+                {"name": "DeltaNeutralFundingStrategy", "attempts": 0, "fires": 0},
             ]},
             "never_fired": ["DarkPoolVolumeStrategy"],
             "archived": ["OrnsteinUhlenbeckStrategy", "DeltaNeutralFundingStrategy"],
@@ -158,3 +163,59 @@ class TestEndToEndRender:
         assert "ARCHIVED" in out
         # ...and the buckets that really were absent must still say so.
         assert "never-active (regime not seen)" in out[:out.index("[SIDEWAYS]")]
+
+
+class TestStrategyNamesComeFromTheAgent:
+    """[P215, second pass] The same mismatch one level down. Three runtime
+    `strategy.name` values differ from the script's hardcoded CANONICAL list
+    (`KalmanCointegration_SOL_ETH` vs `KalmanCointegrationStrategy`,
+    `ETFSpotCointegration`, `OrderBookImbalance`), so the row lookup missed and
+    the report printed "[!] not invoked despite regime active" for a strategy
+    that HAD been invoked — a fresh false diagnosis, produced by the fix to the
+    previous one. A hardcoded mirror of a runtime list drifts; iterate what the
+    agent reported.
+    """
+
+    def _mod(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("_kqdiag4", _SCRIPT)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_rows_drive_the_table_not_the_hardcoded_list(self, capsys):
+        mod = self._mod()
+        mod.render({
+            "ts": "x", "tick": 1, "uptime_sec": 60,
+            "regime_ticks": {"SIDEWAYS": 5},
+            "by_regime": {"SIDEWAYS": [
+                # runtime name, deliberately NOT the CANONICAL spelling
+                {"name": "KalmanCointegration_SOL_ETH", "attempts": 5, "fires": 2},
+            ]},
+            "never_fired": [], "archived": [],
+        })
+        out = capsys.readouterr().out
+        assert re.search(r"KalmanCointegration_SOL_ETH\s+5\s+2", out), out
+        assert "not invoked despite regime active" not in out, (
+            "a strategy with 5 attempts was reported as never invoked"
+        )
+
+    def test_reachable_uses_runtime_names(self, capsys):
+        mod = self._mod()
+        mod.render({
+            "ts": "x", "tick": 1, "uptime_sec": 60,
+            "regime_ticks": {"SIDEWAYS": 5},
+            "by_regime": {"SIDEWAYS": [
+                {"name": "KalmanCointegration_SOL_ETH", "attempts": 5, "fires": 0},
+                {"name": "OrnsteinUhlenbeckStrategy", "attempts": 0, "fires": 0},
+            ]},
+            "never_fired": [], "archived": ["OrnsteinUhlenbeckStrategy"],
+        })
+        out = capsys.readouterr().out
+        assert "KalmanCointegration_SOL_ETH" in out.split("Reachable now:")[1]
+        assert "1 reachable" in out
+
+    def test_a_bucket_that_lost_a_strategy_is_flagged(self):
+        """CANONICAL still earns its place: it must notice a bucket the agent
+        stopped reporting a strategy for."""
+        assert "absent from the agent's" in _SCRIPT.read_text(encoding="utf-8")

@@ -88,9 +88,24 @@ def render(stats: Dict[str, Any]) -> None:
 
     alive = 0
     dead = 0
-    for regime_name, expected in CANONICAL.items():
+    for regime_name, canonical_names in CANONICAL.items():
         rows = by_regime.get(regime_name, []) or []
         by_name = {r.get("name"): r for r in rows}
+        # [P215] Iterate the names the AGENT reported, not this hardcoded list.
+        # Three runtime names differ from CANONICAL — KalmanCointegration_SOL_ETH
+        # vs KalmanCointegrationStrategy, ETFSpotCointegration(+Strategy),
+        # OrderBookImbalance(+Strategy) — so looking up by the literal missed and
+        # printed "[!] not invoked despite regime active" for a strategy that HAD
+        # been invoked. Exactly the mismatch this entry already fixed one level
+        # up; a hardcoded mirror of a runtime list drifts. CANONICAL is kept only
+        # to notice a bucket that lost a strategy entirely.
+        expected = [r.get("name") for r in rows] or canonical_names
+        _missing = [n for n in canonical_names
+                    if n not in by_name and not any(
+                        n.rstrip("Strategy") in str(k) for k in by_name)]
+        if rows and _missing:
+            print(f"  [!] expected in {regime_name} but absent from the agent's "
+                  f"report: {_missing}")
         rticks = regime_ticks.get(regime_name, 0)
         bucket_hit = "*" if rticks == 0 else ""
         print(f"  [{regime_name}]   regime_ticks={rticks}{bucket_hit}")
@@ -126,8 +141,9 @@ def render(stats: Dict[str, Any]) -> None:
     # [P215] Report against the strategies that CAN fire, not a flat 12. With 4
     # archived and the market in one regime bucket, "x/12" understates by
     # counting strategies that are excluded by design or unreachable by regime.
-    _reachable = [s for b, ss in CANONICAL.items() if regime_ticks.get(b, 0) > 0
-                  for s in ss if s not in archived]
+    _reachable = [r.get("name")
+                  for b, rows in by_regime.items() if regime_ticks.get(b, 0) > 0
+                  for r in (rows or []) if r.get("name") not in archived]
     print(f"  Summary: {alive} alive, {dead} never fired while active")
     print(f"  Of 12 strategies: {len(archived)} archived (P157), "
           f"{len(_reachable)} reachable in the regimes actually seen "
