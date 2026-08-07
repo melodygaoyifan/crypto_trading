@@ -66,6 +66,19 @@ COPY --chown=hmats:hmats dashboard/ ./dashboard/
 COPY --chown=hmats:hmats training/__init__.py ./training/
 COPY --chown=hmats:hmats training/models/__init__.py training/models/film_extractor.py training/models/feature_extractors.py ./training/models/
 COPY --chown=hmats:hmats training/drl/__init__.py training/drl/features.py training/drl/model.py training/drl/train_decision_transformer_v32.py training/drl/oracle_tqc_teacher.py ./training/drl/
+# [P214] Wavelet denoise — this is NOT training-only code. The LIVE feature
+# pipeline imports it every tick (data_mgmt/market_data_pipeline.py:855) to
+# produce 5 of the 122 model features. It was never copied, so the import raised
+# ModuleNotFoundError, the except fell back to RAW values, and serving silently
+# disagreed with training on those 5 columns for as long as this image has
+# existed. Needs PyWavelets in requirements-runtime.txt (added in the same
+# change) — shipping the module without the library just moves the failure.
+COPY --chown=hmats:hmats training/scripts/__init__.py training/scripts/wavelet_denoise.py ./training/scripts/
+# [P214] Sequence-alpha class definitions. The CHECKPOINTS are in the models
+# volume but the classes that unpickle them were not in the image, so live
+# logged `No module named 'training.model_alpha'` and model_alpha — an ADVISE
+# agent — emitted +0.00/0.00 for BTC and SOL (ETH happened to load). torch only.
+COPY --chown=hmats:hmats training/model_alpha/__init__.py training/model_alpha/sequence_alpha_model.py ./training/model_alpha/
 # Exit-DRL training package — runtime needs DiscreteActor + DiscreteQCritic for
 # checkpoint deserialization and the build_state helper for state construction.
 COPY --chown=hmats:hmats training/exit_drl ./training/exit_drl

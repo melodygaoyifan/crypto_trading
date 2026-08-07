@@ -49,3 +49,9 @@ pytz>=2023.0
 
 # Coinbase US Perpetual-Style Futures (Phase 2 derivatives venue)
 coinbase-advanced-py==1.8.3
+
+# [P214] Wavelet denoising for 5 of the 122 model features. WITHOUT this the
+# live pipeline's import fails, it falls back to RAW, and serving silently
+# disagrees with training on rsi_14/macd_12_26/bb_width_20/atr_14/vol_ratio_s.
+# See data_mgmt/market_data_pipeline.py:855.
+PyWavelets>=1.4.0
