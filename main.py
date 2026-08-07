@@ -15351,6 +15351,19 @@ class HMATSProductionRunner:
                 "peak_equity": peak_equity,
                 "position_entry_times": entry_times_serializable,
                 "existence_fuse_state": fuse_state,
+                # [P209] The equity basis the fuse's PnL series is denominated in.
+                # "coinbase_sleeve" => the records came from the sleeve feed below,
+                # NOT from Kraken fills. The restore path needs this to know that
+                # comparing starting_equity against config.initial_capital is
+                # meaningless (see the carve-out there).
+                "existence_fuse_equity_basis": getattr(
+                    self, "_fuse_equity_basis", "") or "",
+                # [P209] Anchor for the sleeve->fuse delta. Persisted so the delta
+                # after a restart is measured against the last equity we actually
+                # recorded, not against a fresh reading (which would silently drop
+                # every loss that happened while the process was down).
+                "fuse_sleeve_anchor_equity": getattr(
+                    self, "_fuse_sleeve_anchor_equity", None),
                 "cascade_state": cascade_state,
                 "failure_memory_state": failure_memory_state,
                 "confidence_scorer_state": confidence_scorer_state,
@@ -16956,6 +16969,26 @@ class HMATSProductionRunner:
                         if _saved_starting_equity > 0 and _expected_equity > 0
                         else 1.0
                     )
+                    # [P209] The ratio guard asks "is this fuse from a different
+                    # capital regime than config.initial_capital?". That question is
+                    # meaningless once the series is sleeve-denominated: the sleeve
+                    # (~$3.8k) is a fraction of initial_capital ($10k), so the guard
+                    # would discard the history on EVERY restart and the 28d window
+                    # could never fill — the fuse would look armed and never be able
+                    # to fire. Worse, the natural alternative (compare against
+                    # current equity) resets precisely when a drawdown is deepest,
+                    # i.e. exactly when the accumulated history matters most.
+                    # So: skip the guard for a sleeve-denominated series, loudly.
+                    _basis = str(data.get("existence_fuse_equity_basis") or "")
+                    if _basis == "coinbase_sleeve" and _ratio > 2.0:
+                        logger.info(
+                            f"[P209] Fuse capital-regime guard skipped: series is "
+                            f"'{_basis}'-denominated (starting_equity="
+                            f"${_saved_starting_equity:,.0f} vs initial_capital="
+                            f"${_expected_equity:,.0f}); comparing them is a "
+                            f"category error, not a corruption signal"
+                        )
+                        _ratio = 1.0
                     if _ratio > 2.0:
                         logger.warning(
                             f"[PAPER] Existence fuse reset: saved starting_equity=${_saved_starting_equity:,.0f} "
@@ -16963,10 +16996,20 @@ class HMATSProductionRunner:
                         )
                     else:
                         self.existence_fuse.from_dict(fuse_data)
+                        # [P209] Restore the sleeve anchor + basis alongside the
+                        # history they belong to. Restoring one without the other
+                        # would measure the next delta against the wrong reference.
+                        self._fuse_equity_basis = str(
+                            data.get("existence_fuse_equity_basis") or "")
+                        _anchor = data.get("fuse_sleeve_anchor_equity")
+                        self._fuse_sleeve_anchor_equity = (
+                            float(_anchor) if _anchor else None)
                         logger.info(
                             f"[PAPER] Restored existence fuse: state={fuse_data.get('state', '?')}, "
                             f"starting_equity=${(fuse_data.get('starting_equity') or 0):,.0f}, "
                             f"history={len(fuse_data.get('pnl_history', []))} records"
+                            + (f", sleeve_anchor=${self._fuse_sleeve_anchor_equity:,.2f}"
+                               if self._fuse_sleeve_anchor_equity else "")
                         )
                 except Exception as e:
                     logger.warning(f"[PAPER] Fuse restore failed (starting fresh): {e}")
@@ -18588,6 +18631,113 @@ class HMATSProductionRunner:
                                         )
                                     except Exception as _cb_sl_err:
                                         logger.debug(f"[COINBASE-SLEEVE] skipped: {_cb_sl_err}")
+                                    # [P209] FEED THE EXISTENCE FUSE THE SLEEVE'S PnL.
+                                    # Non-Negotiable Rule #3 (28d window, cumulative
+                                    # loss -> halt) has been inert since Phase B: all
+                                    # three record_pnl() call sites live in
+                                    # execution_service.py PAST the P152 early return,
+                                    # so for a Coinbase-routed asset they never run.
+                                    # The fuse's pnl_history was literally [] while the
+                                    # sleeve carried 100% of the directional risk.
+                                    #
+                                    # The OUTPUT half is already wired: a suspended
+                                    # fuse sets veto_reason=[STRATEGY_SUSPENDED], which
+                                    # P206's translator classifies as neither HOLD nor
+                                    # venue-NA, so it falls through to veto_flat and the
+                                    # sleeve flattens. So this input is the last link.
+                                    try:
+                                        _fz = getattr(self, "existence_fuse", None)
+                                        _fz_sleeve = getattr(self, "_coinbase_sleeve", None)
+                                        if _fz is not None and _fz_sleeve is not None:
+                                            _fz_eq = float(
+                                                getattr(_fz_sleeve, "_last_equity_usd", 0.0) or 0.0)
+                                            _fz_fresh = bool(
+                                                getattr(_fz_sleeve, "_reconcile_ok", False))
+                                            if not _fz_fresh or _fz_eq <= 0:
+                                                # sleeve_equity_usd() returns the last
+                                                # KNOWN value on API failure, so a stale
+                                                # read would compute delta=0 and enter
+                                                # the window as "no loss". Skipping
+                                                # leaves a gap; recording a fabricated
+                                                # zero would understate the drawdown.
+                                                logger.debug(
+                                                    "[P209] fuse feed skipped: sleeve "
+                                                    f"equity not fresh (ok={_fz_fresh}, "
+                                                    f"eq=${_fz_eq:,.2f})")
+                                            else:
+                                                _fz_anchor = getattr(
+                                                    self, "_fuse_sleeve_anchor_equity", None)
+                                                # First ever point: anchor here and
+                                                # record 0. Deliberately NOT retroactive
+                                                # — seeding the window with the sleeve's
+                                                # inception-to-date loss would suspend on
+                                                # the first tick for PnL earned before
+                                                # the fuse could ever have acted on it.
+                                                _fz_delta = (
+                                                    _fz_eq - float(_fz_anchor)
+                                                    if _fz_anchor else 0.0)
+                                                self._fuse_sleeve_anchor_equity = _fz_eq
+                                                self._fuse_equity_basis = "coinbase_sleeve"
+                                                # record_pnl ONLY. on_trade_close() is
+                                                # deliberately NOT called: it counts a
+                                                # CONSECUTIVE-LOSS streak and suspends at
+                                                # 10, and a 4H mark-to-market tick is not
+                                                # a trade — ten red ticks (~1.7 days of
+                                                # normal drift) would halt the system.
+                                                _fz.record_pnl(
+                                                    realized_pnl=_fz_delta,
+                                                    current_equity=_fz_eq,
+                                                    trade_count=0,
+                                                )
+                                                _fz_st = _fz.get_status()
+                                                logger.info(
+                                                    f"[P209][FUSE-FEED] sleeve "
+                                                    f"equity=${_fz_eq:,.2f} "
+                                                    f"delta={_fz_delta:+,.2f} "
+                                                    f"window={_fz_st.window_pnl_pct * 100:+.2f}% "
+                                                    f"state={_fz_st.state.name}"
+                                                )
+                                                if _fz_st.is_suspended:
+                                                    logger.critical(
+                                                        f"[P209][FUSE-FEED] EXISTENCE FUSE "
+                                                        f"SUSPENDED: {_fz_st.suspension_reason} "
+                                                        f"— the sleeve will be flattened by "
+                                                        f"the STRATEGY_SUSPENDED veto"
+                                                    )
+                                    except Exception as _fz_err:
+                                        logger.warning(
+                                            f"[P209] fuse feed failed: "
+                                            f"{type(_fz_err).__name__}: {_fz_err}")
+                                    # [P209] PERSIST IT. Without this the feed above is
+                                    # theatre: run_live() never calls
+                                    # _save_paper_positions() anywhere. The three
+                                    # per-tick calls (17800/18046/18057) are all inside
+                                    # run_paper(); the ones reachable in live
+                                    # (MAX_HOLD_TIMEOUT, FastRiskTick, CORR-0) each
+                                    # require a Kraken _paper_positions entry, and that
+                                    # dict has been {} since the 2026-06-13 flatten. The
+                                    # live file was last written 2026-06-13T02:17Z.
+                                    #
+                                    # So the fuse's 28d rolling window would reset to
+                                    # empty on every deploy and could never accumulate
+                                    # 28 days of anything — the same in-memory-baseline
+                                    # class as P150 (sleeve DD baseline) and P148 (DRL
+                                    # frame buffer), and the reason P140/B2 observed
+                                    # `_peak_equity` re-initialising on restart.
+                                    #
+                                    # Carries the other governors in the same bundle
+                                    # (cascade, failure_memory, confidence_scorer,
+                                    # opportunity_budget, regime_smoother, AC-5 daily
+                                    # fill counters), all equally unpersisted in live.
+                                    # Same family as the main.py:18215 note that
+                                    # run_live() was missing dispatches run_paper() had:
+                                    # run_live is a partial copy and keeps losing things.
+                                    try:
+                                        self._save_paper_positions(force=True)
+                                    except Exception as _sv_err:
+                                        logger.warning(
+                                            f"[P209] state persist failed: "
+                                            f"{type(_sv_err).__name__}: {_sv_err}")
                                     # [COINBASE-FUNDING] Phase 3 SHADOW: run the 3
                                     # funding-rate strategies on live perp funding and
                                     # LOG the combined signal. Observe-only — does NOT

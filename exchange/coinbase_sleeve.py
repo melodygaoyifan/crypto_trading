@@ -241,8 +241,19 @@ class CoinbaseSleeve:
         and wrongly concluded the account was thinly margined near liquidation;
         the portfolio breakdown shows ~$4,000 USDC backing ~$2,050 notional
         (~0.5x leverage). Falls back to the futures-summary estimate on error.
-        Used ONLY for the sleeve's own risk guard + reporting — never fed into the
-        Kraken existence-fuse/drawdown."""
+
+        [P209] This value IS now fed into the existence fuse (main.py, tagged
+        [FUSE-FEED]) as a per-tick equity delta, because the fuse's own three
+        record_pnl() sites sit past the P152 early return and so never fire for a
+        routed asset — leaving Non-Negotiable Rule #3 with an empty pnl_history
+        while this sleeve carried all of the directional risk. The earlier
+        "never fed into the Kraken existence-fuse/drawdown" note described a
+        separation that made sense when Kraken still traded; keeping it after
+        Phase B just meant nothing measured the book that was actually at risk.
+
+        NOTE the failure mode if you reuse this: on an API error it returns the
+        last KNOWN equity, so a caller computing a delta must check
+        `_reconcile_ok` first or a stale read silently becomes "no change"."""
         if not self.is_ready():
             return self._last_equity_usd
         # primary: real portfolio total_balance (the cross-collateralized equity)
