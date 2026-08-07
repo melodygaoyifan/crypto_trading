@@ -5075,8 +5075,21 @@ class HMATSProductionRunner:
                         f"(models_ready={self._drl_models_ready})"
                     )
             self._sync_drl_authority(self._drl_authority_level)
-            # [2026-04-11] Force DRL ACTIVE unconditionally if models are ready
-            if self._drl_models_ready > 0 and self._drl_authority_level != "ACTIVE":
+            # [2026-04-11] Force DRL ACTIVE unconditionally if models are ready.
+            # [P198 2026-08-07] Now gated on drl_config.force_active (default
+            # True = the historical behavior). While this ran unconditionally,
+            # the promotion gate's persisted level was COSMETIC across
+            # restarts: any demotion — auto or manual — was silently
+            # re-promoted to ACTIVE on the next boot, so rule #4's "DRL
+            # Authority" was decided by this block, not by the gate. With
+            # force_active=false the persisted gate level is authoritative,
+            # which is what makes the 2026-08 demote-to-SHADOW (live IC
+            # +0.019/-0.081, no stable edge in two independent windows)
+            # actually stick.
+            _drl_force_active = bool(_drl_cfg.get('force_active', True))
+            if (self._drl_models_ready > 0
+                    and self._drl_authority_level != "ACTIVE"
+                    and _drl_force_active):
                 logger.warning(
                     f"[DRL_FORCE_ACTIVE] Overriding {self._drl_authority_level} → ACTIVE "
                     f"(models_ready={self._drl_models_ready})"
@@ -5084,6 +5097,13 @@ class HMATSProductionRunner:
                 self._promotion_gate.promote("ACTIVE")
                 self._drl_authority_level = "ACTIVE"
                 self._sync_drl_authority("ACTIVE")
+            elif self._drl_models_ready > 0 and self._drl_authority_level != "ACTIVE":
+                logger.warning(
+                    f"[DRL_GATE] force_active=false: honoring persisted level "
+                    f"{self._drl_authority_level} (models_ready="
+                    f"{self._drl_models_ready}; DRL runs inference + logs "
+                    f"signals but does not vote in fusion below EXIT_ONLY)"
+                )
             logger.info(f"  DRLPromotionGate: ACTIVE (level={self._drl_authority_level})")
         except Exception as e:
             logger.warning(f"  DRLPromotionGate: STUB ({e})")
@@ -7769,7 +7789,15 @@ class HMATSProductionRunner:
         if getattr(self.config, "trend_following_mode", "off") != "off":
             try:
                 from core.trend_decision_layer import get_trend_decision_layer
-                get_trend_decision_layer(self.config.trend_following_mode).process(
+                get_trend_decision_layer(
+                    self.config.trend_following_mode,
+                    # [P198] regime gate: shadow (default) logs would-gate
+                    # verdicts to data/trend_regime_shadow.jsonl; "enforce"
+                    # zeroes trend in gated regimes. Promote on forward
+                    # evidence only (scripts/trend_regime_review.py).
+                    regime_gate_mode=str(getattr(
+                        self.config, "trend_regime_gate", "shadow") or "shadow"),
+                ).process(
                     asset, _ohlcv_df, agent_signals, market_data)
                 # [P149 2026-06-14] Bridge to the Coinbase perp sleeve: it's driven
                 # by _last_quant_directions (captured at ~6379 BEFORE this inject),
@@ -18271,6 +18299,14 @@ class HMATSProductionRunner:
                                                 protective_stop_assets=(getattr(
                                                     self.config,
                                                     "coinbase_protective_stop_assets", None) or None),
+                                                # [P198] sleeve-side flip persistence
+                                                # (the P142 churn control never reached
+                                                # this path). Default 2 = same as the
+                                                # Kraken-side flip_persist_ticks; 0/1
+                                                # disables. Tightening-only.
+                                                flip_persist_ticks=int(getattr(
+                                                    self.config,
+                                                    "coinbase_flip_persist_ticks", 2) or 0),
                                             )
                                         _cb_snap = self._coinbase_sleeve.snapshot()
                                         _cb_pos = _cb_snap.get("positions") or {}

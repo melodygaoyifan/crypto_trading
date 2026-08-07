@@ -51,9 +51,23 @@ class CoinbaseSleeve:
                  max_sleeve_drawdown_pct: float = 0.15,
                  max_contracts_per_asset: int = 1,
                  protective_stop_pct: float = 0.0,
-                 protective_stop_assets=None) -> None:
+                 protective_stop_assets=None,
+                 flip_persist_ticks: int = 0) -> None:
         self._adapter = adapter
         self._assets = tuple(assets)
+        # [P198] Flip-persistence churn control, mirroring the Kraken-side P142
+        # guard which never reached this path: the sleeve driver reads
+        # _last_quant_directions raw, so the sleeve inherited NONE of the
+        # Layer-2 churn controls and flipped BTC 29 times in 54 days while the
+        # sleeve lost 5.6% (measured 2026-08-06, coinbase_sleeve_pnl.jsonl).
+        # A sign-FLIP of a live position must persist this many CONSECUTIVE
+        # ticks before it executes; a single-tick reversal holds the position.
+        # <=1 disables. Entries from flat, adds, reduces and flattens are NEVER
+        # deferred — only direction flips (same asymmetry as the P195 halt:
+        # exits must stay instant). In-memory streak; a restart resets it,
+        # which only DELAYS a flip — the conservative side.
+        self._flip_persist_ticks = max(0, int(flip_persist_ticks or 0))
+        self._flip_pending: Dict[str, Any] = {}  # asset -> (want_sign, streak)
         # [P197] Server-side protective stop. `pct` <= 0 DISABLES the feature
         # entirely — a single knob, so "enabled with a 0% stop" is unexpressible.
         # `protective_stop_assets=None` means every sleeve asset; pass a subset to
@@ -434,9 +448,38 @@ class CoinbaseSleeve:
         if not self._reconcile_ok:
             logger.warning(f"[COINBASE_SLEEVE] manage_to_signal {asset}: skip "
                            f"(reconcile failed; not acting on stale snapshot)")
+            # Deliberately leaves any flip-persistence streak untouched: a
+            # stale tick neither confirms nor refutes the opposing signal, so
+            # the streak pauses rather than resets.
             return {"status": "SKIPPED_STALE", "asset": asset,
                     "reason": "reconcile_failed"}
         target = self.target_for_signal(direction, threshold)
+        # [P198] Flip-persistence: an opposing target against a LIVE position
+        # must persist `_flip_persist_ticks` consecutive ticks before the flip
+        # executes; until then, hold the current position (no close, no
+        # reverse — the P142 semantics). Never applies to entries from flat,
+        # flattens (target 0), or same-direction targets, so exits stay
+        # instant (P195 principle) and the deadband flatten is unaffected.
+        cur = self.signed_contracts(asset)
+        if (self._flip_persist_ticks > 1 and cur != 0 and target != 0
+                and (target > 0) != (cur > 0)):
+            want = 1 if target > 0 else -1
+            pend_sign, streak = self._flip_pending.get(asset, (0, 0))
+            streak = streak + 1 if pend_sign == want else 1
+            self._flip_pending[asset] = (want, streak)
+            if streak < self._flip_persist_ticks:
+                logger.info(
+                    f"[COINBASE_SLEEVE] {asset}: FLIP DEFERRED "
+                    f"({streak}/{self._flip_persist_ticks} consecutive opposing "
+                    f"ticks; cur={cur:+.0f}ct target={target:+d}ct) — holding")
+                return {"status": "FLIP_DEFERRED", "asset": asset,
+                        "streak": streak, "need": self._flip_persist_ticks,
+                        "current": cur, "target": target}
+            self._flip_pending.pop(asset, None)
+        else:
+            # Same-direction, flat, or flatten: any pending flip streak is
+            # broken — a flip must be CONSECUTIVE opposing ticks.
+            self._flip_pending.pop(asset, None)
         return await self.execute_target(asset, target)
 
     async def _cancel_resting_orders(self, pid: str, asset: str) -> int:
