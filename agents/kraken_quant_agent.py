@@ -2582,6 +2582,9 @@ _SIGNAL_DIRECTION = {
     SignalType.PAIR_SHORT_A_LONG_B: -0.5,
 }
 
+# [P217] One-shot warn set for regime names absent from _REGIME_MAP.
+_UNMAPPED_REGIMES_WARNED: set = set()
+
 # HMATS regime name -> local Regime enum
 # Covers all 6 canonical GMM regimes + common synonyms + REGIME_N fallthrough
 _REGIME_MAP = {
@@ -2601,6 +2604,19 @@ _REGIME_MAP = {
     "WEAK_CONSOLIDATION": Regime.SIDEWAYS,
     "SIDEWAYS": Regime.SIDEWAYS,
     "CHOP": Regime.SIDEWAYS,
+    # [P217] Added after measuring what the per-asset GMMs ACTUALLY emit over
+    # 2,545 ticks (2026-04-08 -> 08-07). Both names were absent, so _map_regime
+    # silently returned its SIDEWAYS default:
+    #   STEADY_UPTREND  93 ticks (3.7%) — a TRENDING-UP regime being routed to
+    #                   the mean-reversion bucket. This is the defect: the four
+    #                   BULL strategies had 93 ticks of their regime and never
+    #                   saw one, because MOMENTUM_RALLY (the only mapped BULL
+    #                   name) has NEVER occurred in four months.
+    #   NEUTRAL_DRIFT   27 ticks (1.1%) — SIDEWAYS is right, but it was right
+    #                   BY ACCIDENT via the default. Stated explicitly so it is
+    #                   a decision rather than a fallthrough.
+    "STEADY_UPTREND": Regime.BULL,
+    "NEUTRAL_DRIFT": Regime.SIDEWAYS,
     "ACCUMULATION": Regime.SIDEWAYS,
     "RANGE_BOUND": Regime.SIDEWAYS,
 }
@@ -2809,16 +2825,35 @@ class KrakenQuantAgentV6:
 
     @staticmethod
     def _map_regime(regime_str: Optional[str]) -> Regime:
-        """Map HMATS regime name to local Regime enum, default SIDEWAYS."""
+        """Map HMATS regime name to local Regime enum, default SIDEWAYS.
+
+        [P217] The default is now LOUD. An unmapped name used to fall through in
+        silence, and that is how STEADY_UPTREND — a trending-up regime, 3.7% of
+        all ticks — spent four months being handed to the mean-reversion
+        strategy bucket. The mapping was never wrong in a way anything could
+        observe: a GMM regime name is data, `_REGIME_MAP` is a hardcoded mirror
+        of it, and the two drift the moment a model is retrained with different
+        cluster names. Warn once per unseen name so the next drift is visible
+        the day it happens rather than after a four-month log audit.
+        """
         if regime_str is None:
             return Regime.SIDEWAYS
         key = str(regime_str).upper().replace("-", "_")
         mapped = _REGIME_MAP.get(key)
         if mapped:
             return mapped
-        # REGIME_0..7 from per-asset GMM -> conservative default
+        # REGIME_0..7 from per-asset GMM -> conservative default. Expected
+        # shape, not drift, so it stays quiet.
         if key.startswith("REGIME_"):
             return Regime.SIDEWAYS
+        if key not in _UNMAPPED_REGIMES_WARNED:
+            _UNMAPPED_REGIMES_WARNED.add(key)
+            logger.warning(
+                f"[KQ_REGIME] '{key}' is not in _REGIME_MAP — defaulting to "
+                f"SIDEWAYS, so the BEAR and BULL strategy buckets cannot fire "
+                f"in this regime. If it is directional, add it to _REGIME_MAP. "
+                f"Known names: {sorted(_REGIME_MAP)}"
+            )
         return Regime.SIDEWAYS
 
     @staticmethod
