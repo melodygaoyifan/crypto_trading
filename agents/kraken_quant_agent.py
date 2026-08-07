@@ -2426,7 +2426,7 @@ class StrategyAllocator:
         strategies = self.strategies[regime]
 
         # [KQ-DIAG] record which regime bucket ran this tick
-        self._regime_ticks[regime.value] += 1
+        self._regime_ticks[regime.name] += 1  # [P215] NAME, matching the contract
 
         # Calculate IR weights
         weights = self.calculate_ir_weights(regime)
@@ -2541,12 +2541,27 @@ class StrategyAllocator:
                 })
                 if fires == 0:
                     never_fired.append(s.name)
-            by_regime[regime.value] = rows
+            # [P215] Key by regime.NAME ('SIDEWAYS'), which is the contract this
+            # method's own docstring declares and what the reader looks up.
+            # These were keyed by regime.VALUE ('chop'), so every lookup missed:
+            # `by_regime.get('SIDEWAYS')` returned [], every strategy row came
+            # back empty, and the diagnostic printed attempts=0 fires=0 for all
+            # 12 REGARDLESS of what actually happened — a tool that could only
+            # ever report "everything is dead". regime_ticks had the same
+            # mismatch, so each bucket also read 0 and the status column said
+            # "never-active (regime not seen)" for SIDEWAYS while the header
+            # showed chop=100%. A false diagnosis is worse than none: it sends
+            # you to fix a regime mapping that is correct (P155).
+            by_regime[regime.name] = rows
         return {
             'uptime_sec': round(uptime, 1),
             'regime_ticks': dict(self._regime_ticks),
             'by_regime': by_regime,
             'never_fired': never_fired,
+            # [P215] Archived strategies were indistinguishable from dead ones:
+            # both showed attempts=0. They are a deliberate P157 decision, not a
+            # fault, and must not read as one.
+            'archived': sorted(self._archived_strategies),
         }
 
 
