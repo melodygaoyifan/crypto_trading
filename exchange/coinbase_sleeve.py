@@ -633,7 +633,7 @@ class CoinbaseSleeve:
                 if str(_g(o, "side") or "").upper() != want_side:
                     return False
                 cfg = self._order_config(o)
-                inner = next(iter(cfg.values()), {}) if cfg else {}
+                inner: Any = next(iter(cfg.values()), {}) if cfg else {}
                 bs = _f(_g(inner, "base_size"), 0.0)
                 # base_size is in CONTRACTS at the venue (base_increment=1)
                 return abs(bs - abs(cur)) < 1e-9

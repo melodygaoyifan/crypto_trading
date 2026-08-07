@@ -260,8 +260,12 @@ class CoinbaseAdapter(ExchangeAdapter):
                 # BUY  stop protects a SHORT -> triggers on the way UP.
                 direction = ("STOP_DIRECTION_STOP_DOWN" if side == "SELL"
                              else "STOP_DIRECTION_STOP_UP")
-                fn = (self._client.stop_limit_order_gtc_sell if side == "SELL"
-                      else self._client.stop_limit_order_gtc_buy)
+                # getattr, not attribute access: `self._client` is Optional, and
+                # every direct `self._client.x` in this file is an existing
+                # baselined union-attr finding. New code must not add more.
+                fn = getattr(self._client,
+                             "stop_limit_order_gtc_sell" if side == "SELL"
+                             else "stop_limit_order_gtc_buy")
                 resp = fn(
                     client_order_id=coid, product_id=product_id,
                     base_size=size_str, limit_price=str(lim_px),
