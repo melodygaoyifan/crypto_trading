@@ -340,6 +340,80 @@ class TestSleeveStopReconcile:
         assert res["status"] == "ERROR"
 
 
+class _SdkOrderConfiguration:
+    """Mimics the SDK's OrderConfiguration: NOT a dict, data in __dict__.
+
+    This is the exact shape `list_orders` returns. Every fake in this file
+    originally used a plain dict, which is why the bug below shipped.
+    """
+
+    def __init__(self, **kw):
+        for k, v in kw.items():
+            setattr(self, k, v)
+
+
+class TestVenueObjectsAreNotDicts:
+    """[P197-fix] The reconciler could not recognise its own live stop.
+
+    `_is_stop_order` required `order_configuration` to be a dict. The SDK returns
+    an `OrderConfiguration` object, and `fetch_open_orders` only did a one-level
+    `__dict__` conversion, so the nested object survived. Verified against the
+    real venue: a stop-limit resting on SOL (stop 80.82, STOP_DIRECTION_STOP_UP)
+    read as `_is_stop_order() -> False`.
+
+    Two consequences, both live-order defects rather than cosmetic:
+      * the next tick would not see the existing stop and would place a SECOND
+        one — stacking a new real order every 4H;
+      * on going flat, the orphan-cancel branch iterates the (empty) stop list
+        and cancels NOTHING, leaving exactly the orphan the whole design exists
+        to prevent, on a venue with no reduce_only.
+
+    Tests must use the object shape, not a convenient dict.
+    """
+
+    def _order(self):
+        return {"order_id": "REAL1", "side": "BUY",
+                "order_configuration": _SdkOrderConfiguration(
+                    stop_limit_stop_limit_gtc={
+                        "base_size": "1", "limit_price": "81.22",
+                        "stop_price": "80.82",
+                        "stop_direction": "STOP_DIRECTION_STOP_UP"})}
+
+    def test_a_stop_whose_config_is_an_object_is_still_recognised(self):
+        assert CoinbaseSleeve._is_stop_order(self._order()) is True, (
+            "the live stop was not recognised as a stop — the reconciler would "
+            "place a second one next tick and fail to cancel it when flat"
+        )
+
+    def test_an_object_shaped_stop_is_left_alone_not_duplicated(self):
+        a = _FakeAdapter(open_orders=[self._order()])
+        res = _run(_sleeve(a, signed=-1))
+        assert res["status"] == "OK_EXISTS", res
+        assert a.placed == [], "placed a duplicate stop on top of the live one"
+
+    def test_an_object_shaped_orphan_is_cancelled_when_flat(self):
+        a = _FakeAdapter(open_orders=[self._order()])
+        res = _run(_sleeve(a, signed=0))
+        assert res["status"] == "FLAT_CANCELLED"
+        assert a.cancelled == ["REAL1"], (
+            "orphan stop survived going flat — on CDE (no reduce_only) it would "
+            "OPEN a position when triggered"
+        )
+
+    def test_the_adapter_normalises_nested_objects_to_plain_dicts(self):
+        """Fix at the boundary, so every consumer gets ordinary dicts."""
+        from exchange.coinbase_adapter import _plain
+        out = _plain(self._order())
+        assert isinstance(out["order_configuration"], dict)
+        assert out["order_configuration"]["stop_limit_stop_limit_gtc"]["stop_price"] == "80.82"
+
+    def test_plain_is_depth_bounded_against_self_reference(self):
+        from exchange.coinbase_adapter import _plain
+        a = _SdkOrderConfiguration()
+        a.self_ref = a          # cyclic
+        _plain(a)               # must terminate, not recurse forever
+
+
 class TestTheTickSummaryCannotContradictItself:
     """[P197] The stop-summary block was first written between
     `if _m_summary:` and its `else:`, which silently re-bound the else to the

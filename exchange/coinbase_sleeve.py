@@ -497,13 +497,26 @@ class CoinbaseSleeve:
         return asset in self._protective_stop_assets
 
     @staticmethod
+    def _order_config(o) -> Dict[str, Any]:
+        """order_configuration as a plain mapping, whatever shape it arrives in.
+
+        [P197-fix] The adapter now normalises this at the boundary, but this
+        stays defensive on purpose: the first version required a dict, the SDK
+        hands back an `OrderConfiguration` object, and the result was that a
+        stop-limit demonstrably resting at the venue read as "no stop found".
+        Downstream that is not a cosmetic miss — it would have placed a second
+        stop every tick, and skipped cancelling orphans when flat.
+        """
+        cfg = _g(o, "order_configuration")
+        if isinstance(cfg, dict):
+            return cfg
+        inner = getattr(cfg, "__dict__", None)
+        return inner if isinstance(inner, dict) else {}
+
+    @staticmethod
     def _is_stop_order(o) -> bool:
         """A Coinbase order is a stop iff its order_configuration says so."""
-        cfg = _g(o, "order_configuration") or {}
-        try:
-            keys = list(cfg.keys()) if isinstance(cfg, dict) else []
-        except Exception:
-            keys = []
+        keys = list(CoinbaseSleeve._order_config(o).keys())
         return any("stop" in str(k).lower() or "bracket" in str(k).lower()
                    for k in keys)
 
@@ -576,8 +589,8 @@ class CoinbaseSleeve:
             def _matches(o) -> bool:
                 if str(_g(o, "side") or "").upper() != want_side:
                     return False
-                cfg = _g(o, "order_configuration") or {}
-                inner = next(iter(cfg.values()), {}) if isinstance(cfg, dict) else {}
+                cfg = self._order_config(o)
+                inner = next(iter(cfg.values()), {}) if cfg else {}
                 bs = _f(_g(inner, "base_size"), 0.0)
                 # base_size is in CONTRACTS at the venue (base_increment=1)
                 return abs(bs - abs(cur)) < 1e-9

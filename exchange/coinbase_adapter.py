@@ -44,6 +44,31 @@ _DEFAULT_KEY_FILE = os.path.join(
 )
 
 
+def _plain(obj: Any, _depth: int = 0) -> Any:
+    """[P197-fix] Recursively convert an SDK response into plain dicts/lists.
+
+    The SDK returns nested model objects (`Order.order_configuration` is an
+    `OrderConfiguration`, not a dict). A one-level `__dict__` conversion leaves
+    those nested objects intact, so a caller doing `isinstance(cfg, dict)` gets
+    False and concludes the field is absent — which is how a stop-limit that was
+    demonstrably resting at the venue read as "no stop found".
+
+    Depth-bounded so a self-referential SDK object cannot spin.
+    """
+    if _depth > 6:
+        return obj
+    if isinstance(obj, (str, int, float, bool)) or obj is None:
+        return obj
+    if isinstance(obj, dict):
+        return {k: _plain(v, _depth + 1) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_plain(v, _depth + 1) for v in obj]
+    inner = getattr(obj, "__dict__", None)
+    if isinstance(inner, dict):
+        return {k: _plain(v, _depth + 1) for k, v in inner.items()}
+    return obj
+
+
 def _attr(obj: Any, key: str, default: Any = None) -> Any:
     """Read `key` from an SDK response that may be an object or a dict."""
     if obj is None:
@@ -303,7 +328,14 @@ class CoinbaseAdapter(ExchangeAdapter):
                 kwargs["product_ids"] = [symbol]
             resp = self._client.list_orders(**kwargs)
             orders = _attr(resp, "orders", []) or []
-            return [o if isinstance(o, dict) else _attr(o, "__dict__", {}) for o in orders]
+            # [P197-fix] DEEP-convert to plain dicts. The old one-level
+            # `o.__dict__` left NESTED SDK objects intact: an Order's
+            # `order_configuration` stays an `OrderConfiguration`, not a dict.
+            # Callers that reasonably did `isinstance(cfg, dict)` then saw False
+            # and concluded "no stop here" — for a stop that was demonstrably
+            # resting at the venue. Normalising at the boundary is the fix;
+            # every consumer downstream gets ordinary dicts.
+            return [_plain(o) for o in orders]
         except Exception as e:
             logger.warning(f"[COINBASE] fetch_open_orders failed: {type(e).__name__}: {e}")
             return []
