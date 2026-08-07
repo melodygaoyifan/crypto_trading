@@ -25,3 +25,28 @@ mypy>=1.5.0                    # tools/lint_mypy_baseline.py scanner
 pyarrow>=14.0.0                # df.to_parquet in tests/test_pre6_backtest_and_shadow_ic.py
                                # (pandas' parquet engine is an optional dep and
                                # is not pulled in by requirements.txt)
+PyWavelets>=1.4.0              # [P203] `import pywt` reached transitively:
+                               # tests/test_rebuild_pipeline_gmm_split.py loads
+                               # training/scripts/rebuild_pipeline.py, which imports
+                               # wavelet_denoise.py, which imports pywt. Undeclared,
+                               # so that file ERRORed at fixture setup on 5 tests and
+                               # turned main red from d6c488e onward.
+                               #
+                               # It also un-skips tests/test_wavelet_causality.py,
+                               # which guards the P164 lookahead leak behind
+                               # `pytest.importorskip("pywt")` and had therefore NEVER
+                               # RUN IN CI. Declaring the dep is the fix; adding a
+                               # second importorskip would have made main green while
+                               # leaving a leak guard that never executes — the exact
+                               # P175/P187/P188 failure this file was created to end.
+                               # Verified: +14 tests now execute (3315 -> 3329).
+
+# [P203] NOTE on the `mypy>=1.5.0` line above — a latent divergence, not a bug today.
+# codebase-invariants installs `mypy==` the version READ FROM the baseline (P187, one
+# source of truth). This file installs whatever is newest. They agree right now (both
+# 2.3.0, verified by building both environments and diffing: identical counts, zero
+# by_code differences), but the day a new mypy ships, test-suite gets it while the
+# baseline still names the old one, and tests/test_mypy_gate_is_live.py fails on the
+# stamp mismatch. Do NOT fix that by pinning here — that creates a second source of
+# truth, which is what P187 removed. The fix is for test-suite.yml to read the version
+# from the baseline the same way codebase-invariants does.
