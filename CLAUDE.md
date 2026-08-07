@@ -288,6 +288,17 @@ discipline + the grep habit.
 
 ### Recent pitfalls (last ~30 days)
 
+### P208. [FIXED 2026-08-07] P144's net-exposure cap has never been evaluated on the venue that holds the risk — enforced it on the sleeve's own book
+- **The gap:** P144 added `max_net_exposure` (live **0.50**) because the book ran **+0.54 net-long into a −23% market** — roughly half the Apr–Jun loss — and gross caps do not constrain net *direction*. Its only enforcement site is `core/execution_service.py`, which sits **past the P152 early return** and reads Kraken-shaped `_paper_positions`, `{}` since the June flatten. So since Phase B the cap has run zero times on the only venue that trades (P201).
+- **The per-asset contract cap is not a substitute.** `max_contracts_per_asset=1` is per-asset with **no aggregation**: all-three-long is ≈ **+0.5× net** on ~$4,000 while every asset is individually "within cap" — precisely the shape P144 exists to prevent, invisible to both controls.
+- **Fix:** `sleeve_exposure()` computes net/gross as a fraction of sleeve equity from the **venue-reconciled** book (using the venue's `current_price`, then entry vwap, then product mid), and `can_trade` enforces the same policy number. Two properties matter more than the threshold:
+  - **De-risking is always free.** The gate fires only when an order both *increases* `|net|` **and** breaches the budget. An over-budget book can always be trimmed — the P144 rule, and the P195 lesson about a control that traps you in the position it was meant to limit. Falsification-checked: dropping the "increases" clause immediately fails the de-risk test.
+  - **A pricing failure fails OPEN.** `priced_ok` is False if any non-zero position could not be priced, and the gate then allows and warns. A risk control that fires on missing data is a data outage that halts trading.
+- **Deliberately NOT routed through `GlobalExposureCapManager`.** That object carries Kraken-shaped state; feeding Coinbase positions into it is the cross-venue contamination P139/P140 came from. Same policy number, enforced locally, on a book read from the venue — consistent with the separate-sleeve design.
+- **[P85 again, caught by the suite]** The new `self._max_net_exposure` read sits on the **live order path**, and pre-existing P195 fixtures built sleeves without it → `AttributeError` in `can_trade`, which would refuse *every* order. Now `getattr(self, "_max_net_exposure", None)`. Third time this session that a new attribute read on a hot path needed defending (P193, P201, here).
+- **Scope, honestly:** this connects the **net-exposure** control. The existence fuse still never sees sleeve PnL (`pnl_history: []`), and `target_exposure`-based sizing is still discarded by the ±1-contract sleeve — the contract cap, not sizing, is what binds today. Those remain open.
+- **Tests:** `tests/test_sleeve_net_exposure_p208.py` (14), including the aggregate-binds-where-the-per-asset-cap-cannot case, hedging orders that reduce `|net|` staying free, and composition with the P195 halt (neither control traps a position).
+
 ### P207. [FIXED 2026-08-07] A flatten left an orphan stop on a flat asset — venue-authoritative reconcile is blind for exactly one order-lifetime
 - **Observed live**, minutes after the P206 activation. The alpha gate refused ETH and SOL, the sleeve flattened both, and the venue then showed:
   ```

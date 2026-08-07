@@ -18552,6 +18552,17 @@ class HMATSProductionRunner:
                                                 flip_persist_ticks=int(getattr(
                                                     self.config,
                                                     "coinbase_flip_persist_ticks", 2) or 0),
+                                                # [P208] The SAME policy number as P144
+                                                # (risk.max_net_exposure, live 0.50),
+                                                # enforced on the sleeve's own
+                                                # venue-read book. P144's only
+                                                # enforcement site sits past the P152
+                                                # early return and reads Kraken-shaped
+                                                # _paper_positions, `{}` since June — so
+                                                # on the one venue that holds risk it has
+                                                # never been evaluated. None disables.
+                                                max_net_exposure=getattr(
+                                                    self.config, "max_net_exposure", None),
                                             )
                                         _cb_snap = self._coinbase_sleeve.snapshot()
                                         _cb_pos = _cb_snap.get("positions") or {}

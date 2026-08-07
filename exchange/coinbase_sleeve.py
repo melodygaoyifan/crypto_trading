@@ -63,7 +63,8 @@ class CoinbaseSleeve:
                  max_contracts_per_asset: int = 1,
                  protective_stop_pct: float = 0.0,
                  protective_stop_assets=None,
-                 flip_persist_ticks: int = 0) -> None:
+                 flip_persist_ticks: int = 0,
+                 max_net_exposure: Optional[float] = None) -> None:
         self._adapter = adapter
         self._assets = tuple(assets)
         # [P198] Flip-persistence churn control, mirroring the Kraken-side P142
@@ -87,6 +88,23 @@ class CoinbaseSleeve:
         self._protective_stop_pct = float(protective_stop_pct or 0.0)
         self._protective_stop_assets = (
             tuple(protective_stop_assets) if protective_stop_assets else None)
+        # [P208] NET exposure budget, enforced on THIS sleeve's own book.
+        # P144 added `max_net_exposure` because the book ran +0.54 net-long into
+        # a -23% market — about half the Apr-Jun loss — and gross caps do not
+        # constrain net direction. But its only enforcement site is
+        # `core/execution_service.py`, past the P152 early return, reading
+        # Kraken-shaped `_paper_positions` which has been `{}` since June. So on
+        # the only venue that trades, the cap has never once been evaluated
+        # (P201). The 1-contract-per-asset cap does not substitute: it is
+        # per-asset with no aggregation, so all-three-long is ~+0.5x net —
+        # precisely what P144 was written to prevent.
+        # Deliberately NOT wired through GlobalExposureCapManager: that carries
+        # Kraken-shaped state, and feeding Coinbase positions into it is the
+        # cross-venue contamination P139/P140 came from. Same policy number,
+        # enforced locally, on a book read from the venue.
+        # None disables.
+        self._max_net_exposure = (float(max_net_exposure)
+                                  if max_net_exposure else None)
         # product_id -> HMATS asset, for mapping venue positions back
         self._pid_to_asset = {}
         for a in self._assets:
@@ -281,6 +299,62 @@ class CoinbaseSleeve:
         return {"equity_usd": eq, "drawdown_pct": dd,
                 "halted": self._halted, "halt_reason": self._halt_reason}
 
+    def _notional_usd(self, asset: str, signed_contracts: float) -> float:
+        """Signed USD notional of a contract count for `asset`.
+
+        Price preference: the venue's `current_price` for a live position, then
+        its entry vwap, then the product mid. Returns 0.0 when no price can be
+        established — a position we cannot price must not silently count as
+        zero exposure, so callers treat 0.0 as "unknown" (see sleeve_exposure).
+        """
+        if not signed_contracts:
+            return 0.0
+        pos = self._last_positions.get(asset) or {}
+        px = _f(pos.get("current_price"), 0.0) or _f(pos.get("entry_vwap"), 0.0)
+        try:
+            pid = self._adapter.to_venue_symbol(asset, "perp")
+            if not px:
+                prod = self._adapter._client.get_product(product_id=pid)
+                px = _f(_g(prod, "mid_market_price") or _g(prod, "price"), 0.0)
+            cs = self._adapter._contract_size(pid) or 0.0
+        except Exception:
+            return 0.0
+        if not px or not cs:
+            return 0.0
+        return float(signed_contracts) * float(cs) * float(px)
+
+    def sleeve_exposure(self, overrides: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
+        """[P208] Net and gross exposure of THIS sleeve, as a fraction of its
+        own equity, computed from the venue-reconciled book.
+
+        `overrides` replaces an asset's signed contract count, so a proposed
+        order can be evaluated before it is sent.
+
+        `priced_ok` is False when any non-zero position could not be priced —
+        callers must fail OPEN on that (never block a de-risking order because a
+        price lookup failed) while still refusing to certify an increase.
+        """
+        eq = float(self._last_equity_usd or 0.0)
+        book = {a: float((p or {}).get("signed_contracts") or 0.0)
+                for a, p in self._last_positions.items()}
+        for a in (overrides or {}):
+            book[a] = float(overrides[a])
+        net = gross = 0.0
+        priced_ok = True
+        for a, c in book.items():
+            n = self._notional_usd(a, c)
+            if c and not n:
+                priced_ok = False
+                continue
+            net += n
+            gross += abs(n)
+        return {
+            "equity_usd": eq, "net_usd": net, "gross_usd": gross,
+            "net_pct": (net / eq) if eq > 0 else 0.0,
+            "gross_pct": (gross / eq) if eq > 0 else 0.0,
+            "priced_ok": priced_ok and eq > 0,
+        }
+
     def can_trade(self, asset: str, intended_signed_contracts: float) -> tuple:
         """(allowed, reason). Gate consulted by the order-routing branch BEFORE
         any Coinbase order. Isolated to Coinbase — never blocks Kraken.
@@ -325,6 +399,38 @@ class CoinbaseSleeve:
         if resulting > self._max_contracts_per_asset and resulting > abs(cur):
             return False, (f"coinbase_contract_cap: {resulting:.0f} > "
                            f"{self._max_contracts_per_asset} for {asset}")
+
+        # [P208] NET exposure budget across the whole sleeve. The per-asset
+        # contract cap above does not aggregate, so all-three-long is ~+0.5x net
+        # while every asset is individually "within cap" — exactly the +0.54
+        # net-long P144 was written to prevent, on the venue P144 cannot see.
+        # getattr, not self._max_net_exposure: this is the live order path, and
+        # an AttributeError here refuses every order. P85's rule — a new
+        # attribute read defends itself. Caught immediately by pre-existing
+        # tests whose sleeves were built before this field existed; a partially
+        # constructed sleeve in production would have had the same shape.
+        _net_budget = getattr(self, "_max_net_exposure", None)
+        if _net_budget:
+            _before = self.sleeve_exposure()
+            _after = self.sleeve_exposure(
+                overrides={asset: cur + intended_signed_contracts})
+            _n_before, _n_after = abs(_before["net_pct"]), abs(_after["net_pct"])
+            # Only ever block an order that INCREASES |net| — de-risking must
+            # always be free (the P144 rule, and the P195 lesson about controls
+            # that trap you in a position).
+            if _n_after > _n_before and _n_after > _net_budget:
+                if not _after["priced_ok"]:
+                    # Fail OPEN on a pricing failure rather than block on a
+                    # number we could not compute. A risk control that fires on
+                    # missing data is a data outage that stops trading.
+                    logger.warning(
+                        f"[COINBASE_SLEEVE] {asset}: net-exposure check "
+                        f"INCONCLUSIVE (could not price the book); allowing")
+                else:
+                    return False, (
+                        f"coinbase_net_exposure_cap: |net| {_n_after:.1%} > "
+                        f"{_net_budget:.0%} (was {_n_before:.1%}) "
+                        f"on ${_after['equity_usd']:,.0f} equity")
         return True, "ok"
 
     def reset_halt(self) -> None:
