@@ -337,8 +337,9 @@ class CoinbaseSleeve:
         eq = float(self._last_equity_usd or 0.0)
         book = {a: float((p or {}).get("signed_contracts") or 0.0)
                 for a, p in self._last_positions.items()}
-        for a in (overrides or {}):
-            book[a] = float(overrides[a])
+        _ov: Dict[str, float] = dict(overrides or {})
+        for a, c in _ov.items():
+            book[a] = float(c)
         net = gross = 0.0
         priced_ok = True
         for a, c in book.items():
