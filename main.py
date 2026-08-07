@@ -16857,8 +16857,23 @@ class HMATSProductionRunner:
 
         return None
 
-    def _load_paper_positions(self) -> bool:
-        """Restore paper positions from JSON on startup.
+    def _load_paper_positions(self, restore_positions: bool = True) -> bool:
+        """Restore persisted runtime state from JSON on startup.
+
+        Args:
+            restore_positions: when False, restore ONLY the governor states
+                (existence fuse, cascade, failure memory, confidence scorer,
+                opportunity budget, gambler, regime smoother, AC-5 counters,
+                peak equity) and leave `_paper_positions` untouched.
+
+                [P211] LIVE passes False. The governors are venue-independent
+                accounting and must survive a restart or they are not controls
+                at all (P209). `positions` is not: repopulating a Kraken book
+                from a file in live is the P139/P140 failure shape — a state
+                machine acting on a view that does not reflect the venue — and
+                `_paper_positions` being empty is load-bearing for P152/P206.
+                The Kraken book's authority is the startup reconciler, which
+                run_live runs a few lines later against the exchange itself.
 
         Returns:
             True when restore succeeds (or no state exists), False when
@@ -16879,9 +16894,15 @@ class HMATSProductionRunner:
                     f"{payload_error}"
                 )
                 return False
-            positions = data.get("positions", {})
+            positions = data.get("positions", {}) if restore_positions else {}
             saved_at = data.get("saved_at", "unknown")
             self._ac0_restored_assets = set()
+            if not restore_positions:
+                logger.info(
+                    f"[P211] Governor-only restore from {saved_at}: "
+                    f"_paper_positions left untouched (the venue reconciler is "
+                    f"the authority on the Kraken book, not this file)"
+                )
             if positions:
                 restored_pnl = float(data.get("cumulative_pnl", 0.0) or 0.0)
                 restore_equity = max(
@@ -16911,7 +16932,7 @@ class HMATSProductionRunner:
                         f"[PAPER] Reconciled {_restore_reconciled} restored positions "
                         f"to notional/equity truth (equity=${restore_equity:,.2f})"
                     )
-            else:
+            elif restore_positions:
                 logger.info("[PAPER] Saved position file was empty")
 
             _active_positions = self._normalize_runtime_position_state(prune=True)
@@ -18163,47 +18184,37 @@ class HMATSProductionRunner:
                 f"Set {self.config.kraken_api_key_env} and {self.config.kraken_api_secret_env}"
             )
 
-        # [P209] RESTORE the existence-fuse series. `_load_paper_positions()` is
-        # called only from run_paper() (:17375), so live persisted state was
-        # write-only: the fuse started empty on every deploy and its 28d window
-        # could never accumulate 28 days. Persisting without restoring is the
-        # same non-control as not persisting at all.
+        # [P209/P211] RESTORE persisted governor state. `_load_paper_positions()`
+        # was called only from run_paper() (:17375), so live persisted state was
+        # write-only: the existence fuse started empty on every deploy and its
+        # 28d window could never accumulate 28 days. Persisting without
+        # restoring is the same non-control as not persisting at all.
         #
-        # Deliberately restores ONLY the fuse + its anchor, NOT the full bundle.
-        # `_load_paper_positions()` also repopulates `_paper_positions`, and
-        # resurrecting Kraken position state in live from a file is a much
-        # larger blast radius than this fix needs (P139/P140 are both cases of a
-        # state machine acting on a book that did not reflect reality). The
-        # other governors in the bundle (cascade, failure_memory,
-        # confidence_scorer, opportunity_budget, regime_smoother, AC-5 counters,
-        # peak_equity) are persisted but still not restored in live — a separate
-        # change that needs its own safety review.
+        # restore_positions=False: the governors are venue-independent
+        # accounting and must survive a restart to be controls at all; the
+        # Kraken book is NOT restored from a file — that is the P139/P140 shape,
+        # `_paper_positions` being empty is load-bearing for P152/P206, and the
+        # startup reconciler below is the authority on it.
+        #
+        # [P211] Non-fatal by design, unlike the run_paper() caller which fails
+        # closed. Refusing to start LIVE because a diagnostics file is malformed
+        # turns a corrupt state file into an outage, and docker restart:always
+        # turns that into P85's restart loop. Losing governor history is bad;
+        # not trading at all is worse, and the loss is announced.
         try:
-            _fz0 = getattr(self, "existence_fuse", None)
-            if _fz0 is not None and self._PAPER_POS_FILE.exists():
-                import json as _json
-                _d0 = _json.loads(
-                    self._PAPER_POS_FILE.read_text(encoding="utf-8"))
-                _fs0 = _d0.get("existence_fuse_state") or {}
-                if _fs0.get("pnl_history"):
-                    _fz0.from_dict(_fs0)
-                    self._fuse_equity_basis = str(
-                        _d0.get("existence_fuse_equity_basis") or "")
-                    _a0 = _d0.get("fuse_sleeve_anchor_equity")
-                    self._fuse_sleeve_anchor_equity = float(_a0) if _a0 else None
-                    _st0 = _fz0.get_status()
-                    logger.warning(
-                        f"[P209] Restored existence fuse for LIVE: "
-                        f"{len(_fs0.get('pnl_history') or [])} records, "
-                        f"state={_st0.state.name}, "
-                        f"window={_st0.window_pnl_pct * 100:+.2f}%, "
-                        f"basis='{self._fuse_equity_basis}', "
-                        f"anchor={self._fuse_sleeve_anchor_equity}"
-                    )
-        except Exception as _fz0_err:
-            logger.warning(
-                f"[P209] live fuse restore failed (starting fresh — the 28d "
-                f"window restarts): {type(_fz0_err).__name__}: {_fz0_err}")
+            if not self._load_paper_positions(restore_positions=False):
+                logger.error(
+                    f"[P211] Persisted state malformed "
+                    f"({self._paper_restore_error or 'unknown'}) — LIVE starting "
+                    f"with FRESH governors. The existence fuse's 28d window "
+                    f"restarts from now and cannot see prior losses."
+                )
+        except Exception as _gr_err:
+            logger.error(
+                f"[P211] Governor restore failed ({type(_gr_err).__name__}: "
+                f"{_gr_err}) — LIVE starting with FRESH governors; the "
+                f"existence fuse's 28d window restarts from now."
+            )
 
         # =====================================================================
         # V6.2.3e TASK 1: STARTUP RECONCILER - MANDATORY FOR LIVE

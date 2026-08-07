@@ -255,50 +255,63 @@ class TestPersistence:
 class TestLiveRestore:
     """Found by reading the live log after deploying the feed: the first record
     came back with `cumulative_pnl: 0.0` and `history: 1`, i.e. the previous
-    state had NOT been read back. `_load_paper_positions()` is called only from
+    state had NOT been read back. `_load_paper_positions()` was called only from
     run_paper(), so live persistence was write-only — the fuse started empty on
     every deploy and the 28d window could never fill. Persisting without
     restoring is the same non-control as not persisting.
+
+    [P211] The first fix duplicated the restore inline in run_live. Replaced by
+    a `restore_positions` parameter on the one real restore, so the two cannot
+    drift — a second hand-written reader of the same file is exactly the
+    reader/writer contract drift this codebase keeps producing.
     """
 
-    def _live_restore_block(self) -> str:
-        # Align to the start of the line so `_code_only` can recognise the
-        # leading comment lines as comments (a mid-line slice makes the first
-        # line look like code, which is how this test first failed).
-        m = _SRC.index("[P209] RESTORE the existence-fuse series")
+    def _live_block(self) -> str:
+        m = _SRC.index("[P209/P211] RESTORE persisted governor state")
         i = _SRC.rindex("\n", 0, m) + 1
-        return _SRC[i:_SRC.index("[P209] live fuse restore failed", m)]
+        return _SRC[i:_SRC.index("existence fuse's 28d window restarts from now.", m)]
 
-    def test_run_live_restores_the_fuse(self):
-        i = _SRC.index("async def run_live")
-        j = _SRC.index("[P209] RESTORE the existence-fuse series")
-        assert i < j, "restore must be inside run_live"
-        blk = self._live_restore_block()
-        assert "_fz0.from_dict(_fs0)" in blk
+    def test_run_live_restores_governor_state(self):
+        assert _SRC.index("async def run_live") < _SRC.index(
+            "[P209/P211] RESTORE persisted governor state"), (
+            "restore must be inside run_live")
+        assert "_load_paper_positions(restore_positions=False)" in self._live_block()
 
-    def test_it_restores_the_anchor_with_the_history(self):
-        """Restoring history without the anchor would measure the next delta
-        against a fresh reading and silently drop everything that happened while
-        the process was down."""
-        blk = self._live_restore_block()
-        assert '_d0.get("fuse_sleeve_anchor_equity")' in blk
-        assert "self._fuse_sleeve_anchor_equity = float(_a0) if _a0 else None" in blk
+    def test_there_is_only_one_restore_implementation(self):
+        """P211: the inline duplicate is gone."""
+        assert "_fz0.from_dict" not in _SRC, "duplicate restore path still present"
+        assert _SRC.count("def _load_paper_positions") == 1
 
-    def test_it_does_not_repopulate_kraken_positions(self):
-        """`_load_paper_positions()` would also restore `_paper_positions`, and
-        resurrecting a Kraken book from a file in live is the P139/P140 failure
-        shape. Scope is deliberately the fuse only."""
-        code = _code_only(self._live_restore_block())
-        assert "_load_paper_positions" not in code
-        assert "self._paper_positions" not in code
+    def test_positions_are_not_restored_in_live(self):
+        """Repopulating a Kraken book from a file in live is the P139/P140
+        shape, and `_paper_positions` being empty is load-bearing for
+        P152/P206. The startup reconciler is the authority on that book."""
+        assert "restore_positions: bool = True" in _SRC
+        i = _SRC.index("positions = data.get(\"positions\", {}) if restore_positions else {}")
+        assert i > 0, "the positions read is not gated on the flag"
 
-    def test_a_restore_failure_is_non_fatal(self):
-        """Live trading must not fail to start because a state file is corrupt
-        (the P85 10-restart-loop lesson)."""
-        i = _SRC.index("[P209] RESTORE the existence-fuse series")
-        w = _SRC[i:i + 3000]
-        assert "except Exception as _fz0_err:" in w
-        assert "starting fresh" in w
+    def test_the_flag_actually_gates_the_assignment(self):
+        """Falsification: with restore_positions False the `positions` dict is
+        empty, so `self._paper_positions = positions` is unreachable."""
+        i = _SRC.index("positions = data.get(\"positions\", {}) if restore_positions else {}")
+        w = _SRC[i:i + 2500]
+        assert "if positions:" in w
+        assert w.index("if positions:") < w.index("self._paper_positions = positions")
+
+    def test_live_restore_is_non_fatal(self):
+        """run_paper fails closed on a malformed file; LIVE must not. Refusing
+        to start because a diagnostics file is corrupt turns it into an outage,
+        and docker restart:always turns that into P85's restart loop."""
+        blk = self._live_block()
+        assert "except Exception as _gr_err:" in blk
+        assert "FRESH governors" in blk
+
+    def test_the_loss_is_announced_not_silent(self):
+        """Losing 28d of fuse history must be visible — a silent fresh start is
+        indistinguishable from a healthy one."""
+        blk = self._live_block()
+        assert "logger.error" in blk
+        assert "28d window" in blk
 
 
 # ---------------------------------------------------------------------------
