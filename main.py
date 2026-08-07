@@ -18675,7 +18675,17 @@ class HMATSProductionRunner:
                                                 # position, so the stop must be re-placed
                                                 # here, against the NEW position. Inert
                                                 # unless coinbase_protective_stop_pct > 0.
-                                                _st_res = await _sl.ensure_protective_stop(_m_a)
+                                                # [P207] Pass THIS TICK'S intended target.
+                                                # A flatten is a marketable LIMIT that may not
+                                                # have filled yet, so reconcile can still show
+                                                # the position we just closed — which placed a
+                                                # stop on an asset that went flat moments
+                                                # later. On CDE (no reduce_only) that orphan
+                                                # would OPEN a position, and the next
+                                                # reconcile is 4h away. Observed live.
+                                                _st_res = await _sl.ensure_protective_stop(
+                                                    _m_a,
+                                                    intended_target=_sl.target_for_signal(_m_dir))
                                                 _st_st = _st_res.get("status")
                                                 _cb_stop_summary[_m_a] = _st_st
                                                 if _st_st in ("PLACED", "FAILED", "ERROR",

@@ -599,10 +599,26 @@ class CoinbaseSleeve:
         pct = self._protective_stop_pct
         return float(anchor) * ((1.0 - pct) if cur > 0 else (1.0 + pct))
 
-    async def ensure_protective_stop(self, asset: str) -> Dict[str, Any]:
+    async def ensure_protective_stop(self, asset: str,
+                                     intended_target: Optional[float] = None
+                                     ) -> Dict[str, Any]:
         """Reconcile the resting stop for `asset` to the desired state.
 
         Called every tick AFTER manage_to_signal. Never raises.
+
+        `intended_target` is this tick's target contract count, when the caller
+        knows it. It exists because of a REAL orphan observed live on
+        2026-08-07 (P207): `execute_target` flattens with a marketable LIMIT,
+        which had not yet FILLED when this method ran, so `reconcile_positions`
+        still reported the old position and a protective stop was placed on an
+        asset that went flat moments later. CDE rejects `reduce_only`, so that
+        resting stop is a PLAIN order — it would have OPENED a position when
+        touched, and the next reconcile was 4 hours away.
+
+        Reconciling to the venue is right in the steady state but wrong in the
+        instant between "order accepted" and "order filled". When the caller
+        knows the intent, intent wins: `intended_target == 0` means treat the
+        asset as flat and cancel, whatever the snapshot currently says.
         """
         if not self._stop_enabled_for(asset):
             return {"status": "DISABLED", "asset": asset}
@@ -616,6 +632,11 @@ class CoinbaseSleeve:
             from exchange.adapter import OrderRequest
             pid = self._adapter.to_venue_symbol(asset, "perp")
             cur = self.signed_contracts(asset)
+            # [P207] Intent beats the snapshot when the caller supplied it. A
+            # flatten placed a moment ago may not have filled yet, so `cur` can
+            # still show the position we just closed.
+            if intended_target is not None and abs(float(intended_target)) < 1e-9:
+                cur = 0.0
             resting = [o for o in (await self._adapter.fetch_open_orders(pid) or [])
                        if self._is_stop_order(o)]
 

@@ -451,3 +451,53 @@ class TestTheTickSummaryCannotContradictItself:
         src = self._main_src()
         assert '"[COINBASE-MANAGE] tick summary: "' in src
         assert '"[COINBASE-STOP] tick summary: "' in src
+
+
+class TestIntentBeatsTheSnapshotWhenFlattening:
+    """[P207] A real orphan, observed live 2026-08-07.
+
+    P206 activation flattened ETH and SOL (the alpha gate refused both).
+    `execute_target` places a marketable LIMIT, which had not FILLED when
+    `ensure_protective_stop` ran, so `reconcile_positions` still reported the
+    old position and a protective stop was PLACED on an asset that went flat
+    seconds later. Venue state immediately after:
+
+        POSITIONS:   BTC LONG 1        (ETH and SOL flat)
+        OPEN ORDERS: BTC SELL stop     (correct)
+                     SOL BUY  stop     <- ORPHAN on a flat asset
+                     ETH SELL stop     <- ORPHAN on a flat asset
+
+    CDE rejects reduce_only, so those are PLAIN orders: touching 80.82 would
+    have OPENED a SOL long. The next reconcile was 4 hours away.
+
+    Reconciling to the venue is right in the steady state and wrong in the
+    instant between "accepted" and "filled". When the caller knows the intent,
+    intent wins.
+    """
+
+    def test_intended_flat_cancels_even_while_the_snapshot_still_shows_a_position(self):
+        a = _FakeAdapter(open_orders=[_stop_order("SELL", 1.0)])
+        s = _sleeve(a, signed=1)          # snapshot: still long (fill pending)
+        res = asyncio.run(s.ensure_protective_stop("SOL", intended_target=0))
+        assert res["status"] == "FLAT_CANCELLED", res
+        assert a.cancelled == ["O1"]
+        assert a.placed == [], "re-placed a stop on an asset being flattened"
+
+    def test_intended_flat_places_nothing_when_no_stop_rests(self):
+        a = _FakeAdapter()
+        s = _sleeve(a, signed=1)
+        res = asyncio.run(s.ensure_protective_stop("SOL", intended_target=0))
+        assert res["status"] == "FLAT_NONE"
+        assert a.placed == []
+
+    def test_a_nonzero_intent_still_uses_the_snapshot(self):
+        """The override is narrow: only 'intended flat' bypasses reconcile."""
+        a = _FakeAdapter()
+        s = _sleeve(a, signed=1)
+        res = asyncio.run(s.ensure_protective_stop("SOL", intended_target=1))
+        assert res["status"] == "PLACED"
+
+    def test_omitting_the_argument_preserves_the_old_behaviour(self):
+        a = _FakeAdapter()
+        s = _sleeve(a, signed=1)
+        assert asyncio.run(s.ensure_protective_stop("SOL"))["status"] == "PLACED"
