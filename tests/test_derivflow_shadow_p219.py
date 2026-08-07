@@ -205,3 +205,59 @@ class TestCCNewsSingleCall:
     def test_tracked_categories_cover_the_traded_assets(self):
         from data_mgmt.feeds.cryptocompare_news_feed import TRACKED_CATEGORIES
         assert {"BTC", "ETH", "SOL"} <= set(TRACKED_CATEGORIES)
+
+
+class TestOIScopeMismatch:
+    """[P219-fix] Caught by reading the FIRST live ledger record, not by a test:
+    every confidence came back 1.0.
+
+    `market_data["open_interest"]` is written by CoinGlass (GLOBAL, ~$52.9B for
+    ETH) at main.py:6038 and then OVERWRITTEN by the Kraken futures block
+    (ONE VENUE, ~$51M) at :6156. The liquidation figures next to it stay global.
+    So normalising global liquidations by that key divides a global number by a
+    single-venue one — a ~1000x scope error that pinned confidence at its cap and
+    would have made the IC gate's confidence weighting meaningless.
+    """
+
+    _ETH = {
+        "liquidation_imbalance": -0.5146,
+        "total_liquidations_24h": 63_232_011.0,
+        "long_liquidations_24h": 1.0,
+        "short_liquidations_24h": 1.0,
+        "coinglass_open_interest_usd": 52_939_514_538.0,   # global
+        "open_interest": 51_456_072.0,                     # Kraken only
+    }
+
+    def test_global_oi_is_preferred(self):
+        s = LiquidationSqueezeStrategy().evaluate("ETH", self._ETH)
+        assert s.confidence < 0.5, (
+            f"confidence {s.confidence} — still normalising by the single-venue OI"
+        )
+
+    def test_the_venue_scoped_oi_would_saturate(self):
+        """Pins that this was a real defect, not a cosmetic key rename."""
+        md = {k: v for k, v in self._ETH.items()
+              if k != "coinglass_open_interest_usd"}
+        assert LiquidationSqueezeStrategy().evaluate("ETH", md).confidence == 1.0
+
+    def test_direction_is_unaffected_by_the_denominator(self):
+        md = {k: v for k, v in self._ETH.items()
+              if k != "coinglass_open_interest_usd"}
+        a = LiquidationSqueezeStrategy().evaluate("ETH", self._ETH).direction
+        b = LiquidationSqueezeStrategy().evaluate("ETH", md).direction
+        assert a == b
+
+    def test_main_publishes_the_venue_scoped_key(self):
+        assert 'market_data["coinglass_open_interest_usd"]' in _MSRC
+
+    def test_it_is_published_before_kraken_overwrites(self):
+        i = _MSRC.index('market_data["coinglass_open_interest_usd"]')
+        j = _MSRC.index('market_data["open_interest"] = _kf_ticker.open_interest_usd')
+        assert i < j
+
+    def test_fallback_when_the_global_key_is_absent(self):
+        """A degraded tick without CoinGlass must still produce a bounded
+        confidence rather than dividing by zero."""
+        md = {k: v for k, v in self._ETH.items()
+              if k != "coinglass_open_interest_usd"}
+        assert 0.0 <= LiquidationSqueezeStrategy().evaluate("ETH", md).confidence <= 1.0

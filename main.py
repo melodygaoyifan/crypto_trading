@@ -6036,6 +6036,15 @@ class HMATSProductionRunner:
             if cg_symbol in cg_data.open_interest:
                 _cg_oi = cg_data.open_interest[cg_symbol]
                 market_data["open_interest"] = _cg_oi.open_interest_usd
+                # [P219-fix] Also publish under a venue-scoped key. The
+                # Kraken futures block overwrites "open_interest" with
+                # ONE venue's OI (~$51M for ETH) while the liquidation
+                # figures beside it stay GLOBAL (~$63M/24h) — so anything
+                # normalising liquidations by "open_interest" divides a
+                # global number by a single-venue one and saturates. Cost
+                # me exactly that: derivflow confidence pinned at 1.0 on
+                # its first live tick.
+                market_data["coinglass_open_interest_usd"] = _cg_oi.open_interest_usd
                 market_data["oi_change_24h_pct"] = _cg_oi.change_24h_pct
                 market_data["oi_change_1h_pct"] = _cg_oi.change_1h_pct
 

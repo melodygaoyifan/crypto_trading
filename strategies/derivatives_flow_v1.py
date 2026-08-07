@@ -79,7 +79,11 @@ def _inputs(market_data: Dict[str, Any]) -> Dict[str, float]:
         "total_liq": _f("total_liquidations_24h"),
         "long_liq": _f("long_liquidations_24h"),
         "short_liq": _f("short_liquidations_24h"),
-        "oi": _f("open_interest"),
+        # Prefer the GLOBAL (CoinGlass) OI: the liquidation figures are
+        # global, and `open_interest` is overwritten downstream with a
+        # single venue's OI (main.py:6156). Mixing the two scopes made
+        # confidence saturate at 1.0 on the very first live tick.
+        "oi": _f("coinglass_open_interest_usd") or _f("open_interest"),
     }
 
 
