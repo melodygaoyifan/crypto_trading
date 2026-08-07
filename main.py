@@ -17078,10 +17078,19 @@ class HMATSProductionRunner:
 
         Drawdown is returned as a positive fraction (0.08 == 8% below peak).
         """
+        # [P201] Track whether this number came from the exchange or is the
+        # notional fallback. `account_sync` is UNINITIALIZED until the first
+        # `refresh()`, which happens inside the per-asset tick processing —
+        # AFTER this snapshot runs. So the first NAV of every process fabricates
+        # `initial_capital` ($10,000), and before this guard that fabrication was
+        # allowed to establish `_peak_equity`. A peak set from a made-up number
+        # is a drawdown measured against fiction, in either direction.
+        _equity_is_real = False
         current_equity = float(self.config.initial_capital)
         if self.account_sync:
             try:
                 current_equity = float(self.account_sync.get_equity())
+                _equity_is_real = True
             except Exception as err:
                 # FAIL-SAFE: hold the last known drawdown rather than recompute
                 # from notional capital. Falling back to `initial_capital` would
@@ -17127,6 +17136,20 @@ class HMATSProductionRunner:
                     )
                     return (float(getattr(self, "_peak_equity", current_equity)),
                             float(_held_sleeve))
+
+        # [P201] Never let a fabricated equity establish or move the peak, and
+        # never report a drawdown derived from one. Returning the last known
+        # value (0.0 on a fresh process) keeps the halt inert for exactly one
+        # tick, until account_sync has refreshed and the reading is real.
+        if not _equity_is_real:
+            logger.warning(
+                f"[NAV] equity is the notional fallback "
+                f"(${current_equity:,.2f}), not an exchange reading — peak and "
+                f"drawdown NOT updated this tick; the halt stays inert until "
+                f"account_sync has refreshed"
+            )
+            return current_equity, float(
+                getattr(self, "_current_drawdown_pct", 0.0) or 0.0)
 
         if not hasattr(self, "_peak_equity"):
             self._peak_equity = current_equity

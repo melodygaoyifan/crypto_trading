@@ -116,6 +116,41 @@ class TestDrawdownMeasuresTheBookThatActuallyMoves:
         assert eq == pytest.approx(9000.0)
         assert dd == pytest.approx(0.10)
 
+    def test_a_fabricated_equity_never_establishes_the_peak(self):
+        """account_sync is UNINITIALIZED until the first refresh(), which runs
+        AFTER this snapshot. Observed live: the first NAV of every process read
+        `[NAV] equity fetch failed (Status=UNINITIALIZED)` and fell back to
+        initial_capital ($10,000). Letting that set `_peak_equity` measures the
+        drawdown against a made-up number."""
+        r = object.__new__(m.HMATSProductionRunner)
+        r.config = types.SimpleNamespace(initial_capital=10000.0)
+
+        def _boom():
+            raise RuntimeError("Status=UNINITIALIZED")
+
+        r.account_sync = types.SimpleNamespace(get_equity=_boom)
+        eq, dd = r._update_drawdown_snapshot()
+        assert dd == 0.0
+        assert not hasattr(r, "_peak_equity"), (
+            "a fabricated initial_capital established _peak_equity — every later "
+            "drawdown is then measured against fiction"
+        )
+
+    def test_no_account_sync_at_all_also_does_not_set_a_peak(self):
+        r = object.__new__(m.HMATSProductionRunner)
+        r.config = types.SimpleNamespace(initial_capital=10000.0)
+        r.account_sync = None
+        _, dd = r._update_drawdown_snapshot()
+        assert dd == 0.0
+        assert not hasattr(r, "_peak_equity")
+
+    def test_a_real_reading_does_set_the_peak(self):
+        """Falsifies the two above: the guard must not disable the control."""
+        r = _runner(kraken_equity=9000.0, sleeve_equity=1000.0)
+        eq, _ = r._update_drawdown_snapshot()
+        assert eq == pytest.approx(10000.0)
+        assert r._peak_equity == pytest.approx(10000.0)
+
     def test_unreadable_sleeve_holds_rather_than_measuring_a_partial_book(self):
         """The dangerous case: peak INCLUDED the sleeve, so omitting it would
         understate equity and fire a spurious halt."""
