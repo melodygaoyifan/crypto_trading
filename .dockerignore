@@ -26,6 +26,11 @@ scripts/
 !scripts/why_no_trade.py
 !scripts/kq_strategy_diagnostic.py
 !scripts/agent_audit_16.py
+# [P213] The trend_regime_gate promotion evidence (data/trend_regime_shadow.jsonl)
+# is written to the hmats-data VOLUME, so the reader belongs where the data is —
+# otherwise the only way to read it is to scp the ledger to a laptop. Stdlib-only;
+# reads the ledger + Kraken's PUBLIC OHLC endpoint; places no orders.
+!scripts/trend_regime_review.py
 pytorch_build/
 deploy/
 data/diagnostics/

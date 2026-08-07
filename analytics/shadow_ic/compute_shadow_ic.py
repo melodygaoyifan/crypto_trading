@@ -27,6 +27,26 @@ Iron Laws honored:
   7. Phase Pre-6 is the framework; promotion VERDICT is computed here but
      not auto-applied. Phase 10 (Day 57+) reads these reports and gates.
 
+WHERE THIS RUNS — [P213] OPERATOR-LOCAL ONLY. NOT a server-side capability.
+    The price series lives in `training/training_data/`, which `.dockerignore`
+    excludes (line 41), so the parquets are NOT in the engine image and CI does
+    not have them either. This module IS in the image (`analytics/` is not
+    excluded), which is precisely the trap: run it in the container and every
+    strategy comes back `ohlcv_missing` with a report written anyway — output
+    that reads like "the strategies have no signal" when the truth is "this tool
+    cannot run here". That conflation is what hid P199 for months, so it is now
+    a hard, named failure (see `main`) rather than a quietly empty report.
+
+    Run it on the operator's machine:
+        python -X utf8 training/scripts/refresh_ohlcv_4h.py   # refresh prices
+        python -X utf8 analytics/shadow_ic/compute_shadow_ic.py --window-days 30
+
+    Making it server-side would mean shipping the OHLCV parquets into the image
+    or mounting them from a volume. Deliberately NOT done: it is an occasional
+    analysis tool, and the parquets are large and refreshed from Binance monthly
+    archives on the operator's box. Revisit only if the gate needs to run
+    unattended.
+
 Usage:
     python -X utf8 analytics/shadow_ic/compute_shadow_ic.py \
         --ledger-dir data/strategy_shadow \
@@ -730,6 +750,33 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 1
 
     per_strategy = compute_per_strategy_ic(records, horizons_bars=horizons)
+
+    # [P213] "No price series for ANY asset" is a WRONG-ENVIRONMENT error, not a
+    # result. Without this the run prints a full table of ohlcv_missing and
+    # writes a report — indistinguishable from "the strategies have no signal",
+    # which is exactly the conflation that hid P199 for months. Refuse, name the
+    # cause, name the fix.
+    #
+    # Deliberately ALL, not ANY: one missing asset is a genuine data gap the run
+    # should report per-strategy and continue through. Every asset missing means
+    # the tool is running somewhere it cannot work.
+    _priced = [v for v in per_strategy.values() if v.get("error") != "ohlcv_missing"]
+    if per_strategy and not _priced:
+        _assets = sorted({a for (_s, a) in per_strategy})
+        print(
+            f"REFUSING TO REPORT: no 4H OHLCV price series for ANY asset "
+            f"({', '.join(_assets)}) in {OHLCV_DIR}.\n"
+            f"  This is almost certainly the wrong environment, not a result. "
+            f"`training/training_data/` is excluded by .dockerignore, so the "
+            f"parquets are NOT in the engine image or in CI.\n"
+            f"  FIX: run this on the operator machine, refreshing first:\n"
+            f"    python -X utf8 training/scripts/refresh_ohlcv_4h.py\n"
+            f"  Emitting an all-`ohlcv_missing` report instead would read as "
+            f"'the strategies have no signal' — the P199 conflation.",
+            file=sys.stderr,
+        )
+        return 2
+
     print(render_summary(per_strategy, args.window_days, horizons))
 
     # Build report
