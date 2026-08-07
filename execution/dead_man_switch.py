@@ -43,6 +43,16 @@ DEFAULT_TIMEOUT_SEC = 60
 # After this many consecutive refresh failures, escalate to CRITICAL
 MAX_CONSECUTIVE_FAILURES = 3
 
+# [P195] Floor on the post-refresh wait. The monitor schedules at a FIXED RATE
+# (see DeadManSwitchMonitor.run), so when a refresh burns the whole interval the
+# remaining wait is 0 — this keeps a sustained outage from becoming a tight loop
+# against an already-struggling API.
+MIN_HEARTBEAT_GAP_SEC = 5.0
+
+# Warn when a cycle consumes this fraction of the server timer, so margin erosion
+# is visible instead of silent.
+HEARTBEAT_MARGIN_WARN_RATIO = 0.8
+
 
 class DeadManSwitch:
     """
@@ -256,6 +266,7 @@ class DeadManSwitchMonitor(threading.Thread):
             f"(interval={self._interval_sec}s, max_failures={self._max_failures})"
         )
         while not self._stop_event.is_set():
+            _cycle_start = time.monotonic()
             try:
                 success = self._dms.refresh()
                 if success:
@@ -286,7 +297,36 @@ class DeadManSwitchMonitor(threading.Thread):
                     )
                     self._publish_alert()
 
-            self._stop_event.wait(self._interval_sec)
+            # [P195] FIXED-RATE, not fixed-delay. This used to be
+            # `self._stop_event.wait(self._interval_sec)` unconditionally, so the
+            # period was `refresh_duration + interval` and the REST retry budget
+            # was charged on top of the heartbeat instead of inside it:
+            #   healthy  ~0.3s refresh + 24s =  ~24s  -> 2.5x margin vs 60s timeout
+            #   failing  ~31s  refresh + 24s =  ~55s  -> 1.09x margin (5s)
+            # (31s = 3 attempts x 10s read timeout + 2 x 0.5s backoff.) The 24s
+            # interval is chosen as 40% of the timeout precisely to hold a 2.5x
+            # margin; the old loop silently gave that away exactly when the API
+            # was unhealthy and the timer mattered most. Confirmed against the
+            # 2026-08-06 Kraken outage, where failures are spaced exactly 55s
+            # apart. The danger is the MARGINAL case: Kraken slow but answering
+            # on attempt 3, where a refresh "succeeds" yet lands after the server
+            # timer already expired, with nothing in the log saying so.
+            _elapsed = time.monotonic() - _cycle_start
+            _timeout = float(getattr(self._dms, "_timeout_sec", 0) or 0)
+            if _timeout > 0 and (_elapsed + self._interval_sec) > (
+                    _timeout * HEARTBEAT_MARGIN_WARN_RATIO):
+                logger.warning(
+                    f"[DMS-MONITOR] Heartbeat margin thin: refresh took "
+                    f"{_elapsed:.1f}s; at the {self._interval_sec}s interval a "
+                    f"cycle would be {_elapsed + self._interval_sec:.1f}s against "
+                    f"a {_timeout:.0f}s server timer. Scheduling next refresh "
+                    f"early to hold the rate."
+                )
+            # The floor is capped at the configured interval: a floor ABOVE the
+            # cadence would make a healthy monitor run slower than configured
+            # (and would starve any caller using a sub-second interval).
+            _floor = min(MIN_HEARTBEAT_GAP_SEC, self._interval_sec)
+            self._stop_event.wait(max(_floor, self._interval_sec - _elapsed))
 
         logger.info("[DMS-MONITOR] Heartbeat thread stopped")
 

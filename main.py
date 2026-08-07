@@ -5686,16 +5686,25 @@ class HMATSProductionRunner:
                         )
                     except Exception as _h4_err:
                         logger.warning(f"[AUDIT H4] Alert send failed (dead-man): {_h4_err}")
-                # In LIVE mode: 3 consecutive DMS failures → emergency flatten
-                if self.config.mode == RunMode.LIVE and self._dms_consecutive_failures >= 3:
-                    logger.critical(
-                        f"[FIX-DMS-HALT] {self._dms_consecutive_failures} consecutive DMS "
-                        f"refresh failures in LIVE mode — triggering EMERGENCY FLATTEN"
-                    )
-                    try:
-                        self._emergency_flatten("DMS_REFRESH_DEAD")
-                    except Exception as _ef_err:
-                        logger.critical(f"[FIX-DMS-HALT] Emergency flatten failed: {_ef_err}")
+                # [P195] The LIVE "3 consecutive failures -> emergency flatten"
+                # escalation that used to live here has been REMOVED. It was dead
+                # three independent ways and could never have run:
+                #   1. refresh() catches internally and returns False rather than
+                #      raising, and the return value is discarded above — so this
+                #      `except` never fires and _dms_consecutive_failures stayed 0
+                #      forever;
+                #   2. it called an underscore-prefixed emergency-flatten method
+                #      that does not exist on this class (the real one is
+                #      trigger_emergency_flatten), so it would AttributeError;
+                #   3. that AttributeError was swallowed by its own except.
+                # Deleted rather than wired up, deliberately: flatten-on-DMS-failure
+                # is NOT the policy we want. The 2026-08-06 incident was a 13-minute
+                # Kraken private-endpoint outage with the public API healthy; that
+                # must not liquidate the book. Fail-closing here would convert an
+                # API problem into a forced exit at whatever price the outage
+                # leaves us — the same failure shape P141 was opened to end.
+                # The real protection is the fixed-rate heartbeat in
+                # DeadManSwitchMonitor (P195), which keeps the server timer alive.
 
         # [AUDIT H3] Sweep orphaned stops from previous ticks
         if self._orphaned_stops and self.execution_manager:

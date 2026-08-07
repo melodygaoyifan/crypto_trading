@@ -238,19 +238,56 @@ class CoinbaseSleeve:
 
     def can_trade(self, asset: str, intended_signed_contracts: float) -> tuple:
         """(allowed, reason). Gate consulted by the order-routing branch BEFORE
-        any Coinbase order. Isolated to Coinbase — never blocks Kraken."""
-        if self._halted:
-            return False, f"coinbase_sleeve_halted: {self._halt_reason}"
-        # resulting position size after this order (current + intended)
+        any Coinbase order. Isolated to Coinbase — never blocks Kraken.
+
+        [P195] The halt stops OPENING; it must never stop EXITING. Previously
+        `if self._halted: return False` was the first statement, so a tripped
+        drawdown halt blocked every order including a flatten — the control
+        meant to cap losses prevented the exit that realises the cap:
+          - manage_to_signal(asset, 0.0) -> execute_target(asset, 0) -> BLOCKED,
+            so a halted sleeve could not flatten on a hold signal;
+          - scripts/coinbase_flatten.py builds a fresh sleeve, which restores
+            `halted` from disk (P150), so the documented emergency flatten was
+            blocked too until an operator called reset_halt().
+        P150 made the halt sticky across restarts, which is right for a loss cap
+        and compounding for a trade block. The two were conflated; they are now
+        separated.
+        """
+        # Position math first — the halt decision needs it.
         cur = self.signed_contracts(asset)
-        resulting = abs(cur + intended_signed_contracts)
-        if resulting > self._max_contracts_per_asset:
+        resulting_signed = cur + intended_signed_contracts
+        resulting = abs(resulting_signed)
+
+        if self._halted:
+            # Allow only orders that STRICTLY reduce absolute exposure.
+            # `abs(resulting) < abs(cur)` is the deliberate predicate: a flatten
+            # (1 -> 0) and a partial reduce pass, while a FLIP (+1 -> -1, abs
+            # 1 -> 1) does not — a halted sleeve must not open new directional
+            # risk in the opposite direction.
+            if resulting < abs(cur):
+                logger.warning(
+                    f"[COINBASE_SLEEVE] {asset}: halted but ALLOWING risk-reducing "
+                    f"order ({cur:+.0f} -> {resulting_signed:+.0f} contracts); "
+                    f"halt blocks opening, never exiting. reason={self._halt_reason}"
+                )
+                return True, "halted_but_reducing"
+            return False, f"coinbase_sleeve_halted: {self._halt_reason}"
+
+        # [P195] Same shape as the halt above, found while testing it: the cap
+        # must not block getting UNDER the cap. Only gate orders that INCREASE
+        # absolute exposure, so an over-cap position (venue drift, a lowered
+        # limit, a manual fill) can always be trimmed back down.
+        if resulting > self._max_contracts_per_asset and resulting > abs(cur):
             return False, (f"coinbase_contract_cap: {resulting:.0f} > "
                            f"{self._max_contracts_per_asset} for {asset}")
         return True, "ok"
 
     def reset_halt(self) -> None:
-        """Manual recovery (operator action), Coinbase-sleeve only."""
+        """Manual recovery (operator action), Coinbase-sleeve only.
+
+        [P195] Resetting is only needed to resume OPENING. Exiting/reducing an
+        existing position never requires a reset — see can_trade().
+        """
         self._halted = False
         self._halt_reason = ""
         self._persist_state()  # [P150] clear the persisted halt too
@@ -382,6 +419,42 @@ class CoinbaseSleeve:
         target = self.target_for_signal(direction, threshold)
         return await self.execute_target(asset, target)
 
+    async def _cancel_resting_orders(self, pid: str, asset: str) -> int:
+        """[P195] Cancel our own resting orders for `pid` before placing a new one.
+
+        execute_target places a marketable GTC LIMIT, and nothing ever cancelled
+        it. `cancel_order`/`fetch_open_orders` existed on the adapter with zero
+        callers anywhere in main.py, core/, exchange/ or scripts/. So an unfilled
+        limit rested indefinitely and could fill AFTER the engine died — making
+        the sleeve a risk-ADDER on process death rather than merely unprotected.
+        It also let orders stack across ticks.
+
+        Fail-soft by design: a cancel failure must never raise into the tick, and
+        must not stop the new order (the venue-authoritative reconcile on the next
+        pass is the backstop). Returns the number cancelled.
+        """
+        cancelled = 0
+        try:
+            open_orders = await self._adapter.fetch_open_orders(pid)
+        except Exception as e:
+            logger.warning(f"[COINBASE_SLEEVE] {asset}: could not list resting "
+                           f"orders ({type(e).__name__}: {e}); proceeding")
+            return 0
+        for o in open_orders or []:
+            oid = _g(o, "order_id") or _g(o, "id")
+            if not oid:
+                continue
+            try:
+                if await self._adapter.cancel_order(str(oid), pid):
+                    cancelled += 1
+            except Exception as e:
+                logger.warning(f"[COINBASE_SLEEVE] {asset}: cancel {oid} failed "
+                               f"({type(e).__name__}: {e}); proceeding")
+        if cancelled:
+            logger.info(f"[COINBASE_SLEEVE] {asset}: cancelled {cancelled} stale "
+                        f"resting order(s) before new target")
+        return cancelled
+
     async def execute_target(self, asset: str, target_signed_contracts: int,
                              order_type: str = "LIMIT") -> Dict[str, Any]:
         """Move `asset` to a target signed contract count (e.g. +1 long, -1
@@ -409,6 +482,7 @@ class CoinbaseSleeve:
         n_contracts = abs(delta)
         try:
             pid = self._adapter.to_venue_symbol(asset, "perp")
+            await self._cancel_resting_orders(pid, asset)
             cs = self._adapter._contract_size(pid) or 1.0
             base_size = n_contracts * cs  # adapter converts base->contracts
             # marketable limit: cross slightly so it fills; adapter rounds to tick
