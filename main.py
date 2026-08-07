@@ -18161,9 +18161,17 @@ class HMATSProductionRunner:
                 # written in LIVE at all and they all read 0.0 forever.
                 try:
                     _live_equity, _live_dd = self._update_drawdown_snapshot()
+                    # [P201] getattr, not self._peak_equity: the snapshot now
+                    # deliberately returns WITHOUT setting a peak when the equity
+                    # is the notional fallback, so on the first tick of a process
+                    # the attribute does not exist yet. Reading it directly raised
+                    # AttributeError into the outer handler, which swallowed the
+                    # whole NAV line and logged a spurious ERROR. P85's rule: a
+                    # new attribute read defends itself or verifies its writer.
+                    _live_peak = getattr(self, "_peak_equity", _live_equity)
                     logger.info(
                         f"[NAV-LIVE] equity=${_live_equity:,.2f} | "
-                        f"peak=${self._peak_equity:,.2f} | drawdown={_live_dd:.2%}"
+                        f"peak=${_live_peak:,.2f} | drawdown={_live_dd:.2%}"
                     )
                     # [P201] The drawdown HALT. `hard_drawdown_halt` (live 0.25)
                     # was checked in exactly one place — inside run_paper — so
@@ -18183,7 +18191,7 @@ class HMATSProductionRunner:
                                     f"LIVE drawdown {_live_dd:.2%} >= "
                                     f"{self.config.hard_drawdown_halt:.2%}",
                                     {"equity": f"${_live_equity:,.2f}",
-                                     "peak": f"${self._peak_equity:,.2f}"},
+                                     "peak": f"${_live_peak:,.2f}"},
                                 )
                             except Exception as _alert_err:
                                 logger.error(
