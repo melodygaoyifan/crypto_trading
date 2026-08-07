@@ -1575,6 +1575,20 @@ class ProductionConfig:
     # open -> stop-placed -> flatten -> stop-cancelled cycle before widening.
     coinbase_protective_stop_pct: float = 0.0
     coinbase_protective_stop_assets: List[str] = field(default_factory=list)
+    # [P201] P198 shipped these two as JSON keys read via
+    # `getattr(self.config, ..., default)` (main.py:7802, :18313) but never
+    # declared them here and never parsed them in from_file — so the JSON keys
+    # did NOTHING. The defaults happened to equal the JSON values, which is
+    # exactly why it looked correct. Two live consequences:
+    #   * `trend_regime_gate: "enforce"` would silently no-op, so P198's entire
+    #     promotion path was dead on arrival;
+    #   * the documented `REVERT: set 0 and redeploy` for flip-persistence would
+    #     not revert anything.
+    # Same shape as P16 (ENABLE_* flags declared but never gated) and P152
+    # (helper defined but never called). Defaults below MUST match the previous
+    # getattr defaults so wiring them changes no current behaviour.
+    trend_regime_gate: str = "shadow"
+    coinbase_flip_persist_ticks: int = 2
     # [v5.1 PROMOTED 2026-06-13] Operator override of Iron Law 7 (shadow >=30d):
     # blend the 4 v5.1 shadow strategy families into a live ADVISE fusion agent
     # with ZERO validation. Default OFF; set true in the live JSON. ADVISE-bounded
@@ -1830,6 +1844,12 @@ class ProductionConfig:
                 data.get("coinbase_protective_stop_pct", 0.0) or 0.0),
             coinbase_protective_stop_assets=list(
                 data.get("coinbase_protective_stop_assets", []) or []),
+            # [P201] see the dataclass comment — these were read by getattr but
+            # never parsed, so the JSON keys were inert.
+            trend_regime_gate=str(
+                data.get("trend_regime_gate", "shadow") or "shadow"),
+            coinbase_flip_persist_ticks=int(
+                data.get("coinbase_flip_persist_ticks", 2) or 0),
             # [v5.1 PROMOTED 2026-06-13] live ADVISE promotion of shadow strategies
             v5_1_strategies_live=data.get("v5_1_strategies_live", False),
             # P1-02: Thesis budget parameters (overlay-aware)
@@ -15082,6 +15102,49 @@ class HMATSProductionRunner:
                 f"[EMERGENCY_FLAT] Paper positions cleared: {closed_assets}"
             )
 
+        # [P201] 2b. FLATTEN THE COINBASE SLEEVE — the only book that holds risk.
+        # The loop above iterates `self._paper_positions`, which is `{}` since the
+        # 2026-06-13 flatten, and sends Kraken orders. So the documented emergency
+        # kill switch closed NOTHING, halted the loop, and walked away leaving the
+        # live perp positions open — with only SOL carrying a venue-resting stop
+        # (P197), BTC and ETH would have been left completely unmanaged. A kill
+        # switch that abandons the positions is worse than none: it reads as
+        # "flat" in the alert and in the operator's head.
+        # Fail-soft per asset: one venue error must not stop us trying the rest.
+        _cb_sleeve = getattr(self, "_coinbase_sleeve", None)
+        if _cb_sleeve is not None:
+            try:
+                _cb_pos = _cb_sleeve.reconcile_positions() or {}
+                _cb_open = {a: p for a, p in _cb_pos.items()
+                            if abs(float(p.get("signed_contracts") or 0.0)) > 0}
+                if _cb_open:
+                    logger.critical(
+                        f"[EMERGENCY_FLAT] Coinbase sleeve holds {len(_cb_open)} "
+                        f"position(s): {list(_cb_open)} — flattening")
+                    for _cb_a in _cb_open:
+                        try:
+                            # target 0 = flatten. can_trade permits a reduce even
+                            # when the sleeve is halted (P195), so a tripped
+                            # drawdown halt cannot block the emergency exit.
+                            _cb_r = await _cb_sleeve.execute_target(_cb_a, 0)
+                            logger.critical(
+                                f"[EMERGENCY_FLAT] Coinbase {_cb_a}: "
+                                f"{_cb_r.get('status')} "
+                                f"now={_cb_sleeve.signed_contracts(_cb_a)}ct")
+                        except Exception as _cb_e:
+                            logger.critical(
+                                f"[EMERGENCY_FLAT] Coinbase {_cb_a} flatten "
+                                f"FAILED: {type(_cb_e).__name__}: {_cb_e} — "
+                                f"POSITION MAY STILL BE OPEN, close manually via "
+                                f"scripts/coinbase_flatten.py")
+                else:
+                    logger.critical("[EMERGENCY_FLAT] Coinbase sleeve already flat")
+            except Exception as _cb_err:
+                logger.critical(
+                    f"[EMERGENCY_FLAT] Coinbase sleeve flatten FAILED: "
+                    f"{type(_cb_err).__name__}: {_cb_err} — positions may still be "
+                    f"OPEN, close manually via scripts/coinbase_flatten.py")
+
         # 3. Discord alert
         if self.audit_manager:
             try:
@@ -17034,6 +17097,37 @@ class HMATSProductionRunner:
                 if _held is not None:
                     return float(getattr(self, "_peak_equity", current_equity)), float(_held)
 
+        # [P201] Include the Coinbase sleeve, or this measures the wrong book.
+        # `account_sync` is constructed exchange_name="kraken" (main.py:2759), so
+        # this read is Kraken-only — and since Phase B, Kraken is structurally
+        # flat (P152) while the sleeve carries 100% of the directional risk. The
+        # Kraken figure has not moved since the 2026-06-13 flatten, so every
+        # drawdown-scaled control was reading a permanently static number. P163
+        # fixed the writer; the value it wrote was still blind to the only book
+        # that moves. A halt on that equity could never fire — which is worse
+        # than no halt, because it looks like protection.
+        _sleeve = getattr(self, "_coinbase_sleeve", None)
+        if _sleeve is not None:
+            _sleeve_eq = float(getattr(_sleeve, "_last_equity_usd", 0.0) or 0.0)
+            if _sleeve_eq > 0:
+                current_equity += _sleeve_eq
+            else:
+                # Sleeve exists but its equity has not been read yet this
+                # process. Do NOT compute a drawdown that silently omits ~35% of
+                # the book: against a peak that INCLUDED it, that understates
+                # equity and would fire a spurious halt. Hold the last known
+                # value instead — the same fail-safe the equity-fetch path above
+                # uses, and for the same reason.
+                _held_sleeve = getattr(self, "_current_drawdown_pct", None)
+                if _held_sleeve is not None:
+                    logger.warning(
+                        "[NAV] Coinbase sleeve equity unavailable; holding last "
+                        f"known drawdown={_held_sleeve:.2%} rather than measuring "
+                        "a partial book"
+                    )
+                    return (float(getattr(self, "_peak_equity", current_equity)),
+                            float(_held_sleeve))
+
         if not hasattr(self, "_peak_equity"):
             self._peak_equity = current_equity
         self._peak_equity = max(self._peak_equity, current_equity)
@@ -18048,6 +18142,35 @@ class HMATSProductionRunner:
                         f"[NAV-LIVE] equity=${_live_equity:,.2f} | "
                         f"peak=${self._peak_equity:,.2f} | drawdown={_live_dd:.2%}"
                     )
+                    # [P201] The drawdown HALT. `hard_drawdown_halt` (live 0.25)
+                    # was checked in exactly one place — inside run_paper — so
+                    # the one mode risking real money computed the drawdown,
+                    # logged it, and never compared it to anything. The only
+                    # live circuit breaker in the entire system was the Coinbase
+                    # sleeve's own 15%. Mirrors the run_paper halt.
+                    if _live_dd >= self.config.hard_drawdown_halt:
+                        logger.critical(
+                            f"[DRAWDOWN_HALT] Drawdown {_live_dd:.2%} >= halt "
+                            f"threshold {self.config.hard_drawdown_halt:.2%} — "
+                            f"STOPPING LIVE TRADING"
+                        )
+                        if self.audit_manager:
+                            try:
+                                self.audit_manager.discord.send_circuit_breaker_alert(
+                                    f"LIVE drawdown {_live_dd:.2%} >= "
+                                    f"{self.config.hard_drawdown_halt:.2%}",
+                                    {"equity": f"${_live_equity:,.2f}",
+                                     "peak": f"${self._peak_equity:,.2f}"},
+                                )
+                            except Exception as _alert_err:
+                                logger.error(
+                                    f"[DRAWDOWN_HALT] alert send failed: {_alert_err}")
+                        # Halting stops NEW orders. It does not flatten: an
+                        # unattended forced exit at whatever price a halt lands
+                        # on is the failure P141 exists to prevent. SOL's P197
+                        # stop still rests at the venue; BTC/ETH remain
+                        # operator-managed (scripts/coinbase_flatten.py).
+                        self._running = False
                 except Exception as _nav_err:
                     # Never let a NAV read kill the trading loop, but do not let
                     # it pass silently either — a stale drawdown disarms the
