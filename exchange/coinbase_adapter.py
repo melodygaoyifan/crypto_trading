@@ -212,6 +212,37 @@ class CoinbaseAdapter(ExchangeAdapter):
                     client_order_id=coid, product_id=product_id, side=side,
                     base_size=size_str, leverage=lev,
                 )
+            elif request.order_type.upper() in ("STOP", "STOP_LIMIT"):
+                # [P197] Protective stop. Before this branch existed,
+                # order_type="STOP" fell through to the LIMIT path below and
+                # silently placed a plain GTC limit at `price`, ignoring
+                # `stop_price` entirely — an order that looks like protection in
+                # the code and is not one at the venue. OrderRequest has carried
+                # an unused `stop_price` field since exchange/adapter.py:48.
+                if request.stop_price is None:
+                    return OrderResult(
+                        success=False, venue="coinbase", client_order_id=coid,
+                        error_code="NO_STOP_PRICE",
+                        error_message="STOP order requires stop_price")
+                stop_px = self._round_to_tick(product_id, request.stop_price)
+                # Limit price sits THROUGH the stop so the order actually fills
+                # once triggered; a limit exactly at the stop can be left behind
+                # by a fast move. Caller may override via request.price.
+                _lim = (request.price if request.price is not None
+                        else request.stop_price * (0.995 if side == "SELL" else 1.005))
+                lim_px = self._round_to_tick(product_id, _lim)
+                # SELL stop protects a LONG -> triggers on the way DOWN.
+                # BUY  stop protects a SHORT -> triggers on the way UP.
+                direction = ("STOP_DIRECTION_STOP_DOWN" if side == "SELL"
+                             else "STOP_DIRECTION_STOP_UP")
+                fn = (self._client.stop_limit_order_gtc_sell if side == "SELL"
+                      else self._client.stop_limit_order_gtc_buy)
+                resp = fn(
+                    client_order_id=coid, product_id=product_id,
+                    base_size=size_str, limit_price=str(lim_px),
+                    stop_price=str(stop_px), stop_direction=direction,
+                    leverage=lev,
+                )
             else:  # LIMIT / POST — maker-first
                 if request.price is None:
                     return OrderResult(success=False, venue="coinbase",

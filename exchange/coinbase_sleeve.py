@@ -49,9 +49,19 @@ class CoinbaseSleeve:
 
     def __init__(self, adapter, assets=("BTC", "ETH", "SOL"),
                  max_sleeve_drawdown_pct: float = 0.15,
-                 max_contracts_per_asset: int = 1) -> None:
+                 max_contracts_per_asset: int = 1,
+                 protective_stop_pct: float = 0.0,
+                 protective_stop_assets=None) -> None:
         self._adapter = adapter
         self._assets = tuple(assets)
+        # [P197] Server-side protective stop. `pct` <= 0 DISABLES the feature
+        # entirely — a single knob, so "enabled with a 0% stop" is unexpressible.
+        # `protective_stop_assets=None` means every sleeve asset; pass a subset to
+        # roll out one asset at a time (P141: activation is a deliberate,
+        # operator-watched step, never momentum).
+        self._protective_stop_pct = float(protective_stop_pct or 0.0)
+        self._protective_stop_assets = (
+            tuple(protective_stop_assets) if protective_stop_assets else None)
         # product_id -> HMATS asset, for mapping venue positions back
         self._pid_to_asset = {}
         for a in self._assets:
@@ -113,7 +123,17 @@ class CoinbaseSleeve:
                     "side": side,
                     "contracts": contracts,
                     "signed_contracts": signed,
-                    "entry_vwap": _f(_g(pos, "entry_vwap"), 0.0) or None,
+                    # [P197] The venue returns `avg_entry_price` for CDE futures;
+                    # `entry_vwap` is never present, so this read was silently
+                    # None for every position since the sleeve was written. It
+                    # went unnoticed because nothing consumed it — the protective
+                    # stop is its first consumer, and it would have anchored to
+                    # the MARK instead of to entry without ever saying so.
+                    # Textbook P2: reader and writer never agreed on the key.
+                    # Keep the dict key stable; only the source changes.
+                    "entry_vwap": _f(_g(pos, "avg_entry_price")
+                                     or _g(pos, "entry_vwap"), 0.0) or None,
+                    "current_price": _f(_g(pos, "current_price"), 0.0) or None,
                     "unrealized_pnl": _f(_g(pos, "unrealized_pnl"), 0.0),
                     "venue": "coinbase",
                 }
@@ -454,6 +474,147 @@ class CoinbaseSleeve:
             logger.info(f"[COINBASE_SLEEVE] {asset}: cancelled {cancelled} stale "
                         f"resting order(s) before new target")
         return cancelled
+
+    # ----- [P197] server-side protective stop -----------------------------
+    #
+    # The sleeve had NO server-side protection: every exit was a client-side API
+    # call on the 4H tick, so a dead process left BTC/ETH/SOL perp exposure with
+    # nothing resting at the venue to close it. Preview-verified 2026-08-07 that
+    # CDE accepts stop-limits on all three contracts (errs: [], and
+    # order_margin_total = 0, i.e. treated as position-REDUCING).
+    #
+    # THE HAZARD THIS CODE EXISTS TO CONTAIN: CDE rejects `reduce_only`
+    # (coinbase_adapter.py:206). A resting stop is therefore a PLAIN order — if
+    # the position it guards disappears and the stop is still live, triggering it
+    # OPENS an opposite position. So the stop is reconciled to desired-state every
+    # tick and cancelled the moment the asset is flat. It is never fire-and-forget.
+
+    def _stop_enabled_for(self, asset: str) -> bool:
+        if self._protective_stop_pct <= 0:
+            return False
+        if self._protective_stop_assets is None:
+            return True
+        return asset in self._protective_stop_assets
+
+    @staticmethod
+    def _is_stop_order(o) -> bool:
+        """A Coinbase order is a stop iff its order_configuration says so."""
+        cfg = _g(o, "order_configuration") or {}
+        try:
+            keys = list(cfg.keys()) if isinstance(cfg, dict) else []
+        except Exception:
+            keys = []
+        return any("stop" in str(k).lower() or "bracket" in str(k).lower()
+                   for k in keys)
+
+    def desired_stop_price(self, asset: str) -> Optional[float]:
+        """Stop anchored to ENTRY, not to the current mark.
+
+        Anchoring to entry makes this a fixed-risk stop-loss. Anchoring to the
+        mark would silently make it a trailing stop that ratchets on every tick
+        and re-places orders forever. Falls back to the mark only when the venue
+        gives us no entry_vwap.
+        """
+        pos = self._last_positions.get(asset) or {}
+        cur = float(pos.get("signed_contracts") or 0.0)
+        if cur == 0:
+            return None
+        anchor = pos.get("entry_vwap")
+        if not anchor:
+            try:
+                pid = self._adapter.to_venue_symbol(asset, "perp")
+                prod = self._adapter._client.get_product(product_id=pid)
+                anchor = _f(_g(prod, "mid_market_price") or _g(prod, "price"))
+            except Exception:
+                return None
+        if not anchor:
+            return None
+        pct = self._protective_stop_pct
+        return float(anchor) * ((1.0 - pct) if cur > 0 else (1.0 + pct))
+
+    async def ensure_protective_stop(self, asset: str) -> Dict[str, Any]:
+        """Reconcile the resting stop for `asset` to the desired state.
+
+        Called every tick AFTER manage_to_signal. Never raises.
+        """
+        if not self._stop_enabled_for(asset):
+            return {"status": "DISABLED", "asset": asset}
+        if not self.is_ready():
+            return {"status": "NOT_READY", "asset": asset}
+        # Never act on a stale snapshot — same rule as manage_to_signal. Acting
+        # on last-known state here could cancel a live stop we cannot see.
+        if not self._reconcile_ok:
+            return {"status": "SKIPPED_STALE", "asset": asset}
+        try:
+            from exchange.adapter import OrderRequest
+            pid = self._adapter.to_venue_symbol(asset, "perp")
+            cur = self.signed_contracts(asset)
+            resting = [o for o in (await self._adapter.fetch_open_orders(pid) or [])
+                       if self._is_stop_order(o)]
+
+            # FLAT: any surviving stop is an ORPHAN that could open a position.
+            # Cancelling it is the single most important thing in this method.
+            if cur == 0:
+                n = 0
+                for o in resting:
+                    oid = _g(o, "order_id") or _g(o, "id")
+                    if oid and await self._adapter.cancel_order(str(oid), pid):
+                        n += 1
+                if n:
+                    logger.info(f"[COINBASE_STOP] {asset}: flat -> cancelled {n} "
+                                f"orphan stop(s) (no reduce_only on CDE, so a live "
+                                f"stop here would OPEN a position)")
+                return {"status": "FLAT_CANCELLED" if n else "FLAT_NONE",
+                        "asset": asset, "cancelled": n}
+
+            cs = self._adapter._contract_size(pid) or 1.0
+            want_side = "SELL" if cur > 0 else "BUY"
+            want_base = abs(cur) * cs
+
+            # Correct stop already resting? Leave it — re-placing every tick would
+            # churn the venue and reset the anchor.
+            def _matches(o) -> bool:
+                if str(_g(o, "side") or "").upper() != want_side:
+                    return False
+                cfg = _g(o, "order_configuration") or {}
+                inner = next(iter(cfg.values()), {}) if isinstance(cfg, dict) else {}
+                bs = _f(_g(inner, "base_size"), 0.0)
+                # base_size is in CONTRACTS at the venue (base_increment=1)
+                return abs(bs - abs(cur)) < 1e-9
+
+            good = [o for o in resting if _matches(o)]
+            if len(good) == 1 and len(resting) == 1:
+                return {"status": "OK_EXISTS", "asset": asset,
+                        "contracts": cur, "side": want_side}
+
+            # Otherwise: clear whatever is there and place one correct stop.
+            for o in resting:
+                oid = _g(o, "order_id") or _g(o, "id")
+                if oid:
+                    await self._adapter.cancel_order(str(oid), pid)
+
+            stop_px = self.desired_stop_price(asset)
+            if not stop_px:
+                return {"status": "NO_ANCHOR", "asset": asset}
+            req = OrderRequest(symbol=pid, side=want_side, size=want_base,
+                               order_type="STOP", stop_price=stop_px,
+                               post_only=False)
+            res = await self._adapter.place_order(req)
+            if res.success:
+                logger.info(f"[COINBASE_STOP] {asset}: placed protective "
+                            f"{want_side} stop @ {stop_px:.4f} for {cur:+.0f}ct "
+                            f"({self._protective_stop_pct:.1%} from entry)")
+                return {"status": "PLACED", "asset": asset, "side": want_side,
+                        "stop_price": stop_px, "contracts": cur}
+            logger.warning(f"[COINBASE_STOP] {asset}: stop placement FAILED: "
+                           f"{res.error_code}: {res.error_message} — position is "
+                           f"UNPROTECTED at the venue this tick")
+            return {"status": "FAILED", "asset": asset,
+                    "reason": f"{res.error_code}: {res.error_message}"}
+        except Exception as e:
+            logger.warning(f"[COINBASE_STOP] {asset}: ensure failed "
+                           f"({type(e).__name__}: {e}); position may be unprotected")
+            return {"status": "ERROR", "asset": asset, "reason": str(e)}
 
     async def execute_target(self, asset: str, target_signed_contracts: int,
                              order_type: str = "LIMIT") -> Dict[str, Any]:

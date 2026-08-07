@@ -1558,6 +1558,20 @@ class ProductionConfig:
     # Default OFF because enabling it LOOSENS a risk gate. Confirm the blocker
     # with scripts/why_no_trade.py first, then set true in the live JSON.
     coinbase_venue_aware_fees: bool = False
+    # [P197] Server-side protective stop on the Coinbase perp sleeve. Until this,
+    # the sleeve had NO venue-resting protection: every exit was a client-side
+    # call on the 4H tick, so a dead process left the perp positions with nothing
+    # at the venue to close them. Preview-verified 2026-08-07 that CDE accepts
+    # stop-limits on all three contracts.
+    #   pct <= 0 DISABLES the feature (one knob; "on with a 0% stop" is
+    #   unexpressible). Distance is measured from the position's ENTRY vwap, so
+    #   it is a fixed-risk stop, not a trailing one.
+    # Default OFF: this places REAL resting orders on a live account. P141 —
+    # activation is a deliberate, operator-watched step. Roll out with
+    # coinbase_protective_stop_assets=["SOL"] first and watch a full
+    # open -> stop-placed -> flatten -> stop-cancelled cycle before widening.
+    coinbase_protective_stop_pct: float = 0.0
+    coinbase_protective_stop_assets: List[str] = field(default_factory=list)
     # [v5.1 PROMOTED 2026-06-13] Operator override of Iron Law 7 (shadow >=30d):
     # blend the 4 v5.1 shadow strategy families into a live ADVISE fusion agent
     # with ZERO validation. Default OFF; set true in the live JSON. ADVISE-bounded
@@ -1807,6 +1821,12 @@ class ProductionConfig:
             coinbase_routing_enabled=data.get("coinbase_routing_enabled", False),
             # [P155e] venue-aware alpha-gate friction (default OFF — loosens the gate)
             coinbase_venue_aware_fees=data.get("coinbase_venue_aware_fees", False),
+            # [P197] Coinbase server-side protective stop (default OFF — places
+            # REAL resting orders on a live account; see the dataclass comment)
+            coinbase_protective_stop_pct=float(
+                data.get("coinbase_protective_stop_pct", 0.0) or 0.0),
+            coinbase_protective_stop_assets=list(
+                data.get("coinbase_protective_stop_assets", []) or []),
             # [v5.1 PROMOTED 2026-06-13] live ADVISE promotion of shadow strategies
             v5_1_strategies_live=data.get("v5_1_strategies_live", False),
             # P1-02: Thesis budget parameters (overlay-aware)
@@ -18242,7 +18262,16 @@ class HMATSProductionRunner:
                                     try:
                                         if getattr(self, "_coinbase_sleeve", None) is None:
                                             from exchange.coinbase_sleeve import CoinbaseSleeve
-                                            self._coinbase_sleeve = CoinbaseSleeve(_cb, assets=self.config.assets)
+                                            self._coinbase_sleeve = CoinbaseSleeve(
+                                                _cb, assets=self.config.assets,
+                                                # [P197] pct<=0 => stops disabled
+                                                protective_stop_pct=float(getattr(
+                                                    self.config,
+                                                    "coinbase_protective_stop_pct", 0.0) or 0.0),
+                                                protective_stop_assets=(getattr(
+                                                    self.config,
+                                                    "coinbase_protective_stop_assets", None) or None),
+                                            )
                                         _cb_snap = self._coinbase_sleeve.snapshot()
                                         _cb_pos = _cb_snap.get("positions") or {}
                                         _cb_pos_str = ", ".join(
@@ -18314,6 +18343,7 @@ class HMATSProductionRunner:
                                         # already met) emitted literally nothing — silence was
                                         # indistinguishable from healthy. Feeds the heartbeat.
                                         _m_summary = {}
+                                        _cb_stop_summary = {}  # [P197]
                                         if _flag and _rp is not None and _sl is not None:
                                             for _m_a in self.config.assets:
                                                 if _rp.venue_for(_m_a) != "coinbase":
@@ -18330,11 +18360,44 @@ class HMATSProductionRunner:
                                                         f"[COINBASE-MANAGE] {_m_a}: dir={_m_dir:+.2f} -> "
                                                         f"{_m_st} pos={_sl.signed_contracts(_m_a)}ct"
                                                     )
+                                                # [P197] Reconcile the venue-resting
+                                                # protective stop AFTER the position is
+                                                # settled for this asset. Order matters:
+                                                # execute_target cancels ALL resting orders
+                                                # (incl. the old stop) before changing the
+                                                # position, so the stop must be re-placed
+                                                # here, against the NEW position. Inert
+                                                # unless coinbase_protective_stop_pct > 0.
+                                                _st_res = await _sl.ensure_protective_stop(_m_a)
+                                                _st_st = _st_res.get("status")
+                                                _cb_stop_summary[_m_a] = _st_st
+                                                if _st_st in ("PLACED", "FAILED", "ERROR",
+                                                              "FLAT_CANCELLED", "NO_ANCHOR"):
+                                                    logger.info(
+                                                        f"[COINBASE-STOP] {_m_a}: {_st_st}"
+                                                        + (f" @ {_st_res['stop_price']:.4f}"
+                                                           if _st_res.get("stop_price") else "")
+                                                        + (f" ({_st_res['reason']})"
+                                                           if _st_res.get("reason") else "")
+                                                    )
                                         self._coinbase_manage_last = _m_summary
+                                        self._coinbase_stop_last = _cb_stop_summary  # [P197]
                                         if _m_summary:
                                             logger.info(
                                                 "[COINBASE-MANAGE] tick summary: "
                                                 + ", ".join(f"{_a}={_v}" for _a, _v in sorted(_m_summary.items()))
+                                            )
+                                        # [P197] Always log the stop summary when the
+                                        # feature is on, so "no stop resting" can never be
+                                        # silent — the failure mode that matters here is a
+                                        # position sitting unprotected, and silence must not
+                                        # be indistinguishable from protected (P155's lesson).
+                                        if _cb_stop_summary and any(
+                                                _v != "DISABLED" for _v in _cb_stop_summary.values()):
+                                            logger.info(
+                                                "[COINBASE-STOP] tick summary: "
+                                                + ", ".join(f"{_a}={_v}" for _a, _v
+                                                            in sorted(_cb_stop_summary.items()))
                                             )
                                         else:
                                             logger.warning(
