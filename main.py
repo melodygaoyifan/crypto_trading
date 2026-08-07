@@ -1575,6 +1575,13 @@ class ProductionConfig:
     # open -> stop-placed -> flatten -> stop-cancelled cycle before widening.
     coinbase_protective_stop_pct: float = 0.0
     coinbase_protective_stop_assets: List[str] = field(default_factory=list)
+
+    # [P216] Regimes in which the short-bias agent is NOT called. Empty list =
+    # never skip. Declared AND parsed (P201: two flags read via getattr but
+    # never parsed were silently inert, so the config that documented them was
+    # a no-op). Default None -> main.py falls back to the historical set, so
+    # omitting the key preserves today's behaviour exactly.
+    short_bias_skip_regimes: Optional[List[str]] = None
     # [P201] P198 shipped these two as JSON keys read via
     # `getattr(self.config, ..., default)` (main.py:7802, :18313) but never
     # declared them here and never parsed them in from_file — so the JSON keys
@@ -1852,6 +1859,10 @@ class ProductionConfig:
                 data.get("coinbase_protective_stop_pct", 0.0) or 0.0),
             coinbase_protective_stop_assets=list(
                 data.get("coinbase_protective_stop_assets", []) or []),
+            # [P216] None (key absent) != [] (explicitly "never skip").
+            short_bias_skip_regimes=(
+                list(data["short_bias_skip_regimes"])
+                if isinstance(data.get("short_bias_skip_regimes"), list) else None),
             # [P201] see the dataclass comment — these were read by getattr but
             # never parsed, so the JSON keys were inert.
             trend_regime_gate=str(
@@ -7219,7 +7230,20 @@ class HMATSProductionRunner:
         # Short bias penalizes longs (×0.7 ADVISE), hurting the only profitable direction.
         # In QUIET_ACCUMULATION/WEAK_CONSOLIDATION, disable short bias entirely.
         _regime_for_short_bias = market_data.get("regime_state", "")
-        _SHORT_BIAS_SKIP_REGIMES = {"QUIET_ACCUMULATION", "WEAK_CONSOLIDATION", "NEUTRAL_DRIFT"}
+        # [P216] Was a hardcoded literal. Those three regimes cover ~93% of live
+        # ticks (P198's regime census: QUIET_ACCUMULATION 663, WEAK_CONSOLIDATION
+        # 364, NEUTRAL_DRIFT 11 of ~1038), and the live [DIAG] line reports
+        # NOT_CALLED=['short_bias'] on every tick of every asset — so the agent
+        # is switched off almost always. That may well be right for a
+        # short-only agent in chop, but it was a code literal, so it could not
+        # be revisited without a deploy and nothing recorded it as a choice.
+        # DEFAULT IS UNCHANGED — this makes the decision expressible, it does
+        # not make it. Setting the list to [] re-enables short_bias everywhere,
+        # which is a real live change (it emits SHORT signals at ADVISE
+        # authority) and should be done deliberately, watched, per P141.
+        _SHORT_BIAS_SKIP_REGIMES = set(getattr(
+            self.config, "short_bias_skip_regimes", None)
+            or {"QUIET_ACCUMULATION", "WEAK_CONSOLIDATION", "NEUTRAL_DRIFT"})
         if self.short_bias_agent and not p0_abort_tick and _regime_for_short_bias not in _SHORT_BIAS_SKIP_REGIMES:
             try:
                 # [WHALE-PROXY] Derive whale_flow_usd from OI change + funding direction.
@@ -9447,8 +9471,19 @@ class HMATSProductionRunner:
                     ["model_alpha_direction", "model_alpha_confidence", "model_alpha_data_quality"]},
                 "kraken_quant": {k: agent_signals.get(k, 0.0) for k in
                     ["kq_direction", "kq_confidence", "kq_data_quality"]},
+                # [P216] `_extract_vol_alpha` reads vol_alpha_implied_direction /
+                # vol_alpha_intensity / vol_alpha_direction_reason (the agent
+                # emits all three, volatility_alpha_agent.py:963). This dict used
+                # to pass only vol_alpha_direction/_bias, so the collected keys
+                # and the extracted keys DID NOT INTERSECT and attribution read
+                # 0.0 for vol_alpha no matter what the agent produced — a P3
+                # measurement bug independent of the agent being directionally
+                # dead by design. Passing what the extractor actually reads.
                 "vol_alpha": {k: agent_signals.get(k, 0.0) for k in
-                    ["vol_alpha_direction", "vol_alpha_bias", "vol_alpha_data_quality"]},
+                    ["vol_alpha_implied_direction", "vol_alpha_intensity",
+                     "vol_alpha_direction_reason",
+                     "vol_alpha_direction", "vol_alpha_bias",
+                     "vol_alpha_data_quality"]},
                 # [ATTR-EXPAND] direction-producing agents previously dropped by tracker
                 "drl": {
                     "direction": agent_signals.get("drl_direction", 0.0),
