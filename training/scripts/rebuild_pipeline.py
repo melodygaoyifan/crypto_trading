@@ -502,18 +502,77 @@ def _gmm_sanity_checks(gmm, labels, max_probs, regime_names, X_scaled):
     return flip_rate
 
 
-def retrain_gmm_per_asset(asset: str, gmm_features: np.ndarray, smooth: int = 2):
+# ---------------------------------------------------------------------------
+# [P199 2026-08-07] GMM fit boundary — Iron Rule #12 for THIS script.
+#
+# P164 fixed the full-history GMM fit in train_per_asset_gmm.py, but THIS
+# script — the one that actually generated the deployed training parquets —
+# kept fitting scaler + GMM + BIC-k + cluster names on 100% of history and
+# even deploying that model. Every regime_proba_0..7 column it ever emitted
+# was a function of the validation windows it was later evaluated on.
+#
+# The boundary is derived from the SAME fold arithmetic as
+# train_drl_full._get_fold_splits (val_size = int(n*0.15), gap=42, 3 folds,
+# expanding train, folds rolling backwards): the STRICTEST fold boundary is
+# fold_3's train_end = n - 3*val_size - gap. Fitting on rows before it keeps
+# the GMM blind to EVERY fold's validation window — note that fitting to
+# fold_1's boundary (what train_per_asset_gmm's fold=1 default does) still
+# leaks folds 2/3's val windows, which sit inside fold_1's train range.
+#
+# Derived-not-looked-up on purpose: the split manifest is generated FROM the
+# parquets this script produces, so reading it here would be circular (and
+# stale indices from an older data range would silently mis-cut). A test
+# pins this arithmetic against the trainer's.
+# ---------------------------------------------------------------------------
+GMM_FIT_N_FOLDS = 3
+GMM_FIT_VAL_RATIO = 0.15
+GMM_FIT_GAP = 42
+
+
+def gmm_fit_boundary(n_valid_rows: int) -> int:
+    """First `boundary` valid rows are eligible for the GMM fit — everything
+    at or after the strictest fold's train_end is held out."""
+    boundary = int(n_valid_rows * (1 - GMM_FIT_N_FOLDS * GMM_FIT_VAL_RATIO)) - GMM_FIT_GAP
+    if boundary < 1000:
+        raise ValueError(
+            f"gmm_fit_boundary: only {boundary} rows before the strictest fold "
+            f"boundary (n_valid={n_valid_rows}) — too little data for a "
+            f"meaningful GMM fit. Fetch more history before rebuilding."
+        )
+    return boundary
+
+
+def retrain_gmm_per_asset(asset: str, gmm_features: np.ndarray, smooth: int = 2,
+                          no_split: bool = False):
     """Train per-asset GMM with BIC search k=3-8.
 
     Selects lowest BIC where min regime pct > 2%.
     Saves to models/regime_classifier/{ASSET}/ and data/gmm_models/{ASSET}/.
+
+    [P199] Fits on TRAIN-ONLY rows (before the strictest fold boundary) unless
+    `no_split=True` is passed explicitly — the full-sample fit is the leak
+    P164 documented, and it survives here until 2026-08-07.
     """
     logger.info(f"\n  === GMM for {asset} ===")
 
     # Filter valid features
     valid_mask = ~np.any(np.isnan(gmm_features), axis=1)
-    X = gmm_features[valid_mask]
-    logger.info(f"  {asset}: {len(X)} valid bars (of {len(gmm_features)})")
+    valid_idx = np.where(valid_mask)[0]
+    if no_split:
+        logger.warning(
+            f"  {asset}: --gmm-no-split — fitting GMM on ALL {len(valid_idx)} "
+            f"valid bars. The resulting regime features LEAK every validation "
+            f"window (Iron Rule #12); do not train or evaluate models for "
+            f"promotion on this parquet.")
+        fit_idx = valid_idx
+    else:
+        boundary = gmm_fit_boundary(len(valid_idx))
+        fit_idx = valid_idx[:boundary]
+        logger.info(
+            f"  {asset}: fitting GMM on first {len(fit_idx)}/{len(valid_idx)} "
+            f"valid bars (strictest fold boundary; val windows held out)")
+    X = gmm_features[fit_idx]
+    logger.info(f"  {asset}: {len(X)} fit bars (of {len(gmm_features)} total)")
 
     # Fit scaler
     scaler = StandardScaler()
@@ -593,6 +652,11 @@ def retrain_gmm_per_asset(asset: str, gmm_features: np.ndarray, smooth: int = 2)
         "scaler_mean": scaler.mean_.tolist(),
         "scaler_scale": scaler.scale_.tolist(),
         "training_samples": len(labels),
+        # [P199] Record which fit policy produced this artifact — a full-sample
+        # GMM and a split-aware GMM are indistinguishable by value (P179
+        # lesson: record which one you read). "split_aware" = fit on rows
+        # before the strictest fold boundary only.
+        "fit_policy": ("full_sample_LEAKY" if no_split else "split_aware"),
         "flip_rate": flip_rate,
         "mean_confidence": float(max_probs.mean()),
         "bic_search": [{"k": k, "bic": b, "min_pct": p} for k, b, p in bic_results],
@@ -751,6 +815,11 @@ def main():
     parser = argparse.ArgumentParser(description="HMATS v7 Ultimate Rebuild Pipeline")
     parser.add_argument("--skip-gmm", action="store_true",
                         help="Skip GMM retraining, use existing per-asset models")
+    parser.add_argument("--gmm-no-split", action="store_true",
+                        help="[P199] Fit the GMM on ALL history (the pre-2026-08 "
+                             "leaky behavior). The resulting parquets must never "
+                             "be used to train or promote models — explicit "
+                             "opt-in only, e.g. for offline visualisation.")
     parser.add_argument("--resample-only", action="store_true",
                         help="Only resample 1H->4H, don't compute features or train GMM")
     parser.add_argument("--smooth", type=int, default=2,
@@ -869,7 +938,8 @@ def main():
     else:
         for asset in ASSETS:
             gmm, scaler, rnames, rmapping = retrain_gmm_per_asset(
-                asset, all_gmm_features[asset], smooth=args.smooth
+                asset, all_gmm_features[asset], smooth=args.smooth,
+                no_split=args.gmm_no_split,
             )
             per_asset_gmms[asset] = (gmm, scaler, rnames, rmapping)
 

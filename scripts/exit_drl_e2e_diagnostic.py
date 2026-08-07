@@ -122,9 +122,9 @@ def main() -> int:
         _ok(f"using v2 models dir {models_dir}")
 
     per_asset_modes_test = {
-        "BTC": ExitDRLMode.EXIT_ONLY,    # mirror main.py production config
-        "ETH": ExitDRLMode.EXIT_ONLY,
-        "SOL": ExitDRLMode.EXIT_ONLY,
+        "BTC": ExitDRLMode.SHADOW,    # mirror main.py production config (P199 demotion)
+        "ETH": ExitDRLMode.SHADOW,
+        "SOL": ExitDRLMode.SHADOW,
     }
     agent = get_exit_drl_agent(
         models_dir=str(models_dir),

@@ -3387,7 +3387,6 @@ class HMATSProductionRunner:
             from agents.exit_drl_agent import get_exit_drl_agent, ExitDRLMode
             from agents.exit_drl_outcome_ledger import get_outcome_ledger
             from risk.exit_drl_kill_switch import get_kill_switch
-            from risk.exit_drl_promotion_gate import ExitDRLPromotionGate
             # Default to v2 (200-epoch checkpoints, val_align 0.71-0.75); fall
             # back to v1 50-epoch checkpoints if v2 directory missing.
             _edrl_models_dir = (
@@ -3395,22 +3394,32 @@ class HMATSProductionRunner:
                 if Path("models/exit_drl_v2").exists()
                 else "models/exit_drl"
             )
-            # [PROMOTION OVERRIDE 2026-04-24] All 3 assets promoted to
-            # EXIT_ONLY via the accelerated path (CLAUDE.md P29). User
-            # accepted the per-asset blast-radius risk because:
-            #   (a) per-asset isolation is structurally sound — kill-switch
-            #       state is independent per asset, e2e diagnostic confirmed
-            #   (b) kill switch auto-demotes the offending asset on any of
-            #       4 trip conditions before consulting Exit-SAC the next tick
-            #   (c) bridge is limited to PARTIAL_EXIT only — RELEASE_RUNNER
-            #       and EXIT_ALL stay with rule-based triggers
-            # Each EXIT_ONLY asset gets record_promotion (kill-switch start)
-            # + record_override (gate audit stamp) automatically from the
-            # init loop below.
+            # [P199 2026-08-07] DEMOTED to SHADOW, all 3 assets (was EXIT_ONLY
+            # via the P29 accelerated override of 2026-04-24). The override's
+            # evidence dissolved on forensic review:
+            #   - the "+50%/+83%/+91% Sharpe lift" was negative -> less
+            #     negative (-0.042 -> -0.021 etc.), gross of fees, with win
+            #     rates 26-41% WORSE, against a baseline configured stricter
+            #     than the live exit_alpha rules (min_profit 100bps vs 20),
+            #     in a simulator whose remaining_size goes negative after 4
+            #     partials (books a phantom short leg);
+            #   - the (b) justification below was false from 2026-04-30: the
+            #     kill switch's should_demote() returns None unconditionally
+            #     (operator directive, risk/exit_drl_kill_switch.py:226), so
+            #     the promoted state ran with NO automated safety net;
+            #   - 11/40 state features come from the P164-leaked pipeline;
+            #   - lifetime live record: 27 closed events (< the 30 the gate
+            #     required), mean -38.8bps, 12/27 wins; idle since 2026-06-13
+            #     (needs Kraken positions; the Coinbase sleeve never
+            #     consults it), so SHADOW changes zero live behavior today.
+            # RE-PROMOTE only after a clean retrain (real-entry trajectories,
+            # cost-aware validation vs the REAL exit_alpha config, fixed
+            # simulator) passes forward evidence — never on val_alignment,
+            # which is imitation accuracy against a future-peeking oracle.
             _per_asset_modes = {
-                "BTC": ExitDRLMode.EXIT_ONLY,
-                "ETH": ExitDRLMode.EXIT_ONLY,
-                "SOL": ExitDRLMode.EXIT_ONLY,
+                "BTC": ExitDRLMode.SHADOW,
+                "ETH": ExitDRLMode.SHADOW,
+                "SOL": ExitDRLMode.SHADOW,
             }
             self._exit_drl_agent = get_exit_drl_agent(
                 mode=ExitDRLMode.SHADOW,  # default for assets not in override
@@ -3419,21 +3428,12 @@ class HMATSProductionRunner:
             )
             self._exit_drl_outcome_ledger = get_outcome_ledger()
             self._exit_drl_kill_switch = get_kill_switch()
-            # Stamp promotion timestamp + write override audit record.
-            for _asset, _mode in _per_asset_modes.items():
-                if _mode == ExitDRLMode.EXIT_ONLY:
-                    self._exit_drl_kill_switch.record_promotion(_asset)
-                    try:
-                        ExitDRLPromotionGate().record_override(
-                            asset=_asset,
-                            reason="ACCELERATED_PATH_2026-04-24: gate showed "
-                                   "Sharpe lift +50%/+83%/+91% but blockers "
-                                   "(shadow_days, exit_events) required 30+ "
-                                   "days. Override approved via user direction "
-                                   "with kill switch + per-asset isolation.",
-                        )
-                    except Exception:
-                        pass
+            # NOTE: the pre-P199 loop here re-stamped record_promotion +
+            # record_override on EVERY boot, so exit_drl_promotion_state.json's
+            # force_promote_at was always the latest restart, not the actual
+            # 2026-04-24 decision. With no EXIT_ONLY asset the loop is gone;
+            # the historical override record stays in the state file on the
+            # volume.
             _edrl_status = self._exit_drl_agent.status()
             _edrl_ready = [a for a, s in _edrl_status['assets'].items() if s == 'READY']
             logger.warning(

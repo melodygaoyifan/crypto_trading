@@ -276,27 +276,33 @@ def test_bridge_only_acts_on_partial_exit_action():
     )
 
 
-def test_all_three_assets_promoted_in_main_py():
-    """Static guard: all 3 assets in EXIT_ONLY per the all-3 promotion (P29 update).
+def test_all_three_assets_are_shadow_in_main_py():
+    """[P199 2026-08-07] Static guard: all 3 assets DEMOTED to SHADOW.
 
-    User explicitly accepted the per-asset blast-radius risk on the basis that:
-    (a) per-asset isolation is structurally sound (e2e diagnostic confirmed),
-    (b) kill switch auto-demotes per asset on any of 4 trip conditions,
-    (c) bridge is limited to PARTIAL_EXIT only (no RELEASE/EXIT authority).
+    This test used to pin the P29 promotion, including its justification
+    "(b) kill switch auto-demotes per asset on any of 4 trip conditions" —
+    which was false from 2026-04-30, when should_demote() was made to return
+    None unconditionally. The promotion's validation evidence also dissolved
+    on forensic review (negative-Sharpe "lift", strawman baseline config,
+    simulator position-accounting bug, 11/40 leaked features — see CLAUDE.md
+    P199). Re-promotion to EXIT_ONLY must come with forward evidence and a
+    working kill switch, and should flip THIS test deliberately.
     """
     src = Path("main.py").read_text(encoding="utf-8-sig")
-    assert re.search(r'"BTC":\s*ExitDRLMode\.EXIT_ONLY', src), \
-        "BTC must be EXIT_ONLY"
-    assert re.search(r'"ETH":\s*ExitDRLMode\.EXIT_ONLY', src), \
-        "ETH must be EXIT_ONLY (all-3 promotion)"
-    assert re.search(r'"SOL":\s*ExitDRLMode\.EXIT_ONLY', src), \
-        "SOL must be EXIT_ONLY (all-3 promotion)"
+    for asset in ("BTC", "ETH", "SOL"):
+        assert re.search(rf'"{asset}":\s*ExitDRLMode\.SHADOW', src), \
+            f"{asset} must be SHADOW (P199 demotion)"
+    assert not re.search(r'ExitDRLMode\.EXIT_ONLY,', src), \
+        "an EXIT_ONLY assignment reappeared in main.py — that is a live " \
+        "authority change and must come with forward evidence (P199)"
 
 
-def test_main_py_records_kill_switch_promotion_and_gate_override():
+def test_main_py_no_longer_restamps_promotion_on_every_boot():
+    """The pre-P199 init loop called record_promotion + record_override on
+    EVERY boot, so exit_drl_promotion_state.json's force_promote_at was
+    always the latest restart rather than the actual 2026-04-24 decision —
+    an audit stamp that overwrote itself. With no EXIT_ONLY asset there is
+    nothing to stamp; the loop must stay gone."""
     src = Path("main.py").read_text(encoding="utf-8-sig")
-    # The init block must call both record_promotion AND record_override
-    assert "record_promotion(_asset)" in src
-    assert "record_override(" in src
-    # The override reason must mention the accelerated path
-    assert "ACCELERATED_PATH" in src
+    assert "record_promotion(_asset)" not in src
+    assert "record_override(" not in src

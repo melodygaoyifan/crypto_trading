@@ -106,10 +106,27 @@ def fetch_asset(asset: str, start: datetime, end: datetime) -> pd.DataFrame:
 
 
 def main() -> None:
-    # 3 years of 1H data (~26,280 rows) — enough for 4H training (~6,570 rows 4H).
-    # Comfortably above DT v3.2 minimum of 5,000 bars.
+    # [P199] The old hardcoded 3 years (~6,570 4H bars) is NOT enough for the
+    # DRL's 3-fold walk-forward: train_drl_full's fold arithmetic needs
+    # train_end = n - 3*int(0.15n) - 42 >= 5000, i.e. n >= ~9,200 4H bars
+    # (~4.2 years). A 3-year fetch is exactly what produced the 2026-04-22
+    # parquets on which folds 2 and 3 silently skip and fold_3 — the deployed
+    # fold — is unreachable. Default is now 6 years (SOLUSDT listed on
+    # Binance ~2020-08, so ~6y is also the maximum consistent range across
+    # all three assets).
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--years", type=int, default=6,
+                    help="Years of 1H history to fetch (default 6; "
+                         "minimum ~5 for the 3-fold DRL walk-forward)")
+    args = ap.parse_args()
     end = datetime.now()
-    start = datetime(end.year - 3, end.month, 1)
+    start = datetime(end.year - args.years, end.month, 1)
+    n_4h_est = int((end - start).days * 6)
+    if n_4h_est < 9200:
+        logger.warning(
+            f"--years {args.years} yields ~{n_4h_est} 4H bars < ~9,200 — "
+            f"folds 2/3 of the DRL walk-forward will be SKIPPED on this data.")
     logger.info(f"Fetching 1H OHLCV: {start:%Y-%m} -> {end:%Y-%m}")
     for asset in ("BTC", "ETH", "SOL"):
         logger.info(f"\n===== {asset} =====")
