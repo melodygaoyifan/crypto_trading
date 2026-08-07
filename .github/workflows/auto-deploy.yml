@@ -18,10 +18,27 @@ name: auto-deploy
 # Optional:
 #   HMATS_DEPLOY_NOTIFY_DISCORD — Discord webhook URL for deploy events
 
+# [P196 2026-08-07] DISABLED on push — deploys are run from the operator's
+# machine with `bash scripts/hetzner_deploy.sh hmats`.
+#
+# This workflow requires four repo secrets (below) that hold an SSH private key
+# with root on the trading server. This repository is PUBLIC, and Actions
+# secrets are available to any workflow that runs on main — so configuring them
+# would make "push access to the repo" equivalent to "root on the box that holds
+# the money". That trade was declined deliberately; the manual deploy takes
+# ~90 seconds and is what has been used for every deploy to date.
+#
+# Left as workflow_dispatch rather than deleted so the capability is one click
+# away if a restricted deploy user is ever set up (a dedicated non-root key plus
+# a narrow sudoers rule for the `su - hmats -c` steps in hetzner_deploy.sh).
+# Dispatching it WITHOUT the secrets configured will fail at the verify step
+# below, which is the correct and intended behaviour.
+#
+# Why not just leave it on push: it fails on every commit when the secrets are
+# absent, and a permanently-red check on main is how P192 hid a broken image
+# build for weeks. A gate that always fails teaches you to ignore it.
 on:
-  push:
-    branches: ["main"]
-  workflow_dispatch:  # allow manual re-deploy from Actions tab
+  workflow_dispatch:  # manual re-deploy from the Actions tab, opt-in only
 
 permissions:
   contents: read

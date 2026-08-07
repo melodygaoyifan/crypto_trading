@@ -14,7 +14,8 @@ on:
     branches: ["**"]
   pull_request:
     branches: ["main"]
-  workflow_call:  # invoked by auto-deploy.yml as the prerequisite gate
+  workflow_call:  # prerequisite gate for auto-deploy.yml, which is
+                  # workflow_dispatch-only as of P196 (deploys are manual)
 
 permissions:
   contents: read
