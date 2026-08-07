@@ -207,7 +207,8 @@ def load_shadow_ledgers(
     # families that emit NOTHING, and silently ignored funding_*.jsonl and
     # ml_factor_*.jsonl, the only ones producing signal. The gate meant to
     # validate the v5.1 promotion could not see the strategies it was judging.
-    prefixes: Tuple[str, ...] = ("microstructure", "cascade", "funding", "ml_factor"),
+    prefixes: Tuple[str, ...] = ("microstructure", "cascade", "funding",
+                                "ml_factor", "derivflow"),
     since: Optional[datetime] = None,
 ) -> List[Dict[str, Any]]:
     """Read all matching JSONL files and return parsed records.
@@ -732,7 +733,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--horizons", default="4,12,24",
                    help="forward-return horizons in 4H bars, comma-separated")
     p.add_argument("--prefixes",
-                   default="microstructure,cascade,funding,ml_factor",  # [P199]
+                   default="microstructure,cascade,funding,ml_factor,derivflow",  # [P199,P219]
                    help="ledger file prefixes")
     p.add_argument("--output", default=None,
                    help="optional JSON output path; defaults to analytics/shadow_ic/reports/")

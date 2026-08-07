@@ -238,3 +238,27 @@ def build_ml_factor_shadow_harness(
         log_dir=log_dir,
         log_prefix="ml_factor",
     )
+
+
+def build_derivflow_shadow_harness(
+    log_dir: Optional[Path] = None,
+) -> MicrostructureShadowHarness:
+    """[P219] Derivatives-flow shadow harness.
+
+    Sources a directional flow signal from CoinGlass liquidation data — which
+    is already paid for and already fetched every tick — because the `flow`
+    agent's CryptoCompare whale proxy is capped at 100 calls/month and the
+    upgrade is blocked.
+
+    Two strategies that are exact opposites by construction (squeeze /
+    exhaustion), so the IC gate decides which reading, if either, has edge
+    rather than the author guessing. See strategies/derivatives_flow_v1.py.
+
+    Output ledger: data/strategy_shadow/derivflow_YYYYMMDD.jsonl
+    """
+    from strategies.derivatives_flow_v1 import build_derivatives_flow_strategies
+    return MicrostructureShadowHarness(
+        strategies=build_derivatives_flow_strategies(),
+        log_dir=log_dir,
+        log_prefix="derivflow",
+    )

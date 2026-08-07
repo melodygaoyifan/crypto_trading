@@ -29,6 +29,11 @@ logger = logging.getLogger("CCNews")
 BASE_URL = "https://data-api.cryptocompare.com/news/v1/article/list"
 MIN_FETCH_INTERVAL = 300.0  # 5 min cache (news changes slowly vs 4H cadence)
 
+# [P219] Categories requested in a single combined call. Must cover every asset
+# the engine trades, or that asset falls back to an empty list and llm_sentiment
+# drops to the f&g path that main.py:8529 treats as untradeable.
+TRACKED_CATEGORIES = ("BTC", "ETH", "SOL")
+
 
 @dataclass
 class CCNewsItem:
@@ -153,7 +158,12 @@ class CCNewsFeed:
         params = {
             "lang": "EN",
             "api_key": self._api_key,
-            "categories": asset.upper(),
+            # [P219] Ask for ALL tracked assets in ONE call and populate every
+            # asset's cache from the result. This was one request PER ASSET,
+            # i.e. 3x the calls for the same headlines, against an account
+            # capped at 100 calls/MONTH (measured: 283 used). Filtering happens
+            # client-side below, which costs nothing.
+            "categories": ",".join(TRACKED_CATEGORIES),
             "limit": str(limit),
         }
         try:
@@ -201,8 +211,23 @@ class CCNewsFeed:
                     logger.debug(f"[CC_NEWS] row parse skipped: {e}")
                     continue
 
-            self._cache[cache_key] = (now, items)
-            return items
+            # [P219] Fan the single response out to every tracked asset's cache
+            # so the other two assets this tick are served without another call.
+            for _cat in TRACKED_CATEGORIES:
+                _hit = [
+                    it for it in items
+                    # A row with NO categories is general market news and is
+                    # relevant to all of them — dropping it would quietly shrink
+                    # the corpus and push headline_count back toward 0, which is
+                    # the condition this whole change exists to lift.
+                    if (not it.categories) or (_cat in {c.upper() for c in it.categories})
+                ]
+                self._cache[_cat] = (now, _hit)
+            logger.info(
+                f"[CC_NEWS] 1 call served {len(TRACKED_CATEGORIES)} assets: "
+                + ", ".join(f"{c}={len(self._cache[c][1])}" for c in TRACKED_CATEGORIES)
+            )
+            return self._cache.get(cache_key, (now, items))[1]
         except Exception as e:
             self._last_error = str(e)
             logger.warning(f"[CC_NEWS] {asset}: {e}")

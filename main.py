@@ -5008,6 +5008,24 @@ class HMATSProductionRunner:
                 f"{type(_fs_err).__name__}: {_fs_err}"
             )
 
+        # [P219] Derivatives-flow shadow: a directional flow signal built from
+        # CoinGlass liquidation data, which we already pay for and already fetch
+        # every tick. The live `flow` agent is stuck at 0.00 because its whale
+        # proxy needs CryptoCompare's large_transaction_count, and that account
+        # is capped at 100 calls/month (283 used) with the upgrade blocked.
+        # Two strategies that are exact opposites (squeeze vs exhaustion) so the
+        # IC gate picks the reading instead of me guessing. Observation-only.
+        self._derivflow_shadow = None
+        try:
+            from defense.strategy_shadow_v5_1 import build_derivflow_shadow_harness
+            self._derivflow_shadow = build_derivflow_shadow_harness()
+            logger.info("  [P219] DerivFlowShadowHarness: ACTIVE (2 strategies, observation-only)")
+        except Exception as _df_err:
+            logger.warning(
+                f"  [P219] DerivFlowShadowHarness init failed: "
+                f"{type(_df_err).__name__}: {_df_err}"
+            )
+
         # =====================================================================
         # [v5.1 Phase 6] ML factor fusion agent shadow harness (SHADOW)
         # MLFactorDispatcher per-asset routes to MLFactorFusionAgent (BTC/ETH/SOL).
@@ -7761,6 +7779,17 @@ class HMATSProductionRunner:
                 self._funding_shadow.observe(asset, _shadow_md)
             except Exception as _fs_err:
                 logger.debug(f"[v5.1 PHASE3] funding observe {asset} skipped: {_fs_err}")
+
+        # [P219] Derivatives-flow observation. Reads liquidation_imbalance /
+        # total_liquidations_24h / open_interest straight out of market_data —
+        # the CoinGlass feed already injects all three at main.py:6024-6030 —
+        # so this adds ZERO API calls. Iron Law 7: observation-only, never
+        # touches agent_signals or fusion.
+        if getattr(self, "_derivflow_shadow", None) is not None and not p0_abort_tick:
+            try:
+                self._derivflow_shadow.observe(asset, market_data)
+            except Exception as _df_err:
+                logger.debug(f"[P219] derivflow observe {asset} skipped: {_df_err}")
 
         # [v5.1 PROMOTED 2026-06-13] Operator override of Iron Law 7: blend the 4
         # shadow strategy families into ONE ADVISE fusion signal (ZERO validation).
