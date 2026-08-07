@@ -288,6 +288,21 @@ discipline + the grep habit.
 
 ### Recent pitfalls (last ~30 days)
 
+### P207. [FIXED 2026-08-07] A flatten left an orphan stop on a flat asset — venue-authoritative reconcile is blind for exactly one order-lifetime
+- **Observed live**, minutes after the P206 activation. The alpha gate refused ETH and SOL, the sleeve flattened both, and the venue then showed:
+  ```
+  POSITIONS:   BTC LONG 1                (ETH and SOL flat)
+  OPEN ORDERS: BTC SELL stop 57955       (correct)
+               SOL BUY  stop 80.82       <- ORPHAN on a flat asset
+               ETH SELL stop 1725.5      <- ORPHAN on a flat asset
+  ```
+- **Mechanism:** `execute_target` flattens with a **marketable LIMIT**, which had not FILLED when `ensure_protective_stop` ran in the same tick. `reconcile_positions` therefore still reported the old position, so a protective stop was **placed on an asset that went flat seconds later**. CDE rejects `reduce_only`, so those are PLAIN orders — SOL touching 80.82 would have **OPENED a long** — and the next reconcile was **4 hours away**.
+- **The existing orphan-cancel logic was correct and simply never fired**, because the snapshot said "still holding". This is not a missing guard; it is a guard reading a source that is briefly wrong. Venue-authoritative reconcile (the anti-P139 invariant) is right in the steady state and blind in the window between *order accepted* and *order filled*.
+- **Fix:** `ensure_protective_stop(asset, intended_target=None)`. When the caller knows this tick's target, **intent beats the snapshot**: `intended_target == 0` means treat the asset as flat and cancel, whatever reconcile says. Deliberately narrow — a nonzero intent still reconciles to the venue, omitting the argument preserves the old behaviour exactly, and the HOLD path passes nothing because HOLD means the position did not change and the snapshot IS the truth there.
+- **Verified live:** after deploy, `SOL: flat -> cancelled 1 orphan stop(s)` / `ETH: FLAT_CANCELLED`, and an independent venue query showed BTC long with exactly one resting order and zero orphans. This also closed the last unobserved leg of P197 (`PLACED → OK_EXISTS → FLAT_CANCELLED`).
+- **Tests:** 4 added to `tests/test_coinbase_protective_stop.py` (34 in the file).
+- **Mitigation pattern:** any code that acts on a snapshot taken **after it submitted an order** must decide explicitly whether the snapshot or its own intent is authoritative in that window. "Read the venue, never infer" (P139) is the right default and needs this one carve-out; otherwise the system races itself.
+
 ### P206. [BUILT 2026-08-07, DEFAULT OFF] Drive the Coinbase sleeve from the GATED intent — and why the obvious two-line version liquidates the book
 - **The gap (P201):** the sleeve is the only venue that places orders, and it reads `_last_quant_directions` — written at `main.py:6480` and `:7834`, **both before `engine.decide()` at `:9737`**. So it trades a **pre-gate snapshot** and no risk control binds on the venue holding the risk. `grep -rli coinbase risk/ defense/` returns nothing.
 - **The plumbing is trivial and that is the trap.** `_live_intents[asset] = intent` (`main.py:18237`) and the sleeve driver are in the same function body, same tick — the gated intent is already in scope. The 2-line swap "read `_live_intents` instead of the dict" is **wrong**: the gate stack speaks **order** semantics ("should I send an order?"), the sleeve speaks **position-target** semantics ("what position should exist?").

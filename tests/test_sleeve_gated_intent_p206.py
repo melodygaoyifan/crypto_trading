@@ -171,9 +171,20 @@ class TestWiring:
         c = ProductionConfig.from_file(
             Path(__file__).resolve().parents[1] / "configs" / "live_high_risk.json")
         assert hasattr(c, "coinbase_use_gated_intent")
-        assert c.coinbase_use_gated_intent is False, (
-            "must ship OFF — enabling changes live order behaviour"
-        )
+
+    def test_the_code_default_is_off(self):
+        """The invariant is that the CODE ships OFF — enabling changes live order
+        behaviour, so it must be a deliberate profile edit (P141).
+
+        Deliberately asserts the dataclass default, NOT the live profile's value.
+        An earlier version asserted the latter and failed the moment the operator
+        enabled it, which is a test asserting a decision rather than a contract.
+        """
+        import dataclasses
+        from main import ProductionConfig
+        default = {f.name: f.default
+                   for f in dataclasses.fields(ProductionConfig)}["coinbase_use_gated_intent"]
+        assert default is False
 
     def test_the_json_key_actually_takes_effect(self):
         import json, os, tempfile
