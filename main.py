@@ -18162,7 +18162,49 @@ class HMATSProductionRunner:
                 f"Kraken credentials not set. "
                 f"Set {self.config.kraken_api_key_env} and {self.config.kraken_api_secret_env}"
             )
-        
+
+        # [P209] RESTORE the existence-fuse series. `_load_paper_positions()` is
+        # called only from run_paper() (:17375), so live persisted state was
+        # write-only: the fuse started empty on every deploy and its 28d window
+        # could never accumulate 28 days. Persisting without restoring is the
+        # same non-control as not persisting at all.
+        #
+        # Deliberately restores ONLY the fuse + its anchor, NOT the full bundle.
+        # `_load_paper_positions()` also repopulates `_paper_positions`, and
+        # resurrecting Kraken position state in live from a file is a much
+        # larger blast radius than this fix needs (P139/P140 are both cases of a
+        # state machine acting on a book that did not reflect reality). The
+        # other governors in the bundle (cascade, failure_memory,
+        # confidence_scorer, opportunity_budget, regime_smoother, AC-5 counters,
+        # peak_equity) are persisted but still not restored in live — a separate
+        # change that needs its own safety review.
+        try:
+            _fz0 = getattr(self, "existence_fuse", None)
+            if _fz0 is not None and self._PAPER_POS_FILE.exists():
+                import json as _json
+                _d0 = _json.loads(
+                    self._PAPER_POS_FILE.read_text(encoding="utf-8"))
+                _fs0 = _d0.get("existence_fuse_state") or {}
+                if _fs0.get("pnl_history"):
+                    _fz0.from_dict(_fs0)
+                    self._fuse_equity_basis = str(
+                        _d0.get("existence_fuse_equity_basis") or "")
+                    _a0 = _d0.get("fuse_sleeve_anchor_equity")
+                    self._fuse_sleeve_anchor_equity = float(_a0) if _a0 else None
+                    _st0 = _fz0.get_status()
+                    logger.warning(
+                        f"[P209] Restored existence fuse for LIVE: "
+                        f"{len(_fs0.get('pnl_history') or [])} records, "
+                        f"state={_st0.state.name}, "
+                        f"window={_st0.window_pnl_pct * 100:+.2f}%, "
+                        f"basis='{self._fuse_equity_basis}', "
+                        f"anchor={self._fuse_sleeve_anchor_equity}"
+                    )
+        except Exception as _fz0_err:
+            logger.warning(
+                f"[P209] live fuse restore failed (starting fresh — the 28d "
+                f"window restarts): {type(_fz0_err).__name__}: {_fz0_err}")
+
         # =====================================================================
         # V6.2.3e TASK 1: STARTUP RECONCILER - MANDATORY FOR LIVE
         # Ensures local state matches exchange before any trading begins
@@ -18606,6 +18648,21 @@ class HMATSProductionRunner:
                                                 # never been evaluated. None disables.
                                                 max_net_exposure=getattr(
                                                     self.config, "max_net_exposure", None),
+                                                # [P210] Per-asset gross cap, the
+                                                # SAME policy numbers the Kraken
+                                                # path uses (post_leverage_caps),
+                                                # but denominated in sleeve equity.
+                                                # intent.target_exposure is NOT
+                                                # reconnected on purpose: it is
+                                                # multiplied by KRAKEN NAV
+                                                # (unit_system.py:232), so at 0.25
+                                                # it sizes ~$2,457 against the
+                                                # ~$643 this sleeve holds — a ~4x
+                                                # increase, sized out of another
+                                                # venue's capital.
+                                                max_asset_exposure=getattr(
+                                                    self.config,
+                                                    "post_leverage_caps", None),
                                             )
                                         _cb_snap = self._coinbase_sleeve.snapshot()
                                         _cb_pos = _cb_snap.get("positions") or {}

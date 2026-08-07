@@ -65,9 +65,13 @@ def _feed_code() -> str:
     passed judgement on prose, so it would have failed on a correct
     implementation and passed on one that merely deleted the explanation.
     """
+    return _code_only(_feed_block())
+
+
+def _code_only(text: str) -> str:
+    """Drop whole-line comments. See `_feed_code` for why this matters."""
     return "\n".join(
-        ln for ln in _feed_block().splitlines()
-        if not ln.lstrip().startswith("#")
+        ln for ln in text.splitlines() if not ln.lstrip().startswith("#")
     )
 
 
@@ -246,6 +250,55 @@ class TestPersistence:
         restored = _fuse()
         restored.from_dict(f.to_dict())
         assert restored.is_suspended()
+
+
+class TestLiveRestore:
+    """Found by reading the live log after deploying the feed: the first record
+    came back with `cumulative_pnl: 0.0` and `history: 1`, i.e. the previous
+    state had NOT been read back. `_load_paper_positions()` is called only from
+    run_paper(), so live persistence was write-only — the fuse started empty on
+    every deploy and the 28d window could never fill. Persisting without
+    restoring is the same non-control as not persisting.
+    """
+
+    def _live_restore_block(self) -> str:
+        # Align to the start of the line so `_code_only` can recognise the
+        # leading comment lines as comments (a mid-line slice makes the first
+        # line look like code, which is how this test first failed).
+        m = _SRC.index("[P209] RESTORE the existence-fuse series")
+        i = _SRC.rindex("\n", 0, m) + 1
+        return _SRC[i:_SRC.index("[P209] live fuse restore failed", m)]
+
+    def test_run_live_restores_the_fuse(self):
+        i = _SRC.index("async def run_live")
+        j = _SRC.index("[P209] RESTORE the existence-fuse series")
+        assert i < j, "restore must be inside run_live"
+        blk = self._live_restore_block()
+        assert "_fz0.from_dict(_fs0)" in blk
+
+    def test_it_restores_the_anchor_with_the_history(self):
+        """Restoring history without the anchor would measure the next delta
+        against a fresh reading and silently drop everything that happened while
+        the process was down."""
+        blk = self._live_restore_block()
+        assert '_d0.get("fuse_sleeve_anchor_equity")' in blk
+        assert "self._fuse_sleeve_anchor_equity = float(_a0) if _a0 else None" in blk
+
+    def test_it_does_not_repopulate_kraken_positions(self):
+        """`_load_paper_positions()` would also restore `_paper_positions`, and
+        resurrecting a Kraken book from a file in live is the P139/P140 failure
+        shape. Scope is deliberately the fuse only."""
+        code = _code_only(self._live_restore_block())
+        assert "_load_paper_positions" not in code
+        assert "self._paper_positions" not in code
+
+    def test_a_restore_failure_is_non_fatal(self):
+        """Live trading must not fail to start because a state file is corrupt
+        (the P85 10-restart-loop lesson)."""
+        i = _SRC.index("[P209] RESTORE the existence-fuse series")
+        w = _SRC[i:i + 3000]
+        assert "except Exception as _fz0_err:" in w
+        assert "starting fresh" in w
 
 
 # ---------------------------------------------------------------------------
