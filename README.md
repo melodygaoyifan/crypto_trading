@@ -91,7 +91,7 @@ Decision tick: every 4H bar. Per-tick latency: ~7s for the agent fan-in, ~1s for
 | **Sentiment LLM (Haiku)** | ACTIVE | CryptoPanic + CC News blend. |
 | **Quant Best-of-N** | DECIDE | 4 strategies: mean-revert / momentum / volume-breakout / vrp + hold. |
 | **kraken_quant (12 strats)** | DECIDE | Promoted full-weight 2026-04-22; per-strategy stats in `data/kq_firing_stats.json`. |
-| **Exit DRL (Discrete SAC)** | SHADOW (demoted 2026-08-07, P199) | Predictions logged only. The old "kill switch auto-demotes" claim had been false since 2026-04-30 (should_demote returns None unconditionally); the promotion evidence was a negative-Sharpe lift vs a strawman baseline. |
+| **Exit DRL (Discrete SAC)** | SHADOW (demoted 2026-08-07, P200) | Predictions logged only. The old "kill switch auto-demotes" claim had been false since 2026-04-30 (should_demote returns None unconditionally); the promotion evidence was a negative-Sharpe lift vs a strawman baseline. |
 | **OnChain (BTC/ETH)** | DISABLED by config | `OnChainSentimentAlphaEngine.enabled=False`. |
 | **Soldex (SOL DEX arb)** | ACTIVE | 100% confidence emitter, 0% direction in normal regime. |
 | **Discord alerts** | ACTIVE | Webhook in `.env`. |
@@ -134,7 +134,7 @@ HMATS runs three independent DRL components — easy to confuse, important not t
 |---|---|---|---|
 | **TQC direction** | `drl/ensemble.py` | DECIDE (ACTIVE) | Per-asset 122-feature → 126-dim obs → quantile critic; primary directional signal alongside Quant. |
 | **DRL Agent (legacy)** | `agents/drl_agent.py` | DISABLED | P10 tranche/exit scaffolding; instantiated but `mode=DISABLED`. Kept for future enable-path. |
-| **Exit-SAC** | `models/exit_drl_v2/` + `core/tick_exit_triggers.py` | SHADOW (all 3, P199) | Discrete SAC; inference + shadow logging only. NOTE: the kill switch's should_demote() has returned None unconditionally since 2026-04-30 — there is NO auto-demotion; re-promotion requires a clean retrain + forward evidence. |
+| **Exit-SAC** | `models/exit_drl_v2/` + `core/tick_exit_triggers.py` | SHADOW (all 3, P200) | Discrete SAC; inference + shadow logging only. NOTE: the kill switch's should_demote() has returned None unconditionally since 2026-04-30 — there is NO auto-demotion; re-promotion requires a clean retrain + forward evidence. |
 
 The TQC and Exit-SAC use independent observation spaces, model files, and promotion gates. Don't conflate them when grepping for "DRL".
 

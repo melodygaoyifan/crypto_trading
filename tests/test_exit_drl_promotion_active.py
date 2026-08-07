@@ -277,7 +277,7 @@ def test_bridge_only_acts_on_partial_exit_action():
 
 
 def test_all_three_assets_are_shadow_in_main_py():
-    """[P199 2026-08-07] Static guard: all 3 assets DEMOTED to SHADOW.
+    """[P200 2026-08-07] Static guard: all 3 assets DEMOTED to SHADOW.
 
     This test used to pin the P29 promotion, including its justification
     "(b) kill switch auto-demotes per asset on any of 4 trip conditions" —
@@ -285,20 +285,20 @@ def test_all_three_assets_are_shadow_in_main_py():
     None unconditionally. The promotion's validation evidence also dissolved
     on forensic review (negative-Sharpe "lift", strawman baseline config,
     simulator position-accounting bug, 11/40 leaked features — see CLAUDE.md
-    P199). Re-promotion to EXIT_ONLY must come with forward evidence and a
+    P200). Re-promotion to EXIT_ONLY must come with forward evidence and a
     working kill switch, and should flip THIS test deliberately.
     """
     src = Path("main.py").read_text(encoding="utf-8-sig")
     for asset in ("BTC", "ETH", "SOL"):
         assert re.search(rf'"{asset}":\s*ExitDRLMode\.SHADOW', src), \
-            f"{asset} must be SHADOW (P199 demotion)"
+            f"{asset} must be SHADOW (P200 demotion)"
     assert not re.search(r'ExitDRLMode\.EXIT_ONLY,', src), \
         "an EXIT_ONLY assignment reappeared in main.py — that is a live " \
-        "authority change and must come with forward evidence (P199)"
+        "authority change and must come with forward evidence (P200)"
 
 
 def test_main_py_no_longer_restamps_promotion_on_every_boot():
-    """The pre-P199 init loop called record_promotion + record_override on
+    """The pre-P200 init loop called record_promotion + record_override on
     EVERY boot, so exit_drl_promotion_state.json's force_promote_at was
     always the latest restart rather than the actual 2026-04-24 decision —
     an audit stamp that overwrote itself. With no EXIT_ONLY asset there is

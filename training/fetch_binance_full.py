@@ -23,7 +23,12 @@ logger = logging.getLogger("fetch_binance_full")
 
 BASE_URL = "https://data.binance.vision/data/spot/monthly/klines"
 SYMBOLS = {"BTC": "BTCUSDT", "ETH": "ETHUSDT", "SOL": "SOLUSDT"}
-OUTPUT_DIR = Path("training/training_data/raw")
+# [P200] __file__-anchored, NOT cwd-relative. The old Path("training/...")
+# silently created a nested training/training/training_data/raw/ when run
+# from the training/ directory, so the fetch "succeeded" while the pipeline
+# (which resolves the real path absolutely) kept reading stale data — two
+# writers, two paths, both logging success.
+OUTPUT_DIR = Path(__file__).resolve().parent / "training_data" / "raw"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -106,7 +111,7 @@ def fetch_asset(asset: str, start: datetime, end: datetime) -> pd.DataFrame:
 
 
 def main() -> None:
-    # [P199] The old hardcoded 3 years (~6,570 4H bars) is NOT enough for the
+    # [P200] The old hardcoded 3 years (~6,570 4H bars) is NOT enough for the
     # DRL's 3-fold walk-forward: train_drl_full's fold arithmetic needs
     # train_end = n - 3*int(0.15n) - 42 >= 5000, i.e. n >= ~9,200 4H bars
     # (~4.2 years). A 3-year fetch is exactly what produced the 2026-04-22

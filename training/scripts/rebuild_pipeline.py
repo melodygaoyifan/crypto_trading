@@ -503,7 +503,7 @@ def _gmm_sanity_checks(gmm, labels, max_probs, regime_names, X_scaled):
 
 
 # ---------------------------------------------------------------------------
-# [P199 2026-08-07] GMM fit boundary — Iron Rule #12 for THIS script.
+# [P200 2026-08-07] GMM fit boundary — Iron Rule #12 for THIS script.
 #
 # P164 fixed the full-history GMM fit in train_per_asset_gmm.py, but THIS
 # script — the one that actually generated the deployed training parquets —
@@ -549,7 +549,7 @@ def retrain_gmm_per_asset(asset: str, gmm_features: np.ndarray, smooth: int = 2,
     Selects lowest BIC where min regime pct > 2%.
     Saves to models/regime_classifier/{ASSET}/ and data/gmm_models/{ASSET}/.
 
-    [P199] Fits on TRAIN-ONLY rows (before the strictest fold boundary) unless
+    [P200] Fits on TRAIN-ONLY rows (before the strictest fold boundary) unless
     `no_split=True` is passed explicitly — the full-sample fit is the leak
     P164 documented, and it survives here until 2026-08-07.
     """
@@ -652,7 +652,7 @@ def retrain_gmm_per_asset(asset: str, gmm_features: np.ndarray, smooth: int = 2,
         "scaler_mean": scaler.mean_.tolist(),
         "scaler_scale": scaler.scale_.tolist(),
         "training_samples": len(labels),
-        # [P199] Record which fit policy produced this artifact — a full-sample
+        # [P200] Record which fit policy produced this artifact — a full-sample
         # GMM and a split-aware GMM are indistinguishable by value (P179
         # lesson: record which one you read). "split_aware" = fit on rows
         # before the strictest fold boundary only.
@@ -816,7 +816,7 @@ def main():
     parser.add_argument("--skip-gmm", action="store_true",
                         help="Skip GMM retraining, use existing per-asset models")
     parser.add_argument("--gmm-no-split", action="store_true",
-                        help="[P199] Fit the GMM on ALL history (the pre-2026-08 "
+                        help="[P200] Fit the GMM on ALL history (the pre-2026-08 "
                              "leaky behavior). The resulting parquets must never "
                              "be used to train or promote models — explicit "
                              "opt-in only, e.g. for offline visualisation.")

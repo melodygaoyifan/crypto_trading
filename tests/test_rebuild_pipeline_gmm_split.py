@@ -1,4 +1,4 @@
-"""[P199] rebuild_pipeline's GMM must fit train-only — the leak P164 missed.
+"""[P200] rebuild_pipeline's GMM must fit train-only — the leak P164 missed.
 
 P164 fixed the full-history GMM fit in train_per_asset_gmm.py, but
 rebuild_pipeline.py Step 4 — the script that generated the deployed training
@@ -165,7 +165,7 @@ def test_cli_passes_no_split_through():
 
 
 def test_orchestrator_passes_the_extractor():
-    """[P199 blocker 3] run_training.run_drl must pass --extractor
+    """[P200 blocker 3] run_training.run_drl must pass --extractor
     lstm_film_a or it produces a 126-dim ULTIMATE model the runtime's
     hardcoded 1008-dim input cannot consume."""
     src = io.open(REPO / "training" / "run_training.py", encoding="utf-8").read()

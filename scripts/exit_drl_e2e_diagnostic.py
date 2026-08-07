@@ -122,7 +122,7 @@ def main() -> int:
         _ok(f"using v2 models dir {models_dir}")
 
     per_asset_modes_test = {
-        "BTC": ExitDRLMode.SHADOW,    # mirror main.py production config (P199 demotion)
+        "BTC": ExitDRLMode.SHADOW,    # mirror main.py production config (P200 demotion)
         "ETH": ExitDRLMode.SHADOW,
         "SOL": ExitDRLMode.SHADOW,
     }

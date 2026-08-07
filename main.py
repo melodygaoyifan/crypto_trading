@@ -3394,7 +3394,7 @@ class HMATSProductionRunner:
                 if Path("models/exit_drl_v2").exists()
                 else "models/exit_drl"
             )
-            # [P199 2026-08-07] DEMOTED to SHADOW, all 3 assets (was EXIT_ONLY
+            # [P200 2026-08-07] DEMOTED to SHADOW, all 3 assets (was EXIT_ONLY
             # via the P29 accelerated override of 2026-04-24). The override's
             # evidence dissolved on forensic review:
             #   - the "+50%/+83%/+91% Sharpe lift" was negative -> less
@@ -3428,7 +3428,7 @@ class HMATSProductionRunner:
             )
             self._exit_drl_outcome_ledger = get_outcome_ledger()
             self._exit_drl_kill_switch = get_kill_switch()
-            # NOTE: the pre-P199 loop here re-stamped record_promotion +
+            # NOTE: the pre-P200 loop here re-stamped record_promotion +
             # record_override on EVERY boot, so exit_drl_promotion_state.json's
             # force_promote_at was always the latest restart, not the actual
             # 2026-04-24 decision. With no EXIT_ONLY asset the loop is gone;

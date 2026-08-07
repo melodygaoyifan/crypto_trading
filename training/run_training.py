@@ -188,7 +188,7 @@ class TrainingOrchestrator:
                 # left to a default that can move underneath it.
                 '--venue', self.venue,
                 '--fee-side', self.fee_side,
-                # [P199] Without this, train_drl_full defaults to the ULTIMATE
+                # [P200] Without this, train_drl_full defaults to the ULTIMATE
                 # flat-MLP path: no VecFrameStack, obs 126 not 1008, run_label
                 # "ULTIMATE" — a model the runtime cannot consume (drl/ensemble
                 # hardcodes SINGLE_OBS_DIM*N_STACK=1008 and the loader probes
