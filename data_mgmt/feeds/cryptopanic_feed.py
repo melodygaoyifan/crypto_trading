@@ -133,7 +133,8 @@ class CryptoPanicFeed:
 
     ⚠️ [P155, 2026-08-04] BILLING: the plan tier is baked into BASE_URL. This
     is the **Growth** (paid) endpoint, NOT the free tier that .env.example and
-    docs/HMATS_E2E_TRAINING_GUIDE.md described for months. That mismatch is why
+    the 2026-02 E2E training guide (now docs/archive/
+    HMATS_E2E_TRAINING_GUIDE_2026-02.md) described for months. That mismatch is why
     a ~540 req/month workload produced a $400 bill and read as runaway traffic
     (see P154): the cost is the subscription, not the request count. Changing
     this string changes what you are billed — do not treat it as cosmetic.

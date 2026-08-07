@@ -10,7 +10,8 @@ HOT_PATH_FILES = [
     "execution/passive_aggressive.py",
     "execution/learned_execution_policy.py",
     "portfolio/portfolio_brain_offensive.py",
-    "docs/HMATS_E2E_TRAINING_GUIDE.md",
+    "docs/archive/HMATS_E2E_TRAINING_GUIDE_2026-02.md",  # archived 2026-08 (P200)
+    "docs/HMATS_TRAINING_GUIDE_V2.md",
     # [P165] `docs/HMATS_PROFITABILITY_DEVELOPER_AUDIT.md` was removed from this
     # list: `git log --all -- <path>` is empty, so it has never been committed
     # and this test has raised FileNotFoundError since it was written. Add it

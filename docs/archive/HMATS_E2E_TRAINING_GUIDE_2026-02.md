@@ -1,3 +1,21 @@
+> # ⛔ ARCHIVED 2026-08-07 (P200 forensics) — DO NOT TRAIN FROM THIS DOCUMENT
+> Every performance number in this guide is a P164 leak artifact measured at zero
+> exchange fee: the wavelet denoise was non-causal (IC +0.41 on pure random
+> walks), the GMM was fit on 100% of history, fold selection ran on shaped
+> reward with a regime-alignment bonus, and eval std was structurally 0.0.
+> P200's honest rerun of this exact formulation on clean data at real fees is
+> NOT PROMOTABLE on all 3 BTC folds (-$154,661 / -$63,650 / -$62,045 vs
+> positive buy-and-hold baselines). The "Stage 7 chose classic → 8B locked
+> Config 1 → 9.7 said GO" chain this document is organized around is a chain of
+> those artifacts. Its training commands also predate venue-aware fees
+> (--venue/--fee-side), --decision-interval, and the split-aware GMM.
+>
+> **The live guide is docs/HMATS_TRAINING_GUIDE_V2.md.** This file is retained
+> as the forensic record that CLAUDE.md P199/P200 audit, and for the still-valid
+> reference blocks the audit identified (iron laws L229-291 — amend #26 to
+> CAUSAL wavelet and #35 to P200-LADDER — feature chain L89-160, runtime parity
+> L1182-1213, sentiment phase L1387-1974).
+
 # HMATS End-to-End Training Guide: Stage 8B → Live
 # ═══════════════════════════════════════════════════
 # 当前状态: Stage 9.7 ✅ GO, Stage 10 Full Training 下一步

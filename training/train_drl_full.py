@@ -604,13 +604,76 @@ def _sma_rule(window: int):
     return _fn
 
 
+def _ridge_16h_rule(train_df: pd.DataFrame, feature_cols: List[str],
+                    horizon: int = 4, deadband: float = 0.25,
+                    decision_interval: int = 4):
+    """[P200-LADDER] The supervised alternative as a baseline the RL candidate
+    must beat. The edge probe (training/scripts/edge_probe.py) found the only
+    robust after-cost signal in this feature set is LINEAR at the 16h horizon
+    (BTC IC 0.079, +24bps/trade in the strict post-GMM-boundary run) — and the
+    external literature agrees supervised forecast-then-trade routinely beats
+    RL in crypto. An RL policy that cannot beat the ridge it shares features
+    with has no reason to exist; this makes that a promotion gate rather than
+    an opinion.
+
+    Fit ONCE on the train fold (raw features standardized, 4-bar forward
+    return target) — exactly the information the RL model had. Per-bar val
+    forecast maps to a position via z-score with a deadband, acting every
+    `decision_interval` bars (holding between), mirroring the candidate's
+    own cadence so turnover is comparable.
+    """
+    from sklearn.linear_model import Ridge
+    from sklearn.preprocessing import StandardScaler
+
+    X = np.nan_to_num(train_df[feature_cols].to_numpy(dtype=float))
+    close = train_df["close"].to_numpy(dtype=float)
+    y = np.full(len(close), np.nan)
+    y[:-horizon] = close[horizon:] / close[:-horizon] - 1.0
+    m = ~np.isnan(y)
+    sc = StandardScaler().fit(X[m])
+    model = Ridge(alpha=10.0).fit(sc.transform(X[m]), y[m])
+    pred_sigma = float(np.std(model.predict(sc.transform(X[m]))))
+    # A ridge that learned ~nothing has near-constant predictions. Dividing
+    # by that tiny sigma would make z EXPLODE and the "signal-less" baseline
+    # trade noise at full size — a degenerate model must be FLAT, not
+    # maximally confident. (Caught by tests/test_ridge_baseline.py.)
+    degenerate = pred_sigma < 1e-8
+
+    state = {"last_action": 0.0, "bars": 0}
+
+    def _fn(env: "TradingEnvFull") -> float:
+        if degenerate:
+            return 0.0
+        if state["bars"] % max(1, decision_interval) != 0:
+            state["bars"] += 1
+            return state["last_action"]
+        state["bars"] += 1
+        i = env.current_step
+        feats = np.nan_to_num(
+            env.df.iloc[i][feature_cols].to_numpy(dtype=float)).reshape(1, -1)
+        z = float(model.predict(sc.transform(feats))[0]) / pred_sigma
+        a = 0.0 if abs(z) < deadband else float(np.clip(z, -1.0, 1.0))
+        state["last_action"] = a
+        return a
+    return _fn
+
+
 def baseline_policies(raw_env: "TradingEnvFull",
-                      sma_window: int = 200) -> Dict[str, ScriptedPolicy]:
-    return {
+                      sma_window: int = 200,
+                      ridge_ctx: Optional[Dict] = None) -> Dict[str, ScriptedPolicy]:
+    out = {
         "buy_and_hold": ScriptedPolicy("buy_and_hold", _buy_and_hold, raw_env),
         f"sma_{sma_window}bar": ScriptedPolicy(
             f"sma_{sma_window}bar", _sma_rule(sma_window), raw_env),
     }
+    if ridge_ctx is not None:
+        out["ridge_16h"] = ScriptedPolicy(
+            "ridge_16h",
+            _ridge_16h_rule(
+                ridge_ctx["train_df"], ridge_ctx["feature_cols"],
+                decision_interval=int(ridge_ctx.get("decision_interval", 4) or 4)),
+            raw_env)
+    return out
 
 
 def _promotion_verdict(metrics: Dict, baselines: Dict[str, Dict]) -> Dict:
@@ -1859,7 +1922,11 @@ class FullDRLTrainer:
                     std_reward = metrics["std_reward"]
 
                     # [P182] Same env, same fold, same P179 costs.
-                    baselines = self._evaluate_baselines(eval_env)
+                    baselines = self._evaluate_baselines(
+                        eval_env,
+                        ridge_ctx={"train_df": train_df,
+                                   "feature_cols": self.feature_cols,
+                                   "decision_interval": self.decision_interval})
                     verdict = _promotion_verdict(metrics, baselines)
 
                     self.results[fold_name] = {
@@ -2066,7 +2133,7 @@ class FullDRLTrainer:
             "degenerate_spread": bool(float(np.std(rewards)) == 0.0),
         }
 
-    def _evaluate_baselines(self, eval_env) -> Dict[str, Dict]:
+    def _evaluate_baselines(self, eval_env, ridge_ctx: Optional[Dict] = None) -> Dict[str, Dict]:
         """[P182] Run buy-and-hold and SMA through the model's own eval env.
 
         Deliberately the same `eval_env` object the model was scored on, not a
@@ -2089,7 +2156,8 @@ class FullDRLTrainer:
         out: Dict[str, Dict] = {}
         try:
             for name, pol in baseline_policies(
-                    raw, sma_window=self.baseline_sma_window).items():
+                    raw, sma_window=self.baseline_sma_window,
+                    ridge_ctx=ridge_ctx).items():
                 m = self.evaluate_policy_full(
                     pol, eval_env, n_episodes=1, deterministic=True)
                 m["policy"] = name

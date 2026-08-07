@@ -67,7 +67,9 @@ dt-max:
 #
 # The trainer that exists is train_drl_full.py. It takes one --asset per run
 # (three separate walk-forward studies, not one multi-asset env), so these
-# loop. Flags follow docs/HMATS_E2E_TRAINING_GUIDE.md section 5 Config 2.
+# loop. Flags follow docs/HMATS_TRAINING_GUIDE_V2.md section 5 (the 2026-02
+# E2E guide these flags used to cite is archived — its numbers were P164 leak
+# artifacts; see docs/archive/HMATS_E2E_TRAINING_GUIDE_2026-02.md banner).
 #
 # --venue/--fee-side are explicit rather than defaulted: after P179 the
 # training env charges real venue fees, and which venue was charged has to be
