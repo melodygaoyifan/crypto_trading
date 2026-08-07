@@ -688,6 +688,7 @@ class TradingEnvFull(gym.Env):
         bull_reward_multiplier: float = 1.1,
         sol_vol_multiplier: float = 1.0,
         reward_mode: str = "classic",
+        decision_interval: int = 1,   # [P200-followup] act every N bars; see below
         # Reward hyperparams (Optuna-searchable)
         dd_threshold: float = 0.0866,       # Config 1 Optuna winner (was 0.10)
         dd_penalty_mult: float = 2.8243,     # Config 1 Optuna winner (was 2.0)
@@ -740,6 +741,17 @@ class TradingEnvFull(gym.Env):
         self._slippage_bps = slippage_bps_override if slippage_bps_override is not None else ASSET_SLIPPAGE_BPS.get(asset, 10.0)
         self._turnover_cost_mult = turnover_cost_mult
         self._turnover_min_change = turnover_min_change
+        # [P200-followup] Decision-cadence alignment. The edge probe
+        # (training/scripts/edge_probe.py, strict post-GMM-boundary run)
+        # found after-cost predictability at the 16h horizon (BTC IC 0.079
+        # t=6.0, +24bps/trade) while 4h mostly fails — and the P200
+        # measurement showed the policy churning ~1,900 trades/fold with
+        # friction >= the entire loss. decision_interval=N lets the policy
+        # act only every N-th bar (positions HOLD in between), structurally
+        # capping turnover and aligning the action cadence with the horizon
+        # where signal exists. 1 = every bar (historical behavior).
+        self._decision_interval = max(1, int(decision_interval or 1))
+        self._bars_since_decision = 0
 
         # [P179] Venue fee resolution. Fail loudly on an unknown venue rather
         # than falling back to zero — a typo silently restoring the old
@@ -826,6 +838,7 @@ class TradingEnvFull(gym.Env):
         self._last_trade_cost_bps = 0.0
         self._last_trade_cost_usd = 0.0
         self._trade_count = 0
+        self._bars_since_decision = 0  # [P200-followup]
         if self._sortino_calc:
             self._sortino_calc.reset()
         return self._get_observation(), {}
@@ -980,6 +993,14 @@ class TradingEnvFull(gym.Env):
 
     def step(self, action: np.ndarray):
         action_val = float(np.clip(action[0], -1.0, 1.0))
+        # [P200-followup] On non-decision bars the action is overridden to
+        # "hold the current position" BEFORE any downstream logic, so costs,
+        # PnL, reward and the P182 baselines all see the same env contract.
+        if self._decision_interval > 1:
+            if self._bars_since_decision % self._decision_interval != 0:
+                action_val = (self.position / self.max_position
+                              if self.max_position else 0.0)
+            self._bars_since_decision += 1
         current_price = self.df.iloc[self.current_step]["close"]
 
         target_position = action_val * self.max_position
@@ -1297,6 +1318,7 @@ class FullDRLTrainer:
         slippage_bps: Optional[float] = None,
         turnover_cost_mult: float = 1.0,
         turnover_min_change: float = 0.01,
+        decision_interval: int = 1,   # [P200-followup]
         # [P179] Venue fees — see VENUE_FEES_BPS.
         venue: str = DEFAULT_VENUE,
         fee_side: str = DEFAULT_FEE_SIDE,
@@ -1350,6 +1372,7 @@ class FullDRLTrainer:
         self.slippage_bps = slippage_bps
         self.turnover_cost_mult = turnover_cost_mult
         self.turnover_min_change = turnover_min_change
+        self.decision_interval = decision_interval  # [P200-followup]
 
         # [P179] Venue fees. Validated in TradingEnvFull.__init__, which
         # raises on an unknown venue rather than defaulting to zero.
@@ -1404,6 +1427,7 @@ class FullDRLTrainer:
             slippage_bps_override=self.slippage_bps,
             turnover_cost_mult=self.turnover_cost_mult,
             turnover_min_change=self.turnover_min_change,
+            decision_interval=self.decision_interval,  # [P200-followup]
             # [P179] without these three the env silently reverts to 0 bps fee
             venue=self.venue,
             fee_side=self.fee_side,
@@ -1806,6 +1830,7 @@ class FullDRLTrainer:
                                 "fee_side": inner_env._fee_side,
                                 "exchange_fee_bps": inner_env._fee_bps,
                                 "assume_free_tier": inner_env._assume_free_tier,
+                                "decision_interval": inner_env._decision_interval,
                             }
                             friction_path = log_dir / "training_friction.json"
                             with open(friction_path, "w") as f:
@@ -2884,6 +2909,12 @@ def main():
                         help="Turnover cost multiplier (default: 1.0)")
     parser.add_argument("--turnover-min-change", type=float, default=0.01,
                         help="Min position change to trigger friction (default: 0.01)")
+    parser.add_argument("--decision-interval", type=int, default=1,
+                        help="[P200-followup] Policy acts every N bars; positions "
+                             "HOLD in between. 4 aligns the action cadence with "
+                             "the 16h horizon where the edge probe found "
+                             "after-cost signal, and caps turnover at 1/N. "
+                             "Default 1 = historical every-bar behavior.")
 
     # [P179] Venue fee args
     parser.add_argument("--venue", type=str, default=DEFAULT_VENUE,
@@ -3133,6 +3164,7 @@ def main():
         slippage_bps=args.slippage_bps,
         turnover_cost_mult=args.turnover_mult,
         turnover_min_change=args.turnover_min_change,
+        decision_interval=args.decision_interval,
         # [P179] Venue fees
         venue=args.venue,
         fee_side=args.fee_side,
