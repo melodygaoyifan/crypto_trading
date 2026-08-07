@@ -403,25 +403,43 @@ def is_benign_exec_skip(exec_result: dict) -> bool:
 
 
 def _coinbase_fee_model_warning(ctx) -> None:
-    """[P155] The alpha gate prices EVERY asset with Kraken's fee tier.
+    """[P212] Warn only when venue-aware fee pricing is OFF while routed.
 
-    `FRICTION.update_fee_bps` (main.py:4419) is global and is fed from Kraken's
-    fee-tier API — there is no venue dimension. Post-Phase-B the routed assets
-    execute on Coinbase at ~0/3bps, so their intents are charged roughly 23-26bps
-    of friction that they will never pay. Friction is subtracted from expected
-    alpha before sizing, so this systematically shrinks `target_exposure` and can
-    collapse it below the actionable floor — a candidate root cause for the
-    ZERO_EXPOSURE blocker, and the reason the "0/3bps fees" migration item is not
-    actually implemented.
+    Was [P155] `[FEE-MODEL-MISMATCH]`, which asserted that the alpha gate prices
+    every asset with Kraken's tier and ended "NOT auto-corrected". **P172
+    corrected it** (`resolve_venue_fee_bps`, resolved once per tick and reused by
+    the `_fee_context` builder) and **P165 enabled the flag in the live
+    profile**. Verified live 2026-08-07: all three assets log `[VENUE-FEE] …
+    priced for COINBASE (taker=3.0bps maker=0.0bps)`.
 
-    Deliberately REPORTS rather than corrects: making the gate venue-aware
-    loosens it, and loosening a risk gate blind — on a system that has not
-    traded since 2026-06-12 and whose blocker is not yet confirmed — is a change
-    that must be made with evidence and the operator's consent, not as a
-    side-effect of a diagnostics commit. Run scripts/why_no_trade.py first.
+    So the old alert was wrong three ways at once, which is why it had to go
+    rather than be reworded:
+      * **Stale** — it told the operator to fix something already fixed.
+      * **Vacuous** — Kraken's tier is currently the FREE tier (0.0/0.0bps,
+        monthly volume ~0 since Kraken stopped trading), so the "over-charged"
+        magnitude it printed was `max(0, 0 - 3) = 0bps`. It reported a
+        zero-sized problem.
+      * **Backwards** — with Kraken at 0.0 and Coinbase at 3.0, the uncorrected
+        model would UNDER-charge, not over-charge. An operator acting on it
+        would have loosened a gate that was already correct.
+
+    A standing alert nobody can act on trains everyone to ignore the channel —
+    the P202 lesson (the vacuous Iron Law 8 DRL clause) and the P196 one (the
+    always-red deploy check). Same remedy: repoint it at the condition that
+    actually matters.
+
+    What matters now is the INVERSE: an asset routed to Coinbase while
+    `coinbase_venue_aware_fees` is off. Then the gate really does price Kraken's
+    tier, and at the free tier that means charging ~0bps of fee for a venue that
+    charges 3bps taker — an under-charged gate on the only venue that trades.
+    Self-extinguishing: enabling the flag silences it. Latched per process.
     """
     global _CB_FEE_MODEL_WARNED
     if _CB_FEE_MODEL_WARNED:
+        return
+    # Correctly configured is the common case — say nothing, and do NOT latch,
+    # so the warning stays available if the flag is turned off later.
+    if bool(getattr(ctx.config, "coinbase_venue_aware_fees", False)):
         return
     _CB_FEE_MODEL_WARNED = True
     try:
@@ -430,15 +448,17 @@ def _coinbase_fee_model_warning(ctx) -> None:
         _maker = float(getattr(_friction, "maker_fee_bps", 16.0))
     except Exception:
         _taker, _maker = 26.0, 16.0
+    _delta = _COINBASE_TAKER_BPS - _taker
     logger.warning(
-        f"[FEE-MODEL-MISMATCH] Asset routed to Coinbase but the alpha gate is "
-        f"pricing friction with Kraken fees (taker={_taker:.1f}bps "
-        f"maker={_maker:.1f}bps). Coinbase US perp is ~"
-        f"{_COINBASE_TAKER_BPS:.0f}/{_COINBASE_MAKER_BPS:.0f}bps, so intents are "
-        f"over-charged ~{max(0.0, _taker - _COINBASE_TAKER_BPS):.0f}bps taker / "
-        f"~{max(0.0, _maker - _COINBASE_MAKER_BPS):.0f}bps maker. This shrinks "
-        f"target_exposure and is a candidate cause of ZERO_EXPOSURE. NOT "
-        f"auto-corrected — see _coinbase_fee_model_warning()."
+        f"[FEE-MODEL-VENUE-BLIND] Asset routed to Coinbase but "
+        f"coinbase_venue_aware_fees is OFF, so the alpha gate prices friction "
+        f"with Kraken's tier (taker={_taker:.1f}bps maker={_maker:.1f}bps) "
+        f"instead of Coinbase's ~{_COINBASE_TAKER_BPS:.0f}/"
+        f"{_COINBASE_MAKER_BPS:.0f}bps. The gate is currently "
+        + (f"UNDER-charging ~{_delta:.0f}bps taker (too permissive)"
+           if _delta > 0 else
+           f"OVER-charging ~{-_delta:.0f}bps taker (shrinks target_exposure)")
+        + ". FIX: set coinbase_venue_aware_fees=true in the live profile."
     )
 
 

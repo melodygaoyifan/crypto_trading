@@ -41,12 +41,16 @@ def _reset_latches():
     es._CB_FEE_MODEL_WARNED = False
 
 
-def _ctx(stop_pct=0.0, stop_assets=None, routing_enabled=True):
+def _ctx(stop_pct=0.0, stop_assets=None, routing_enabled=True,
+         venue_aware_fees=True):
     return types.SimpleNamespace(
         config=types.SimpleNamespace(
             coinbase_routing_enabled=routing_enabled,
             coinbase_protective_stop_pct=stop_pct,
             coinbase_protective_stop_assets=list(stop_assets or []),
+            # [P212] Live value is True (P165). The fee warning now fires only
+            # when this is OFF, so the default here mirrors production.
+            coinbase_venue_aware_fees=venue_aware_fees,
         )
     )
 
@@ -197,19 +201,67 @@ def _warnings(caplog):
     return [r.message for r in caplog.records if r.levelno == logging.WARNING]
 
 
-def test_routed_asset_reports_the_fee_mismatch(monkeypatch, caplog):
+def test_venue_blind_fee_pricing_is_reported(monkeypatch, caplog):
+    """[P212] Fires only when the gate really IS venue-blind."""
     rp = RoutingPolicy(phase=CutoverPhase.DUAL_VENUE, coinbase_assets=["SOL"])
     monkeypatch.setattr(es, "_coinbase_get_routing", lambda: rp)
     with caplog.at_level(logging.WARNING):
-        es._coinbase_routed(_ctx(stop_pct=0.10, stop_assets=[]), "SOL")
+        es._coinbase_routed(
+            _ctx(stop_pct=0.10, stop_assets=[], venue_aware_fees=False), "SOL")
     msgs = _warnings(caplog)
-    assert any("FEE-MODEL-MISMATCH" in m for m in msgs), msgs
+    assert any("FEE-MODEL-VENUE-BLIND" in m for m in msgs), msgs
+    assert any("coinbase_venue_aware_fees=true" in m for m in msgs), (
+        "an alert must name the action that resolves it (P202)"
+    )
 
 
-def test_fee_mismatch_reported_once_not_every_tick(monkeypatch, caplog):
+def test_correctly_configured_is_SILENT(monkeypatch, caplog):
+    """The defect P212 fixes. The old alert fired unconditionally on every
+    routed asset, including when P172's correction was active and working —
+    telling the operator to fix something already fixed, with a printed
+    magnitude of 0bps. Verified live: all three assets log
+    `[VENUE-FEE] priced for COINBASE (taker=3.0bps)`.
+    """
+    rp = RoutingPolicy(phase=CutoverPhase.DUAL_VENUE, coinbase_assets=["SOL"])
+    monkeypatch.setattr(es, "_coinbase_get_routing", lambda: rp)
+    with caplog.at_level(logging.WARNING):
+        es._coinbase_routed(
+            _ctx(stop_pct=0.10, stop_assets=[], venue_aware_fees=True), "SOL")
+    assert not [m for m in _warnings(caplog) if "FEE-MODEL" in m]
+
+
+def test_a_silent_pass_does_not_consume_the_latch(monkeypatch, caplog):
+    """If the flag is later turned OFF, the warning must still be available —
+    a one-shot latch spent while correctly configured would silence the real
+    condition forever (the P193 latch bug)."""
+    rp = RoutingPolicy(phase=CutoverPhase.DUAL_VENUE, coinbase_assets=["SOL"])
+    monkeypatch.setattr(es, "_coinbase_get_routing", lambda: rp)
+    with caplog.at_level(logging.WARNING):
+        es._coinbase_routed(_ctx(stop_pct=0.10, venue_aware_fees=True), "SOL")
+        es._coinbase_routed(_ctx(stop_pct=0.10, venue_aware_fees=False), "SOL")
+    assert any("FEE-MODEL-VENUE-BLIND" in m for m in _warnings(caplog))
+
+
+def test_venue_blind_reported_once_not_every_tick(monkeypatch, caplog):
     rp = RoutingPolicy(phase=CutoverPhase.DUAL_VENUE, coinbase_assets=["SOL"])
     monkeypatch.setattr(es, "_coinbase_get_routing", lambda: rp)
     with caplog.at_level(logging.WARNING):
         for _ in range(4):
-            es._coinbase_routed(_ctx(stop_pct=0.10, stop_assets=[]), "SOL")
-    assert len([m for m in _warnings(caplog) if "FEE-MODEL-MISMATCH" in m]) == 1
+            es._coinbase_routed(
+                _ctx(stop_pct=0.10, stop_assets=[], venue_aware_fees=False),
+                "SOL")
+    assert len([m for m in _warnings(caplog)
+                if "FEE-MODEL-VENUE-BLIND" in m]) == 1
+
+
+def test_the_retired_alert_string_is_gone_from_the_emit_path(monkeypatch, caplog):
+    """Guard against the wording coming back. Matches EMITTED output, not the
+    source — the docstring deliberately names the retired string to explain the
+    retirement, and a substring source-scan would fire on its own explanation
+    (the P192 `_emergency_flatten` mistake, and P202's own retirement guard)."""
+    rp = RoutingPolicy(phase=CutoverPhase.DUAL_VENUE, coinbase_assets=["SOL"])
+    monkeypatch.setattr(es, "_coinbase_get_routing", lambda: rp)
+    with caplog.at_level(logging.WARNING):
+        es._coinbase_routed(
+            _ctx(stop_pct=0.10, venue_aware_fees=False), "SOL")
+    assert not [m for m in _warnings(caplog) if "FEE-MODEL-MISMATCH" in m]
