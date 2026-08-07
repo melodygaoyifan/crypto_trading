@@ -18382,30 +18382,41 @@ class HMATSProductionRunner:
                                                     )
                                         self._coinbase_manage_last = _m_summary
                                         self._coinbase_stop_last = _cb_stop_summary  # [P197]
+                                        # [P197] Two explicit `if`s, deliberately NOT
+                                        # if/else. The P197 stop-summary block below was
+                                        # first written between this `if` and its `else`,
+                                        # which silently re-bound the else to the stop
+                                        # condition: with stops disabled (the default) the
+                                        # engine logged "NO routed assets managed this
+                                        # tick — the order path is inert" immediately after
+                                        # a summary showing all three managed. The log
+                                        # contradicted itself about the one thing this
+                                        # block exists to report. Explicit conditions are
+                                        # immune to that insertion hazard.
                                         if _m_summary:
                                             logger.info(
                                                 "[COINBASE-MANAGE] tick summary: "
                                                 + ", ".join(f"{_a}={_v}" for _a, _v in sorted(_m_summary.items()))
                                             )
-                                        # [P197] Always log the stop summary when the
-                                        # feature is on, so "no stop resting" can never be
-                                        # silent — the failure mode that matters here is a
-                                        # position sitting unprotected, and silence must not
-                                        # be indistinguishable from protected (P155's lesson).
-                                        if _cb_stop_summary and any(
-                                                _v != "DISABLED" for _v in _cb_stop_summary.values()):
-                                            logger.info(
-                                                "[COINBASE-STOP] tick summary: "
-                                                + ", ".join(f"{_a}={_v}" for _a, _v
-                                                            in sorted(_cb_stop_summary.items()))
-                                            )
-                                        else:
+                                        if not _m_summary:
                                             logger.warning(
                                                 "[COINBASE-MANAGE] NO routed assets managed this tick "
                                                 f"(routing_enabled={_flag}, "
                                                 f"policy={'None' if _rp is None else getattr(_rp, 'phase', '?')}, "
                                                 f"sleeve={'None' if _sl is None else 'ok'}) "
                                                 "— the Coinbase order path is inert"
+                                            )
+                                        # [P197] Log the stop summary whenever the feature
+                                        # is on, so "no stop resting" can never be silent —
+                                        # a position sitting unprotected is the failure that
+                                        # matters, and silence must not be indistinguishable
+                                        # from protected (P155's lesson).
+                                        if _cb_stop_summary and any(
+                                                _v != "DISABLED" for _v in _cb_stop_summary.values()):
+                                            logger.info(
+                                                "[COINBASE-STOP] tick summary: "
+                                                + ", ".join(f"{_a}={_v}" for _a, _v
+                                                            in sorted(_cb_stop_summary.items()))
                                             )
                                     except Exception as _cb_mg_err:
                                         # [P155] WARNING, not DEBUG: this is the sole Coinbase

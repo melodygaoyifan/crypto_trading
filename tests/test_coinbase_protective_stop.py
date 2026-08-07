@@ -338,3 +338,42 @@ class TestSleeveStopReconcile:
                 raise RuntimeError("venue down")
         res = _run(_sleeve(_Boom(), signed=1))
         assert res["status"] == "ERROR"
+
+
+class TestTheTickSummaryCannotContradictItself:
+    """[P197] The stop-summary block was first written between
+    `if _m_summary:` and its `else:`, which silently re-bound the else to the
+    stop condition. With stops disabled (the default) the engine then logged
+
+        [COINBASE-MANAGE] tick summary: BTC=NOOP, ETH=NOOP, SOL=NOOP
+        [COINBASE-MANAGE] NO routed assets managed this tick — the order path is inert
+
+    one line apart. The log contradicted itself about the single thing this
+    block exists to report, and it shipped to production before the live output
+    made it obvious. The guard is now an explicit `if not _m_summary:` rather
+    than a dangling else, so inserting code between them cannot re-bind it.
+    """
+
+    @staticmethod
+    def _main_src():
+        from pathlib import Path
+        return (Path(__file__).resolve().parents[1] / "main.py").read_text(
+            encoding="utf-8", errors="replace")
+
+    def test_the_inert_warning_is_guarded_explicitly_not_by_a_dangling_else(self):
+        src = self._main_src()
+        marker = '"[COINBASE-MANAGE] NO routed assets managed this tick "'
+        assert marker in src, "the inert-path warning vanished"
+        window = src[max(0, src.index(marker) - 400):src.index(marker)]
+        assert "if not _m_summary:" in window, (
+            "the 'NO routed assets managed' warning is no longer guarded by an "
+            "explicit `if not _m_summary:`. If it has been turned back into an "
+            "`else:`, any block inserted above it re-binds the condition — which "
+            "is exactly how it came to fire on ticks where all three assets were "
+            "managed."
+        )
+
+    def test_both_summaries_are_still_emitted(self):
+        src = self._main_src()
+        assert '"[COINBASE-MANAGE] tick summary: "' in src
+        assert '"[COINBASE-STOP] tick summary: "' in src
