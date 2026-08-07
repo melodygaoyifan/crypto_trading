@@ -183,7 +183,11 @@ def required_ic_for_costs(
 
 def load_shadow_ledgers(
     ledger_dir: Path,
-    prefixes: Tuple[str, ...] = ("microstructure", "cascade"),
+    # [P199] Was ("microstructure", "cascade") — which read only the two
+    # families that emit NOTHING, and silently ignored funding_*.jsonl and
+    # ml_factor_*.jsonl, the only ones producing signal. The gate meant to
+    # validate the v5.1 promotion could not see the strategies it was judging.
+    prefixes: Tuple[str, ...] = ("microstructure", "cascade", "funding", "ml_factor"),
     since: Optional[datetime] = None,
 ) -> List[Dict[str, Any]]:
     """Read all matching JSONL files and return parsed records.
@@ -239,7 +243,18 @@ def load_ohlcv(asset: str) -> Any:
         import pandas as pd
     except ImportError as e:
         raise RuntimeError(f"pandas required: {e}")
+    # [P199] Prefer the OHLCV-only series over the DRL training parquet.
+    # `_4H_full.parquet` is a 130-column TRAINING artifact, regenerated only by a
+    # full rebuild_pipeline run — it sat frozen at 2026-03-31 while the shadow
+    # ledgers started 2026-04-30. Zero overlap, so every record scored N=0 and
+    # this gate reported INSUFFICIENT_SAMPLES for months, which is
+    # indistinguishable from "the strategies have no signal". Coupling an
+    # analytics price series to a training artifact is what caused that.
+    # `_4H_ohlcv.parquet` is refreshed by training/scripts/refresh_ohlcv_4h.py
+    # and is validated to reproduce the training parquet's bars exactly.
+    # The training parquet stays as a fallback so this never hard-fails.
     candidates = [
+        OHLCV_DIR / f"{asset}_4H_ohlcv.parquet",
         OHLCV_DIR / f"{asset}_4H_full.parquet",
         OHLCV_DIR / f"{asset}_4h_full.parquet",
     ]
@@ -696,7 +711,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--window-days", type=int, default=14)
     p.add_argument("--horizons", default="4,12,24",
                    help="forward-return horizons in 4H bars, comma-separated")
-    p.add_argument("--prefixes", default="microstructure,cascade",
+    p.add_argument("--prefixes",
+                   default="microstructure,cascade,funding,ml_factor",  # [P199]
                    help="ledger file prefixes")
     p.add_argument("--output", default=None,
                    help="optional JSON output path; defaults to analytics/shadow_ic/reports/")
