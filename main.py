@@ -1589,6 +1589,14 @@ class ProductionConfig:
     # getattr defaults so wiring them changes no current behaviour.
     trend_regime_gate: str = "shadow"
     coinbase_flip_persist_ticks: int = 2
+    # [P206] Drive the Coinbase sleeve from the GATED intent instead of the
+    # pre-gate `_last_quant_directions` snapshot. The sleeve is the only venue
+    # that trades, and it currently reads a signal captured BEFORE the alpha
+    # gate, veto chain and every cap — so none of them bind on the venue that
+    # holds the risk (P201). Default OFF: enabling changes live order behaviour
+    # (today it would flatten ETH and SOL, which the alpha gate is refusing on
+    # friction grounds, and keep BTC long). Revert = set false + redeploy.
+    coinbase_use_gated_intent: bool = False
     # [v5.1 PROMOTED 2026-06-13] Operator override of Iron Law 7 (shadow >=30d):
     # blend the 4 v5.1 shadow strategy families into a live ADVISE fusion agent
     # with ZERO validation. Default OFF; set true in the live JSON. ADVISE-bounded
@@ -1850,6 +1858,9 @@ class ProductionConfig:
                 data.get("trend_regime_gate", "shadow") or "shadow"),
             coinbase_flip_persist_ticks=int(
                 data.get("coinbase_flip_persist_ticks", 2) or 0),
+            # [P206] see the dataclass comment — changes live order behaviour
+            coinbase_use_gated_intent=bool(
+                data.get("coinbase_use_gated_intent", False)),
             # [v5.1 PROMOTED 2026-06-13] live ADVISE promotion of shadow strategies
             v5_1_strategies_live=data.get("v5_1_strategies_live", False),
             # P1-02: Thesis budget parameters (overlay-aware)
@@ -1909,6 +1920,82 @@ class ProductionConfig:
             sentiment_gate_config=data.get("sentiment_gate_config") or None,
             smart_beta_config=data.get("smart_beta_config") or None,
         )
+
+
+# =============================================================================
+# [P206] GATED INTENT -> SLEEVE POSITION TARGET
+# =============================================================================
+
+# Veto reasons that mean "no CHANGE needed", not "no POSITION wanted".
+# The gate stack speaks ORDER semantics ("should I send an order?"); the Coinbase
+# sleeve speaks POSITION-TARGET semantics ("what position should exist?"). These
+# two are not the same, and conflating them is how a naive rewiring liquidates
+# the book: EXPOSURE_DELTA_BELOW_THRESHOLD (main.py, anti-churn) means *already
+# at target* — mapping it to direction 0 would flatten on every stable tick.
+_SLEEVE_HOLD_VETOES = ("EXPOSURE_DELTA_BELOW_THRESHOLD",)
+
+# Vetoes that exist only because KRAKEN SPOT cannot express the position. They
+# do not apply to a perp venue, which can. B1 blocks short entries when
+# regime_leverage <= 1 because spot cannot hold a short; the Coinbase sleeve
+# trades perps and can. B1 also ZEROES intent.direction, so the signal cannot be
+# recovered from the intent — the pre-gate value is used instead for these.
+# (Verified 2026-08-07: B1 is not currently firing at all — regime_leverage is
+# 2.0 in both dominant regimes. This is preventive, for EXTREME_VOLATILITY,
+# unmapped regimes, or the DD-adaptive reducer clamping to 1x.)
+_SLEEVE_VENUE_NA_VETOES = ("B1_SPOT_SHORT_BLOCK",)
+
+# Sentinel: "make no change to this asset this tick".
+SLEEVE_HOLD = object()
+
+
+def sleeve_direction_from_intent(intent, fallback_dir: float):
+    """Translate a gated TradeIntent into a Coinbase sleeve position target.
+
+    Returns ``(target_direction, reason)`` where target_direction is a float, or
+    ``SLEEVE_HOLD`` meaning leave the position untouched.
+
+    Five things this has to get right — each one is a way the obvious two-line
+    version goes wrong:
+
+    1. **A veto does NOT imply direction was zeroed.** Verified from an emitted
+       record: ``direction=-0.3327 target_exposure=0.2495 veto_active=True``
+       (`[WEEKEND] alpha 10bps < min 20bps`). Only a few sites also zero it.
+       Feeding ``intent.direction`` blindly would OPEN a position the gate just
+       refused.
+    2. **Some vetoes mean HOLD, not FLAT** — see `_SLEEVE_HOLD_VETOES`.
+    3. **Some vetoes are venue-inapplicable** — see `_SLEEVE_VENUE_NA_VETOES`.
+    4. **`direction` is overloaded as a CLOSE instruction.** The existence fuse
+       and the deadlock abort encode "close" as
+       ``direction = -current, target_exposure = 0, veto_active = False``. Fed to
+       `target_for_signal` that OPENS the opposite side. ``target_exposure == 0``
+       is the discriminator, and `manage_to_signal` never sees it — so it is
+       resolved here.
+    5. **A missing intent must mean HOLD, not 0.** An asset skipped by a prefetch
+       failure has no intent; defaulting to 0.0 would turn a data outage into an
+       unintended liquidation.
+    """
+    if intent is None:
+        return SLEEVE_HOLD, "no_intent_this_tick"
+
+    _dir = float(getattr(intent, "direction", 0.0) or 0.0)
+    _exp = float(getattr(intent, "target_exposure", 0.0) or 0.0)
+    _reason = str(getattr(intent, "veto_reason", "") or "")
+
+    if bool(getattr(intent, "veto_active", False)):
+        if any(v in _reason for v in _SLEEVE_HOLD_VETOES):
+            return SLEEVE_HOLD, f"hold_veto:{_reason[:60]}"
+        # Venue-inapplicable only when it is the SOLE veto — if a real risk veto
+        # also fired, that one governs and we flatten.
+        if any(v in _reason for v in _SLEEVE_VENUE_NA_VETOES) and "|" not in _reason:
+            return float(fallback_dir), f"venue_na_veto:{_reason[:60]}"
+        return 0.0, f"veto_flat:{_reason[:60]}"
+
+    # Not vetoed. target_exposure == 0 means "hold nothing" — including the
+    # close-encoding above, where direction carries the opposite sign.
+    if abs(_exp) <= 1e-9:
+        return 0.0, "zero_target_exposure"
+
+    return _dir, "gated_direction"
 
 
 # =============================================================================
@@ -18542,7 +18629,32 @@ class HMATSProductionRunner:
                                             for _m_a in self.config.assets:
                                                 if _rp.venue_for(_m_a) != "coinbase":
                                                     continue
-                                                _m_dir = float(self._last_quant_directions.get(_m_a, 0.0) or 0.0)
+                                                # [P206] Pre-gate snapshot (the historical
+                                                # input) — still the fallback, and still what
+                                                # runs when the flag is off.
+                                                _m_pre = float(self._last_quant_directions.get(_m_a, 0.0) or 0.0)
+                                                _m_dir = _m_pre
+                                                _m_src = "pre_gate"
+                                                if getattr(self.config, "coinbase_use_gated_intent", False):
+                                                    _m_tgt, _m_why = sleeve_direction_from_intent(
+                                                        _live_intents.get(_m_a), _m_pre)
+                                                    if _m_tgt is SLEEVE_HOLD:
+                                                        # Leave the position exactly as it is.
+                                                        # Never silently substitute the ungated
+                                                        # value here — that is the gap this
+                                                        # workstream exists to close.
+                                                        _m_summary[_m_a] = (
+                                                            f"HOLD({_m_why},"
+                                                            f"{_sl.signed_contracts(_m_a)}ct)")
+                                                        logger.info(
+                                                            f"[COINBASE-MANAGE] {_m_a}: HOLD "
+                                                            f"({_m_why}) pos="
+                                                            f"{_sl.signed_contracts(_m_a)}ct")
+                                                        _st_res = await _sl.ensure_protective_stop(_m_a)
+                                                        _cb_stop_summary[_m_a] = _st_res.get("status")
+                                                        continue
+                                                    _m_dir = float(_m_tgt)
+                                                    _m_src = _m_why
                                                 _m_res = await _sl.manage_to_signal(_m_a, _m_dir)
                                                 _m_st = _m_res.get("status")
                                                 _m_summary[_m_a] = (
@@ -18551,7 +18663,8 @@ class HMATSProductionRunner:
                                                 )
                                                 if _m_st not in ("NOOP", "NOT_READY"):
                                                     logger.info(
-                                                        f"[COINBASE-MANAGE] {_m_a}: dir={_m_dir:+.2f} -> "
+                                                        f"[COINBASE-MANAGE] {_m_a}: dir={_m_dir:+.2f} "
+                                                        f"src={_m_src} -> "
                                                         f"{_m_st} pos={_sl.signed_contracts(_m_a)}ct"
                                                     )
                                                 # [P197] Reconcile the venue-resting
