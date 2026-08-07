@@ -6,12 +6,14 @@ Real implementation over the official `coinbase-advanced-py` SDK (RESTClient),
 which handles CDP (ES256 JWT) auth + endpoint signing. Targets Coinbase US
 Perpetual-Style Futures (CFTC) via the Advanced Trade API.
 
-STILL PENDING before live use (see docs/COINBASE_MIGRATION_PREP.md):
-  * exact perp `product_id`s — run scripts/coinbase_probe.py, then finalize
-    exchange/symbol_mapping.py (coinbase/perp). Until then to_venue_symbol
-    returns the placeholder `BTC-PERP`.
-  * USDC funded into the perps portfolio.
-  * credentials: .coinbase_key.json (CDP key file) or COINBASE_API_KEY/SECRET.
+[STATUS 2026-08-07 — LIVE.] The "STILL PENDING before live use" list that used
+to sit here was completed in June 2026 and the header was never updated (stale
+docs cost diagnosis time — P155 layer 1). Resolved state: perp product_ids are
+finalized in exchange/symbol_mapping.py (BTC=BIP-20DEC30-CDE etc., nano
+contracts 0.01/0.1/5.0); the Default portfolio's ~$4K USDC cross-collateralizes
+the perps (P153); the trade key lives at /opt/hmats/data/.coinbase_key.json
+(`COINBASE_KEY_FILE`). This adapter places real orders every 4H tick via the
+sleeve (market/limit/STOP branches — the STOP branch is [P197]).
 
 Fail-closed (Iron Law 4): with no client/creds, place/cancel return failure,
 balance/positions/orderbook return empty, funding raises. Maker-first (Iron

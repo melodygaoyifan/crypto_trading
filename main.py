@@ -1543,9 +1543,12 @@ class ProductionConfig:
     # positive forward Sharpe — flipping before that repeats the backtest-vs-live trap.
     trend_following_mode: str = "off"
     # [Coinbase Phase 2] Master switch for Coinbase US perp routing. Default OFF
-    # -> engine is byte-identical to today (Kraken-only). When ON, Phase A logs
-    # read-only Coinbase-vs-Kraken parity in the heartbeat; order routing stays
-    # Kraken until RoutingPolicy is advanced past SHADOW (separate gated step).
+    # -> engine is byte-identical to a Kraken-only build. When ON, the heartbeat
+    # logs Coinbase-vs-Kraken parity AND — for every asset the RoutingPolicy
+    # (data/coinbase_routing_state.json) routes to Coinbase — the sleeve's
+    # manage_to_signal places REAL perp orders each 4H tick. LIVE with all 3
+    # assets routed (DUAL_VENUE) since 2026-06-13; Kraken entries for routed
+    # assets are skipped (P152), so the sleeve is the sole directional path.
     # See docs/COINBASE_ENGINE_INTEGRATION_PLAN.md.
     coinbase_routing_enabled: bool = False
     # [P155e] Price alpha-gate friction with the fee schedule of the venue the
@@ -18283,10 +18286,11 @@ class HMATSProductionRunner:
                                             f"[COINBASE-SHADOW] {_cb_a}: CB={_cb_mark:.2f} "
                                             f"KR={_cb_kr:.2f} basis={_cb_basis:+.1f}bps funding={_cb_fr}"
                                         )
-                                    # [COINBASE-SLEEVE] read-only Coinbase position +
-                                    # buying-power, reconciled from the venue (anti-P139).
-                                    # Makes Coinbase state VISIBLE in the engine before
-                                    # any order routing. Still read-only; fail-soft.
+                                    # [COINBASE-SLEEVE] the LIVE sleeve: venue-reconciled
+                                    # position/equity state (anti-P139), and the SAME
+                                    # instance is the sole order driver — manage_to_signal
+                                    # + ensure_protective_stop run on it further down
+                                    # this heartbeat block. Fail-soft.
                                     try:
                                         if getattr(self, "_coinbase_sleeve", None) is None:
                                             from exchange.coinbase_sleeve import CoinbaseSleeve

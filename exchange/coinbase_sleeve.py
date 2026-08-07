@@ -11,7 +11,14 @@ Core anti-P139 invariant: Coinbase position state is **reconciled from the
 venue** (`list_futures_positions`), NEVER inferred from our own fills. The
 exchange is the source of truth; we read it, we don't reconstruct it.
 
-This module is INERT until Phase B wires order routing — it only *reads*.
+[STATUS 2026-08-07 — LIVE, the SOLE directional order path.] The "INERT until
+Phase B" line that used to sit here went stale the day Phase B activated
+(2026-06-13) and cost diagnosis time (P155 layer 1: docs said the opposite of
+runtime truth). Current reality: `manage_to_signal` is called every 4H tick
+from main.py's heartbeat for every routed asset and OPENS, FLIPS (subject to
+[P198] flip-persistence), and FLATTENS real Coinbase perp positions; [P197]
+`ensure_protective_stop` rests a real venue-side stop. Kraken is structurally
+flat (P152), so this sleeve is the only thing taking directional risk.
 Sync (reuses the adapter's RESTClient); fail-soft (never raises to the caller).
 """
 
@@ -40,7 +47,11 @@ def _f(v: Any, d: float = 0.0) -> float:
 
 
 class CoinbaseSleeve:
-    """Read-only Coinbase position/equity view, reconciled from the venue.
+    """LIVE Coinbase perp sleeve: venue-reconciled state + the sole order
+    driver (`manage_to_signal`/`execute_target`), with its own risk guard
+    (15% drawdown halt, contract cap, [P197] protective stop, [P198]
+    flip-persistence). Position state is always reconciled FROM the venue,
+    never inferred from our own fills (anti-P139).
 
     Args:
         adapter: a connected CoinbaseAdapter (shares its RESTClient).

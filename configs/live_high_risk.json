@@ -3,7 +3,7 @@
   "_created": "2026-03-08",
   "mode": "LIVE",
   "risk_profile": "HIGH_RISK",
-  "_coinbase_note": "Phase A only: read-only Coinbase-vs-Kraken parity logging in the heartbeat. Order routing stays Kraken until RoutingPolicy advances past SHADOW (separate gated step). See docs/COINBASE_ENGINE_INTEGRATION_PLAN.md.",
+  "_coinbase_note": "LIVE (updated 2026-08-07; the previous 'Phase A only: read-only' text went stale on 2026-06-13 and was never corrected). coinbase_routing_enabled=true + data/coinbase_routing_state.json phase=DUAL_VENUE routes ALL 3 assets to the Coinbase perp sleeve, which places REAL orders every 4H tick via manage_to_signal (opens/flips/flattens; P198 flip-persistence; P197 protective stop on SOL). Kraken entries for routed assets are skipped (P152) — the sleeve is the SOLE directional path. Revert to Kraken-only: scripts/coinbase_set_assets.sh \"\" (inert routing) — but note Kraken then has no directional driver either; that is a full trading stop, not a venue swap.",
   "coinbase_routing_enabled": true,
   "_l2_churn_note": "L2-CHURN 2026-06-13: flip-persistence whipsaw guard. Require an opposing direction signal to persist N consecutive 4H ticks before committing a flip. Set flip_persistence_enabled=false to disable. AC thresholds (min-hold/global/daily) tightened in main.py:~2105 literals.",
   "flip_persistence_enabled": true,
