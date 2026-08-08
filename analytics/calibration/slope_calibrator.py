@@ -82,6 +82,10 @@ def main() -> int:
     ap.add_argument("--window-days", type=int, default=90)
     ap.add_argument("--thresholds", default=None,
                     help='JSON like {"BTC":28.9,...}; default = P230 values')
+    ap.add_argument("--report-dir", default=None,
+                    help="[P235] pass /opt/hmats/data/evidence_reports "
+                         "in-container so weekly reports land on the "
+                         "persistent volume, not the ephemeral container FS")
     args = ap.parse_args()
     thresholds = (json.loads(args.thresholds) if args.thresholds
                   else dict(DEFAULT_THRESHOLDS))
@@ -126,7 +130,8 @@ def main() -> int:
                 r["vs_threshold"] = (f"max alpha {max_alpha:.1f} vs enter "
                                      f"{thresholds.get(a)} -> {verdict}")
             print(f"{a} {h*4:>3}h: {json.dumps(r)}")
-    rep_dir = Path(__file__).resolve().parent / "reports"
+    rep_dir = (Path(args.report_dir) if args.report_dir
+               else Path(__file__).resolve().parent / "reports")
     rep_dir.mkdir(parents=True, exist_ok=True)
     out = rep_dir / ("slope_" +
                      datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
