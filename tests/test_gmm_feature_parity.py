@@ -170,3 +170,31 @@ def test_perturbing_the_future_does_not_move_any_gmm_feature(rp):
     assert np.array_equal(base, after, equal_nan=True), (
         "a GMM feature at bar i moved when only bars > i changed — lookahead"
     )
+
+
+# ---------------------------------------------------------------------------
+# [P221 naming pass] k<=8 must exhaust the runtime vocabulary before any
+# generic name — a REGIME_N label resolves fine (P184 guard can't fire) but
+# binds to NO name-keyed table and silently neutralizes every
+# regime-conditional term for that cluster.
+# ---------------------------------------------------------------------------
+
+def test_naming_pass_leaves_no_generic_names_at_k8(rp):
+    from sklearn.mixture import GaussianMixture
+    from sklearn.preprocessing import StandardScaler
+    rng = np.random.default_rng(4)
+    k, d = 8, len(rp.GMM_FEATURE_COLS)
+    centers = rng.normal(0, 4, size=(k, d))
+    X = np.vstack([c + rng.normal(0, 0.3, size=(600, d)) for c in centers])
+    sc = StandardScaler().fit(X)
+    Xs = sc.transform(X)
+    gmm = GaussianMixture(n_components=k, covariance_type="full",
+                          random_state=0, n_init=2).fit(Xs)
+    labels = gmm.predict(Xs)
+    names, mapping = rp.name_clusters(gmm, sc, Xs, labels)
+    generic = [n for n in names if n.startswith("REGIME_")]
+    assert not generic, (
+        f"k={k} naming produced generic labels {generic} — clusters that "
+        f"bind to no bias/weight table (the P221 REGIME_1 defect)"
+    )
+    assert len(set(names)) == k, f"duplicate names: {names}"

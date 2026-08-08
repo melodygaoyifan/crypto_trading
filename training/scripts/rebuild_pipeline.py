@@ -467,9 +467,39 @@ def name_clusters(gmm, scaler, X_scaled, labels):
         assigned[weak_id] = "WEAK_CONSOLIDATION"
         remaining.remove(weak_id)
 
-    # 7+: Generic names for k > 6
+    # 7+: [P221 naming pass] Assign the REMAINING known vocabulary before ever
+    # falling back to a generic name. The 2026-08-07 refit produced clusters
+    # named REGIME_1 (BTC, 20% of bars) and REGIME_7 (SOL) — names that
+    # resolve fine (so the P184 guard cannot fire) but appear in NO
+    # name-keyed table (POSITION_BIAS / BULL_REGIMES / BEAR_REGIMES /
+    # regime_weights), silently taking neutral values in every
+    # regime-conditional term. The runtime vocabulary has two more members
+    # the heuristics above never assign:
+    #   STEADY_UPTREND — positive drift at low vol
+    #   NEUTRAL_DRIFT  — everything near zero
+    # Assign them by centroid shape; only if MORE clusters remain after the
+    # full 8-name vocabulary is exhausted does a generic name appear — and
+    # then it is a loud ERROR, not a silent label.
+    if remaining:
+        up_score = {c: scores[c]["ret_24h"] + scores[c]["ret_7d"]
+                    - scores[c]["vol_24h"] for c in remaining}
+        up_id = max(up_score, key=up_score.get)
+        if scores[up_id]["ret_24h"] > 0:
+            assigned[up_id] = "STEADY_UPTREND"
+            remaining.remove(up_id)
+    if remaining:
+        drift_score = {c: -abs(scores[c]["ret_24h"]) - abs(scores[c]["mom_con"])
+                       for c in remaining}
+        drift_id = max(drift_score, key=drift_score.get)
+        assigned[drift_id] = "NEUTRAL_DRIFT"
+        remaining.remove(drift_id)
     for c in remaining:
         assigned[c] = f"REGIME_{c}"
+        logger.error(
+            f"  [P221] cluster {c} exhausted the 8-name vocabulary and got "
+            f"generic name REGIME_{c} — it will take NEUTRAL values in every "
+            f"name-keyed regime table. Extend the vocabulary (and the bias "
+            f"tables) before training on this parquet.")
 
     # Build regime_names list + mapping
     regime_names = [assigned.get(i, f"REGIME_{i}") for i in range(k)]
