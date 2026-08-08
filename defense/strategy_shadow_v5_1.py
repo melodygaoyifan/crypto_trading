@@ -294,12 +294,16 @@ class MAFilterEchoStrategy:
     def evaluate(self, asset: str, market_data: Dict[str, Any]):
         ma = float(market_data.get("_maf_ma_dir", 0.0) or 0.0)
         direction = float(market_data.get("_maf_ledger_dir", 0.0) or 0.0)
-        # [P224] a confidence must never saturate on a zero direction: a flat
-        # claim carries the strength of the OPINION that produced it (|ma|
-        # when model_alpha vetoed, 0 when there was simply nothing to say).
+        # [P236-followup] compute_shadow_ic scores x = direction x confidence,
+        # so a directional claim MUST carry full confidence — anything less
+        # silently down-weights that tick out of the IC, and the scored
+        # series stops being the filtered signal (the first cut gave
+        # ma_silent pass-throughs conf=0, which would have zeroed ~60% of
+        # ticks out of the measurement). Flat claims carry 0 — a confidence
+        # must never saturate on a zero direction (P224). The opinion's own
+        # strength lives in diagnostics.ma_dir.
         reason = str(market_data.get("_maf_reason", "") or "")
-        conf = min(1.0, abs(ma)) if reason.startswith("ma_") else (
-            min(1.0, abs(direction)))
+        conf = min(1.0, abs(direction))
         return self._Sig(
             direction=direction,
             confidence=conf,

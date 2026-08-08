@@ -127,8 +127,25 @@ class TestHarness:
         assert rec["reason"] == "ma_disagrees_entry"
         assert rec["diagnostics"]["action"] == "block_entry"
         assert rec["diagnostics"]["pos_contracts"] == 0
-        # veto claims carry the strength of the opinion that produced them
-        assert rec["confidence"] == pytest.approx(0.42)
+        # a flat claim carries 0 confidence (P224); the vetoing opinion's
+        # strength lives in diagnostics.ma_dir
+        assert rec["confidence"] == 0.0
+        assert rec["diagnostics"]["ma_dir"] == pytest.approx(-0.42)
+
+    def test_directional_claim_carries_full_confidence(self, tmp_path):
+        """compute_shadow_ic scores x = direction * confidence. A pass-through
+        claim (ma silent or agreeing) scored at conf < 1 is silently
+        down-weighted out of the IC — the scored series then measures 'quant
+        when model_alpha agrees', not the filtered book. Full confidence on
+        every directional claim keeps x == the claim."""
+        rec = self._observe(tmp_path, {
+            "_maf_ledger_dir": 1.0, "_maf_ma_dir": 0.0,
+            "_maf_raw_target": 1, "_maf_sleeve_dir": 0.9,
+            "_maf_pos": 1, "_maf_action": "",
+            "_maf_reason": "ma_silent", "_maf_enforce": False,
+        })
+        assert rec["direction"] == 1.0
+        assert rec["confidence"] == 1.0
 
     def test_confidence_never_saturates_on_a_flat_non_veto_claim(self, tmp_path):
         """P224: a confident non-signal is worse than a missing one. A flat
