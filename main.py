@@ -7683,6 +7683,36 @@ class HMATSProductionRunner:
                             f"signal={_micro_sig.get('micro_primary_signal', 'none')} "
                             f"spread={_micro_sig.get('spread_bps', 0):.1f}bps"
                         )
+                # [P222] Say WHY when micro is neutral. The agent already
+                # records a cause in diagnostics.reason — `no_exchange_data`,
+                # `stale_snapshot`, insufficient samples, or an exception — but
+                # nothing surfaced it, so all four presented identically as
+                # `micro=+0.00/0.00` in AGENT-TRACE. That is the one agent in
+                # the P216 sweep I could not diagnose remotely, purely because
+                # the system does not say. The Binance LOB feed IS live and
+                # directional (BTC taker_buy 159.8 vs taker_sell 69.8, a 2.3:1
+                # skew), so "no data" is not the obvious answer and guessing
+                # would repeat the Helius mistake.
+                #
+                # Logged only when the reason CHANGES, per asset: a per-tick
+                # line for a steady-state condition becomes wallpaper (P202).
+                try:
+                    if _micro_sig and float(_micro_sig.get("micro_direction", 0.0) or 0.0) == 0.0:
+                        _m_diag = _micro_sig.get("diagnostics") or {}
+                        _m_reason = str(_m_diag.get("reason") or _m_diag.get("error") or "")
+                        if _m_reason:
+                            if not hasattr(self, "_micro_last_reason"):
+                                self._micro_last_reason = {}
+                            if self._micro_last_reason.get(asset) != _m_reason:
+                                self._micro_last_reason[asset] = _m_reason
+                                logger.warning(
+                                    f"[WIRE-MICRO] {asset}: neutral — reason="
+                                    f"{_m_reason} (dq="
+                                    f"{_micro_sig.get('micro_data_quality', 0.0)}). "
+                                    f"micro contributes no direction while this holds."
+                                )
+                except Exception:  # noqa: silent-swallow — diagnostics must never break the tick
+                    pass
             except Exception as _micro_err:
                 logger.debug(f"[WIRE-MICRO] {asset} skipped: {_micro_err}")
 
@@ -8797,11 +8827,21 @@ class HMATSProductionRunner:
         agent_signals.setdefault('cvd_divergence', 0.0)
 
         # [v3.2-B5] phase: from engine's last phase result
+        # [P222] Prefer THIS asset's phase from the previous tick over the
+        # engine-global _last_phase_result, which at this point in the tick
+        # still holds the PREVIOUS ASSET's phase (both writers — engine.decide
+        # and the T22 phase_detector block — run later in this method). A
+        # same-asset one-tick-stale phase beats a cross-asset fresh one: the
+        # consumer that matters is SmartBeta's TREND_STRONG branch (P173),
+        # which gates a long-side gate/size loosening on phase ∈
+        # {IGNITION, EXPANSION}. Falls back to the old engine-global read when
+        # no per-asset value exists yet (first tick after restart).
         try:
-            if hasattr(self, 'engine') and hasattr(self.engine, '_last_phase_result'):
+            _phase = getattr(self, '_last_phase_by_asset', {}).get(asset)
+            if _phase is None and hasattr(self, 'engine') and hasattr(self.engine, '_last_phase_result'):
                 _phase = self.engine._last_phase_result
-                if _phase and hasattr(_phase, 'phase'):
-                    agent_signals['phase'] = _phase.phase.value if hasattr(_phase.phase, 'value') else str(_phase.phase)
+            if _phase and hasattr(_phase, 'phase'):
+                agent_signals['phase'] = _phase.phase.value if hasattr(_phase.phase, 'value') else str(_phase.phase)
         except Exception:
             pass
 
@@ -9588,8 +9628,32 @@ class HMATSProductionRunner:
                 },
                 "flow": {
                     "direction": float(agent_signals.get("flow_direction", 0.0) or 0.0),
-                    # flow has no native confidence — proxy from whale_flow magnitude
-                    "confidence": min(1.0, abs(float(agent_signals.get("whale_flow", 0.0) or 0.0)) / 1e7),
+                    # flow has no native confidence — proxy from whale_flow magnitude.
+                    #
+                    # [P222] Gated on a NON-ZERO direction. The /1e7 divisor was
+                    # calibrated for CryptoCompare's `large_tx_count x
+                    # avg_tx_value` (millions). P221 replaced that source with
+                    # Blockchair's 24h settlement VALUE (~$5.7e10), so the proxy
+                    # saturated and attribution began reporting flow as
+                    # direction=0.00 with confidence=1.00 — a maximally-confident
+                    # non-signal, which is worse than the 0.00/0.00 it replaced.
+                    #
+                    # A confidence attached to a zero direction has no meaning:
+                    # nothing downstream can act on "certainly no opinion", but
+                    # the IC/attribution layer will happily weight it. The
+                    # whale feed is a MAGNITUDE with no sign (P221), so until a
+                    # signed flow source exists this is honestly zero.
+                    #
+                    # Same scale-mismatch shape as the P219 confidence bug —
+                    # changing what a number MEASURES without re-checking the
+                    # normalisers calibrated against the old scale. Second time
+                    # in this session; the pattern is that a magnitude swap is
+                    # never local.
+                    "confidence": (
+                        min(1.0, abs(float(agent_signals.get("whale_flow", 0.0) or 0.0)) / 1e7)
+                        if abs(float(agent_signals.get("flow_direction", 0.0) or 0.0)) > 1e-9
+                        else 0.0
+                    ),
                 },
                 # [P57 2026-04-25] whale + options were direction-producing per the
                 # authority matrix (rows 24 + 22) and consumed by fusion, but were
@@ -10077,6 +10141,14 @@ class HMATSProductionRunner:
                 # Store on engine so exit_alpha reads it from the canonical location
                 if hasattr(self, 'engine'):
                     self.engine._last_phase_result = _phase_result
+                # [P222] Per-asset store — the engine-global slot above is
+                # overwritten by every asset in turn, so early-tick readers
+                # (agent_signals['phase'] at the v3.2-B5 site, consumed by
+                # SmartBeta) were seeing the previous asset's phase. Lazy init
+                # (P85: no unguarded new-attribute reads on the hot path).
+                if not hasattr(self, '_last_phase_by_asset'):
+                    self._last_phase_by_asset = {}
+                self._last_phase_by_asset[asset] = _phase_result
 
                 if _phase_result.phase_transition:
                     logger.info(
