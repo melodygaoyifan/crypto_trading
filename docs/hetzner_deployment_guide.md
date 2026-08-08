@@ -114,9 +114,12 @@ chown -R hmats:hmats /home/hmats/.ssh
 chmod 700 /home/hmats/.ssh
 chmod 600 /home/hmats/.ssh/authorized_keys
 
-# 防火墙（只开 SSH + Streamlit dashboard）
+# 防火墙（只开 SSH）
+# [FIXED 2026-08-07] 不要开 8501：生产拓扑只暴露 127.0.0.1:8080（hmats-api，
+# 见 docker-compose.hetzner.yml），刻意不对外。把 Streamlit 端口开到公网
+# 是对活跃交易系统的安全回退。需要看 dashboard 用 SSH 隧道：
+#   ssh -L 8501:127.0.0.1:8501 hmats
 ufw allow 22/tcp
-ufw allow 8501/tcp    # Streamlit dashboard（可选）
 ufw --force enable
 
 # 安装 fail2ban（防暴力破解）
@@ -244,6 +247,13 @@ python main.py --mode paper
 ## 5. 模型文件传输
 
 模型文件没有上传到 GitHub（太大），需要从本地传输。
+
+> **⚠️ [P191] 只 scp 到 `~/hmats/models/` 不会让引擎看到新模型。** 引擎从
+> **命名卷 `hmats-models`**（挂载在容器内 `/opt/hmats/models`，只读）读模型，
+> 不是从宿主机目录。scp 之后必须执行 §9.2 的卷同步步骤
+> （`docker run --rm -v hmats-models:/models ...`，`hetzner_deploy.sh` Step 4
+> 会自动做）。跳过这一步正是 2026-04-22 `models_ready=0` / DRL 卡 SHADOW
+> 事故的原因。
 
 ### 从本地 Windows 传输到服务器
 
@@ -430,7 +440,10 @@ if ! docker inspect -f '{{.State.Running}}' hmats-engine 2>/dev/null | grep -q t
 fi
 
 # 检查日志是否有 CRITICAL
-RECENT_CRITICAL=$(tail -100 $LOG_DIR/hmats_stderr.log 2>/dev/null | grep -c "CRITICAL")
+# [FIXED 2026-08-07] 原来 tail 的 $LOG_DIR/hmats_stderr.log 是 systemd/venv
+# 时代的路径，Docker 部署下永远不存在 → grep 永远数出 0（一个不会失败的检查）。
+# Docker 下引擎日志在 json-file driver + hmats-logs 卷里，用 docker logs 读：
+RECENT_CRITICAL=$(docker logs hmats-engine --since 10m 2>&1 | grep -c "CRITICAL")
 if [ "$RECENT_CRITICAL" -gt 0 ]; then
     echo "$(date): $RECENT_CRITICAL CRITICAL errors in recent logs" >> $LOG_DIR/health.log
 fi
@@ -689,23 +702,30 @@ docker compose -f docker-compose.hetzner.yml up -d --build
 docker compose -f docker-compose.hetzner.yml logs -f hmats-engine
 ```
 
-### 7. 验证 checklist (前 30 分钟)
-- [ ] `[CCXT] Kraken initialized` (API key 正确)
+### 7. 验证 checklist (前 30 分钟) — [UPDATED 2026-08-07]
+- [ ] `[CCXT] Kraken initialized` (API key 正确 — Kraken 仍是数据源)
+- [ ] `[COINBASE-SLEEVE]` / `[COINBASE-MANAGE]` 出现（**真正下单的 venue**；P152 后 Kraken 结构性无仓）
 - [ ] `[HEALTH_S1..S12]` 全部 PASS/WARN (无 CRITICAL)
-- [ ] `[DRL] FORCE_ACTIVE` (DRL 状态正确加载)
+- [ ] ~~`[DRL] FORCE_ACTIVE`~~ **不要检查这一条** — P198 后 DRL 已降级 SHADOW，
+      live 配置 `drl.force_active=false` 正是让降级在重启后生效的机制；
+      看到 `[DRL_FORCE_ACTIVE]` 反而说明配置错了。预期一条
+      `[CUTOVER-IRON-LAW-8]` CRITICAL/启动 属正常（observe-only，P202）
 - [ ] `[LIVE_DATA]` 每 ~34s 出现 3 个资产
-- [ ] `[ALPHA_GATE]` 阈值 5-13bps (合理区间)
+- [ ] `[ALPHA_GATE]` 阈值合理（Coinbase venue-aware fees 下远低于旧的 Kraken 区间）
 - [ ] `[VETO_CHAIN]` 主要 gate 显示 PASS
 - [ ] SSH tunnel 后 `curl http://127.0.0.1:8080/health` 返回 200
 
 ### 8. 回滚
 如果云端 30 分钟内出现 CRITICAL 告警, 或持仓发生异常:
 ```bash
-ssh hetzner "docker compose -f ~/hmats/docker-compose.hetzner.yml down"
-# 回到 laptop 恢复 live
-python scripts/launch_live.py start highrisk
+ssh hmats "cd /home/hmats/hmats/app && docker compose -f docker-compose.hetzner.yml down"
 ```
 Docker volumes 保留所有 state, 无数据损失.
+
+> **[STALE 2026-08-07] "回 laptop 恢复 live" 已不是真实选项** — 系统在
+> Coinbase perp sleeve 上有真实持仓，停掉引擎后只剩 venue 上的保护性止损
+> (P197/P205) 在管仓位。停机超过一个 tick 周期前，先决定是否需要
+> `scripts/coinbase_flatten.py`（操作者手动跑）。
 
 ### 已知变更 (本次审计)
 - 所有 Windows-only 代码 (live_watchdog.py, launch_live.py, launch_paper.py, health_validator.py) 已加 `sys.platform == 'win32'` 守护, Linux 分支使用 `os.kill(pid, 0)` + `pkill -f` + `pgrep -cf`.

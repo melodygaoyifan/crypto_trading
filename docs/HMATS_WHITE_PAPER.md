@@ -1,8 +1,17 @@
 # HMATS: Hierarchical Multi-Agent Trading System
 ## White Paper v6.8.0
 
+> **⚠️ HISTORICAL — PARALLEL LINEAGE (banner added 2026-08-07).** This is NOT the
+> English edition of `03_WHITE_PAPER_v10.md`; it is an earlier, separate lineage
+> whose technical details disagree with the v10 docs on several load-bearing
+> points (3-fold vs 4-fold CV, DummyVecEnv-vs-SubprocVecEnv "iron rule", CRACK
+> exit tiers inverted, "55% DRL fusion weight" contradicting the authority-not-
+> weights design). Runtime facts are stale: the venue is Coinbase US perps since
+> 2026-06-13 (Kraken structurally flat), and DRL is SHADOW since 2026-08-07
+> (P198). Treat as archaeology; current state lives in **CLAUDE.md**.
+
 **System**: HMATS — Hierarchical Multi-Agent Trading System
-**Assets**: BTC, ETH, SOL on Kraken
+**Assets**: BTC, ETH, SOL (execution: Coinbase US perp sleeve since 2026-06-13; historically Kraken)
 **Decision Frequency**: 4-hour candles
 **Account Target**: $10K seed → $100K growth
 

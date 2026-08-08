@@ -8,6 +8,13 @@
 **分类**: 技术白皮书  
 **审计状态**: 97.7% GREEN — 91 checks, 7/7 data flows, 0 regression
 
+> **⚠️ 历史文档（标注于 2026-08-07）。** 冻结于 2026-02-28，早于实盘。已过时的
+> 关键事实：venue 已迁移 Coinbase US perps（2026-06-13，Kraken 结构性无仓）；
+> DRL 已降级 SHADOW（2026-08-07，P198/P200），其 backtest 业绩数字后被认定为
+> P164 泄漏产物；§8 的 backtest/paper 业绩早于 Apr–Jun 实盘 −25%（P143/P144
+> forensic）。另注："97.7% GREEN" 与其自引的 80/91 (=87.9%) 不一致。当前状态
+> 以 **CLAUDE.md** 为准。
+
 ---
 
 # 摘要

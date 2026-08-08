@@ -1,5 +1,14 @@
 # Live Root-Cause — Spot/Margin Mismatch + State Divergence
 
+> **✅ CLOSED (note added 2026-08-07).** Executed: **A1** (spot flatten to ~$7,190
+> cash + tracker reset, `scripts/reconcile_flatten_2026_06_12.py`, P140-A1, same
+> day) + **B1** (spot-short entry guard `block_short_entry_on_spot`, P140) +
+> **B2** (regime_leverage 1.0→2.0 in the two dominant regimes, 2026-06-13) +
+> **B4** — which shipped the *next day*, not "months out": Coinbase perp
+> DUAL_VENUE activated all-3 on 2026-06-13; Kraken has been structurally flat
+> since (P152). This file stays as the forensic record; current state lives in
+> CLAUDE.md.
+
 **Date:** 2026-06-12 (investigation before money reconciliation)
 **Trigger:** "Fix trading first" — investigate before touching real funds.
 **Scope:** read-only cloud forensics + local code/config trace. No money moved, no live state mutated.

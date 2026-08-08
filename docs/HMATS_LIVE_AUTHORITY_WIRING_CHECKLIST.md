@@ -1,5 +1,14 @@
 # HMATS Live Authority Wiring Checklist
 
+> **⚠️ HISTORICAL — SUPERSEDED (banner added 2026-08-07).** March-2026 snapshot
+> of a paper-trading system. Since then: the system went live, lost −25%
+> (Apr–Jun), cut over to Coinbase perps (2026-06-13), and both DRLs were demoted
+> to SHADOW (2026-08-07, P198/P200). The promotion framework below is replaced
+> by the **P200-LADDER** (`docs/HMATS_TRAINING_GUIDE_V2.md` + CLAUDE.md). This
+> doc also contradicts itself on DRL (§3 says promote-to-DECIDE, §5.5 says
+> EXIT_ONLY first). Every `main.py:NNNN` line reference is from a March snapshot
+> of a file that has since roughly doubled — treat all of them as unverified.
+
 Date: 2026-03-09
 Scope: runtime module promotion for live paper-trading authority
 

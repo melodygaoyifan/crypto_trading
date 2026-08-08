@@ -1,7 +1,18 @@
 # Coinbase Engine Integration Plan — v5.1 Phase 2 (DUAL_VENUE)
 
+> **⚠️ HISTORICAL — SUPERSEDED DESIGN (banner added 2026-08-07).** The cutover
+> happened 2026-06-13 but with a **different architecture** than this plan: the
+> H2/H3/H4 `execute_intent_v2` fork exists in code as a **NO-OP** (P141), and real
+> orders go through the isolated sleeve `exchange/coinbase_sleeve.py` driven
+> per-tick by `manage_to_signal` (+ P206 gated intent, P197 protective stops,
+> P198 flip persistence). The phase table below was not followed — the system
+> went from Phase A directly to all-3 DUAL_VENUE. Principle #4's "DRL ACTIVE
+> throughout (Law 8)" is void: DRL was demoted to SHADOW 2026-08-07 (P198) and
+> Iron Law 8's DRL clause was retired (P202). For current state see
+> **CLAUDE.md §Current Runtime State**.
+
 **Date:** 2026-06-13
-**Status:** DESIGN — for operator review before any `main.py`/`execution_manager` edit.
+**Status:** ~~DESIGN — for operator review~~ HISTORICAL — superseded by the sleeve architecture (P141), see banner.
 **Precondition met:** `CoinbaseAdapter` is live-validated + order-ready (see `COINBASE_MIGRATION_PREP.md`). Account flat. Trade key in `.coinbase_key.json`.
 
 ---

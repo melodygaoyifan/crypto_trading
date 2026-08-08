@@ -1,5 +1,18 @@
 # HMATS v6.8.0 — Hetzner Cloud Deployment
 
+> **⚠️ PAPER-BURN-IN ERA DOC (banner added 2026-08-07).** Written for the cloud
+> *paper* burn-in. The system has been **LIVE** since ~2026-04 (`--mode live
+> --confirm-live --config configs/live_high_risk.json`, see
+> `docker-compose.hetzner.yml`), still on **CPX21** despite the CPX31
+> recommendation below, and since 2026-06-13 trades **Coinbase US perps** via the
+> sleeve (Kraken structurally flat). The 72h burn-in gate and its "paper trade
+> fill" criterion are historical. **Do NOT hand-build on the server** (step 10
+> below is superseded): the single deploy authority is
+> `bash scripts/hetzner_deploy.sh hmats` run from the operator machine (P190/P196).
+> Stopping the stack with live perp positions leaves only the venue-resting
+> protective stops managing them — decide about `scripts/coinbase_flatten.py`
+> first.
+
 ## Capacity Verdict
 
 **Current server: CPX21 (2 vCPU AMD EPYC, 4GB RAM, 80GB SSD, Nuremberg)**
@@ -179,8 +192,9 @@ docker compose -f docker-compose.hetzner.yml down
 docker compose -f docker-compose.hetzner.yml restart hmats-engine
 
 # Full rebuild after code update
-cd ~/hmats/app && git pull
-docker compose -f docker-compose.hetzner.yml up -d --build
+# [SUPERSEDED 2026-08-07 — do not hand-build on the server (P190).
+#  Deploy from the operator machine instead:]
+#   bash scripts/hetzner_deploy.sh hmats
 ```
 
 ## API Endpoints

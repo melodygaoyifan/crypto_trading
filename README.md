@@ -3,7 +3,7 @@
 [![test-suite](https://github.com/melodygaoyifan/crypto_trading/actions/workflows/test-suite.yml/badge.svg)](https://github.com/melodygaoyifan/crypto_trading/actions/workflows/test-suite.yml)
 [![codebase-invariants](https://github.com/melodygaoyifan/crypto_trading/actions/workflows/codebase-invariants.yml/badge.svg)](https://github.com/melodygaoyifan/crypto_trading/actions/workflows/codebase-invariants.yml)
 
-Production live-trading system for **BTC / ETH / SOL on Kraken**. Multi-agent decision pipeline with GMM regime detection, three independent DRL systems, 25-agent authority fusion, and seven layers of regression-protected safety.
+Production live-trading system for **BTC / ETH / SOL**. Since 2026-06-13 all three assets execute as **Coinbase Derivatives US perpetual-style futures** via an isolated sleeve (`exchange/coinbase_sleeve.py`); **Kraken (spot/margin) is structurally flat by design** (CLAUDE.md P152/P155) and serves as data + legacy-unwind venue only. Multi-agent decision pipeline with GMM regime detection, three independent DRL systems, 25-agent authority fusion, and seven layers of regression-protected safety.
 
 > **Project status**: live on Hetzner CPX21, single-operator deployment. Not a general-purpose library — private codebase, conventions are HMATS-specific.
 
@@ -28,9 +28,9 @@ Production live-trading system for **BTC / ETH / SOL on Kraken**. Multi-agent de
 
 ## What this is
 
-A single-asset-class (crypto spot) execution system that:
+A single-asset-class (crypto) execution system that:
 
-- Subscribes to **Kraken REST + WebSocket** for OHLCV, orderbook, taker flow.
+- Subscribes to **Kraken REST + WebSocket** for OHLCV, orderbook, taker flow (plus Binance WS microstructure); **executes on Coinbase US perps** via the sleeve since 2026-06-13.
 - Runs ~25 specialised agents per 4H tick (quant Best-of-N, three DRL systems, sentiment LLM, on-chain, options, microstructure, volatility-alpha, etc.).
 - Fuses signals through a **non-weighted authority matrix** (DECIDE / ADVISE / CONFIRM / VETO / CAP / EXECUTE) — see [`signals/authority_fusion.py`](signals/authority_fusion.py).
 - Enforces seven gate layers (Constitution alpha gate, P0 Safety, Trade Gate, Existence Fuse, Risk Veto, Cascade Governor, Dead-Man Switch) before any order leaves the box.
@@ -73,8 +73,10 @@ If you're trying to learn how the system works, **start with [`CLAUDE.md`](CLAUD
                                                        └────────┬───────┘
                                                                 ▼
                                                        ┌────────────────┐
-                                                       │  Kraken        │
-                                                       │  (real orders) │
+                                                       │ Coinbase sleeve│
+                                                       │ (real orders;  │
+                                                       │  Kraken flat   │
+                                                       │  since 06-13)  │
                                                        └────────────────┘
 ```
 
@@ -86,7 +88,7 @@ Decision tick: every 4H bar. Per-tick latency: ~7s for the agent fan-in, ~1s for
 
 | Component | State | Notes |
 |---|---|---|
-| **DRL (TQC)** | ACTIVE | Best-fold per asset (`fold_3` for all three); `models/retrained/{ASSET}/fold_3/`. |
+| **DRL (TQC)** | SHADOW (demoted 2026-08-07, P198) | Still runs inference + logs signals every tick but is EXCLUDED from fusion. Live IC: no stable edge across two independent windows (16h IC −0.081, t=−2.78); the old backtest Sharpes were P164-leak artifacts. Re-promotion only via the P200-LADDER (see `docs/HMATS_TRAINING_GUIDE_V2.md`). |
 | **Sentiment L1 (Fear & Greed)** | ACTIVE | Deterministic engine. |
 | **Sentiment LLM (Haiku)** | ACTIVE | CryptoPanic + CC News blend. |
 | **Quant Best-of-N** | DECIDE | 4 strategies: mean-revert / momentum / volume-breakout / vrp + hold. |
@@ -132,7 +134,7 @@ HMATS runs three independent DRL components — easy to confuse, important not t
 
 | System | Module | Authority | Purpose |
 |---|---|---|---|
-| **TQC direction** | `drl/ensemble.py` | DECIDE (ACTIVE) | Per-asset 122-feature → 126-dim obs → quantile critic; primary directional signal alongside Quant. |
+| **TQC direction** | `drl/ensemble.py` | SHADOW (demoted 2026-08-07, P198) | Per-asset 122-feature → 126-dim obs → quantile critic; inference + IC logging only, excluded from fusion. Re-promotion gated by P200-LADDER forward evidence. |
 | **DRL Agent (legacy)** | `agents/drl_agent.py` | DISABLED | P10 tranche/exit scaffolding; instantiated but `mode=DISABLED`. Kept for future enable-path. |
 | **Exit-SAC** | `models/exit_drl_v2/` + `core/tick_exit_triggers.py` | SHADOW (all 3, P200) | Discrete SAC; inference + shadow logging only. NOTE: the kill switch's should_demote() has returned None unconditionally since 2026-04-30 — there is NO auto-demotion; re-promotion requires a clean retrain + forward evidence. |
 
@@ -256,23 +258,15 @@ python -X utf8 tools/ci_check_invariants.py
 
 ## Training
 
-```bash
-# DRL (TQC) — per asset, ULTIMATE preset (~6 hours per fold per asset on a 5090)
-python -X utf8 -u training/train_drl_full.py --asset BTC --no-progress-bar
-python -X utf8 -u training/train_drl_full.py --asset ETH --no-progress-bar
-python -X utf8 -u training/train_drl_full.py --asset SOL --no-progress-bar
+**The authoritative pipeline is [`docs/HMATS_TRAINING_GUIDE_V2.md`](docs/HMATS_TRAINING_GUIDE_V2.md)** (2026-08-07, post-P200). Do not train from memory of older commands — several flags are load-bearing and the defaults reproduce known-bad runs:
 
-# Decision Transformer (TQC teacher pretrain + finetune)
-python -X utf8 -u training/drl/train_decision_transformer_v32.py \
-    --asset BTC --extra-assets ETH,SOL --oracle-mode tqc_teacher \
-    --epochs 300 --save-suffix _pretrain
+- `--extractor lstm_film_a` is required (the default preset produces a 126-dim model the runtime cannot consume, P189/P200).
+- `--venue coinbase --fee-side taker` is required (the default prices Kraken 26bps, a venue that has been structurally flat since 2026-06-13, P179).
+- A fresh `--tag` is required (without it the trainer restores cached folds and reports stale numbers as if it trained, P200).
+- `fetch_binance_full.py` needs ≥6 years of data or folds 2/3 silently skip (P200).
+- Run the edge probe (`training/scripts/edge_probe.py`) BEFORE any GPU spend — exit 1 = NO_EDGE = stop (P200-LADDER Rung 0).
 
-# Data prep
-python -X utf8 training/fetch_binance_full.py
-python -X utf8 training/scripts/rebuild_pipeline.py --smooth 2
-```
-
-Iron rules for DRL training (see [`memory/drl_training_rules.md`](https://example.invalid/) — local file): `ent_coef` must be a fixed float (auto causes gradient explosion); `n_quantiles=24` for TQC; SubprocVecEnv unreliable on Windows, use `DummyVecEnv`.
+Iron rules for DRL training (local memory file `drl_training_rules.md`, not in repo): `ent_coef` must be a fixed float (auto causes gradient explosion); `n_quantiles=24` for TQC; SubprocVecEnv unreliable on Windows, use `DummyVecEnv`.
 
 ---
 
@@ -321,6 +315,10 @@ cp .env.example .env
 # Required for any mode
 KRAKEN_API_KEY=
 KRAKEN_API_SECRET=
+
+# Required for live (Coinbase perp sleeve — the venue that actually trades)
+# CDP trade key JSON on the data volume; see CLAUDE.md "Coinbase US Perp" row
+COINBASE_KEY_FILE=/opt/hmats/data/.coinbase_key.json
 
 # Required for full feature set
 FRED_API_KEY=

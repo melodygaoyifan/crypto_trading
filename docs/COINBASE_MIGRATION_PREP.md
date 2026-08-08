@@ -1,7 +1,18 @@
 # Coinbase Migration Prep — v5.1 Phase 2 (status + blockers)
 
+> **⚠️ HISTORICAL — SUPERSEDED BY EVENTS (banner added 2026-08-07).** This doc is
+> frozen at 2026-06-13, *before* the cutover. Everything below the banner describes
+> a pre-integration state that no longer exists: Phase B DUAL_VENUE was activated
+> for **all three assets on 2026-06-13**, the Coinbase sleeve
+> (`exchange/coinbase_sleeve.py`) is the **sole directional driver**, and Kraken
+> has been structurally flat since (P152). The integration did NOT follow the
+> `execute_intent_v2` fork design — that fork is a NO-OP per P141. For current
+> state see **CLAUDE.md §Current Runtime State** and the `_coinbase_note` in
+> `configs/live_high_risk.json`. Keep this file only as a record of the prep work
+> and the live-API defects it documents.
+
 **Date:** 2026-06-13
-**Scope:** prep/scaffolding only. **No live cutover. Nothing wired into the live path.**
+**Scope (as of 2026-06-13, since overtaken):** prep/scaffolding only. ~~No live cutover. Nothing wired into the live path.~~
 **Verified against:** ccxt 4.5.34, local repo, web (Coinbase docs).
 
 ---
