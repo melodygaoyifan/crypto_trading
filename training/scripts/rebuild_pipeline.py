@@ -78,7 +78,7 @@ ASSETS = ["BTC", "ETH", "SOL"]
 MAX_REGIME_PROBA = 8  # Zero-pad proba vector to 8 columns
 
 # GMM config - v3: cleaned to 12 dims
-# [P216] Runtime ranks the current volume within its fetched frame
+# [P221] Runtime ranks the current volume within its fetched frame
 # (721 bars bootstrapped to ~1024). Training must rank within the same
 # trailing depth or the percentile distributions diverge.
 GMM_VOL_PCT_WINDOW = 1024
@@ -342,7 +342,7 @@ def compute_gmm_features_for_bar(closes, volumes, rets, i, asset="BTC"):
 
     vol_1h = float(np.std(rets[max(0, i - 1):i + 1])) if i >= 1 else 0.02
     vol_24h = float(np.std(rets[max(0, i - 5):i + 1])) if i >= 5 else 0.02
-    # [P216] TRAILING window, mirroring the runtime contract. The runtime ranks
+    # [P221] TRAILING window, mirroring the runtime contract. The runtime ranks
     # vols[-1] within its fetched ~1024-bar frame (market_data_pipeline
     # _predict_gmm_regime: `vols = df["volume"].values`); the old expanding
     # `volumes[:i+1]` ranked against the full 6-year history — with volume's

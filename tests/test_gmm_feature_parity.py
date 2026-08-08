@@ -1,4 +1,4 @@
-"""[P216] The 12 GMM inputs must mean the same thing in training and at serve.
+"""[P221] The 12 GMM inputs must mean the same thing in training and at serve.
 
 Audit prompted by the operator's "are we sure the GMM features are correctly
 built?" — the answer was: causally yes (no lookahead anywhere), but the
@@ -80,7 +80,7 @@ def test_vol_percentile_ignores_history_beyond_the_runtime_window(rp):
     vp_idx = rp.GMM_FEATURE_COLS.index("vol_percentile")
     assert fa[vp_idx] == fb[vp_idx], (
         "vol_percentile still ranks against history older than the runtime "
-        "window — the train/serve skew P216 fixed has returned"
+        "window — the train/serve skew P221 fixed has returned"
     )
 
 
