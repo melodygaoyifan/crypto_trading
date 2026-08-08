@@ -239,3 +239,56 @@ class TestFlipPersistHoldClassification:
                     veto_reason="[v3.6.1] Alpha gate: Alpha 10bps < 55bps"),
             fallback_dir=0.7)
         assert tgt == 0.0 and why.startswith("veto_flat")
+
+
+class TestVetoStringCouplingDriftGuard:
+    """[P240] The translator classifies vetoes by SUBSTRING match against
+    free-text veto_reason strings written at ~36 independent sites. The
+    failure mode is silent and severe: rename a veto at its write site and
+    the translator reclassifies "hold, no order" as veto_flat — the sleeve
+    liquidates the position the guard exists to hold (exactly how the P231
+    FLIP_PERSIST_HOLD bug arose: the set and the write site disagreed).
+
+    Guard: every member of both classification sets must still appear in
+    COMMENT-STRIPPED source OUTSIDE the set definitions — i.e. at a real
+    write site. Renaming either half alone goes red; renaming both
+    consistently passes. Comments are stripped so a stale comment quoting
+    the old name cannot satisfy the check (the P177 trap, inverted)."""
+
+    def _write_site_corpus(self):
+        import re
+        from pathlib import Path
+        from tests._source_scan import code_only
+        repo = Path(__file__).resolve().parents[1]
+        src = code_only(repo / "main.py", strip_docstrings=True)
+        # Excise the definition statements themselves.
+        src = re.sub(r"_SLEEVE_HOLD_VETOES\s*=\s*\([^)]*\)", "", src)
+        src = re.sub(r"_SLEEVE_VENUE_NA_VETOES\s*=\s*\([^)]*\)", "", src)
+        return src
+
+    def test_every_hold_veto_has_a_live_write_site(self):
+        import main as m
+        corpus = self._write_site_corpus()
+        for member in m._SLEEVE_HOLD_VETOES:
+            assert member in corpus, (
+                f"{member!r} is in _SLEEVE_HOLD_VETOES but no write site "
+                f"emits it — the hold classification is dead and the next "
+                f"firing of that guard becomes a veto_flat LIQUIDATION "
+                f"(the P231 failure class)"
+            )
+
+    def test_every_venue_na_veto_has_a_live_write_site(self):
+        import main as m
+        corpus = self._write_site_corpus()
+        for member in m._SLEEVE_VENUE_NA_VETOES:
+            assert member in corpus, (
+                f"{member!r} is in _SLEEVE_VENUE_NA_VETOES but no write "
+                f"site emits it — the venue-inapplicable carve-out is dead"
+            )
+
+    def test_sets_are_nonempty(self):
+        """The guards above iterate the sets — empty sets would pass
+        vacuously (P174)."""
+        import main as m
+        assert len(m._SLEEVE_HOLD_VETOES) >= 2
+        assert len(m._SLEEVE_VENUE_NA_VETOES) >= 1
