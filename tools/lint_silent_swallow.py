@@ -247,7 +247,7 @@ class SilentSwallowVisitor(ast.NodeVisitor):
 
 def scan_file(path: Path) -> List[dict]:
     try:
-        source = path.read_text(encoding="utf-8", errors="replace")
+        source = path.read_text(encoding="utf-8-sig", errors="replace")
         tree = ast.parse(source, filename=str(path))
     except (SyntaxError, UnicodeDecodeError, OSError):
         return []

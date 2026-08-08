@@ -41,6 +41,23 @@ LIVE_DIRS = [
 SKIP_DIRS = {"archive", "tests", "training", "scripts", "venv", "node_modules", ".git", "__pycache__", "pytorch_build"}
 
 
+# [P226] main.py carries a UTF-8 BOM, and every read below used
+# encoding="utf-8", so `ast.parse` raised SyntaxError on U+FEFF and this audit
+# SILENTLY SKIPPED THE LARGEST FILE IN THE REPO for its entire existence. The
+# committed baseline of 337 simply did not include main.py; the honest number
+# with it is 645. Found only because an unrelated edit happened to strip the
+# BOM and 308 findings appeared at once.
+#
+# This is P171 exactly — same BOM, same SyntaxError, same "a parse failure is
+# indistinguishable from a clean file" — fixed there in
+# lint_orphan_signal_reads.py and never applied here. Two halves, because
+# either alone leaves the hole open:
+#   1. utf-8-sig: a BOM is an encoding detail, not a syntax error.
+#   2. PARSE_FAILURES: refuse to report rather than emit counts computed from
+#      a partial scan.
+PARSE_FAILURES: list = []
+
+
 def _live_py_files() -> List[Path]:
     files = []
     for d in LIVE_DIRS:
@@ -196,7 +213,7 @@ def find_enable_flags(files: List[Path]) -> Tuple[Dict[str, Dict], Dict[str, int
     config_files = [f for f in files if "configs" in str(f) or "sota_flags" in f.name or "/flags" in str(f).replace("\\", "/")]
     for path in config_files:
         try:
-            content = path.read_text(encoding="utf-8", errors="replace")
+            content = path.read_text(encoding="utf-8-sig", errors="replace")
         except Exception:
             continue
         for m in ENABLE_FLAG_DECL_PATTERN.finditer(content):
@@ -215,7 +232,7 @@ def find_enable_flags(files: List[Path]) -> Tuple[Dict[str, Dict], Dict[str, int
         rel_path = str(path.relative_to(REPO_ROOT)).replace("\\", "/")
         is_decl_file = any(d["file"] == rel_path for d in declared.values())
         try:
-            content = path.read_text(encoding="utf-8", errors="replace")
+            content = path.read_text(encoding="utf-8-sig", errors="replace")
         except Exception:
             continue
         for m in flag_pattern.finditer(content):
@@ -240,7 +257,7 @@ def collect_class_methods(files: List[Path]) -> Dict[str, Set[str]]:
     class_methods: Dict[str, Set[str]] = defaultdict(set)
     for path in files:
         try:
-            tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"), filename=str(path))
+            tree = ast.parse(path.read_text(encoding="utf-8-sig", errors="replace"), filename=str(path))
         except Exception:
             continue
         for node in ast.walk(tree):
@@ -277,7 +294,7 @@ def main():
     if args.pattern in ("all", "tryexcept"):
         for path in files:
             try:
-                source = path.read_text(encoding="utf-8", errors="replace")
+                source = path.read_text(encoding="utf-8-sig", errors="replace")
                 tree = ast.parse(source, filename=str(path))
             except Exception:
                 continue
@@ -326,7 +343,7 @@ def main():
     if args.pattern in ("all", "dictget"):
         for path in files:
             try:
-                source = path.read_text(encoding="utf-8", errors="replace")
+                source = path.read_text(encoding="utf-8-sig", errors="replace")
             except Exception:
                 continue
             pattern2.extend(detect_dict_get_misuse(path, source))

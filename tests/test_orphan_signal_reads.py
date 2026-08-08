@@ -88,10 +88,22 @@ class TestAParseFailureIsNotACleanScan:
     def test_the_real_main_py_is_actually_parsed(self):
         # The regression that mattered: main.py is the dominant producer, so if
         # it drops out of the scan the whole result inverts.
-        head = (REPO_ROOT / "main.py").read_bytes()[:3]
-        assert head == b"\xef\xbb\xbf", (
-            "main.py no longer starts with a BOM — good, but this test is the "
-            "record of why the scanner reads utf-8-sig; keep it reading that way"
+        # [P226] This asserted main.py STARTS with a BOM — and its own message
+        # anticipated the day that stopped being true ("no longer starts with a
+        # BOM — good, but this test is the record of why the scanner reads
+        # utf-8-sig"). That day arrived: an unrelated edit stripped it, which is
+        # how P226 discovered that TWO OTHER scanners
+        # (scripts/silent_failure_audit.py, tools/lint_silent_swallow.py) had
+        # been silently skipping main.py all along for exactly this reason.
+        #
+        # So the assertion now pins the DURABLE contract — the scanner reads
+        # BOM-safely and main.py is genuinely scanned — rather than an
+        # incidental property of the file, which was always going to rot.
+        src = (REPO_ROOT / "tools" / "lint_orphan_signal_reads.py").read_text(
+            encoding="utf-8", errors="replace")
+        assert "utf-8-sig" in src, (
+            "the scanner no longer reads BOM-safely; a BOM-prefixed file will "
+            "raise SyntaxError and drop out of the scan silently"
         )
         writes = scan_file(REPO_ROOT / "main.py").writes
         assert len(writes) > 50, f"main.py contributed only {len(writes)} writes"

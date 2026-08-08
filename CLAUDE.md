@@ -293,6 +293,20 @@ discipline + the grep habit.
 
 ### Recent pitfalls (last ~30 days)
 
+### P226. [FIXED 2026-08-08] Two scanners had been silently skipping main.py — the largest file in the repo — for their entire existence
+- **Found by accident, which is the point.** An unrelated edit of mine stripped `main.py`'s UTF-8 BOM and the deploy gate went red with **+308 / +272** findings at once. The tempting move — restore the BOM and go green — would have re-hidden them.
+- **Cause:** `scripts/silent_failure_audit.py` and `tools/lint_silent_swallow.py` read with `encoding="utf-8"`. `main.py` carries a **BOM**, so `ast.parse` raised `SyntaxError: invalid non-printable character U+FEFF` and the file was dropped — **not loudly**: a parse failure was indistinguishable from a clean file. The committed baselines simply never included main.py.
+  ```
+  silent_failure  tryexcept  337 -> 645   (+308, ALL main.py symbols)
+  silent_swallow  total      416 -> 688   (+272)
+  ```
+- **This is P171 EXACTLY** — same file, same BOM, same SyntaxError, same "a check that cannot read the code reports what a check that found nothing reports". P171 fixed it in `lint_orphan_signal_reads.py` (utf-8-sig + a PARSE_FAILURES refusal) and **it was never applied to the other two**. A mitigation applied to one instance of a class is not applied to the class.
+- **Attributed BEFORE re-baselining (P175):** every one of the 308 new entries is a main.py symbol (`ExecutionContext.build_from_runner`, `MahalanobisOODDetector.load`, `*Config.from_dict` …), and both counts are now **identical with and without the BOM** — so the rise is **coverage, not regression**. Both baselines carry that attribution inline, or the next reader assumes 272 defects were introduced.
+- **`main.py` is left WITHOUT the BOM.** It is an encoding artefact that has now caused this twice; removing it is safe and removes the trap.
+- **P171's own test predicted this and had to be corrected.** It asserted main.py *starts with* a BOM, with a message saying "no longer starts with a BOM — good, but this test is the record of why the scanner reads utf-8-sig". That day arrived, so the assertion now pins the **durable contract** (the scanner reads BOM-safely and main.py is genuinely scanned) rather than an incidental property of the file, which was always going to rot.
+- Tests: `tests/test_scanner_bom_blindspot_p226.py` (9). The load-bearing one is **behavioural** — it runs the linter and asserts main.py contributes findings — because a source scan can pass while the file is skipped for some other reason. My first version asserted "no bare `encoding=\"utf-8\"` anywhere" and failed on those files' legitimate JSON reads.
+- **Mitigation pattern:** when a defect is fixed, grep for every other instance of the SHAPE, not just the symptom — `encoding="utf-8"` + `ast.parse` was findable the day P171 landed. And a scanner must treat "I could not read this file" as a distinct, loud outcome from "I found nothing"; a silent skip understates every number it reports.
+
 ### P225. [FIXED 2026-08-08] SmartBeta is LIVE on the gate path with no terminal clamp, it read the previous asset's phase, and five of its seven outputs are decorative — the smart-beta workstream audited for the first time since April
 Smart beta shipped 2026-04 and appears in **zero** P-entries since — the one workstream that quietly stayed in production unaudited across the June loss forensic, the cutover, and the P198 investigation. Full audit + fixes:
 - **Verified live first (not from the repo):** `SmartBeta V1: ACTIVE (mode=bounded_influence)` on the server, applying **every tick** — `gate 0.99→1.14 size 0.85→0.59`. Note 0.59 is already **below the module's own documented size floor of 0.70**: composition escapes per-writer bounds in practice, tonight, not hypothetically. (Local logs all say DISABLED — the local default config lacks `smart_beta_config`; only `live_high_risk.json` has it. Do not diagnose smart beta from laptop logs.)
