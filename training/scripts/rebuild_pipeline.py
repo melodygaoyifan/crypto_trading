@@ -78,6 +78,11 @@ ASSETS = ["BTC", "ETH", "SOL"]
 MAX_REGIME_PROBA = 8  # Zero-pad proba vector to 8 columns
 
 # GMM config - v3: cleaned to 12 dims
+# [P216] Runtime ranks the current volume within its fetched frame
+# (721 bars bootstrapped to ~1024). Training must rank within the same
+# trailing depth or the percentile distributions diverge.
+GMM_VOL_PCT_WINDOW = 1024
+
 GMM_FEATURE_COLS = [
     "return_1h", "return_4h", "return_24h", "return_7d",
     "volatility_1h", "volatility_24h", "vol_percentile", "vol_of_vol",
@@ -337,7 +342,17 @@ def compute_gmm_features_for_bar(closes, volumes, rets, i, asset="BTC"):
 
     vol_1h = float(np.std(rets[max(0, i - 1):i + 1])) if i >= 1 else 0.02
     vol_24h = float(np.std(rets[max(0, i - 5):i + 1])) if i >= 5 else 0.02
-    vol_pct = float(np.searchsorted(np.sort(volumes[:i + 1]), volumes[i]) / (i + 1) * 100)
+    # [P216] TRAILING window, mirroring the runtime contract. The runtime ranks
+    # vols[-1] within its fetched ~1024-bar frame (market_data_pipeline
+    # _predict_gmm_regime: `vols = df["volume"].values`); the old expanding
+    # `volumes[:i+1]` ranked against the full 6-year history — with volume's
+    # secular drift those are materially different distributions, i.e. a
+    # train/serve skew on one of the GMM's 10 effective inputs (same family
+    # as the P214 wavelet skew, and a contributor to the old GMM's
+    # distribution-shift saturation, P215 addendum).
+    _vp_lo = max(0, i - GMM_VOL_PCT_WINDOW + 1)
+    _vp_win = volumes[_vp_lo:i + 1]
+    vol_pct = float(np.searchsorted(np.sort(_vp_win), volumes[i]) / len(_vp_win) * 100)
 
     if i >= 30:
         rolling_v = [float(np.std(rets[max(0, j - 5):j + 1])) for j in range(max(6, i - 19), i + 1)]
