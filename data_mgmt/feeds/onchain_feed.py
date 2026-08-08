@@ -325,7 +325,7 @@ class OnChainFeed:
         except Exception as e:
             logger.warning(f"[ONCHAIN_COMPOSITE] CryptoCompare failed: {e}")
 
-        # [P221] Blockchair fallback — free, keyless, unmetered.
+        # [P223] Blockchair fallback — free, keyless, unmetered.
         #
         # CryptoCompare is capped at 100 calls/MONTH (P220) and the plan cannot
         # be upgraded, so the block above contributes nothing in practice: its

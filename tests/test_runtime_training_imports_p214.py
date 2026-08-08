@@ -43,9 +43,11 @@ _DOCKERFILE = _REPO / "Dockerfile.engine"
 # Packages copied wholesale into the image — i.e. code that runs in production.
 _RUNTIME_DIRS = [
     "core", "agents", "data_mgmt", "integration", "drl", "execution",
-    "exchange", "signals", "defense", "risk", "strategies", "engine",
+    "exchange", "signals", "defense", "risk", "strategies",
     "portfolio", "liquidity", "market", "orchestration", "infra",
 ]
+# "engine" removed [P225]: the package was an empty shell (4 __init__.py, real
+# code in archive/engine/) and was deleted along with its Dockerfile COPY lines.
 
 _IMPORT_RE = re.compile(r"(?:^|\n)\s*(?:from|import)\s+(training\.[\w.]+)")
 

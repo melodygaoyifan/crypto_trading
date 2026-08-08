@@ -1,4 +1,4 @@
-"""[P221] A free, keyless replacement for the on-chain feed we cannot buy.
+"""[P223] A free, keyless replacement for the on-chain feed we cannot buy.
 
 The CryptoCompare account is capped at 100 calls/MONTH (P220) and the plan
 cannot be upgraded, so `/blockchain/latest` is effectively gone. It was the only
@@ -193,7 +193,7 @@ class TestCompositeWiring:
         then fail for a reason unrelated to the contract (same mistake as the
         first cut of the P209 tests)."""
         s = self._src()
-        i = s.index("[P221] Blockchair fallback")
+        i = s.index("[P223] Blockchair fallback")
         return s[i:s.index("Blockchair fallback failed", i)]
 
     def _code(self):
@@ -212,7 +212,7 @@ class TestCompositeWiring:
 
     def test_it_runs_after_the_cryptocompare_block(self):
         s = self._src()
-        assert s.index("CryptoCompare failed") < s.index("[P221] Blockchair fallback")
+        assert s.index("CryptoCompare failed") < s.index("[P223] Blockchair fallback")
 
     def test_it_does_not_fabricate_a_large_transaction_count(self):
         s = self._src()
@@ -225,7 +225,7 @@ class TestCompositeWiring:
 
     def test_the_fallback_cannot_break_the_tick(self):
         s = self._src()
-        i = s.index("[P221] Blockchair fallback")
+        i = s.index("[P223] Blockchair fallback")
         assert "except Exception as e:" in s[i:s.index("Blockchair fallback failed", i) + 120]
 
     def test_direction_is_not_claimed(self):

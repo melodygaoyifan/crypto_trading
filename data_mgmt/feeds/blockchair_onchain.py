@@ -1,4 +1,4 @@
-"""[P221] BTC/ETH on-chain metrics from Blockchair — free, keyless, unmetered.
+"""[P223] BTC/ETH on-chain metrics from Blockchair — free, keyless, unmetered.
 
 WHY. The CryptoCompare account is capped at 100 calls/MONTH (P220) and the plan
 cannot be upgraded, so `/blockchain/latest` is effectively unavailable: it was

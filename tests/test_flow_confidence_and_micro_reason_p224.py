@@ -1,4 +1,4 @@
-"""[P222] Two loose ends from this session's own changes.
+"""[P224] Two loose ends from this session's own changes.
 
 1. FLOW CONFIDENCE SATURATED — a defect I introduced in P221. The attribution
    proxy is `min(1.0, |whale_flow| / 1e7)`, calibrated for CryptoCompare's
@@ -53,7 +53,7 @@ class TestFlowConfidenceIsGatedOnDirection:
         """The /1e7 divisor is calibrated for a source that no longer feeds it;
         whoever restores a signed flow source must re-derive it."""
         b = self._block()
-        assert "1e7" in b and "P222" in b
+        assert "1e7" in b and "P224" in b
 
     def test_it_evaluates_correctly(self):
         """Reproduce the arithmetic rather than trusting the source scan."""
@@ -68,7 +68,7 @@ class TestFlowConfidenceIsGatedOnDirection:
 class TestMicroNeutralReasonIsSurfaced:
 
     def _block(self):
-        i = _MSRC.index("[P222] Say WHY when micro is neutral")
+        i = _MSRC.index("[P224] Say WHY when micro is neutral")
         return _MSRC[i:_MSRC.index("except Exception as _micro_err:", i)]
 
     def test_the_reason_is_logged(self):

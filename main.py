@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 ================================================================================
 HMATS v6.8.0 -CANONICAL PRODUCTION ENTRYPOINT
@@ -7683,7 +7683,7 @@ class HMATSProductionRunner:
                             f"signal={_micro_sig.get('micro_primary_signal', 'none')} "
                             f"spread={_micro_sig.get('spread_bps', 0):.1f}bps"
                         )
-                # [P222] Say WHY when micro is neutral. The agent already
+                # [P224] Say WHY when micro is neutral. The agent already
                 # records a cause in diagnostics.reason — `no_exchange_data`,
                 # `stale_snapshot`, insufficient samples, or an exception — but
                 # nothing surfaced it, so all four presented identically as
@@ -8827,7 +8827,7 @@ class HMATSProductionRunner:
         agent_signals.setdefault('cvd_divergence', 0.0)
 
         # [v3.2-B5] phase: from engine's last phase result
-        # [P222] Prefer THIS asset's phase from the previous tick over the
+        # [P225] Prefer THIS asset's phase from the previous tick over the
         # engine-global _last_phase_result, which at this point in the tick
         # still holds the PREVIOUS ASSET's phase (both writers — engine.decide
         # and the T22 phase_detector block — run later in this method). A
@@ -9630,7 +9630,7 @@ class HMATSProductionRunner:
                     "direction": float(agent_signals.get("flow_direction", 0.0) or 0.0),
                     # flow has no native confidence — proxy from whale_flow magnitude.
                     #
-                    # [P222] Gated on a NON-ZERO direction. The /1e7 divisor was
+                    # [P224] Gated on a NON-ZERO direction. The /1e7 divisor was
                     # calibrated for CryptoCompare's `large_tx_count x
                     # avg_tx_value` (millions). P221 replaced that source with
                     # Blockchair's 24h settlement VALUE (~$5.7e10), so the proxy
@@ -10141,7 +10141,7 @@ class HMATSProductionRunner:
                 # Store on engine so exit_alpha reads it from the canonical location
                 if hasattr(self, 'engine'):
                     self.engine._last_phase_result = _phase_result
-                # [P222] Per-asset store — the engine-global slot above is
+                # [P225] Per-asset store — the engine-global slot above is
                 # overwritten by every asset in turn, so early-tick readers
                 # (agent_signals['phase'] at the v3.2-B5 site, consumed by
                 # SmartBeta) were seeing the previous asset's phase. Lazy init
