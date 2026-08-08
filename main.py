@@ -1643,6 +1643,11 @@ class ProductionConfig:
     # cause) for N 4H ticks. Exits and reduces are NEVER deferred (P195).
     # 0 = OFF.
     coinbase_reentry_cooldown_ticks: int = 0
+    # [P237] Tripwire actuator: assets that receive the trend injection when
+    # trend_following_mode != off. Removing an asset here is how the P237
+    # calibration tripwire fires per asset (2026-09-01 criterion). Default =
+    # all three; an absent config key changes nothing.
+    trend_assets: List[str] = field(default_factory=lambda: ["BTC", "ETH", "SOL"])
     # [P236] model_alpha disagreement filter on the sleeve driver. The
     # SHADOW ledger (data/strategy_shadow/ma_filter_*.jsonl) accumulates
     # regardless; this flag arms ENFORCEMENT: suppress a sleeve entry-from-
@@ -1929,6 +1934,8 @@ class ProductionConfig:
                 data.get("alpha_gate_hold_ratio", 0.0)),
             coinbase_reentry_cooldown_ticks=int(
                 data.get("coinbase_reentry_cooldown_ticks", 0)),
+            trend_assets=list(
+                data.get("trend_assets", ["BTC", "ETH", "SOL"])),
             coinbase_ma_filter_enforce=bool(
                 data.get("coinbase_ma_filter_enforce", False)),
             # [v5.1 PROMOTED 2026-06-13] live ADVISE promotion of shadow strategies
@@ -8299,7 +8306,27 @@ class HMATSProductionRunner:
         # [TREND-LAYER 2026-06-14] trend decision layer (default off -> no-op). Runs
         # BEFORE fusion: shadow logs trend vs quant; enforce INJECTS trend as the
         # quant signal so the full pipeline (gate/sizing/NET cap P144) trades it.
-        if getattr(self.config, "trend_following_mode", "off") != "off":
+        # [P237] Tripwire ACTUATOR: per-asset trend participation. The P237
+        # calibration decision needs "that asset's trend injection comes off"
+        # to be a one-line config edit, but trend_following_mode is global —
+        # so firing the tripwire for SOL alone had no lever. An asset removed
+        # from trend_assets skips the inject entirely and falls back to the
+        # Best-of-N quant signal (~13bps alpha → gate fails → flat): exactly
+        # the tripwire's intended effect, per asset. Default = all three
+        # (absent key changes nothing).
+        _trend_assets = getattr(self.config, "trend_assets", None) or [
+            "BTC", "ETH", "SOL"]
+        if (getattr(self.config, "trend_following_mode", "off") != "off"
+                and asset not in _trend_assets):
+            if not hasattr(self, "_trend_excluded_logged"):
+                self._trend_excluded_logged = set()
+            if asset not in self._trend_excluded_logged:
+                self._trend_excluded_logged.add(asset)
+                logger.warning(
+                    f"[TREND-LAYER] {asset}: EXCLUDED by trend_assets "
+                    f"(P237 tripwire actuator) — no trend injection; the "
+                    f"asset trades only if Best-of-N clears the gate")
+        elif getattr(self.config, "trend_following_mode", "off") != "off":
             try:
                 from core.trend_decision_layer import get_trend_decision_layer
                 get_trend_decision_layer(

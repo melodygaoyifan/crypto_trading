@@ -255,3 +255,75 @@ class TestConsensusRosterFix:
             "P232 regression: the consensus boost roster omits the only "
             "weighted agent that fires — the boost is structurally dead again"
         )
+
+
+class TestTripwireActuatorAndChecker:
+    """[P237] The calibration tripwire made executable: a per-asset actuator
+    (trend_assets) and a Monday checker that states FIRED loudly but NEVER
+    edits config (deactivating live behavior stays a recorded human step)."""
+
+    def test_actuator_config_trio_default_all_three(self):
+        assert 'data.get("trend_assets", ["BTC", "ETH", "SOL"])' in MAIN
+        live = json.loads((REPO / "configs" / "live_high_risk.json"
+                           ).read_text(encoding="utf-8-sig"))
+        assert "trend_assets" not in live, (
+            "trend_assets appeared in the live profile — firing the tripwire "
+            "needs its own recorded decision referencing the report evidence"
+        )
+
+    def test_call_site_skips_excluded_assets(self):
+        blk = MAIN[MAIN.find("[P237] Tripwire ACTUATOR"):]
+        blk = blk[:blk.find("get_trend_decision_layer")]
+        assert "asset not in _trend_assets" in blk
+        assert "EXCLUDED by trend_assets" in blk
+
+    def _write_report(self, d, day, closed_assets):
+        rep = {"generated": f"{day}T06:20:00+00:00", "assets": {}}
+        for a in ("BTC", "ETH", "SOL"):
+            v = ("GATE-CLOSED under honest calibration"
+                 if a in closed_assets else "TRADEABLE")
+            rep["assets"][a] = {"4h": {"vs_threshold": f"max alpha x -> {v}"},
+                                "16h": {"vs_threshold": f"max alpha y -> {v}"}}
+        (d / f"slope_{day.replace('-', '')}_062000.json").write_text(
+            json.dumps(rep), encoding="utf-8")
+
+    def _run(self, d, today):
+        env = dict(os.environ, PYTHONIOENCODING="utf-8")
+        return subprocess.run(
+            [sys.executable, "-X", "utf8",
+             str(REPO / "analytics" / "calibration" / "tripwire_check.py"),
+             "--reports-dir", str(d), "--today", today],
+            capture_output=True, text=True, timeout=60, env=env)
+
+    def test_no_reports_is_a_refusal_not_a_not_fired(self, tmp_path):
+        r = self._run(tmp_path, "2026-09-01")
+        assert r.returncode == 2
+
+    def test_four_closed_reports_past_the_date_fires(self, tmp_path):
+        for day in ("2026-08-11", "2026-08-18", "2026-08-25", "2026-09-01"):
+            self._write_report(tmp_path, day, closed_assets={"SOL"})
+        r = self._run(tmp_path, "2026-09-01")
+        assert r.returncode == 3
+        assert "TRIPWIRE FIRED for SOL" in r.stdout
+        assert "BTC: armed 0/4" in r.stdout  # tradeable asset never fires
+
+    def test_before_the_date_only_arms(self, tmp_path):
+        for day in ("2026-08-04", "2026-08-11", "2026-08-18", "2026-08-25"):
+            self._write_report(tmp_path, day, closed_assets={"SOL"})
+        r = self._run(tmp_path, "2026-08-25")
+        assert r.returncode == 0
+        assert "SOL: armed 4/4" in r.stdout
+
+    def test_fewer_than_four_reports_never_fires(self, tmp_path):
+        for day in ("2026-08-25", "2026-09-01"):
+            self._write_report(tmp_path, day, closed_assets={"SOL"})
+        r = self._run(tmp_path, "2026-09-08")
+        assert r.returncode == 0
+
+    def test_checker_never_edits_config(self):
+        src = (REPO / "analytics" / "calibration" / "tripwire_check.py"
+               ).read_text(encoding="utf-8-sig")
+        assert "live_high_risk" not in src.replace(
+            "configs/live_high_risk.json", "")  # named only in the MESSAGE
+        assert "write_text" not in src.split('def main')[1].replace(
+            'read_text', '')  # no writes in main
