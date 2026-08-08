@@ -336,6 +336,17 @@ class TradeIntentV36:
     # can compute real $-PnL per agent.
     primary_agent: str = ""
     quant_confidence: float = 0.0
+    # [P239] Previously undeclared dynamic attributes — assigned on the fusion
+    # path but invisible to serialization/asdict and absent on early-return
+    # intents (found in the 2026-08-08 read-through; same P85 contract gap the
+    # P233 alpha_gate_hold declaration closed). Defaults deliberately equal
+    # every consumer's getattr default, so declaring them is behavior-neutral:
+    # main.py reads confidence with default 0.5 (:~12933/:~13020),
+    # confidence_multiplier with default 1.0 and lead_lag_amplifier_applied
+    # with default False (:~13900).
+    confidence: float = 0.5
+    confidence_multiplier: float = 1.0
+    lead_lag_amplifier_applied: bool = False
     
     # v3.6.1: Constitution guarantees tracking
     no_trade_triggers_internal: bool = True

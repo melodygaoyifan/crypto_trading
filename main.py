@@ -1,26 +1,31 @@
 #!/usr/bin/env python3
 """
 ================================================================================
-HMATS v6.8.0 -CANONICAL PRODUCTION ENTRYPOINT
+HMATS -CANONICAL PRODUCTION ENTRYPOINT
 ================================================================================
-Version: 6.5.1-HOTPATH-WIRING-FIX
-Build Date: 2026-02-28
+Version: see the VERSION constant below — the single source of truth.
+[P239] This header used to carry its own version/build-date literals
+("6.5.1", 2026-02-28) which drifted from VERSION for six months; a second
+copy of a version is how the first one stops being read.
 
 CANONICAL FILES (LOCKED):
     CANONICAL_ENTRYPOINT:       main.py
     CANONICAL_MAIN_LOOP:        main.py::_process_4h_tick_inner   [P178]
     CANONICAL_DECISION_ENGINE:  integration/integration_v36.py
     CANONICAL_SOTA_ENHANCEMENT: orchestration/sota_v521_complete_integration.py
-    CANONICAL_CONFIG:           configs/cloud_production.json
+    LIVE_CONFIG_PROFILE:        configs/live_high_risk.json  (docker-compose.hetzner.yml)
 
 This is THE canonical entry point for production deployment.
 All other entry points (main_v36.py, etc.) are DEPRECATED and in legacy/.
 
 ARCHITECTURE (LOCKED):
     Data ->Regime  Agents ->Fusion ->Execution ->Risk ->Feedback
-    
-SINGLE EXCHANGE MODE (LOCKED):
-    Execution: Kraken ONLY
+
+VENUES [corrected P239 — the old "Kraken ONLY (LOCKED)" claim was falsified
+2026-06-13 and stood here for two months]:
+    Directional execution: Coinbase US perp sleeve (sole order path since
+        Phase B, P152/P155 — Kraken structurally flat by design).
+    Kraken: market data + the dormant legacy spot/margin path.
     Data-only exchanges: moved to legacy/data_only_exchanges/
 
 DRL AUTHORITY GATING (v5.3.0):
@@ -1648,6 +1653,14 @@ class ProductionConfig:
     # calibration tripwire fires per asset (2026-09-01 criterion). Default =
     # all three; an absent config key changes nothing.
     trend_assets: List[str] = field(default_factory=lambda: ["BTC", "ETH", "SOL"])
+    # [P239] The two sleeve risk knobs that were ctor-defaults-only while
+    # every OTHER sleeve control was config-wired (found in the 2026-08-08
+    # read-through). Defaults exactly match the CoinbaseSleeve ctor defaults
+    # they replace, so declaring them is behavior-neutral; they exist so the
+    # 15% halt and the 1-contract cap are operator-tunable without a code
+    # change, like their siblings.
+    coinbase_max_sleeve_drawdown_pct: float = 0.15
+    coinbase_max_contracts_per_asset: int = 1
     # [P236] model_alpha disagreement filter on the sleeve driver. The
     # SHADOW ledger (data/strategy_shadow/ma_filter_*.jsonl) accumulates
     # regardless; this flag arms ENFORCEMENT: suppress a sleeve entry-from-
@@ -1938,6 +1951,10 @@ class ProductionConfig:
                 data.get("trend_assets", ["BTC", "ETH", "SOL"])),
             coinbase_ma_filter_enforce=bool(
                 data.get("coinbase_ma_filter_enforce", False)),
+            coinbase_max_sleeve_drawdown_pct=float(
+                data.get("coinbase_max_sleeve_drawdown_pct", 0.15)),
+            coinbase_max_contracts_per_asset=int(
+                data.get("coinbase_max_contracts_per_asset", 1)),
             # [v5.1 PROMOTED 2026-06-13] live ADVISE promotion of shadow strategies
             v5_1_strategies_live=data.get("v5_1_strategies_live", False),
             # P1-02: Thesis budget parameters (overlay-aware)
@@ -19426,6 +19443,19 @@ class HMATSProductionRunner:
                                         max_asset_exposure=getattr(
                                             self.config,
                                             "post_leverage_caps", None),
+                                        # [P239] Previously ctor-defaults-only
+                                        # (0.15 / 1) — the two sleeve knobs no
+                                        # config could reach. Defaults match,
+                                        # so this wiring changes nothing until
+                                        # an operator sets the keys.
+                                        max_sleeve_drawdown_pct=float(getattr(
+                                            self.config,
+                                            "coinbase_max_sleeve_drawdown_pct",
+                                            0.15) or 0.15),
+                                        max_contracts_per_asset=int(getattr(
+                                            self.config,
+                                            "coinbase_max_contracts_per_asset",
+                                            1) or 1),
                                     )
                                 _cb_snap = self._coinbase_sleeve.snapshot()
                                 _cb_pos = _cb_snap.get("positions") or {}

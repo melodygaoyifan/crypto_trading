@@ -263,6 +263,16 @@ def get_authority_matrix(mode: str) -> dict:
     return matrix
 
 # --- [v9-PATCH-11a] High-volatility authority matrix ---
+# [P239] NOT WIRED — recorded decision, not an oversight. This matrix has had
+# ZERO references since v9-PATCH-11a shipped it: get_authority_matrix()
+# branches only on NO_TRADE/OPPORTUNITY/else, so the high-vol authority
+# downgrade it describes (quant DECIDE->ADVISE, regime->DECIDE) has never
+# executed. Kept as the documented design for a future high-vol mode rather
+# than deleted, because the shape is sound; WIRING it is a live strategy
+# change — it re-points the DECIDER in exactly the regimes where money moves
+# fastest — and requires shadow evidence + its own P-entry first (P141).
+# tests/test_hygiene_p239.py pins that the selector never returns it, so a
+# silent wiring cannot land without failing a test.
 AUTHORITY_MATRIX_HIGH_VOL = {
     "quant": Authority.ADVISE,       # downgrade from DECIDE in high vol
     "regime": Authority.DECIDE,      # regime drives decisions
