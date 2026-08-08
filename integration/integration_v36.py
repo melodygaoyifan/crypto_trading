@@ -233,6 +233,27 @@ def gate_hysteresis_decision(
     return agrees, shadow_would_hold, enforce_hold
 
 
+def alpha_gate_sign_diverges(alpha_input_dir, fused_dir, eps: float = 1e-9):
+    """[P238] True when the direction the alpha gate JUDGED (STEP 7's
+    ``_alpha_input_direction``) and the direction the book will TRADE
+    (STEP 8's fusion output) carry opposite signs.
+
+    Why it matters: every sign-dependent gate branch — the short x0.80
+    discount, ``min_alpha_bps_short``, the quiet-accumulation short floor,
+    the short borderline epsilon — keys off the gate's input, which is
+    resolved 165 lines before fusion assigns the traded direction. On a
+    divergent tick those branches were applied for the opposite side of
+    what trades. This predicate is LOG-ONLY instrumentation: the live
+    divergence rate must be measured before any gate re-check is designed
+    (changing a live gate off an unmeasured hypothesis is the P198
+    mistake). Either side at ~zero is not a divergence — a flat signal
+    has no sign to disagree with.
+    """
+    a = float(alpha_input_dir or 0.0)
+    f = float(fused_dir or 0.0)
+    return abs(a) > eps and abs(f) > eps and (a * f) < 0
+
+
 # =============================================================================
 # TRADE INTENT v3.6.1
 # =============================================================================
@@ -1540,7 +1561,24 @@ class HMATSv36Engine:
         intent.urgency = fusion_result.urgency
         # [FIX 2026-04-22] Propagate primary_agent for PnL attribution
         intent.primary_agent = getattr(fusion_result, 'primary_agent', '') or getattr(fusion_result, 'decider_agent', '')
-        
+
+        # [P238] Gate-vs-trade sign divergence counter — LOG-ONLY. See
+        # alpha_gate_sign_diverges() for why; nothing here may touch the
+        # intent beyond reading it.
+        self._gate_sign_decide_count = getattr(
+            self, "_gate_sign_decide_count", 0) + 1
+        if alpha_gate_sign_diverges(_alpha_input_direction, intent.direction):
+            self._gate_sign_diverge_count = getattr(
+                self, "_gate_sign_diverge_count", 0) + 1
+            logger.warning(
+                f"[GATE-SIGN-DIVERGE] {market_data.get('asset', '?')}: alpha gate judged "
+                f"{_alpha_input_direction:+.3f} but fusion trades "
+                f"{intent.direction:+.3f} — the sign-dependent gate branches "
+                f"ran for the opposite side this tick "
+                f"({self._gate_sign_diverge_count}/"
+                f"{self._gate_sign_decide_count} fusion-decided ticks)"
+            )
+
         # Apply v3.5 failure memory aggressiveness
         intent.target_exposure *= failure_modifiers.aggressiveness_modifier
         
