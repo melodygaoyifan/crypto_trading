@@ -21,25 +21,93 @@ V36 = (REPO / "integration" / "integration_v36.py").read_text(
 
 
 class TestGateHysteresis:
+    """[P234] Behavioral tests of gate_hysteresis_decision() — the block was
+    extracted to a pure function after the inline version shipped dead: it
+    read the intent's direction field before fusion assigned it, so
+    agreement was always False, the shadow line always said WOULD-EXIT, and
+    enforcement could never fire. The old tests here asserted source
+    substrings and passed on that dead code."""
+
     def test_shadow_line_always_logs_the_counterfactual(self):
         assert "[GATE-HYST]" in V36
         assert "WOULD-HOLD" in V36 and "WOULD-EXIT" in V36
 
-    def test_enforcement_requires_positive_ratio(self):
+    def test_p234_agreement_input_is_the_pre_fusion_signal(self):
+        """The exact regression: the hysteresis block must feed the signal
+        the gate judged (_alpha_input_direction), and must not read the
+        intent's not-yet-assigned direction field."""
         blk = V36[V36.find("[P232] Gate hysteresis"):]
         blk = blk[:blk.find("pure new entry")]
-        assert "_hy_ratio > 0" in blk, (
-            "hold enforcement no longer gated on alpha_gate_hold_ratio > 0 — "
-            "the default-OFF contract is broken"
+        assert "gate_hysteresis_decision(" in blk
+        assert "_alpha_input_direction" in blk, (
+            "P234 regression: the hold band no longer receives the "
+            "pre-fusion signal direction"
+        )
+        assert 'getattr(intent, "direction"' not in blk, (
+            "P234 regression: intent.direction is 0.0 until STEP 8 fusion — "
+            "reading it here makes the hold band dead code again"
         )
 
-    def test_hold_requires_direction_agreement(self):
-        """A flip is never hold-banded — reversals keep the full enter
-        threshold + P198 persistence."""
-        blk = V36[V36.find("[P232] Gate hysteresis"):]
-        blk = blk[:blk.find("pure new entry")]
-        assert "_hy_agrees" in blk
-        assert "(_hy_dir * _hy_pos) > 0" in blk
+    def test_a_held_agreeing_position_actually_holds(self):
+        """The case that was impossible before P234: long 1 contract, long
+        signal, alpha inside the band -> enforce holds."""
+        from integration.integration_v36 import gate_hysteresis_decision
+        agrees, shadow, enforce = gate_hysteresis_decision(
+            sleeve_position_contracts=1, hold_ratio=0.65,
+            signal_direction=0.4, alpha_bps=30.0, threshold_bps=40.0)
+        assert agrees and shadow and enforce
+
+    def test_zero_signal_never_holds(self):
+        """The dead-code state the old block was permanently stuck in
+        (direction read as 0.0) must itself never grant a hold."""
+        from integration.integration_v36 import gate_hysteresis_decision
+        agrees, shadow, enforce = gate_hysteresis_decision(
+            1, 0.65, 0.0, 1000.0, 40.0)
+        assert not agrees and not shadow and not enforce
+
+    def test_a_flip_is_never_hold_banded(self):
+        """Reversals keep the full enter threshold + P198 persistence —
+        even with alpha far above the bar."""
+        from integration.integration_v36 import gate_hysteresis_decision
+        agrees, shadow, enforce = gate_hysteresis_decision(
+            1, 0.65, -0.9, 1000.0, 40.0)
+        assert not agrees and not shadow and not enforce
+        agrees, shadow, enforce = gate_hysteresis_decision(
+            -1, 0.65, 0.9, 1000.0, 40.0)
+        assert not agrees and not shadow and not enforce
+
+    def test_a_real_exit_still_exits(self):
+        """Alpha below ratio x threshold does not hold — the band widens
+        the exit side only down to the ratio, never further."""
+        from integration.integration_v36 import gate_hysteresis_decision
+        agrees, shadow, enforce = gate_hysteresis_decision(
+            1, 0.65, 0.4, 20.0, 40.0)
+        assert agrees and not shadow and not enforce
+
+    def test_enforcement_requires_positive_ratio(self):
+        """Default-OFF contract: ratio 0 accumulates shadow evidence at
+        0.65 but never enforces."""
+        from integration.integration_v36 import (
+            gate_hysteresis_decision, GATE_HYST_SHADOW_RATIO)
+        assert GATE_HYST_SHADOW_RATIO == 0.65
+        agrees, shadow, enforce = gate_hysteresis_decision(
+            1, 0.0, 0.4, 30.0, 40.0)
+        assert agrees and shadow and not enforce
+
+    def test_short_side_holds_symmetrically(self):
+        from integration.integration_v36 import gate_hysteresis_decision
+        agrees, shadow, enforce = gate_hysteresis_decision(
+            -1, 0.65, -0.4, 30.0, 40.0)
+        assert agrees and shadow and enforce
+
+    def test_degenerate_threshold_never_holds(self):
+        """threshold <= 0 must not grant a hold — a broken gate must not
+        become a standing exemption."""
+        from integration.integration_v36 import gate_hysteresis_decision
+        for thresh in (0.0, -5.0):
+            agrees, shadow, enforce = gate_hysteresis_decision(
+                1, 0.65, 0.4, 30.0, thresh)
+            assert not shadow and not enforce
 
     def test_hold_marker_precedes_the_pure_entry_veto(self):
         held = V36.find('getattr(intent, "alpha_gate_hold", False)')

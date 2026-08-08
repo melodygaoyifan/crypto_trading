@@ -187,7 +187,7 @@ from core.canonical_enums import (
 
 
 # =============================================================================
-# [P233] GATE HYSTERESIS (HOLD BAND) DECISION — pure, unit-testable
+# [P234] GATE HYSTERESIS (HOLD BAND) DECISION — pure, unit-testable
 # =============================================================================
 
 # The shadow counterfactual is always evaluated at this ratio so the
@@ -203,13 +203,13 @@ def gate_hysteresis_decision(
     alpha_bps: float,
     threshold_bps: float,
 ):
-    """[P232/P233] Hold-band verdict for an alpha-gate FAIL while the sleeve
+    """[P232/P234] Hold-band verdict for an alpha-gate FAIL while the sleeve
     holds a position.
 
     A held position survives the fail iff the signal still AGREES with the
     held direction (a flip is never hold-banded) and alpha clears
     ratio x threshold. ``signal_direction`` MUST be the pre-fusion signal the
-    gate itself just judged (``_alpha_input_direction`` in decide()): P233
+    gate itself just judged (``_alpha_input_direction`` in decide()): P234
     found the original inline block read the intent's post-fusion direction
     field, which fusion has not assigned yet at STEP 7, so agreement was
     always False — the band was dead code and every shadow line logged
@@ -1431,21 +1431,25 @@ class HMATSv36Engine:
             # holding past the enter threshold loosens the EXIT side, P141).
             _hy_pos = int(market_data.get("sleeve_position_contracts", 0) or 0)
             _hy_ratio = float(market_data.get("alpha_gate_hold_ratio", 0.0) or 0.0)
-            _hy_dir = float(getattr(intent, "direction", 0.0) or 0.0)
+            # [P234] The agreement input is the PRE-FUSION signal the gate
+            # itself just judged. The intent's own direction field is not
+            # assigned until STEP 8 fusion, so it must not be read here.
             if _hy_pos != 0 and _c1_current_exp < 0.001:
-                _hy_agrees = (_hy_dir * _hy_pos) > 0
                 _hy_alpha = float(alpha_result.estimated_alpha_bps or 0.0)
                 _hy_thresh = float(alpha_result.threshold_bps or 0.0)
-                _hy_would_hold = (_hy_agrees and _hy_thresh > 0
-                                  and _hy_alpha >= 0.65 * _hy_thresh)
+                _hy_agrees, _hy_would_hold, _hy_enforce = gate_hysteresis_decision(
+                    _hy_pos, _hy_ratio, _alpha_input_direction,
+                    _hy_alpha, _hy_thresh,
+                )
                 logger.info(
                     f"[GATE-HYST] sleeve pos={_hy_pos:+d} alpha={_hy_alpha:.1f} "
-                    f"thresh={_hy_thresh:.1f} agrees={_hy_agrees} -> "
+                    f"thresh={_hy_thresh:.1f} sig={_alpha_input_direction:+.3f} "
+                    f"agrees={_hy_agrees} -> "
                     f"{'WOULD-HOLD' if _hy_would_hold else 'WOULD-EXIT'} at "
-                    f"ratio 0.65 (enforce={'ON' if _hy_ratio > 0 else 'OFF'})"
+                    f"ratio {GATE_HYST_SHADOW_RATIO} "
+                    f"(enforce={'ON' if _hy_ratio > 0 else 'OFF'})"
                 )
-                if (_hy_ratio > 0 and _hy_agrees and _hy_thresh > 0
-                        and _hy_alpha >= _hy_ratio * _hy_thresh):
+                if _hy_enforce:
                     intent.veto_active = False
                     intent.veto_reason = ""
                     intent.alpha_gate_hold = True  # read by the P232
@@ -1453,7 +1457,7 @@ class HMATSv36Engine:
                     # it the secondary veto overrides the hold band.
                     logger.info(
                         f"[GATE-HYST] HOLD: alpha {_hy_alpha:.1f} >= "
-                        f"{_hy_ratio:.2f} x {_hy_thresh:.1f} and direction "
+                        f"{_hy_ratio:.2f} x {_hy_thresh:.1f} and signal "
                         f"agrees with held position — position kept, no "
                         f"re-entry credit (enter threshold unchanged)"
                     )
