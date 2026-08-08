@@ -270,12 +270,25 @@ class SmartBetaController:
 
             if abs(state.funding_heat) > 0.5:
                 tags.append("FUNDING_EXTREME")
-            # Carry opportunity: negative funding = LONGs earn carry income
-            # This is free alpha when holding LONG positions in negative funding environment
-            if state.funding_heat < -0.3:
-                tags.append("CARRY_OPPORTUNITY_LONG")
-            elif state.funding_heat > 0.3:
-                tags.append("CARRY_OPPORTUNITY_SHORT")
+            # [P228] CARRY_OPPORTUNITY_{LONG,SHORT} tags DELETED (operator
+            # decision, 2026-08-08 audit follow-up). Three independent
+            # reasons, any one sufficient:
+            #   1. DEAD: the threshold needs |funding| > 6bps/8h; live
+            #      readings are 1-2 orders of magnitude smaller (P218), and
+            #      the shipping commit's own justifying example (-0.00036 x
+            #      500 = -0.18) did not clear its own -0.3 bar.
+            #   2. MIS-SPECIFIED: apply_to_agent_signals multiplies the
+            #      "LONG-only" gate relaxation into BOTH _regime_alpha_gate_
+            #      mult AND _..._short, while the compensating short_mult
+            #      was never wired — a symmetric loosening wearing a
+            #      directional label (P225 audit finding 5).
+            #   3. WRONG INPUT: market_data["funding_rate"] is the KRAKEN
+            #      rate; the book trades Coinbase perps and the SIGN differs
+            #      on BTC/SOL (P218) — a carry tag would key off the venue
+            #      we do not trade.
+            # A real carry sleeve is a strategy (see the refuted cash-carry
+            # analysis, V5 validation): it re-enters via shadow + the P166
+            # gate, not via a resurrected tag.
             if state.crowding_score > 0.6:
                 tags.append("HIGH_CROWDING")
             if state.liquidation_risk > 0.5:
@@ -324,14 +337,8 @@ class SmartBetaController:
         if "FUNDING_EXTREME" in tags:
             size_mult *= 0.85
             short_mult *= 0.70
-        # Carry opportunity: negative funding = LONGs earn carry income
-        # Relax gate for LONG entries and boost size — this is "free" alpha
-        if "CARRY_OPPORTUNITY_LONG" in tags:
-            gate_mult *= 0.92   # lower bar for LONG entries
-            size_mult *= 1.08   # slightly larger LONG positions (earn carry)
-            short_mult *= 0.80  # discourage shorts (they PAY funding)
-        elif "CARRY_OPPORTUNITY_SHORT" in tags:
-            short_mult *= 1.00  # don't penalize shorts when they earn carry
+        # [P228] CARRY_OPPORTUNITY_* recommendation branch deleted with its
+        # tags (see the liquidity-context block for the three reasons).
         if "HIGH_CROWDING" in tags:
             size_mult *= 0.90
             allow_si = False
@@ -344,6 +351,13 @@ class SmartBetaController:
                                                  min(cfg.alpha_gate_mult_max, gate_mult))
         state.recommended_size_mult = max(cfg.size_mult_min,
                                            min(cfg.size_mult_max, size_mult))
+        # [P228] DECISION (2026-08-08): the two fields below are DIAGNOSTICS
+        # ONLY — computed, clamped, surfaced in _smart_beta_state, and
+        # deliberately NOT applied to any consumed key. The P225 audit found
+        # they had never been wired since V1; wiring them now would be an
+        # unvalidated live behavior change (P141/P177). If either is ever to
+        # act, it goes through shadow evidence first, and apply_to_agent_
+        # signals gains an explicit writer + tests in the same commit.
         state.recommended_confidence_mult = max(cfg.confidence_mult_min,
                                                  min(cfg.confidence_mult_max, conf_mult))
         state.short_restriction_mult = max(cfg.short_restriction_mult_min,

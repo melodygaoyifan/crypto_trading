@@ -175,40 +175,42 @@ class TestLiquidityContext:
         assert "HIGH_CROWDING" in state.explanation_tags
 
 
-class TestCarryOpportunity:
-    def test_negative_funding_tags_carry_long(self, market_data, agent_signals):
-        """Negative funding (shorts pay longs) → CARRY_OPPORTUNITY_LONG tag."""
-        market_data["funding_rate"] = -0.001  # negative = longs earn carry
+class TestCarryOpportunityDeleted:
+    """[P228] The CARRY_OPPORTUNITY_* tags are DELETED, and these tests pin
+    the deletion. The old tests here validated a regime that does not occur
+    (they used funding_rate=-0.001 — 2.6x the largest real reading; the tag
+    never fired once on live data) against an implementation that was
+    directionally broken (the "LONG-only" relaxation loosened BOTH gate keys
+    while the compensating short mult was never wired) keyed off the wrong
+    venue's funding sign (P218). See core/smart_beta_controller.py [P228]."""
+
+    @pytest.mark.parametrize("funding", [-0.01, -0.001, 0.001, 0.01])
+    def test_no_carry_tag_at_any_funding_level(
+            self, market_data, agent_signals, funding):
+        """Even at extreme funding the tags must not resurface — if a carry
+        strategy returns, it comes through shadow + the P166 gate, not a
+        resurrected tag."""
+        market_data["funding_rate"] = funding
         ctrl = SmartBetaController(SmartBetaConfig(enabled=True))
         state = ctrl.compute("ETH", market_data, agent_signals)
-        assert "CARRY_OPPORTUNITY_LONG" in state.explanation_tags
-
-    def test_positive_funding_tags_carry_short(self, market_data, agent_signals):
-        """Positive funding (longs pay shorts) → CARRY_OPPORTUNITY_SHORT tag."""
-        market_data["funding_rate"] = 0.001  # positive = shorts earn carry
-        ctrl = SmartBetaController(SmartBetaConfig(enabled=True))
-        state = ctrl.compute("BTC", market_data, agent_signals)
-        assert "CARRY_OPPORTUNITY_SHORT" in state.explanation_tags
-
-    def test_carry_long_relaxes_gate_boosts_size(self, market_data, agent_signals):
-        """CARRY_OPPORTUNITY_LONG should lower gate and boost LONG size."""
-        market_data["funding_rate"] = -0.001
-        market_data["regime_state"] = "STEADY_UPTREND"  # avoid neutral_drift overriding
-        ctrl = SmartBetaController(SmartBetaConfig(enabled=True, mode="bounded_influence"))
-        state = ctrl.compute("ETH", market_data, agent_signals)
-        ctrl.apply_to_agent_signals(state, agent_signals, "ETH")
-        # Gate should be relaxed (lower)
-        assert state.recommended_alpha_gate_mult < 1.0
-        # Short restriction should be tighter (discourage shorts that pay funding)
-        assert state.short_restriction_mult < 1.0
-
-    def test_neutral_funding_no_carry_tag(self, market_data, agent_signals):
-        """Neutral funding → no carry tag."""
-        market_data["funding_rate"] = 0.00005  # negligible
-        ctrl = SmartBetaController(SmartBetaConfig(enabled=True))
-        state = ctrl.compute("BTC", market_data, agent_signals)
         assert "CARRY_OPPORTUNITY_LONG" not in state.explanation_tags
         assert "CARRY_OPPORTUNITY_SHORT" not in state.explanation_tags
+
+    def test_funding_heat_is_still_computed(self, market_data, agent_signals):
+        """Deleting the tag must not delete the diagnostic — funding_heat
+        stays observable so future evidence can accumulate."""
+        market_data["funding_rate"] = -0.001
+        ctrl = SmartBetaController(SmartBetaConfig(enabled=True))
+        state = ctrl.compute("ETH", market_data, agent_signals)
+        assert state.funding_heat < 0
+
+    def test_unwired_channels_are_recorded_as_deliberate(self):
+        """short_restriction_mult / recommended_confidence_mult are
+        diagnostics-only BY DECISION — the source must say so."""
+        import inspect
+        from core import smart_beta_controller
+        src = inspect.getsource(smart_beta_controller)
+        assert "DIAGNOSTICS" in src and "[P228]" in src
 
 
 class TestExistingDataOnlyGuard:

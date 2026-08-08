@@ -328,6 +328,29 @@ AUTHORITY_MATRIX_NO_TRADE = {
 MAX_ADVISE_INFLUENCE = 0.20  # [FIX-M6] Was 0.15. Raised to ±20% after sentiment moved from CONFIRM to ADVISE (FIX-H1). Consensus boost can take it to ±25%, hard cap 0.35.
 
 ADVISE_WEIGHTS_BY_REGIME = {
+    # ========================================================================
+    # [P228] DECISION (operator, 2026-08-08): the 6 agents named here are the
+    # ONLY ADVISE agents fusion consumes — the other 12 in the matrix (drl-as-
+    # ADVISE, squeeze, cvd, risk_appetite, microstructure, model_alpha,
+    # v5_1_strats, onchain_graph, options, vol_alpha, whale, soldex-in-NORMAL)
+    # resolve to weight 0.0 and are DELIBERATELY OFF. This converts what the
+    # P227 audit found as an undecided accident into a recorded decision.
+    #
+    # WHY OFF: no forward evidence clears the bar. The live-IC record (P143
+    # Apr-Jun, P198 Jun-Aug) has model_alpha and llm_sentiment SIGN-FLIPPING
+    # between windows (noise), most of the rest emitting zero (P215/P216
+    # starved), and whale — the only both-window-positive agent — too weak to
+    # clear the P166 cost-aware bar alone. Weighting agents into the live
+    # decider on no evidence is the exact mistake P147 exists to prevent.
+    #
+    # PROMOTION PATH (per agent, never in bulk): its signals keep computing
+    # and attributing every tick (that is the evidence pipeline — do NOT
+    # "optimize away" the dead compute), measured live IC must pass the P166
+    # cost-aware gate on FORWARD data, then the agent gets a weight here with
+    # its own P-entry. The one-shot [P228-ADVISE-WEIGHTS] log names the
+    # currently-off roster each boot so this table and reality cannot drift
+    # silently again.
+    # ========================================================================
     # [FIX-M6] Added "sentiment" key (moved from CONFIRM to ADVISE per FIX-H1).
     # Weights redistributed: sentiment gets 0.10 base, taken from llm_sentiment.
     "default": {
@@ -904,14 +927,12 @@ class AuthorityFusionEngine:
             total_weight = 0.0
             advise_details = []
 
-            # [P227] Make the silent zero-weighting VISIBLE. ADVISE_WEIGHTS_BY_REGIME
-            # names only 6 agents; every other ADVISE agent in the matrix resolves
-            # to weight 0.0 via the .get default below and is dropped here — 12 of
-            # 18 ADVISE agents as of the 2026-08-08 audit. That may be the intended
-            # design, but a `.get(agent, 0.0)` default makes "not configured"
-            # indistinguishable from "deliberately zero-weighted" (the P2
-            # missing-vs-neutral shape), and nothing anywhere reported it. One
-            # log line per process, so the roster is greppable, not spam.
+            # [P227/P228] Keep the zero-weighting VISIBLE. As of P228 this is
+            # a RECORDED DECISION (see the block above ADVISE_WEIGHTS_BY_
+            # REGIME): the off-roster agents keep computing for IC evidence
+            # and are excluded from fusion until one passes the P166 gate on
+            # forward data. This one-shot log exists so the table and reality
+            # cannot drift apart silently again.
             _zero_weighted = [
                 a for a, auth in matrix.items()
                 if auth == Authority.ADVISE and a in signals
@@ -921,11 +942,10 @@ class AuthorityFusionEngine:
                     AuthorityFusionEngine, "_p227_zero_weight_logged", False):
                 AuthorityFusionEngine._p227_zero_weight_logged = True
                 logger.info(
-                    "[P227-ADVISE-WEIGHTS] %d ADVISE agents carry ZERO regime "
-                    "weight and are excluded from fusion every tick: %s — their "
-                    "signals are computed and attributed but never consumed. If "
-                    "this is intended, record it; if not, add them to "
-                    "ADVISE_WEIGHTS_BY_REGIME.",
+                    "[P228-ADVISE-WEIGHTS] %d ADVISE agents are DELIBERATELY "
+                    "zero-weighted (recorded decision, P228 — evidence bar: "
+                    "P166 cost-aware gate on forward IC): %s. Their signals "
+                    "keep computing for IC accumulation.",
                     len(_zero_weighted), sorted(_zero_weighted),
                 )
 

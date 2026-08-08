@@ -251,9 +251,14 @@ class TestFusionObservability:
     def test_zero_weighted_advise_agents_are_logged(self):
         src = (REPO / "signals" / "authority_fusion.py").read_text(
             encoding="utf-8-sig", errors="replace")
-        assert "[P227-ADVISE-WEIGHTS]" in src, (
-            "The silent zero-weighting of 12/18 ADVISE agents is invisible "
-            "again — restore the one-shot roster log or record the decision."
+        assert "ADVISE-WEIGHTS]" in src, (
+            "The zero-weighting of 12/18 ADVISE agents is invisible again — "
+            "restore the one-shot roster log."
+        )
+        # [P228] and the decision itself must be recorded AT the table.
+        assert "DELIBERATELY OFF" in src and "P166" in src, (
+            "The P228 decision block above ADVISE_WEIGHTS_BY_REGIME is gone — "
+            "the zero-weighting is back to being an undecided accident."
         )
 
 

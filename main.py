@@ -3042,7 +3042,20 @@ class HMATSProductionRunner:
                 leverage_guard=self.leverage_guard,
                 strict_mode=False,  # Allow missing optional modules
             )
-            logger.info("  AuthorityChain: ACTIVE")
+            # [P228] Honest boot log. The P227 audit first called this
+            # "orphan-instantiated, never invoked" — that was WRONG:
+            # execute_intent_v2 calls ctx.authority_chain.evaluate() at
+            # core/execution_service.py:~1215 via ExecutionContext. It is
+            # inert today only because that sits past the P152 early return,
+            # i.e. the same dormant-Kraken-path status as the rest of that
+            # stack (P201). DECISION: KEEP (it is a wired control on a real
+            # if dormant path; deleting it would strip the Kraken book's
+            # one-veto-kill if Kraken ever trades again), but stop logging
+            # a bare "ACTIVE" that reads as load-bearing.
+            logger.info(
+                "  AuthorityChain: wired (Kraken exec path via "
+                "ExecutionContext; dormant for Coinbase-routed assets, P152)"
+            )
         
         # Execution manager
         self.execution_manager = None

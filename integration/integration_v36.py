@@ -2203,6 +2203,20 @@ class HMATSv36Engine:
         
         # Regime - in OPPORTUNITY mode, regime has DECIDE authority for timing.
         # Direction comes from quant (regime provides confidence/gating, not direction).
+        # [P228] DECISION (operator, 2026-08-08): the fallback below is
+        # ACCEPTED for now, with its consequence stated plainly rather than
+        # implied: `regime_direction` has NO live producer (only the synthetic
+        # verification path writes it — P227 audit), so this branch fires on
+        # EVERY live tick and the regime CONFIRM check compares quant's
+        # direction with itself — a tautology that can never disagree. Regime
+        # still influences decisions through mode selection, regime_confidence,
+        # the leverage map and the P198 trend-regime gate; only the CONFIRM
+        # *direction* vote is vacuous. Building a real producer (candidate:
+        # the GMM POSITION_BIAS mapping) is a NEW SIGNAL — it enters via
+        # shadow logging + forward IC through the P166 gate, not by a quiet
+        # edit here. Removing the fallback instead would make an absent key
+        # read as direction=0 and penalize as disagreement at random — worse
+        # than the tautology.
         regime_confidence = agent_signals.get("regime_confidence", 0.5)
         regime_direction = agent_signals.get("regime_direction", 0.0)
         if regime_direction == 0.0:
