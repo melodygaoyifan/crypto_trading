@@ -150,3 +150,21 @@ def test_registry_includes_ridge_only_with_ctx(T, planted_df):
         "train_df": planted_df.iloc[:700], "feature_cols": ["f1", "f2"],
         "decision_interval": 4})
     assert "ridge_16h" in with_ridge
+
+
+# ---------------------------------------------------------------------------
+# [P221-followup] --include-fv2 must preserve the FiLM slice contract
+# ---------------------------------------------------------------------------
+
+def test_include_fv2_inserts_before_the_regime_block():
+    """The LSTM-FiLM-A extractor slices regime as obs[-12:-4] END-relative;
+    fv2 appended at the end would silently feed flow z-scores into the FiLM
+    regime conditioner (live check: the [FiLM-PosA] debug line's
+    regime_sum=1.0000 proves the slice lands on a probability vector)."""
+    src = _src()
+    assert "feature_cols[:-8] + _fv2 + feature_cols[-8:]" in src, (
+        "--include-fv2 no longer inserts BEFORE the trailing regime_proba "
+        "block — the FiLM slice contract is broken for fv2 runs"
+    )
+    assert 'all(c.startswith("regime_proba") for c in feature_cols[-8:])' in src
+    assert "raise SystemExit" in src  # missing fv2 columns must refuse, not train silently

@@ -3010,6 +3010,20 @@ def main():
     parser.add_argument("--baseline-sma-window", type=int, default=200,
                         help="SMA baseline window in BARS (200 @4h ~ 33 days)")
 
+    # [P221-followup] fv2 flow features (built by build_flow_features.py as
+    # EXTRA parquet columns outside the 122-manifest). Admitting them here is
+    # the deliberate obs-contract change the manifest deliberately does not
+    # make: obs becomes (122+13+4)=139 x8=1112, which the CURRENT runtime
+    # (hardcoded 126/1008) cannot load — fine for a measurement; deployment
+    # rides the Rung-3 atomic set with a runtime obs update.
+    parser.add_argument("--include-fv2", action="store_true",
+                        help="Extend the feature set with the fv2_* flow "
+                             "features (probe: BTC 16h +10.9bps standalone, "
+                             "ensemble +28bps). Inserted BEFORE the trailing "
+                             "regime_proba block so the FiLM extractor's "
+                             "end-relative slices ([-12:-4]=regime, last 4="
+                             "env state) stay valid.")
+
     # [P180] Reward shaping
     parser.add_argument("--regime-alignment-bonus", action="store_true",
                         help="Re-enable the regime-alignment reward bonus. "
@@ -3111,6 +3125,27 @@ def main():
         no_scale = set(manifest.get("no_scale_features", []))
         logger.info(f"  Features: {len(feature_cols)} (from manifest, "
                     f"{len(no_scale)} no-scale)")
+        if getattr(args, "include_fv2", False):
+            _fv2 = sorted(c for c in data.columns if c.startswith("fv2_"))
+            if not _fv2:
+                raise SystemExit(
+                    "--include-fv2 passed but the parquet has no fv2_* columns. "
+                    "Run training/scripts/build_flow_features.py AFTER the "
+                    "rebuild (the rebuild rewrites parquets without them). "
+                    "Refusing to train silently without the requested features.")
+            # INSERT BEFORE the trailing regime_proba block: the LSTM-FiLM-A
+            # extractor slices regime as obs[-12:-4] and env state as the last
+            # 4, both END-relative. regime_proba must therefore remain the
+            # last 8 feature columns. Appending fv2 at the end would silently
+            # feed flow features into the FiLM regime conditioner.
+            assert all(c.startswith("regime_proba") for c in feature_cols[-8:]), (
+                "manifest tail is no longer the 8 regime_proba columns — the "
+                "FiLM slice contract has changed; do not insert fv2 blindly")
+            feature_cols = feature_cols[:-8] + _fv2 + feature_cols[-8:]
+            logger.info(f"  [P221-followup] +{len(_fv2)} fv2 features -> "
+                        f"{len(feature_cols)} total; obs_dim="
+                        f"{len(feature_cols) + 4} (runtime contract stays 126 "
+                        f"until the Rung-3 obs update)")
     else:
         # Fallback: auto-detect float cols, exclude OHLCV + regime metadata
         feature_cols = [
