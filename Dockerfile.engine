@@ -45,7 +45,6 @@ COPY --chown=hmats:hmats analytics/ ./analytics/
 COPY --chown=hmats:hmats configs/ ./configs/
 COPY --chown=hmats:hmats defense/ ./defense/
 COPY --chown=hmats:hmats drl/ ./drl/
-COPY --chown=hmats:hmats engine/ ./engine/
 COPY --chown=hmats:hmats exchange/ ./exchange/
 COPY --chown=hmats:hmats execution/ ./execution/
 COPY --chown=hmats:hmats infra/ ./infra/
@@ -58,7 +57,6 @@ COPY --chown=hmats:hmats risk/ ./risk/
 COPY --chown=hmats:hmats signals/ ./signals/
 COPY --chown=hmats:hmats strategies/ ./strategies/
 COPY --chown=hmats:hmats data_mgmt/ ./data_mgmt/
-COPY --chown=hmats:hmats shadow/ ./shadow/
 COPY --chown=hmats:hmats tools/ ./tools/
 COPY --chown=hmats:hmats dashboard/ ./dashboard/
 

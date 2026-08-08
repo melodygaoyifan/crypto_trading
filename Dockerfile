@@ -63,7 +63,6 @@ COPY --chown=hmats:hmats analytics/ ./analytics/
 COPY --chown=hmats:hmats configs/ ./configs/
 COPY --chown=hmats:hmats defense/ ./defense/
 COPY --chown=hmats:hmats drl/ ./drl/
-COPY --chown=hmats:hmats engine/ ./engine/
 COPY --chown=hmats:hmats exchange/ ./exchange/
 COPY --chown=hmats:hmats execution/ ./execution/
 COPY --chown=hmats:hmats infra/ ./infra/
@@ -88,7 +87,6 @@ COPY --chown=hmats:hmats training/drl/__init__.py training/drl/features.py train
 COPY --chown=hmats:hmats training/exit_drl ./training/exit_drl
 # Validator outputs — read by risk/exit_drl_promotion_gate.py for Sharpe lift evidence.
 COPY --chown=hmats:hmats data/exit_drl_validation ./data/exit_drl_validation
-COPY --chown=hmats:hmats shadow/ ./shadow/
 COPY --chown=hmats:hmats tools/ ./tools/
 
 # Volumes for persistent data

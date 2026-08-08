@@ -19,6 +19,7 @@ CRITICAL: These checks run INSIDE v3.6 runtime, not delegated to caller.
 """
 
 import logging
+import math
 import os
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple, Any
@@ -33,6 +34,12 @@ from configs.canonical_config import (  # [FIX-33] single source for fee constan
 )
 
 logger = logging.getLogger(__name__)
+
+# [P225] Terminal bounds for the COMPOSED regime/smart-beta alpha-gate
+# multiplier (see check_alpha_gate). Wider than any single writer's own bounds
+# on purpose — this is a runaway-stacking backstop, not a tuning knob.
+REGIME_GATE_MULT_MIN = 0.5
+REGIME_GATE_MULT_MAX = 2.0
 
 
 # =============================================================================
@@ -1229,8 +1236,35 @@ class AlphaThresholdCalculator:
 
         # [v6.7-P1] Regime-conditional alpha gate multiplier
         # <1.0 = more permissive (PANIC_SELLOFF), >1.0 = more selective (MOMENTUM_RALLY)
+        # [P225] Terminal clamp at the single consumption point. Six writers
+        # stack multiplicatively into agent_signals["_regime_alpha_gate_mult"]
+        # (RegimeAggressor assign, then SmartBeta / AlphaBoost /
+        # EXTERNAL-COMPOSITE / EC-ORPHAN each `*=`, main.py) and each bounds
+        # only its OWN factor — the size-path twin has had a [0.2, 2.0] clamp
+        # at main.py's WIRE-REGIME-SIZE for months while this gate path, the
+        # one that produces vetoes and (post-P206) sleeve flattens, had none.
+        # Bounds chosen to be behavior-preserving for every composition
+        # observed live (0.99–1.39): they only bite on runaway stacking.
+        # A non-finite product fails toward NEUTRAL (1.0), not toward either
+        # extreme — a poisoned multiplier must not become a silent trading
+        # stop (mult→inf) or a disabled gate (mult→0).
         if regime_alpha_gate_mult != 1.0:
-            ev_threshold_bps *= regime_alpha_gate_mult
+            _gm = float(regime_alpha_gate_mult)
+            if not math.isfinite(_gm):
+                logger.warning(
+                    f"[P225-GATE-MULT] non-finite regime_alpha_gate_mult "
+                    f"({regime_alpha_gate_mult!r}) — using neutral 1.0"
+                )
+                _gm = 1.0
+            elif not (REGIME_GATE_MULT_MIN <= _gm <= REGIME_GATE_MULT_MAX):
+                _clamped = min(REGIME_GATE_MULT_MAX, max(REGIME_GATE_MULT_MIN, _gm))
+                logger.warning(
+                    f"[P225-GATE-MULT] composed regime_alpha_gate_mult {_gm:.3f} "
+                    f"outside [{REGIME_GATE_MULT_MIN}, {REGIME_GATE_MULT_MAX}] — "
+                    f"clamped to {_clamped:.3f} (check the stacking writers in main.py)"
+                )
+                _gm = _clamped
+            ev_threshold_bps *= _gm
 
         # P1-2A: Effective threshold = max(min_alpha floor, EV gate)
         effective_threshold = max(min_alpha_bps, ev_threshold_bps)
