@@ -1974,7 +1974,15 @@ class ProductionConfig:
 # two are not the same, and conflating them is how a naive rewiring liquidates
 # the book: EXPOSURE_DELTA_BELOW_THRESHOLD (main.py, anti-churn) means *already
 # at target* — mapping it to direction 0 would flatten on every stable tick.
-_SLEEVE_HOLD_VETOES = ("EXPOSURE_DELTA_BELOW_THRESHOLD",)
+# [P231] FLIP_PERSIST_HOLD added. The main.py flip-persistence guard
+# (L2-CHURN, ~main.py:12520) sets veto_active with that reason and its
+# documented semantics are "hold the current position — no close, no
+# reverse". It was missing from this set, so sleeve_direction_from_intent
+# classified it as veto_flat → the sleeve would LIQUIDATE the position the
+# guard exists to hold. Latent today only because the guard reads the empty
+# Kraken _paper_positions and cannot fire — the exact P206-docstring failure
+# class, found by the P231 calibration research, defused before it can arm.
+_SLEEVE_HOLD_VETOES = ("EXPOSURE_DELTA_BELOW_THRESHOLD", "FLIP_PERSIST_HOLD")
 
 # Vetoes that exist only because KRAKEN SPOT cannot express the position. They
 # do not apply to a perp venue, which can. B1 blocks short entries when

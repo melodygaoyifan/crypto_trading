@@ -211,3 +211,31 @@ class TestWiring:
         assert "sleeve_direction_from_intent" in window
         assert "SLEEVE_HOLD" in window, "HOLD is not honoured at the call site"
         assert "_live_intents.get" in window
+
+
+class TestFlipPersistHoldClassification:
+    """[P231] The L2-CHURN flip-persistence guard (main.py ~12520) stamps
+    veto_reason FLIP_PERSIST_HOLD with documented semantics 'hold the current
+    position — no close, no reverse'. It was missing from _SLEEVE_HOLD_VETOES,
+    so the translator classified it veto_flat: the sleeve would LIQUIDATE the
+    position the guard exists to hold. Latent (the guard reads the empty
+    Kraken book today) — defused before _paper_positions can ever repopulate."""
+
+    def test_flip_persist_hold_is_a_hold_not_a_flatten(self):
+        import main as m
+        tgt, why = m.sleeve_direction_from_intent(
+            _intent(direction=0.0, target_exposure=0.0, veto_active=True,
+                    veto_reason="[L2-CHURN] FLIP_PERSIST_HOLD ETH 1/2"),
+            fallback_dir=0.7)
+        assert tgt is m.SLEEVE_HOLD, (
+            "P231 regression: FLIP_PERSIST_HOLD translates to a flatten — "
+            "the hold guard would liquidate the book when it first fires."
+        )
+
+    def test_ordinary_vetoes_still_flatten(self):
+        import main as m
+        tgt, why = m.sleeve_direction_from_intent(
+            _intent(direction=0.0, veto_active=True,
+                    veto_reason="[v3.6.1] Alpha gate: Alpha 10bps < 55bps"),
+            fallback_dir=0.7)
+        assert tgt == 0.0 and why.startswith("veto_flat")

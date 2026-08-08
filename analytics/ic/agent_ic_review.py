@@ -199,12 +199,23 @@ def main() -> int:
                 rows[h] = {"n": n, "ic": ic, "verdict": "INSUFFICIENT"}
                 verdict_bits.append("INSUFFICIENT")
                 continue
-            t = ic * math.sqrt(n - 1)
+            # [P231] OVERLAP CORRECTION. An h-bar forward return sampled every
+            # bar overlaps h times, so consecutive observations are not
+            # independent and the naive t = IC*sqrt(n-1) overstates
+            # significance by ~sqrt(h). The first live reading's headline
+            # (model_alpha 16h t=4.4) was exactly this artifact — corrected it
+            # is ~2.2, below the multiple-testing hurdle (research: Bailey/
+            # Lopez de Prado MinTRL + Harvey-Liu-Zhu t>3 for new signals).
+            # Effective n = n/h is the standard cheap correction; a proper
+            # Newey-West would be tighter still, so this remains generous.
+            n_eff = max(3, n // h)
+            t = ic * math.sqrt(n_eff - 1)
             edge = 0.7979 * 2.0 * math.sin(math.pi * ic / 6.0) * fwd_vol[h]
             req = required_ic(fwd_vol[h])
             clears = (ic > 0 and abs(t) >= 2.0
                       and req is not None and ic >= req)
-            rows[h] = {"n": n, "ic": round(ic, 4), "t": round(t, 2),
+            rows[h] = {"n": n, "n_eff": n_eff, "ic": round(ic, 4),
+                       "t": round(t, 2), "t_note": f"overlap-corrected (n/{h})",
                        "edge_bps": round(edge, 2),
                        "required_ic": round(req, 4) if req else None,
                        "clears_p166": clears}
