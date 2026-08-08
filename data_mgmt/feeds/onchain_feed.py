@@ -325,6 +325,45 @@ class OnChainFeed:
         except Exception as e:
             logger.warning(f"[ONCHAIN_COMPOSITE] CryptoCompare failed: {e}")
 
+        # [P221] Blockchair fallback — free, keyless, unmetered.
+        #
+        # CryptoCompare is capped at 100 calls/MONTH (P220) and the plan cannot
+        # be upgraded, so the block above contributes nothing in practice: its
+        # `large_transaction_count > 0` gate never passes and BTC/ETH whale flow
+        # has been empty, which is why the `flow` and `onchain` agents read 0.00
+        # every tick.
+        #
+        # Runs only when CryptoCompare produced nothing, so restoring that quota
+        # would silently take precedence again. Blockchair has no "large
+        # transaction count", so this uses the honest quantity it does publish —
+        # 24h on-chain settlement VALUE in USD — rather than fabricating a count
+        # to satisfy the gate above.
+        #
+        # Still a MAGNITUDE, not a direction, exactly as before: the whale
+        # proxy's sign comes from CoinGlass OI + funding (main.py:7263), never
+        # from this feed.
+        if not any_real:
+            try:
+                from data_mgmt.feeds.blockchair_onchain import (
+                    get_blockchair_onchain_feed,
+                )
+                bc_data = get_blockchair_onchain_feed().fetch()
+                for symbol in ("BTC", "ETH"):
+                    bc = bc_data.get(symbol)
+                    if bc and not bc.is_mock and bc.onchain_volume_24h_usd > 0:
+                        any_real = True
+                        whale_activities.append({
+                            "address": f"blockchair_{symbol}_aggregate",
+                            "activity_type": "buy",  # net direction unknown
+                            "token": symbol,
+                            "amount": float(bc.transaction_count),
+                            "value_usd": float(bc.onchain_volume_24h_usd),
+                            "timestamp": bc.timestamp.isoformat(),
+                            "tx_hash": "",
+                        })
+            except Exception as e:  # noqa: silent-swallow — a free fallback must never break the tick
+                logger.warning(f"[ONCHAIN_COMPOSITE] Blockchair fallback failed: {e}")
+
         # 2. Solana RPC: SOL network health + Jito MEV
         try:
             from data_mgmt.feeds.solana_onchain import get_solana_onchain_feed

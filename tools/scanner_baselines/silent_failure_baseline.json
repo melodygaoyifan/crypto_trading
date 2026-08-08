@@ -1,6 +1,7 @@
 {
   "dictget_count": 42,
   "flags_count": 0,
-  "tryexcept_count": 336,
-  "_p216_note": "336 was 334: +2 for CCNewsFeed._restore_state/_persist_state (P216). Both are deliberate fail-soft guards mirroring the accepted CryptoPanic precedent from P154 \u2014 a corrupt state file must not break startup, and telemetry must not break the tick. Both LOG on failure (warning / debug) and carry noqa: silent-swallow; this counter is produced by silent_failure_audit, which counts try/except blocks generally and is not noqa-aware. Updated this ONE counter by hand: --update re-seeds all seven baselines including mypy (P171)."
+  "tryexcept_count": 337,
+  "_p216_note": "336 was 334: +2 for CCNewsFeed._restore_state/_persist_state (P216). Both are deliberate fail-soft guards mirroring the accepted CryptoPanic precedent from P154 \u2014 a corrupt state file must not break startup, and telemetry must not break the tick. Both LOG on failure (warning / debug) and carry noqa: silent-swallow; this counter is produced by silent_failure_audit, which counts try/except blocks generally and is not noqa-aware. Updated this ONE counter by hand: --update re-seeds all seven baselines including mypy (P171).",
+  "_p221_note": "337 was 336: +1 for BlockchairOnChainFeed._f (P221), a numeric coercion helper. Blockchair returns wei as a STRING and absent fields as null, so both are expected data shapes rather than errors; logging each would drown the feed. It carries noqa: silent-swallow and the swallow scanner accepts it \u2014 this counter comes from silent_failure_audit, which counts try/except generally and is NOT noqa-aware. Updated this ONE counter by hand; --update re-seeds all seven including mypy (P171)."
 }
