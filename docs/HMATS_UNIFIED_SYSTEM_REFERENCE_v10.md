@@ -4,6 +4,13 @@
 > **审计链**: 1909行审计 → 84项自检 → 11修复(11/11 PASS) → 91项再审计 = 97.7% GREEN
 > **总条目**: 96+ 项 (含 v10 新增)
 > **标注**: 🔧 = v10审计修正; 🆕 = v10新增; ★ = v10核心改进
+
+> **⚠️ 历史文档（标注于 2026-08-08，P227 审计）。** 冻结于 2026-03 时代。机制叙述仍有
+> 参考价值，但运行时事实已过时：**执行 venue 是 Coinbase US perps sleeve（2026-06-13
+> 起，Kraken 结构性无仓，P152）**；**DRL(TQC) 与 Exit-SAC 均已降级 SHADOW（2026-08-07，
+> P198/P200）**；authority matrix 为 26 agents，fusion 实际消费 11 个（P227）；风控数值
+> 以代码与 `configs/live_high_risk.json` 为准（本文的 4 级回撤梯度乘数 ×0.85/×0.65 在
+> 代码中不存在，fuse 阈值为 UNLEASH v2）。当前真实状态以 **CLAUDE.md** 为准。
 > **接线状态**: ✅ ACTIVE | 🌓 SHADOW/ADVISORY/BOUNDED_LIVE | ⚠️ FEATURE_FLAG / CODE_ONLY | ❌ NOT_IMPL
 
 ---

@@ -25,11 +25,30 @@ logger = logging.getLogger(__name__)
 
 
 def load_trade_returns():
-    """Load per-trade returns from exit_alpha_tracking."""
+    """Load per-trade returns from exit_alpha_tracking.
+
+    [P227b] A MISSING input file is a refusal, not an empty result. The old
+    `return []` on absence made "no data source" indistinguishable from "no
+    trades" (the P199/P183 conflation) — and it is exactly how this tool sat
+    unrunnable through the Apr–Jun −25%: its last report predates the loss it
+    existed to measure, because `data/exit_alpha_tracking.jsonl` never existed
+    on this machine and nothing said so.
+    """
     trades = []
     path = Path("data/exit_alpha_tracking.jsonl")
     if not path.exists():
-        return trades
+        print(
+            f"REFUSING TO REPORT: {path} does not exist on this machine.\n"
+            f"This is 'no data source', not 'no trades' — a report from here "
+            f"would look like a finding.\n"
+            f"The file is written by the exit-alpha tracker on the LIVE "
+            f"engine's data volume; run this in-container or scp the file "
+            f"first. For sleeve-era beta, note the sleeve PnL series is "
+            f"data/coinbase_sleeve_pnl.jsonl (different schema — this tool "
+            f"does not read it yet).",
+            file=sys.stderr,
+        )
+        sys.exit(2)
     with open(path) as f:
         for line in f:
             if not line.strip():

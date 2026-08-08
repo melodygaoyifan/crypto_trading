@@ -255,3 +255,189 @@ class TestFusionObservability:
             "The silent zero-weighting of 12/18 ADVISE agents is invisible "
             "again — restore the one-shot roster log or record the decision."
         )
+
+
+# ---------------------------------------------------------------------------
+# P227b cleanup batch
+# ---------------------------------------------------------------------------
+
+class TestPromotionGateHonorsPersistedLevel:
+    """[P227b] get_authority_level() used to silently restore ACTIVE whenever
+    `_demoted_at` was set — a self-reversing demotion mechanism (the exact
+    shape P198 removed from main.py). Any demotion through the gate's own
+    `_demote` would have been undone by the very next read."""
+
+    def _gate(self, tmp_path, payload):
+        import json as _json
+        from drl.promotion_gate import DRLPromotionGate
+        f = tmp_path / "state.json"
+        f.write_text(_json.dumps(payload))
+        return DRLPromotionGate(state_file=str(f))
+
+    def test_persisted_shadow_with_demoted_at_stays_shadow(self, tmp_path):
+        g = self._gate(tmp_path, {
+            "authority_level": "SHADOW",
+            "demoted_at": "2026-08-07T01:45:00",
+            "peak_equity": 0.0, "current_equity": 0.0,
+            "demotion_history": [],
+        })
+        # Pre-P227b this returned "ACTIVE" and SAVED it — a read with a
+        # promotion side-effect.
+        assert g.get_authority_level() == "SHADOW"
+        # And repeated reads must not drift.
+        assert g.get_authority_level() == "SHADOW"
+
+    def test_a_demotion_through_the_gates_own_api_sticks(self, tmp_path):
+        g = self._gate(tmp_path, {
+            "authority_level": "ACTIVE", "demoted_at": None,
+            "peak_equity": 0.0, "current_equity": 0.0,
+            "demotion_history": [],
+        })
+        g._demote("test demotion")  # sets _demoted_at at the end
+        level_after = g.get_authority_level()
+        assert level_after != "ACTIVE", (
+            "P227b regression: the gate un-demoted itself on the next read."
+        )
+
+    def test_fresh_volume_boots_disabled_not_active(self, tmp_path):
+        """The audit's 'repo-tracked state says ACTIVE' scare was a false
+        positive — pin the actual fresh-boot behavior."""
+        from drl.promotion_gate import DRLPromotionGate
+        g = DRLPromotionGate(state_file=str(tmp_path / "nonexistent.json"))
+        assert g.get_authority_level() == "DISABLED"
+
+
+class TestBullTransitionPersistence:
+    """[P227b] to_dict/from_dict had ZERO callers — CONFIRMED (5 continuous
+    days) could never arm across the deploy cadence (P148/P150/P209 class)."""
+
+    def test_state_round_trips(self):
+        from datetime import datetime, timedelta
+        from risk.bull_transition_detector import (
+            BullTransitionDetector, BullTransitionState)
+        d = BullTransitionDetector()
+        d._state = BullTransitionState.ACTIVE
+        d._state_entry_time = datetime(2026, 8, 1, 12, 0, 0)
+        d2 = BullTransitionDetector()
+        d2.from_dict(d.to_dict())
+        assert d2._state == BullTransitionState.ACTIVE
+        assert d2._state_entry_time == d._state_entry_time
+
+    def test_malformed_payload_falls_back_to_inactive(self):
+        """Conservative direction: a bad restore may DELAY the shorts-block,
+        never falsely CONFIRM it."""
+        from risk.bull_transition_detector import (
+            BullTransitionDetector, BullTransitionState)
+        d = BullTransitionDetector()
+        d.from_dict({"state": "NOT_A_STATE", "state_entry_time": "garbage"})
+        assert d._state == BullTransitionState.INACTIVE
+
+    def test_save_payload_carries_it(self):
+        assert '"bull_transition_state"' in MAIN
+
+    def test_restore_calls_from_dict(self):
+        assert "self._bull_detector.from_dict(bt_data)" in MAIN
+
+    def test_restore_is_in_the_governor_section_not_positions_gated(self):
+        """P211: run_live restores with restore_positions=False; the bull
+        restore must sit with the governors (unconditional), so find it AFTER
+        the positions gate but verify it does not reference restore_positions."""
+        idx = MAIN.find("bt_data = data.get(\"bull_transition_state\"")
+        assert idx > 0
+        surrounding = MAIN[idx - 400:idx]
+        assert "if restore_positions" not in surrounding
+
+
+class TestV51AttributionEntry:
+    """[P227b] The one P8 3-file-rule violation closed: extractor existed,
+    _attr_collected entry did not."""
+
+    def test_collected_entry_exists(self):
+        assert '"v5_1_strats": {k: agent_signals.get(k, 0.0) for k in' in MAIN
+
+    def test_collected_keys_match_what_the_extractor_reads(self):
+        """The rule breaks at KEY level, so pin the keys, not just presence."""
+        env = (REPO / "agents" / "signal_envelope.py").read_text(
+            encoding="utf-8-sig", errors="replace")
+        for key in ("v5_1_strats_direction", "v5_1_strats_confidence"):
+            assert key in env, f"extractor no longer reads {key}"
+            assert f'"{key}"' in MAIN, f"_attr_collected no longer passes {key}"
+
+
+class TestLoopControllerRetired:
+    def test_main_no_longer_imports_the_200ms_loop(self):
+        assert "from execution.loop_controller import" not in MAIN, (
+            "P227b regression: the dead 200ms loop import is back in the "
+            "EXECUTION_AVAILABLE try-block — an ImportError in dead code "
+            "would silently disable the REAL ExecutionManager."
+        )
+
+    def test_the_module_itself_survives_for_tests(self):
+        assert (REPO / "execution" / "loop_controller.py").exists()
+
+
+class TestRegimeSmootherParity:
+    """[P227b] Runtime re-implements the smoothing inline in the pipeline.
+    Full object-level parity needs a constructed pipeline; what is pinned
+    here: (a) the core class matches an INDEPENDENTLY-written oracle (not a
+    copy of either implementation), (b) the pipeline block still carries the
+    same structural machine, so a semantic edit to either side trips a test."""
+
+    @staticmethod
+    def _oracle(seq, n):
+        """Hold current until the newcomer appears n times consecutively."""
+        out, cur, cand, streak = [], None, None, 0
+        for r in seq:
+            if cur is None:
+                cur = r
+            elif r == cur:
+                cand, streak = None, 0
+            elif r == cand:
+                streak += 1
+                if streak >= n:
+                    cur, cand, streak = r, None, 0
+            else:
+                cand, streak = r, 1
+            out.append(cur)
+        return out
+
+    def test_core_class_matches_oracle_on_random_sequences(self):
+        import random
+        import pandas as pd
+        from core.regime_smoother import RegimeSmoother
+        rng = random.Random(42)
+        for trial in range(20):
+            seq = [rng.choice("ABC") for _ in range(60)]
+            df = pd.DataFrame({"regime": seq})
+            got = RegimeSmoother(min_persistence=2).smooth_column(
+                df, "regime")["regime"].tolist()
+            assert got == self._oracle(seq, 2), f"trial {trial}: {seq}"
+
+    def test_pipeline_inline_machine_still_has_the_same_structure(self):
+        src = (REPO / "data_mgmt" / "market_data_pipeline.py").read_text(
+            encoding="utf-8-sig", errors="replace")
+        for token in (
+            '_state["count"] >= self._regime_smoother_persistence',
+            '{"current": gmm_regime_name, "pending": None, "count": 0}',
+        ):
+            assert token in src, (
+                f"pipeline smoother structure changed ({token!r} gone) — "
+                f"re-verify parity with core/regime_smoother.py"
+            )
+
+
+class TestBetaAuditRefusesLoudly:
+    def test_missing_input_exits_2_before_reporting(self, tmp_path):
+        """P199 pattern: 'no data source' must be a refusal, not an empty
+        report. Run from a cwd with no data/ so the file is absent."""
+        import os
+        import subprocess
+        import sys as _sys
+        env = dict(os.environ, PYTHONPATH=str(REPO), PYTHONIOENCODING="utf-8")
+        r = subprocess.run(
+            [_sys.executable, "-X", "utf8",
+             str(REPO / "scripts" / "run_beta_audit.py")],
+            cwd=tmp_path, env=env, capture_output=True, text=True, timeout=120,
+        )
+        assert r.returncode == 2, (r.returncode, r.stderr[-300:])
+        assert "REFUSING TO REPORT" in r.stderr

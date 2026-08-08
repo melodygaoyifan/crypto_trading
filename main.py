@@ -729,7 +729,13 @@ EXECUTION_AVAILABLE = False
 try:
     from execution import ExecutionManager
     from execution.execution_manager import ExecutionConfig, StopOrderFailurePolicy
-    from execution.loop_controller import ExecutionLoopController
+    # [P227b] ExecutionLoopController (the 200ms loop) import REMOVED — it was
+    # imported here and never instantiated anywhere in this file, i.e. dead
+    # architecture sharing this try-block with the REAL ExecutionManager: an
+    # ImportError in the dead module would have silently disabled live
+    # execution (P177 family). The module stays in execution/ for the
+    # simulator/tests; the docs' "200ms execution loop" does not run in
+    # production and never has from this entrypoint.
     EXECUTION_AVAILABLE = True
     logger.info("[OK]Execution modules loaded")
 except ImportError as e:
@@ -3814,7 +3820,13 @@ class HMATSProductionRunner:
             logger.warning(f"  GMM Pretrained: FAILED ({e})")
 
         # v6.5.2: RegimeSmoother -persistence filter (must match training pipeline)
-        self._regime_smoother_persistence = 2  # Must match train_tqc.py default
+        # [P227b] Must match training's --smooth-regimes default
+        # (training/train_drl_full.py; the old comment cited train_tqc.py,
+        # which no longer exists in source). Runtime smoothing is the inline
+        # block in data_mgmt/market_data_pipeline.py; parity with
+        # core/regime_smoother.py is pinned by
+        # tests/test_audit_fixes_p227.py::TestRegimeSmootherParity.
+        self._regime_smoother_persistence = 2
         # [Phase 4C] _regime_smoother_state owned by MarketDataPipeline
 
         # 4. Short-Bias Agent - Dedicated short signal generation
@@ -9742,6 +9754,14 @@ class HMATSProductionRunner:
                      "vol_alpha_direction_reason",
                      "vol_alpha_direction", "vol_alpha_bias",
                      "vol_alpha_data_quality"]},
+                # [P227b] v5_1_strats was the ONE agent with an extractor but
+                # no collected entry — the P8 3-file rule violated by the one
+                # agent added after the rule was written. Inert while
+                # v5_1_strategies_live=false (keys absent -> 0.0), but the
+                # wiring hole is closed so a future re-enable is attributed
+                # from tick one instead of zero-firing silently (P3 shape).
+                "v5_1_strats": {k: agent_signals.get(k, 0.0) for k in
+                    ["v5_1_strats_direction", "v5_1_strats_confidence"]},
                 # [ATTR-EXPAND] direction-producing agents previously dropped by tracker
                 "drl": {
                     "direction": agent_signals.get("drl_direction", 0.0),
@@ -15742,6 +15762,16 @@ class HMATSProductionRunner:
                 "carry_positions": self._derivatives_executor.to_dict() if self._derivatives_executor else {},
                 "alpha_boost_state": alpha_boost_state,
                 "drl_shadow_diag_state": drl_shadow_diag_state,
+                # [P227b] BullTransitionDetector state. to_dict/from_dict had
+                # ZERO callers since the module was written, so _state reset to
+                # INACTIVE on every process start — CONFIRMED (the only rung
+                # that binds the sleeve, blocking naked shorts) needs 5
+                # CONTINUOUS days of 2+ conditions and could never arm across
+                # the deploy cadence. RAM-only-control class (P148/P150/P209).
+                "bull_transition_state": (
+                    self._bull_detector.to_dict()
+                    if getattr(self, "_bull_detector", None) else {}
+                ),
                 # L4-14: Regime smoother state for restart continuity
                 "regime_smoother_state": dict(self._regime_smoother_state) if hasattr(self, '_regime_smoother_state') and self._regime_smoother_state else {},
                 # [AC-5 + AC-2] Persist daily fill budget AND per-asset rate
@@ -17449,6 +17479,23 @@ class HMATSProductionRunner:
                     )
                 except Exception as e:
                     logger.warning(f"[PAPER] Gambler sizing restore failed: {e}")
+
+            # [P227b] Restore BullTransitionDetector state — without this the
+            # 5-continuous-day CONFIRMED rung (the only one that binds the
+            # sleeve) restarted from INACTIVE on every deploy and could never
+            # arm. from_dict is self-defensive (falls back to INACTIVE on any
+            # malformed payload), so a bad restore only delays, never falsely
+            # CONFIRMs — the conservative direction for a shorts-blocking gate.
+            bt_data = data.get("bull_transition_state", {})
+            if bt_data and getattr(self, "_bull_detector", None):
+                try:
+                    self._bull_detector.from_dict(bt_data)
+                    logger.info(
+                        f"[P227b] Restored bull transition state: "
+                        f"{bt_data.get('state', '?')}"
+                    )
+                except Exception as e:
+                    logger.warning(f"[P227b] Bull transition restore failed: {e}")
 
             # Restore AlphaBoost state
             ab_data = data.get("alpha_boost_state", {})

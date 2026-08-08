@@ -85,22 +85,28 @@ class DRLPromotionGate:
     # ------------------------------------------------------------------
 
     def get_authority_level(self) -> str:
-        """Get current DRL authority level.
+        """Get current DRL authority level. The PERSISTED level is authoritative.
 
-        Auto-recovery short-circuited per operator directive 2026-04-30 — since
-        _check_demotion() never fires, _demoted_at can only be set by legacy
-        persisted state. If we see one, restore to ACTIVE on first read.
+        [P227b] The 2026-04-30 "restore to ACTIVE on first read" branch is
+        RETIRED. It silently re-promoted whenever `_demoted_at` was set — so
+        any demotion performed through this class's own `_demote`
+        (which sets `_demoted_at` at the end) would have been UNDONE by the
+        very next read: a self-reversing demotion mechanism, the exact shape
+        P198 removed from main.py ([DRL_FORCE_ACTIVE]). It never fired live
+        only because the P198 manual demote wrote `demoted_at: null`. Under
+        P200-LADDER Rung 4a the gate's persisted level is authoritative and
+        promotion is a deliberate operator write, never a read side-effect.
         """
         if self._demoted_at and self._authority_level != "ACTIVE":
-            old = self._authority_level
-            self._authority_level = "ACTIVE"
-            self._demoted_at = None
-            self._peak_equity_contribution = 0.0
-            self._current_equity_contribution = 0.0
-            self._save_state()
-            logger.info(
-                f"[DRL_GATE] Forced restore from legacy demoted state {old} -> ACTIVE"
-            )
+            # Legacy state observed — REPORT it, never act on it.
+            if not getattr(self, "_p227b_demoted_at_logged", False):
+                self._p227b_demoted_at_logged = True
+                logger.info(
+                    f"[DRL_GATE] persisted level={self._authority_level} with "
+                    f"demoted_at={self._demoted_at} — honoring the persisted "
+                    f"level (the pre-P227b code would have silently restored "
+                    f"ACTIVE here)"
+                )
         return self._authority_level
 
     def get_authority(self):

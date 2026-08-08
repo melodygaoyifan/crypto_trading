@@ -56,7 +56,7 @@ cat $env:USERPROFILE\.ssh\hetzner_hmats.pub
 |------|--------|------|
 | **Location** | `Nuremberg (eu-central)` | 德国，离 Kraken 最近 |
 | **Image** | `Ubuntu 24.04` | LTS，稳定 |
-| **Type** | `CPX22` | 够跑 runtime + dashboard |
+| **Type** | `CPX21` | 够跑 runtime + dashboard（[P227] 旧文写 "CPX22"——不是真实 Hetzner SKU；实际生产一直是 CPX21，见 README） |
 | **SSH Key** | 选择 `hmats-deploy` | 刚添加的密钥 |
 | **Networking** | 勾选 IPv4 | 需要公网 IP |
 | **Name** | `hmats-prod` | 服务器名 |
@@ -468,6 +468,13 @@ crontab -e -u hmats
 
 ### 8.2 日志轮转
 
+> **[P227 修正]** 下面的 logrotate 目标 `/home/hmats/hmats/logs/*.log` 是
+> systemd/venv 时代的路径 —— Docker 部署下引擎日志在 **`hmats-logs` 命名卷**
+> （容器内 `/opt/hmats/logs`）+ json-file driver 里，宿主机该目录基本为空，
+> 这条 logrotate 配置轮转不到任何东西。Docker 下正确做法是限制 json-file
+> driver（compose 里 `logging.options.max-size/max-file`）；卷内日志由引擎自身
+> 的 RotatingFileHandler（10MB × 5）管理，无需宿主机 logrotate。
+
 ```bash
 sudo nano /etc/logrotate.d/hmats
 ```
@@ -550,9 +557,11 @@ docker compose -f docker-compose.hetzner.yml up -d hmats-engine
 
 ```bash
 # 每日备份 cron（在服务器上）
+# [P227 修正] 旧目标 ~/hmats/app/data/ 与 ~/hmats/data/ 是 systemd 时代路径，
+# Docker 下几乎为空 —— 真实 state 在 hmats-data 命名卷。备份卷内容：
 crontab -e -u hmats
 # 添加:
-0 6 * * * tar czf ~/hmats/backups/data_$(date +\%Y\%m\%d).tar.gz ~/hmats/app/data/ ~/hmats/data/
+0 6 * * * tar czf ~/hmats/backups/data_$(date +\%Y\%m\%d).tar.gz -C /var/lib/docker/volumes/hmats-data/_data .
 # 保留 7 天
 0 7 * * * find ~/hmats/backups/ -name "data_*.tar.gz" -mtime +7 -delete
 ```
