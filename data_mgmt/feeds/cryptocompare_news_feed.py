@@ -27,7 +27,13 @@ from data_mgmt.feeds._http import create_session
 logger = logging.getLogger("CCNews")
 
 BASE_URL = "https://data-api.cryptocompare.com/news/v1/article/list"
-MIN_FETCH_INTERVAL = 300.0  # 5 min cache (news changes slowly vs 4H cadence)
+# [P220] 5 min -> 12 h. At a 4H decision cadence a 5-minute cache expired
+# before every tick, so this fetched 6x/day = ~180 calls/month against an
+# account capped at 100/MONTH. 12h => 2 calls/day => ~60/month, which fits
+# inside the shared budget alongside the on-chain feed. Headline sentiment
+# is a slow variable; a 12h-old corpus is materially the same signal, and
+# the alternative is no corpus at all.
+MIN_FETCH_INTERVAL = 43200.0  # 12 h
 
 # [P219] Categories requested in a single combined call. Must cover every asset
 # the engine trades, or that asset falls back to an empty list and llm_sentiment
@@ -139,6 +145,12 @@ class CCNewsFeed:
 
         if self._mock_mode:
             return []
+
+        # [P220] Reserve against the SHARED account budget before spending a
+        # call. One call now serves all tracked assets (P219), so this is 1.
+        from data_mgmt.feeds._cc_quota import get_cc_quota
+        if not get_cc_quota().try_consume(1, caller="cc_news"):
+            return cached[1] if cached else []
 
         # [P216] Honour an active 429 backoff. Without this the feed re-hit the
         # API on the very next asset, seconds after being told to slow down:

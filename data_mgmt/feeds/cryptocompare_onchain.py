@@ -35,7 +35,20 @@ except ImportError:
 
 BASE_URL = "https://min-api.cryptocompare.com/data"
 SUPPORTED_ASSETS = ("BTC", "ETH")
-MIN_FETCH_INTERVAL = 900.0  # 15 minutes between fetches (onchain data changes slowly)
+# [P220] 15 min -> 48 h. Each fetch costs 2 calls (BTC + ETH), so at a 4H
+# cadence this was 12 calls/day = ~360/month against a 100/MONTH cap. On-chain
+# large-transfer counts are a 24h ROLLING statistic, so refreshing them every
+# 15 minutes was spending the month to re-read a number that had barely moved.
+#
+# 48h rather than 24h so total DEMAND lands ON the budget rather than above it:
+#   news    12h x 1 call  = 60/month
+#   onchain 48h x 2 calls = 30/month
+#   total                 = 90 = the budget, under the provider's 100 cap.
+# At 24h the total is 120 and the shared guard would bind every month around
+# the 3/4 mark — a control that fires routinely stops being read. The guard is
+# meant to be a backstop for the unforeseen (another process on the key, a
+# manual probe), not the thing that paces us.
+MIN_FETCH_INTERVAL = 172800.0  # 48 h
 RATE_LIMIT_BACKOFF = 3600.0  # 1 hour backoff on rate limit errors
 
 
@@ -114,6 +127,17 @@ class CryptoCompareOnChainFeed:
             for sym in SUPPORTED_ASSETS:
                 self._data[sym] = CryptoCompareOnChainData(symbol=sym, is_mock=True)
             self._last_fetch_time = now
+            return self._data
+
+        # [P220] Reserve against the SHARED CryptoCompare account budget before
+        # spending anything. This feed and cryptocompare_news_feed use the SAME
+        # key and the SAME 100-calls/month allowance, but each used to back off
+        # independently — so one could exhaust the month while the other kept
+        # calling. One fetch here costs len(SUPPORTED_ASSETS) calls, and it is
+        # all-or-nothing: half a fetch would spend quota for a partial picture.
+        from data_mgmt.feeds._cc_quota import get_cc_quota
+        if not get_cc_quota().try_consume(len(SUPPORTED_ASSETS),
+                                          caller="cc_onchain"):
             return self._data
 
         try:
