@@ -18981,14 +18981,36 @@ class HMATSProductionRunner:
                             _hb_ad = _live_asset_data.get(_hb_asset, {})
                             _hb_strat = _hb_ad.get("strategy", "?")
                             _hb_dir = float(self._last_quant_directions.get(_hb_asset, 0) or 0)
-                            _hb_veto = self._dashboard_asset_runtime.get(_hb_asset, {}).get("veto_reason", "")
+                            # [P229] Read the veto from the INTENT, not from
+                            # _dashboard_asset_runtime["veto_reason"] — that
+                            # key has NO writer in that dict (P170 orphan-read
+                            # shape, found when a live heartbeat showed
+                            # "NOT_CALLED" for an asset the alpha gate had
+                            # just vetoed with a full reason string). The
+                            # VETOED branch below had never fired in live.
+                            _hb_intent = _live_intents.get(_hb_asset)
+                            _hb_veto = ""
+                            if _hb_intent is not None and getattr(
+                                    _hb_intent, "veto_active", False):
+                                _hb_veto = str(getattr(
+                                    _hb_intent, "veto_reason", "") or "")[:80]
                             _hb_exec = self._dashboard_asset_runtime.get(_hb_asset, {}).get("execution_status", "")
                             if _hb_strat in ("hold", "?") or abs(_hb_dir) < 0.15:
                                 _hb_reason = "Best-of-N=hold"
                             elif _hb_veto:
                                 _hb_reason = f"VETOED: {_hb_veto}"
                             elif _hb_exec == "FILLED":
-                                _hb_reason = "TRADED"
+                                _hb_reason = "TRADED(KR)"
+                            elif _hb_exec == "SKIPPED":
+                                # [P229] P152 routing skip is benign — the
+                                # sleeve holds/manages the real position. The
+                                # bare "SKIPPED" read as a fault (P162 shape).
+                                _hb_reason = "KR-entry-skip (routed→sleeve manages)"
+                            elif _hb_exec == "NOT_CALLED":
+                                # Kraken exec never invoked; with vetoes now
+                                # surfaced above, this remaining case is a
+                                # non-actionable intent on the KRAKEN path.
+                                _hb_reason = "KR-path not_actionable"
                             else:
                                 _hb_reason = _hb_exec or "no_signal"
                             _hb_lines.append(
@@ -19013,7 +19035,20 @@ class HMATSProductionRunner:
                                     f"{_a}={_v}" for _a, _v in sorted(_hb_cb_last.items())
                                 ) + " (prev tick)"
                             else:
-                                _hb_cb_txt = "NO RESULT YET — driver has never run"
+                                # [P229] Accurate first-tick wording. The old
+                                # all-caps NO-RESULT/never-ran text read as a
+                                # fault, but `_coinbase_manage_last` is
+                                # in-memory and the driver deliberately runs
+                                # AFTER this message (prev-tick reporting) —
+                                # so on the first tick after ANY restart this
+                                # branch fires while the driver is seconds
+                                # from running. P155's own lesson: a message
+                                # must not send the reader to a wrong cause.
+                                _hb_cb_txt = (
+                                    "no result yet this process (first tick "
+                                    "after restart — driver runs after this "
+                                    "message; see [COINBASE-MANAGE])"
+                                )
                         self.audit_manager.log_event(
                             AlertSeverity.INFO, AlertCategory.TRADING,
                             _hb_msg,

@@ -431,6 +431,49 @@ class TestRegimeSmootherParity:
             )
 
 
+class TestHeartbeatDiagnosticsP229:
+    """[P229] Three heartbeat readability defects found by inspecting the
+    first post-deploy tick: (1) the VETOED branch read
+    _dashboard_asset_runtime["veto_reason"], a key with NO writer in that
+    dict (P170 orphan-read shape) — a live alpha-gate veto displayed as bare
+    "NOT_CALLED"; (2) the P152 routing skip displayed as bare "SKIPPED",
+    reading as a fault (P162 shape); (3) "NO RESULT YET — driver has never
+    run" fired on every first tick after a restart while the driver was
+    seconds from running."""
+
+    def test_veto_is_read_from_the_intent_not_the_orphan_key(self):
+        hb = MAIN[MAIN.find("_hb_intent = _live_intents.get(_hb_asset)"):]
+        hb = hb[:600]
+        assert "veto_active" in hb and "veto_reason" in hb
+        # the orphan read must NOT come back
+        assert '_hb_veto = self._dashboard_asset_runtime' not in MAIN, (
+            "P229 regression: the heartbeat veto is back to reading a key "
+            "nothing writes — the VETOED branch will never fire again."
+        )
+
+    def test_benign_routing_skip_is_labelled_not_bare(self):
+        assert "KR-entry-skip" in MAIN
+
+    def test_first_tick_sleeve_text_no_longer_claims_never_ran(self):
+        assert "NO RESULT YET — driver has never run" not in MAIN
+        assert "driver runs after this" in MAIN
+
+
+class TestGrowOnlyRosterLog:
+    """[P229] The one-shot bool latch under-reported the zero-weight roster
+    (fired on tick 1 with a barely-populated signals dict: named 2 of 12).
+    Now a set-based latch converges to the full roster."""
+
+    def test_set_based_latch_replaced_the_bool(self):
+        src = (REPO / "signals" / "authority_fusion.py").read_text(
+            encoding="utf-8-sig", errors="replace")
+        assert "_p228_zero_weight_named" in src
+        assert "_new_names = _zero_weighted - _already" in src
+        assert "_p227_zero_weight_logged" not in src, (
+            "the tick-1 bool latch is back — it under-reports the roster"
+        )
+
+
 class TestBetaAuditRefusesLoudly:
     def test_missing_input_exits_2_before_reporting(self, tmp_path):
         """P199 pattern: 'no data source' must be a refusal, not an empty

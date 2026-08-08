@@ -411,9 +411,11 @@ class AuthorityFusionEngine:
         3. Clear decision responsibility (no confusion)
     """
 
-    # [P227] one-shot latch for the zero-weighted-ADVISE roster log (class
-    # level on purpose: one line per process, not per engine instance).
-    _p227_zero_weight_logged: bool = False
+    # [P227/P229] latch for the zero-weighted-ADVISE roster log (class level
+    # on purpose: process-wide, not per engine instance). P229: a SET of
+    # already-named agents rather than a bool — the bool latched on tick 1
+    # before conditional writers populated `signals`, under-reporting 12 as 2.
+    _p228_zero_weight_named: set = set()
 
     def __init__(self):
         self._momentum_memory = MomentumMemory()
@@ -933,20 +935,33 @@ class AuthorityFusionEngine:
             # and are excluded from fusion until one passes the P166 gate on
             # forward data. This one-shot log exists so the table and reality
             # cannot drift apart silently again.
-            _zero_weighted = [
+            # [P229] Grow-only roster logging. The original one-shot latch
+            # fired on the FIRST tick, when most conditional writers had not
+            # yet populated `signals` — the live boot log named 2 agents
+            # instead of 12, i.e. the observability fix under-observed. Now
+            # the latch is the SET of already-logged names: a line is emitted
+            # whenever agents appear that have not been named before, so the
+            # roster converges to complete without per-tick spam.
+            _zero_weighted = {
                 a for a, auth in matrix.items()
                 if auth == Authority.ADVISE and a in signals
                 and advise_weights.get(a, 0.0) <= 0
-            ]
-            if _zero_weighted and not getattr(
-                    AuthorityFusionEngine, "_p227_zero_weight_logged", False):
-                AuthorityFusionEngine._p227_zero_weight_logged = True
+            }
+            _already = getattr(
+                AuthorityFusionEngine, "_p228_zero_weight_named", set())
+            _new_names = _zero_weighted - _already
+            if _new_names:
+                AuthorityFusionEngine._p228_zero_weight_named = (
+                    _already | _new_names)
                 logger.info(
                     "[P228-ADVISE-WEIGHTS] %d ADVISE agents are DELIBERATELY "
                     "zero-weighted (recorded decision, P228 — evidence bar: "
-                    "P166 cost-aware gate on forward IC): %s. Their signals "
+                    "P166 cost-aware gate on forward IC): %s%s. Their signals "
                     "keep computing for IC accumulation.",
                     len(_zero_weighted), sorted(_zero_weighted),
+                    (" (+%d newly seen: %s)" % (len(_new_names),
+                                                sorted(_new_names)))
+                    if _already else "",
                 )
 
             for agent, authority in matrix.items():
