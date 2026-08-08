@@ -1643,6 +1643,14 @@ class ProductionConfig:
     # cause) for N 4H ticks. Exits and reduces are NEVER deferred (P195).
     # 0 = OFF.
     coinbase_reentry_cooldown_ticks: int = 0
+    # [P236] model_alpha disagreement filter on the sleeve driver. The
+    # SHADOW ledger (data/strategy_shadow/ma_filter_*.jsonl) accumulates
+    # regardless; this flag arms ENFORCEMENT: suppress a sleeve entry-from-
+    # flat, and demote a flip to a flatten, when model_alpha's live 16h
+    # direction actively contradicts the gated direction. Exits and reduces
+    # are NEVER deferred (P195); model_alpha silent = allow (P208). Flip
+    # only on P166 forward evidence from the ledger + its own P-entry.
+    coinbase_ma_filter_enforce: bool = False
     # [v5.1 PROMOTED 2026-06-13] Operator override of Iron Law 7 (shadow >=30d):
     # blend the 4 v5.1 shadow strategy families into a live ADVISE fusion agent
     # with ZERO validation. Default OFF; set true in the live JSON. ADVISE-bounded
@@ -1921,6 +1929,8 @@ class ProductionConfig:
                 data.get("alpha_gate_hold_ratio", 0.0)),
             coinbase_reentry_cooldown_ticks=int(
                 data.get("coinbase_reentry_cooldown_ticks", 0)),
+            coinbase_ma_filter_enforce=bool(
+                data.get("coinbase_ma_filter_enforce", False)),
             # [v5.1 PROMOTED 2026-06-13] live ADVISE promotion of shadow strategies
             v5_1_strategies_live=data.get("v5_1_strategies_live", False),
             # P1-02: Thesis budget parameters (overlay-aware)
@@ -2064,6 +2074,49 @@ def sleeve_direction_from_intent(intent, fallback_dir: float):
         return 0.0, "zero_target_exposure"
 
     return _dir, "gated_direction"
+
+
+def sleeve_ma_filter_decision(current_contracts, raw_target, ma_dir):
+    """[P236] model_alpha disagreement filter for the sleeve driver — pure,
+    unit-testable (the P206 pattern).
+
+    Evidence (2026-08-08 live counterfactual, 30d, 16h horizon,
+    overlap-corrected): quant earns +24.9bps/tick when model_alpha agrees and
+    -78.9bps/tick (t=-3.42) when it disagrees; model_alpha standalone
+    +49.9bps/tick (t=2.91), positive on all three assets. This filter is the
+    cheapest expression of that split: zero the decider where model_alpha
+    actively contradicts it. Memory note ``profit_research_2026-08-08``.
+
+    Returns ``(ledger_dir, action, reason)``:
+      - ``ledger_dir`` — the SHADOW strategy's claim, scored by the P166 IC
+        gate: ``raw_target`` with ANY model_alpha disagreement zeroed.
+      - ``action`` — what enforcement may do when the flag is on: ``""``
+        (nothing), ``"block_entry"`` (entry-from-flat suppressed) or
+        ``"flip_to_flat"`` (the opening leg of a flip suppressed; the closing
+        leg — a reduce — is always free, P195).
+
+    Deliberate v1 scope: an aligned HELD position is never force-exited on
+    disagreement (``ma_disagrees_hold_kept`` — ledger zeroes it, enforcement
+    keeps it). Forcing exits would make an entry filter into an exit engine
+    with its own 16bps/flap churn when model_alpha oscillates. A model_alpha
+    of 0.0 is "no opinion" and always allows — a dead agent must not become
+    a trading stop (P208).
+    """
+    pos = int(current_contracts or 0)
+    raw = int(raw_target or 0)
+    ma = float(ma_dir or 0.0)
+    if raw == 0:
+        return 0, "", "no_target"           # exits/holds are never filtered
+    if abs(ma) <= 1e-9:
+        return raw, "", "ma_silent"         # fail-open on no opinion
+    if ma * raw > 0:
+        return raw, "", "ma_agrees"
+    # Disagreement.
+    if pos == 0:
+        return 0, "block_entry", "ma_disagrees_entry"
+    if raw * pos < 0:
+        return 0, "flip_to_flat", "ma_disagrees_flip"
+    return 0, "", "ma_disagrees_hold_kept"
 
 
 async def sleeve_fast_risk_action(sleeve, asset: str, action_name: str,
@@ -5172,6 +5225,26 @@ class HMATSProductionRunner:
                 f"{type(_df_err).__name__}: {_df_err}"
             )
 
+        # [P236] model_alpha disagreement filter shadow: the decision is made
+        # in the sleeve driver (sleeve_ma_filter_decision) where the gated
+        # direction and venue position live; this harness only persists it to
+        # data/strategy_shadow/ma_filter_*.jsonl for the P166 IC gate.
+        # Evidence: 30d live counterfactual — quant +24.9bps/tick when
+        # model_alpha agrees, -78.9 (t=-3.42) when it disagrees. Observation
+        # always-on; enforcement gated on coinbase_ma_filter_enforce (OFF).
+        self._ma_filter_shadow = None
+        self._last_model_alpha_directions: Dict[str, float] = {}
+        try:
+            from defense.strategy_shadow_v5_1 import build_ma_filter_shadow_harness
+            self._ma_filter_shadow = build_ma_filter_shadow_harness()
+            logger.info("  [P236] MAFilterShadowHarness: ACTIVE (observation-only; enforce=%s)",
+                        "ON" if getattr(self.config, "coinbase_ma_filter_enforce", False) else "OFF")
+        except Exception as _maf_err:
+            logger.warning(
+                f"  [P236] MAFilterShadowHarness init failed: "
+                f"{type(_maf_err).__name__}: {_maf_err}"
+            )
+
         # =====================================================================
         # [v5.1 Phase 6] ML factor fusion agent shadow harness (SHADOW)
         # MLFactorDispatcher per-asset routes to MLFactorFusionAgent (BTC/ETH/SOL).
@@ -8256,6 +8329,15 @@ class HMATSProductionRunner:
         _env_state = self._build_drl_env_state(asset)
 
         # [SOTA-G10] ModelAlpha advisory signal -profitability-first wiring
+        # [P236] Reset the sleeve-driver stash BEFORE the block: if the agent
+        # is absent, aborted, or raises this tick, the filter must read "no
+        # opinion" (0.0 = fail-open), never a stale strong direction — a dead
+        # agent must not become a standing entry veto (P208). Written
+        # unconditionally, not behind a magnitude gate (the P155-L5
+        # high-water-mark lesson).
+        if not hasattr(self, "_last_model_alpha_directions"):
+            self._last_model_alpha_directions = {}
+        self._last_model_alpha_directions[asset] = 0.0
         if self.model_alpha is not None and not p0_abort_tick:
             try:
                 _g10_signals = self.model_alpha.to_agent_signals(
@@ -8270,6 +8352,9 @@ class HMATSProductionRunner:
                 )
                 for _g10k, _g10v in _g10_signals.items():
                     agent_signals[_g10k] = _g10v
+                # [P236] Current reading for the sleeve-driver filter.
+                self._last_model_alpha_directions[asset] = float(
+                    _g10_signals.get("model_alpha_direction", 0.0) or 0.0)
                 self._dashboard_asset_runtime.setdefault(asset, {}).update({
                     "model_alpha_direction": float(_g10_signals.get("model_alpha_direction", 0.0) or 0.0),
                     "model_alpha_confidence": float(_g10_signals.get("model_alpha_confidence", 0.0) or 0.0),
@@ -19538,6 +19623,74 @@ class HMATSProductionRunner:
                                                 continue
                                             _m_dir = float(_m_tgt)
                                             _m_src = _m_why
+                                        # [P236] model_alpha disagreement
+                                        # filter. Decision is pure
+                                        # (sleeve_ma_filter_decision); the
+                                        # SHADOW ledger records every managed
+                                        # tick regardless; enforcement only
+                                        # when coinbase_ma_filter_enforce
+                                        # (default OFF). Exits/reduces are
+                                        # never touched; a demoted flip
+                                        # becomes a flatten (the closing leg
+                                        # is a reduce and always free, P195).
+                                        # NOTE: the HOLD branch above
+                                        # `continue`s before this point —
+                                        # deliberate: on HOLD no order is
+                                        # intended, so there is no entry to
+                                        # filter and no claim to ledger.
+                                        try:
+                                            _maf_ma = float(getattr(
+                                                self,
+                                                "_last_model_alpha_directions",
+                                                {}).get(_m_a, 0.0) or 0.0)
+                                            _maf_pos = int(
+                                                _sl.signed_contracts(_m_a) or 0)
+                                            _maf_raw = int(
+                                                _sl.target_for_signal(_m_dir))
+                                            (_maf_led, _maf_act,
+                                             _maf_why) = sleeve_ma_filter_decision(
+                                                _maf_pos, _maf_raw, _maf_ma)
+                                            _maf_enf = bool(getattr(
+                                                self.config,
+                                                "coinbase_ma_filter_enforce",
+                                                False))
+                                            if self._ma_filter_shadow is not None:
+                                                self._ma_filter_shadow.observe(_m_a, {
+                                                    "_maf_ledger_dir": float(_maf_led),
+                                                    "_maf_ma_dir": _maf_ma,
+                                                    "_maf_raw_target": _maf_raw,
+                                                    "_maf_sleeve_dir": float(_m_dir),
+                                                    "_maf_pos": _maf_pos,
+                                                    "_maf_action": _maf_act,
+                                                    "_maf_reason": _maf_why,
+                                                    "_maf_enforce": _maf_enf,
+                                                })
+                                            if _maf_act:
+                                                logger.info(
+                                                    f"[MA-FILTER] {_m_a}: {_maf_why} "
+                                                    f"raw={_maf_raw:+d} ma={_maf_ma:+.3f} "
+                                                    f"pos={_maf_pos} -> {_maf_act} "
+                                                    f"(enforce={'ON' if _maf_enf else 'OFF'})")
+                                            if _maf_enf and _maf_act == "block_entry":
+                                                _m_summary[_m_a] = (
+                                                    f"MA_VETO(entry,ma={_maf_ma:+.2f},"
+                                                    f"dir={_m_dir:+.2f})")
+                                                _st_res = await _sl.ensure_protective_stop(
+                                                    _m_a, intended_target=0)
+                                                _cb_stop_summary[_m_a] = _st_res.get("status")
+                                                continue
+                                            if _maf_enf and _maf_act == "flip_to_flat":
+                                                _m_dir = 0.0
+                                                _m_src = f"{_m_src}+ma_veto"
+                                        except Exception as _maf_e:  # noqa: silent-swallow
+                                            # deliberate: the filter is an
+                                            # overlay — a fault in it must
+                                            # never stop the order path. Say
+                                            # so instead of going quiet (P155).
+                                            logger.warning(
+                                                f"[MA-FILTER] {_m_a}: skipped on "
+                                                f"{type(_maf_e).__name__}: {_maf_e} "
+                                                f"— sleeve managed UNFILTERED this tick")
                                         # [P232] Re-entry cooldown (P168's
                                         # rebuild cooldown, ported to the
                                         # venue that trades). Blocks only a

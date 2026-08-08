@@ -262,3 +262,71 @@ def build_derivflow_shadow_harness(
         log_dir=log_dir,
         log_prefix="derivflow",
     )
+
+
+class MAFilterEchoStrategy:
+    """[P236] Echo strategy for the model_alpha disagreement filter.
+
+    Unlike the other shadow strategies, this one computes NOTHING: the
+    decision is made by ``main.sleeve_ma_filter_decision`` inside the sleeve
+    driver (where the gated direction and the venue position actually live),
+    and the driver passes the result in via the observe() dict. This class
+    only reshapes it into the ledger record schema, so the filter rides the
+    same durable-write + prefix machinery as every other shadow family
+    instead of growing a second JSONL writer (P172: no estimator twins).
+
+    Ledger claim: ``direction`` is the FILTERED signal — the sleeve target
+    with any model_alpha disagreement zeroed. That is the strategy the P166
+    cost-aware IC gate scores.
+    """
+
+    class _Sig:
+        __slots__ = ("strategy_name", "direction", "confidence", "reason",
+                     "diagnostics")
+
+        def __init__(self, direction, confidence, reason, diagnostics):
+            self.strategy_name = "ma_filtered"
+            self.direction = direction
+            self.confidence = confidence
+            self.reason = reason
+            self.diagnostics = diagnostics
+
+    def evaluate(self, asset: str, market_data: Dict[str, Any]):
+        ma = float(market_data.get("_maf_ma_dir", 0.0) or 0.0)
+        direction = float(market_data.get("_maf_ledger_dir", 0.0) or 0.0)
+        # [P224] a confidence must never saturate on a zero direction: a flat
+        # claim carries the strength of the OPINION that produced it (|ma|
+        # when model_alpha vetoed, 0 when there was simply nothing to say).
+        reason = str(market_data.get("_maf_reason", "") or "")
+        conf = min(1.0, abs(ma)) if reason.startswith("ma_") else (
+            min(1.0, abs(direction)))
+        return self._Sig(
+            direction=direction,
+            confidence=conf,
+            reason=reason,
+            diagnostics={
+                "raw_target": market_data.get("_maf_raw_target"),
+                "ma_dir": ma,
+                "sleeve_dir": market_data.get("_maf_sleeve_dir"),
+                "pos_contracts": market_data.get("_maf_pos"),
+                "action": market_data.get("_maf_action"),
+                "enforce": market_data.get("_maf_enforce"),
+            },
+        )
+
+
+def build_ma_filter_shadow_harness(
+    log_dir: Optional[Path] = None,
+) -> MicrostructureShadowHarness:
+    """[P236] model_alpha disagreement filter shadow harness.
+
+    Output ledger: data/strategy_shadow/ma_filter_YYYYMMDD.jsonl
+    Scored by analytics/shadow_ic/compute_shadow_ic.py (prefix registered
+    there). Promotion = P166 forward evidence + its own P-entry, never
+    automatic.
+    """
+    return MicrostructureShadowHarness(
+        strategies=[MAFilterEchoStrategy()],
+        log_dir=log_dir,
+        log_prefix="ma_filter",
+    )
