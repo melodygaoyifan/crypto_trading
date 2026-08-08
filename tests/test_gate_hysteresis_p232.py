@@ -128,14 +128,18 @@ class TestGateHysteresis:
             "overrides the hold band again"
         )
 
-    def test_config_trio_and_default_off(self):
+    def test_config_trio_and_decided_value(self):
+        """[P236] The operator decision was made (delegated, 2026-08-08):
+        hold band ON at the researched 0.65. The dataclass default stays 0
+        (absent key = off); the LIVE value is pinned so a silent revert or a
+        silent widening both fail loudly."""
         assert re.search(r"^\s+alpha_gate_hold_ratio: float = 0\.0", MAIN, re.M)
         assert 'data.get("alpha_gate_hold_ratio"' in MAIN
         live = json.loads((REPO / "configs" / "live_high_risk.json"
                            ).read_text(encoding="utf-8-sig"))
-        assert "alpha_gate_hold_ratio" not in live, (
-            "enforcement flipped on in the live profile — that is an "
-            "operator decision needing WOULD-HOLD shadow evidence first"
+        assert live.get("alpha_gate_hold_ratio") == 0.65, (
+            "P236 decision drifted: hold ratio is not the decided 0.65 — "
+            "changing it needs its own recorded decision"
         )
 
 
@@ -157,13 +161,15 @@ class TestReentryCooldown:
     def test_flatten_events_are_recorded(self):
         assert "_sleeve_flatten_tick[_m_a]" in MAIN
 
-    def test_config_trio_and_default_off(self):
+    def test_config_trio_and_decided_value(self):
+        """[P236] Cooldown ON at 2 ticks (8h) by the delegated operator
+        decision — tightening-only, P168 evidence."""
         assert re.search(
             r"^\s+coinbase_reentry_cooldown_ticks: int = 0", MAIN, re.M)
         assert 'data.get("coinbase_reentry_cooldown_ticks"' in MAIN
         live = json.loads((REPO / "configs" / "live_high_risk.json"
                            ).read_text(encoding="utf-8-sig"))
-        assert "coinbase_reentry_cooldown_ticks" not in live
+        assert live.get("coinbase_reentry_cooldown_ticks") == 2
 
 
 class TestRegimeICFusionWiring:
