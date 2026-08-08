@@ -61,7 +61,8 @@ def load_pnl(path: Path, window_days: int) -> list[dict]:
             r = json.loads(line)
             if float(r["ts"]) >= cutoff and r.get("equity_usd"):
                 rows.append(r)
-        except Exception:
+        except Exception:  # noqa: silent-swallow — per-record JSONL
+            # skip; MIN_POINTS refusal below reports the aggregate
             continue
     if len(rows) < MIN_POINTS:
         _refuse(f"only {len(rows)} usable points in {window_days}d "

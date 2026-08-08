@@ -187,6 +187,53 @@ from core.canonical_enums import (
 
 
 # =============================================================================
+# [P233] GATE HYSTERESIS (HOLD BAND) DECISION — pure, unit-testable
+# =============================================================================
+
+# The shadow counterfactual is always evaluated at this ratio so the
+# [GATE-HYST] evidence stream is comparable across ticks; enforcement uses
+# the operator-configured alpha_gate_hold_ratio instead.
+GATE_HYST_SHADOW_RATIO = 0.65
+
+
+def gate_hysteresis_decision(
+    sleeve_position_contracts: int,
+    hold_ratio: float,
+    signal_direction: float,
+    alpha_bps: float,
+    threshold_bps: float,
+):
+    """[P232/P233] Hold-band verdict for an alpha-gate FAIL while the sleeve
+    holds a position.
+
+    A held position survives the fail iff the signal still AGREES with the
+    held direction (a flip is never hold-banded) and alpha clears
+    ratio x threshold. ``signal_direction`` MUST be the pre-fusion signal the
+    gate itself just judged (``_alpha_input_direction`` in decide()): P233
+    found the original inline block read the intent's post-fusion direction
+    field, which fusion has not assigned yet at STEP 7, so agreement was
+    always False — the band was dead code and every shadow line logged
+    WOULD-EXIT.
+
+    Returns ``(agrees, shadow_would_hold, enforce_hold)``. A zero or
+    negative threshold never holds (a degenerate gate must not grant a
+    hold), and ``hold_ratio <= 0`` keeps enforcement OFF while the shadow
+    verdict still accumulates at GATE_HYST_SHADOW_RATIO.
+    """
+    agrees = (float(signal_direction) * int(sleeve_position_contracts)) > 0
+    valid = agrees and float(threshold_bps) > 0
+    shadow_would_hold = bool(
+        valid and float(alpha_bps) >= GATE_HYST_SHADOW_RATIO * float(threshold_bps)
+    )
+    enforce_hold = bool(
+        valid
+        and float(hold_ratio) > 0
+        and float(alpha_bps) >= float(hold_ratio) * float(threshold_bps)
+    )
+    return agrees, shadow_would_hold, enforce_hold
+
+
+# =============================================================================
 # TRADE INTENT v3.6.1
 # =============================================================================
 
@@ -242,6 +289,10 @@ class TradeIntentV36:
     # Veto
     veto_active: bool = False
     veto_reason: str = ""
+    # [P232] Set by the gate-hysteresis hold branch: the position survived a
+    # gate fail inside the hold band. Read by main.py's FRICTION_EXCEEDS_EDGE
+    # exemption (declared here, not ad-hoc — P85 reader/writer contract).
+    alpha_gate_hold: bool = False
 
     # [P162] Non-fill that is NOT a veto: the execution path had nothing to do
     # (e.g. the asset is Coinbase-routed, so the Kraken path declines the entry

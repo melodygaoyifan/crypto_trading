@@ -956,7 +956,7 @@ class AuthorityFusionEngine:
                 if auth == Authority.ADVISE and a in signals
                 and advise_weights.get(a, 0.0) <= 0
             }
-            _already = getattr(
+            _already: set = getattr(
                 AuthorityFusionEngine, "_p228_zero_weight_named", set())
             _new_names = _zero_weighted - _already
             if _new_names:

@@ -3,8 +3,8 @@
   "by_category": {
     "BLIND": 228,
     "EXEMPT_TICK_LOCAL": 36,
-    "GUARDED": 6,
+    "GUARDED": 7,
     "TIMESTAMPED": 13
   },
-  "total_writes": 283
+  "total_writes": 284
 }

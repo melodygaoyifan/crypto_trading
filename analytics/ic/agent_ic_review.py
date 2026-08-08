@@ -82,7 +82,8 @@ def load_signal_records(log_dir: Path, window_days: int) -> list[dict]:
                 try:
                     rec = json.loads(line)
                     ts = datetime.fromisoformat(rec["ts"]).timestamp()
-                except Exception:
+                except Exception:  # noqa: silent-swallow — per-record
+                    # JSONL skip, batch-reported below (audit pattern A)
                     skipped += 1
                     continue
                 if ts >= cutoff and rec.get("asset") in KRAKEN_PAIRS:

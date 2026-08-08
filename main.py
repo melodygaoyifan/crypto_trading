@@ -10254,7 +10254,14 @@ class HMATSProductionRunner:
             market_data["sleeve_position_contracts"] = (
                 int(_p232_sl.signed_contracts(asset) or 0)
                 if _p232_sl is not None else 0)
-        except Exception:
+        except Exception as _p232_err:  # noqa: silent-swallow — deliberate:
+            # a diagnostics feed must never break the tick; 0 = "no sleeve
+            # position visible", the conservative reading (hold band simply
+            # does not arm). Logged so absence is not invisible (P155).
+            logger.warning(
+                f"[P232] sleeve position feed failed for {asset}: "
+                f"{type(_p232_err).__name__}: {_p232_err} — hold band "
+                f"disarmed this tick")
             market_data["sleeve_position_contracts"] = 0
         market_data["alpha_gate_hold_ratio"] = float(
             getattr(self.config, "alpha_gate_hold_ratio", 0.0) or 0.0)
@@ -10270,7 +10277,8 @@ class HMATSProductionRunner:
         try:
             from signals.regime_ic_fusion import RegimeICFusion
             if not hasattr(self, "_ric_fusion"):
-                self._ric_fusion, self._ric_prev = {}, {}
+                self._ric_fusion: Dict[str, Any] = {}
+                self._ric_prev: Dict[str, Any] = {}
             _ric = self._ric_fusion.setdefault(asset, RegimeICFusion())
             _ric_dirs = {a: float(agent_signals.get(k, 0.0) or 0.0)
                          for a, k in (("quant", "quant_direction"),
@@ -10291,8 +10299,13 @@ class HMATSProductionRunner:
             _ric_out = _ric.shadow_fuse(_ric_rg, _ric_dirs)
             if _ric_out:
                 logger.info(f"[RIC-SHADOW] {asset} {_ric_rg}: {_ric_out}")
-        except Exception as _ric_err:
-            logger.debug(f"[RIC-SHADOW] {asset}: skipped: {_ric_err}")
+        except Exception as _ric_err:  # noqa: silent-swallow — deliberate:
+            # shadow evidence collection is fail-open by module contract and
+            # must never break the tick; a skipped tick only slows the
+            # evidence clock. DEBUG not WARNING: this can fire per-asset
+            # per-tick during warmup and the roster log already covers it.
+            logger.debug(f"[RIC-SHADOW] {asset}: skipped: "
+                         f"{type(_ric_err).__name__}: {_ric_err}")
 
         # Call v3.6 engine
         intent = self.engine.decide(
@@ -19541,7 +19554,7 @@ class HMATSProductionRunner:
                                             0) or 0)
                                         _cd_pre = int(_sl.signed_contracts(_m_a) or 0)
                                         if not hasattr(self, "_sleeve_flatten_tick"):
-                                            self._sleeve_flatten_tick = {}
+                                            self._sleeve_flatten_tick: Dict[str, int] = {}
                                         if (_cd_n > 0 and _cd_pre == 0
                                                 and abs(_m_dir) >= 0.15):
                                             _cd_last = self._sleeve_flatten_tick.get(_m_a)
@@ -19568,8 +19581,15 @@ class HMATSProductionRunner:
                                                     int(_sl.signed_contracts(_m_a) or 0) == 0):
                                                 self._sleeve_flatten_tick[_m_a] = (
                                                     self._live_round_count)
-                                        except Exception:
-                                            pass
+                                        except Exception as _cd_err:  # noqa: silent-swallow
+                                            # deliberate: bookkeeping must never
+                                            # break the order path; a missed
+                                            # record only SHORTENS the cooldown
+                                            # (conservative), but say so (P155).
+                                            logger.warning(
+                                                f"[COINBASE-COOLDOWN] flatten "
+                                                f"record failed for {_m_a}: "
+                                                f"{type(_cd_err).__name__}")
                                         _m_summary[_m_a] = (
                                             f"{_m_st}(dir={_m_dir:+.2f},"
                                             f"{_sl.signed_contracts(_m_a)}ct)"
