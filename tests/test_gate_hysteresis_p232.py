@@ -129,7 +129,7 @@ class TestGateHysteresis:
         )
 
     def test_config_trio_and_decided_value(self):
-        """[P236] The operator decision was made (delegated, 2026-08-08):
+        """[P237] The operator decision was made (delegated, 2026-08-08):
         hold band ON at the researched 0.65. The dataclass default stays 0
         (absent key = off); the LIVE value is pinned so a silent revert or a
         silent widening both fail loudly."""
@@ -138,7 +138,7 @@ class TestGateHysteresis:
         live = json.loads((REPO / "configs" / "live_high_risk.json"
                            ).read_text(encoding="utf-8-sig"))
         assert live.get("alpha_gate_hold_ratio") == 0.65, (
-            "P236 decision drifted: hold ratio is not the decided 0.65 — "
+            "P237 decision drifted: hold ratio is not the decided 0.65 — "
             "changing it needs its own recorded decision"
         )
 
@@ -162,7 +162,7 @@ class TestReentryCooldown:
         assert "_sleeve_flatten_tick[_m_a]" in MAIN
 
     def test_config_trio_and_decided_value(self):
-        """[P236] Cooldown ON at 2 ticks (8h) by the delegated operator
+        """[P237] Cooldown ON at 2 ticks (8h) by the delegated operator
         decision — tightening-only, P168 evidence."""
         assert re.search(
             r"^\s+coinbase_reentry_cooldown_ticks: int = 0", MAIN, re.M)
