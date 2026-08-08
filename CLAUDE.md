@@ -291,6 +291,51 @@ discipline + the grep habit.
 
 > **History:** Detailed P-entries older than the last ~30 days have been moved to [archive/CLAUDE_history.md](archive/CLAUDE_history.md) to keep this file scannable. The summaries below + the foundational invariants (P1-P8) are what every session should load.
 
+### OPERATOR DECISION 2026-08-08: keep the Coinbase sleeve TRADING while forward evidence accumulates
+
+Asked to choose between continuing to trade a signal with no demonstrated edge
+and cutting to SOL-only / `""` and waiting, the operator chose **continue**.
+Recorded here because it is a live-money decision, not a code change, and the
+next session needs to know it was made deliberately rather than by inertia.
+
+**What is being accepted.** The sleeve is at **−5.47%** (−$218.67) on a trend
+signal whose `base_edge_bps = 40.0` is a constant chosen to clear the alpha
+gate, live daily Sharpe ≈ **−4.5**, and the P200 retrain returned **no edge**.
+Continuing means accepting further drawdown while the evidence matures.
+
+**Why it is defensible now and was not two days ago.** Every control that would
+bound that drawdown is, for the first time, actually connected to the venue that
+holds the risk:
+
+| control | state at the decision |
+|---|---|
+| Alpha gate (Non-Negotiable #1) | binds via gated intent (P206) — currently flattens ETH/SOL |
+| Net exposure cap (P144) | armed on the sleeve book, 0.50 (P208) |
+| Per-asset cap | `post_leverage_caps` in sleeve equity (P210) |
+| Protective stops | resting at venue, all routed assets, 10% (P197/P205/P207) |
+| Sleeve drawdown halt | 5.5% of 15%, sticky across restarts (P150/P195) |
+| LIVE drawdown halt + kill switch | wired and able to fire (P201) |
+| Existence fuse | fed and persisted, ACTIVE (P209/P211) |
+
+**The three evidence streams this is waiting on** (none promotable yet — do NOT
+act on partial data, that is the P147/P198 mistake):
+  * **Existence fuse** — 28d window meaningful ~**2026-09-04**.
+  * **`trend_regime_gate`** — shadow only; promote to `enforce` only on ≥3–4
+    weeks FORWARD data via `scripts/trend_regime_review.py`. Early forward
+    numbers point the OPPOSITE way to the in-sample hypothesis.
+  * **`derivflow`** (P219/P223) — squeeze vs exhaustion, judged by the P166
+    cost-aware gate. At most one can be right; both being noise is expected.
+
+**Operational consequence: STOP DEPLOYING unless something is broken.** The
+sleeve was deployed ~15 times on 2026-08-07, and several warmups are in-memory —
+`micro` needs `min_samples=5` at one sample per 4H tick, i.e. **~20 h of
+uninterrupted uptime**, which it has never had. Frequent deploys are themselves
+why parts of the agent layer look dead. A quiet run IS the work now.
+
+**Revert path, unchanged and one step:** `scripts/coinbase_set_assets.sh ""`
+makes the sleeve inert; `coinbase_use_gated_intent: false` restores the pre-gate
+driver. Neither needs a code change.
+
 ### Recent pitfalls (last ~30 days)
 
 ### P226. [FIXED 2026-08-08] Two scanners had been silently skipping main.py — the largest file in the repo — for their entire existence
