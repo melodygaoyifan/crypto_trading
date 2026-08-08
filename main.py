@@ -1388,6 +1388,14 @@ class ProductionConfig:
     max_leverage: float = MAX_LEVERAGE
     reduce_at_drawdown: float = REDUCE_AT_DRAWDOWN
     critical_drawdown: float = CRITICAL_DRAWDOWN
+    # [P227] Previously documented in the live JSON but never parsed:
+    # daily_loss_limit reached the P0 integrator as a hardcoded 0.08 via a
+    # getattr on a field that did not exist (value-coincident with the JSON,
+    # which is why it never surfaced); max_position_pct was configured 0.80
+    # while RiskManager enforced its dataclass default 0.40. Defaults here
+    # match the OLD ENFORCED values, so absent keys change nothing.
+    daily_loss_limit: float = 0.08
+    max_position_pct: float = 0.40
     # Leverage guard overrides
     max_position_notional_usd: float = MAX_POSITION_NOTIONAL_USD
     max_total_notional_usd: float = MAX_TOTAL_NOTIONAL_USD
@@ -1609,6 +1617,12 @@ class ProductionConfig:
     # (today it would flatten ETH and SOL, which the alpha gate is refusing on
     # friction grounds, and keep BTC long). Revert = set false + redeploy.
     coinbase_use_gated_intent: bool = False
+    # [P227] FastRiskTick inter-tick watchdog may act on the Coinbase sleeve
+    # (EXIT_ONLY -> flatten via execute_target; REDUCE_50 is a logged no-op at
+    # 1-contract granularity). DEFAULT OFF — enabling a new live order path is
+    # an operator-watched step (P141). While off, a triggered action logs one
+    # warning per asset so the gap stays visible (P155).
+    fast_risk_sleeve_enabled: bool = False
     # [v5.1 PROMOTED 2026-06-13] Operator override of Iron Law 7 (shadow >=30d):
     # blend the 4 v5.1 shadow strategy families into a live ADVISE fusion agent
     # with ZERO validation. Default OFF; set true in the live JSON. ADVISE-bounded
@@ -1838,6 +1852,8 @@ class ProductionConfig:
             max_leverage=leverage.get("max_leverage", risk.get("max_leverage", MAX_LEVERAGE)),
             reduce_at_drawdown=risk.get("reduce_at_drawdown", REDUCE_AT_DRAWDOWN),
             critical_drawdown=risk.get("critical_drawdown", CRITICAL_DRAWDOWN),
+            daily_loss_limit=float(risk.get("daily_loss_limit", 0.08)),
+            max_position_pct=float(risk.get("max_position_pct", 0.40)),
             max_position_notional_usd=leverage.get("max_position_notional_usd", MAX_POSITION_NOTIONAL_USD),
             max_total_notional_usd=leverage.get("max_total_notional_usd", MAX_TOTAL_NOTIONAL_USD),
             exposure_caps=data.get("exposure_caps", dict(EXPOSURE_CAPS)),
@@ -1879,6 +1895,8 @@ class ProductionConfig:
             # [P206] see the dataclass comment — changes live order behaviour
             coinbase_use_gated_intent=bool(
                 data.get("coinbase_use_gated_intent", False)),
+            fast_risk_sleeve_enabled=bool(
+                data.get("fast_risk_sleeve_enabled", False)),
             # [v5.1 PROMOTED 2026-06-13] live ADVISE promotion of shadow strategies
             v5_1_strategies_live=data.get("v5_1_strategies_live", False),
             # P1-02: Thesis budget parameters (overlay-aware)
@@ -2014,6 +2032,64 @@ def sleeve_direction_from_intent(intent, fallback_dir: float):
         return 0.0, "zero_target_exposure"
 
     return _dir, "gated_direction"
+
+
+async def sleeve_fast_risk_action(sleeve, asset: str, action_name: str,
+                                  enabled: bool):
+    """[P227] FastRiskTick's inter-tick safety net, for the Coinbase sleeve.
+
+    The legacy `_handle_fast_risk_action` body reads `_paper_positions` (the
+    Kraken book, `{}` since 2026-06-14) and exits via Kraken orders — so the
+    30s watchdog has been structurally unable to touch the only positions that
+    exist since Phase B. P201 fixed the sibling FORCE_FLAT path and enumerated
+    what it left; FastRiskTick was not on that list.
+
+    Module-level and sleeve-injected so it is unit-testable without the
+    runner (the P206 pattern). Returns ``(status, detail)``; never raises.
+
+    Semantics, each a deliberate choice:
+      - DEFAULT OFF (`fast_risk_sleeve_enabled`). A new live order path is an
+        operator-watched activation, never momentum (P141). While disabled it
+        reports DISABLED rather than silently doing nothing (P155).
+      - EXIT_ONLY -> ``execute_target(asset, 0)``. Works while halted, because
+        P195 permits reduces under a halt; execute_target cancels resting
+        orders (incl. the protective stop) before the flatten (P197 ordering),
+        so no orphan stop survives.
+      - REDUCE_50 at |contracts| <= 1 is a logged NO-OP: half of one nano
+        contract is not expressible, and escalating a reduce into a full exit
+        would make the watchdog MORE aggressive than its 4H counterpart.
+      - A stale venue snapshot refuses to act (P141: never trade on last-known
+        state) — the protective stop is still resting at the venue.
+    """
+    if not enabled:
+        return "DISABLED", "fast_risk_sleeve_enabled=false"
+    if sleeve is None:
+        return "NO_SLEEVE", "sleeve not constructed yet"
+    try:
+        sleeve.reconcile_positions()
+        if not getattr(sleeve, "_reconcile_ok", False):
+            return "SKIPPED_STALE", "venue snapshot stale — refusing to act"
+        cur = int(sleeve.signed_contracts(asset) or 0)
+        if cur == 0:
+            return "FLAT", "no sleeve position"
+        if action_name == "EXIT_ONLY":
+            res = await sleeve.execute_target(asset, 0)
+            return "EXITED", f"execute_target(0) -> {res.get('status')}"
+        if action_name == "REDUCE_50":
+            if abs(cur) <= 1:
+                return ("REDUCE_NOOP",
+                        f"|contracts|={abs(cur)} — 1-contract granularity, "
+                        f"cannot halve (venue-resting stop still protects)")
+            _tgt = int(cur / 2)  # truncates toward zero = a genuine reduce
+            res = await sleeve.execute_target(asset, _tgt)
+            return "REDUCED", f"execute_target({_tgt}) -> {res.get('status')}"
+        return "IGNORED", f"unhandled action {action_name!r}"
+    except Exception as e:  # fail-soft: watchdog must never kill the loop
+        logger.warning(
+            f"[FastRiskTick][SLEEVE] {asset}: {action_name} failed inside the "
+            f"sleeve helper: {type(e).__name__}: {e}"
+        )
+        return "ERROR", f"{type(e).__name__}: {e}"
 
 
 # =============================================================================
@@ -2928,7 +3004,23 @@ class HMATSProductionRunner:
                     _corr_source = get_correlation_controller()
                 except Exception:
                     pass
-                self.risk_manager = RiskManager(correlation_source=_corr_source)
+                # [P227] Feed the parsed risk.* values in. Constructed with
+                # config=None since forever, RiskManager ran on RiskConfig
+                # dataclass defaults while the live JSON documented different
+                # numbers (max_position_pct 0.80 configured vs 0.40 enforced)
+                # — two authorities holding divergent values. Behavior-neutral
+                # today (its sizing methods have no live callers and the VC-2
+                # veto is log-only) but the config stops lying.
+                from risk.risk_manager import RiskConfig as _RMConfig
+                self.risk_manager = RiskManager(
+                    config=_RMConfig(
+                        max_position_pct=self.config.max_position_pct,
+                        reduce_at_drawdown=self.config.reduce_at_drawdown,
+                        critical_drawdown=self.config.critical_drawdown,
+                        max_daily_loss=self.config.daily_loss_limit,
+                    ),
+                    correlation_source=_corr_source,
+                )
                 self.risk_manager.initialize(self.config.initial_capital)
                 _src = "live" if _corr_source else "static"
                 logger.info(f"  RiskManager: ACTIVE (balance=${self.config.initial_capital:,.0f}, corr={_src})")
@@ -3177,7 +3269,10 @@ class HMATSProductionRunner:
                     "reduce_at_drawdown": self.config.reduce_at_drawdown,
                     "hard_drawdown_halt": self.config.hard_drawdown_halt,
                     "critical_drawdown": self.config.critical_drawdown,
-                    "daily_loss_limit": getattr(self.config, "daily_loss_limit", 0.08),
+                    # [P227] Now a real ProductionConfig field parsed from
+                    # risk.daily_loss_limit — previously this getattr resolved
+                    # to the hardcoded default on a field that did not exist.
+                    "daily_loss_limit": self.config.daily_loss_limit,
                     "correlation_crisis": self.config.correlation_crisis,
                 })
                 status = self.p0_integrator.get_status()
@@ -5820,6 +5915,44 @@ class HMATSProductionRunner:
                     # Refresh equity each tick to keep status VALID (avoids stale ->FAIL-CLOSED)
                     await self.account_sync.refresh()
                     equity = self.account_sync.get_equity()
+
+                # [P227] Include the Coinbase sleeve, or SOTARiskController's
+                # peak/drawdown/REDUCED/HALTED/KILL states — including the ONLY
+                # 35% kill-switch in the system — run on Kraken-only equity,
+                # frozen since the 2026-06-13 flatten. This is P201 §2b's exact
+                # bug on the SECOND equity feed, which P201 never touched; and
+                # unlike _update_drawdown_snapshot, this controller CAN veto the
+                # sleeve (can_open_position -> [P0_SAFETY] -> veto_flat).
+                # Fail-safe mirrors P201: if the sleeve exists but its equity is
+                # unreadable this tick, feed the LAST KNOWN combined value
+                # rather than a partial book — omitting the sleeve understates
+                # equity against a peak that included it and would fire a
+                # spurious HALT exactly when the venue API is unhealthy.
+                _p0_sleeve = getattr(self, "_coinbase_sleeve", None)
+                if _p0_sleeve is not None:
+                    _p0_sleeve_eq = float(
+                        getattr(_p0_sleeve, "_last_equity_usd", 0.0) or 0.0
+                    )
+                    if _p0_sleeve_eq > 0:
+                        equity += _p0_sleeve_eq
+                        self._p0_last_combined_equity = equity
+                    else:
+                        _p0_held = getattr(
+                            self, "_p0_last_combined_equity", None
+                        )
+                        if _p0_held is not None:
+                            logger.warning(
+                                f"[P227] sleeve equity unreadable this tick; "
+                                f"feeding P0 the last known COMBINED equity "
+                                f"${_p0_held:,.2f} rather than the Kraken-only "
+                                f"${equity:,.2f} (partial book would read as a "
+                                f"spurious drawdown)"
+                            )
+                            equity = _p0_held
+                # No sleeve object yet (paper mode, or the first live tick
+                # before run_live builds it): Kraken-only, the historical
+                # behavior — the peak has not seen sleeve equity, so no
+                # spurious drawdown is possible.
 
                 prices_dict = {
                     asset: market_data.get("current_price", 0.0)
@@ -14956,6 +15089,51 @@ class HMATSProductionRunner:
         if result.action == FastRiskAction.HOLD:
             return
 
+        # [P227] Coinbase-routed book first. The legacy body below reads
+        # `_paper_positions` ({} since 2026-06-14) and exits via Kraken —
+        # structurally inert for the sleeve. Default OFF; while disabled we
+        # LOG the skip so "watchdog fired and did nothing" is observable
+        # rather than indistinguishable from healthy (P155).
+        _frs_sleeve = getattr(self, "_coinbase_sleeve", None)
+        if _frs_sleeve is not None and int(
+                _frs_sleeve.signed_contracts(asset) or 0) != 0:
+            _frs_enabled = bool(getattr(
+                self.config, "fast_risk_sleeve_enabled", False))
+            _frs_st, _frs_why = await sleeve_fast_risk_action(
+                _frs_sleeve, asset, result.action.name, _frs_enabled)
+            if _frs_st == "DISABLED":
+                # once per asset per process — a 30s loop must not spam
+                if not hasattr(self, "_frs_disabled_logged"):
+                    self._frs_disabled_logged = set()
+                if asset not in self._frs_disabled_logged:
+                    self._frs_disabled_logged.add(asset)
+                    logger.warning(
+                        f"[FastRiskTick][SLEEVE] {asset}: {result.action.name} "
+                        f"triggered but fast_risk_sleeve_enabled=false — the "
+                        f"sleeve position is protected only by the venue "
+                        f"resting stop between 4H ticks"
+                    )
+            else:
+                logger.warning(
+                    f"[FastRiskTick][SLEEVE] {asset}: {result.action.name} "
+                    f"-> {_frs_st} ({_frs_why}) - {result.reason}"
+                )
+                if self.fast_risk_tick:
+                    if _frs_st in ("EXITED", "REDUCED"):
+                        self.fast_risk_tick.on_reduce_executed(
+                            asset,
+                            new_depth=market_data.get(
+                                'orderbook_depth_1pct_usd', 0.0))
+                    elif (_frs_st in ("ERROR", "SKIPPED_STALE")
+                          and result.action == FastRiskAction.EXIT_ONLY
+                          and hasattr(self.fast_risk_tick, 'on_exit_failed')):
+                        # [P110] failure-detection complement: an urgent
+                        # trigger that cannot act must back off, not storm.
+                        self.fast_risk_tick.on_exit_failed(asset, _frs_why)
+            # The sleeve holds the position; the Kraken branch below has
+            # nothing to act on either way.
+            return
+
         pos = self._paper_positions.get(asset, {})
         cur_exposure = pos.get("exposure", 0.0)
         if cur_exposure <= 0:
@@ -18764,8 +18942,9 @@ class HMATSProductionRunner:
                             + f" | Kraken trades: {_hb_trades_this_tick}"
                         )
                         # [P155] Surface the Coinbase sleeve in the heartbeat. Reports the
-                        # PREVIOUS tick's result — the manage driver runs further down this
-                        # same block, after the message is composed — so it is labelled
+                        # PREVIOUS tick's result — the manage driver runs AFTER this
+                        # heartbeat block ([P227] it was moved out so a logging failure
+                        # cannot stop the order path) — so it is labelled
                         # "prev tick" rather than passed off as current.
                         _hb_cb_txt = "not routed"
                         if getattr(self.config, "coinbase_routing_enabled", False):
@@ -18790,424 +18969,433 @@ class HMATSProductionRunner:
                             f"positions={len(_hb_positions)} | "
                             + " || ".join(_hb_lines).replace("**", "")
                         )
-                        # [COINBASE-SHADOW] Phase A: read-only venue parity.
-                        # Flag-gated (default OFF) + fail-soft -> NEVER affects the
-                        # Kraken trading path. No Coinbase orders. See
-                        # docs/COINBASE_ENGINE_INTEGRATION_PLAN.md.
-                        if getattr(self.config, "coinbase_routing_enabled", False):
-                            try:
-                                if getattr(self, "_coinbase_adapter", None) is None:
-                                    from exchange.coinbase_adapter import CoinbaseAdapter
-                                    self._coinbase_adapter = CoinbaseAdapter()
-                                from exchange.symbol_mapping import to_venue_symbol
-                                _cb = self._coinbase_adapter
-                                if _cb.is_connected():
-                                    _cbg = lambda o, k: (o.get(k) if isinstance(o, dict) else getattr(o, k, None))
-                                    for _cb_a in self.config.assets:
-                                        _cb_pid = to_venue_symbol(_cb_a, "coinbase", "perp")
-                                        _cb_p = _cb._client.get_product(product_id=_cb_pid)
-                                        _cb_mark = float(_cbg(_cb_p, "mid_market_price") or _cbg(_cb_p, "price") or 0)
-                                        _cb_fpd = _cbg(_cb_p, "future_product_details") or {}
-                                        _cb_fr = _cbg(_cb_fpd, "funding_rate")
-                                        _cb_kr = float(_live_prices.get(_cb_a, 0) or 0)
-                                        _cb_basis = ((_cb_mark - _cb_kr) / _cb_kr * 1e4) if _cb_kr else 0.0
-                                        logger.info(
-                                            f"[COINBASE-SHADOW] {_cb_a}: CB={_cb_mark:.2f} "
-                                            f"KR={_cb_kr:.2f} basis={_cb_basis:+.1f}bps funding={_cb_fr}"
-                                        )
-                                    # [COINBASE-SLEEVE] the LIVE sleeve: venue-reconciled
-                                    # position/equity state (anti-P139), and the SAME
-                                    # instance is the sole order driver — manage_to_signal
-                                    # + ensure_protective_stop run on it further down
-                                    # this heartbeat block. Fail-soft.
-                                    try:
-                                        if getattr(self, "_coinbase_sleeve", None) is None:
-                                            from exchange.coinbase_sleeve import CoinbaseSleeve
-                                            self._coinbase_sleeve = CoinbaseSleeve(
-                                                _cb, assets=self.config.assets,
-                                                # [P197] pct<=0 => stops disabled
-                                                protective_stop_pct=float(getattr(
-                                                    self.config,
-                                                    "coinbase_protective_stop_pct", 0.0) or 0.0),
-                                                protective_stop_assets=(getattr(
-                                                    self.config,
-                                                    "coinbase_protective_stop_assets", None) or None),
-                                                # [P198] sleeve-side flip persistence
-                                                # (the P142 churn control never reached
-                                                # this path). Default 2 = same as the
-                                                # Kraken-side flip_persist_ticks; 0/1
-                                                # disables. Tightening-only.
-                                                flip_persist_ticks=int(getattr(
-                                                    self.config,
-                                                    "coinbase_flip_persist_ticks", 2) or 0),
-                                                # [P208] The SAME policy number as P144
-                                                # (risk.max_net_exposure, live 0.50),
-                                                # enforced on the sleeve's own
-                                                # venue-read book. P144's only
-                                                # enforcement site sits past the P152
-                                                # early return and reads Kraken-shaped
-                                                # _paper_positions, `{}` since June — so
-                                                # on the one venue that holds risk it has
-                                                # never been evaluated. None disables.
-                                                max_net_exposure=getattr(
-                                                    self.config, "max_net_exposure", None),
-                                                # [P210] Per-asset gross cap, the
-                                                # SAME policy numbers the Kraken
-                                                # path uses (post_leverage_caps),
-                                                # but denominated in sleeve equity.
-                                                # intent.target_exposure is NOT
-                                                # reconnected on purpose: it is
-                                                # multiplied by KRAKEN NAV
-                                                # (unit_system.py:232), so at 0.25
-                                                # it sizes ~$2,457 against the
-                                                # ~$643 this sleeve holds — a ~4x
-                                                # increase, sized out of another
-                                                # venue's capital.
-                                                max_asset_exposure=getattr(
-                                                    self.config,
-                                                    "post_leverage_caps", None),
-                                            )
-                                        _cb_snap = self._coinbase_sleeve.snapshot()
-                                        _cb_pos = _cb_snap.get("positions") or {}
-                                        _cb_pos_str = ", ".join(
-                                            f"{_a}={_p.get('signed_contracts')}" for _a, _p in _cb_pos.items()
-                                        ) or "FLAT"
-                                        logger.info(
-                                            f"[COINBASE-SLEEVE] buying_power="
-                                            f"${_cb_snap.get('buying_power_usd', 0):,.2f} positions={_cb_pos_str}"
-                                        )
-                                        # [P150] record a forward-PnL point so the
-                                        # sleeve's live edge is judged on real data
-                                        # (the "real test"), and surface PnL + DD +
-                                        # halt in the heartbeat stream.
-                                        _cb_pnl = self._coinbase_sleeve.log_pnl_point()
-                                        _cb_risk = _cb_snap.get("risk") or {}
-                                        logger.info(
-                                            f"[COINBASE-PNL] equity=${_cb_pnl.get('equity_usd', 0):,.2f} "
-                                            f"pnl=${_cb_pnl.get('pnl_usd', 0):+,.2f} "
-                                            f"({_cb_pnl.get('pnl_pct', 0) * 100:+.2f}%) "
-                                            f"dd={_cb_risk.get('drawdown_pct', 0) * 100:.1f}% "
-                                            f"halted={_cb_risk.get('halted', False)}"
-                                        )
-                                    except Exception as _cb_sl_err:
-                                        logger.debug(f"[COINBASE-SLEEVE] skipped: {_cb_sl_err}")
-                                    # [P209] FEED THE EXISTENCE FUSE THE SLEEVE'S PnL.
-                                    # Non-Negotiable Rule #3 (28d window, cumulative
-                                    # loss -> halt) has been inert since Phase B: all
-                                    # three record_pnl() call sites live in
-                                    # execution_service.py PAST the P152 early return,
-                                    # so for a Coinbase-routed asset they never run.
-                                    # The fuse's pnl_history was literally [] while the
-                                    # sleeve carried 100% of the directional risk.
-                                    #
-                                    # The OUTPUT half is already wired: a suspended
-                                    # fuse sets veto_reason=[STRATEGY_SUSPENDED], which
-                                    # P206's translator classifies as neither HOLD nor
-                                    # venue-NA, so it falls through to veto_flat and the
-                                    # sleeve flattens. So this input is the last link.
-                                    try:
-                                        _fz = getattr(self, "existence_fuse", None)
-                                        _fz_sleeve = getattr(self, "_coinbase_sleeve", None)
-                                        if _fz is not None and _fz_sleeve is not None:
-                                            _fz_eq = float(
-                                                getattr(_fz_sleeve, "_last_equity_usd", 0.0) or 0.0)
-                                            _fz_fresh = bool(
-                                                getattr(_fz_sleeve, "_reconcile_ok", False))
-                                            if not _fz_fresh or _fz_eq <= 0:
-                                                # sleeve_equity_usd() returns the last
-                                                # KNOWN value on API failure, so a stale
-                                                # read would compute delta=0 and enter
-                                                # the window as "no loss". Skipping
-                                                # leaves a gap; recording a fabricated
-                                                # zero would understate the drawdown.
-                                                logger.debug(
-                                                    "[P209] fuse feed skipped: sleeve "
-                                                    f"equity not fresh (ok={_fz_fresh}, "
-                                                    f"eq=${_fz_eq:,.2f})")
-                                            else:
-                                                _fz_anchor = getattr(
-                                                    self, "_fuse_sleeve_anchor_equity", None)
-                                                # First ever point: anchor here and
-                                                # record 0. Deliberately NOT retroactive
-                                                # — seeding the window with the sleeve's
-                                                # inception-to-date loss would suspend on
-                                                # the first tick for PnL earned before
-                                                # the fuse could ever have acted on it.
-                                                _fz_delta = (
-                                                    _fz_eq - float(_fz_anchor)
-                                                    if _fz_anchor else 0.0)
-                                                self._fuse_sleeve_anchor_equity = _fz_eq
-                                                self._fuse_equity_basis = "coinbase_sleeve"
-                                                # record_pnl ONLY. on_trade_close() is
-                                                # deliberately NOT called: it counts a
-                                                # CONSECUTIVE-LOSS streak and suspends at
-                                                # 10, and a 4H mark-to-market tick is not
-                                                # a trade — ten red ticks (~1.7 days of
-                                                # normal drift) would halt the system.
-                                                _fz.record_pnl(
-                                                    realized_pnl=_fz_delta,
-                                                    current_equity=_fz_eq,
-                                                    trade_count=0,
-                                                )
-                                                _fz_st = _fz.get_status()
-                                                logger.info(
-                                                    f"[P209][FUSE-FEED] sleeve "
-                                                    f"equity=${_fz_eq:,.2f} "
-                                                    f"delta={_fz_delta:+,.2f} "
-                                                    f"window={_fz_st.window_pnl_pct * 100:+.2f}% "
-                                                    f"state={_fz_st.state.name}"
-                                                )
-                                                if _fz_st.is_suspended:
-                                                    logger.critical(
-                                                        f"[P209][FUSE-FEED] EXISTENCE FUSE "
-                                                        f"SUSPENDED: {_fz_st.suspension_reason} "
-                                                        f"— the sleeve will be flattened by "
-                                                        f"the STRATEGY_SUSPENDED veto"
-                                                    )
-                                    except Exception as _fz_err:
-                                        logger.warning(
-                                            f"[P209] fuse feed failed: "
-                                            f"{type(_fz_err).__name__}: {_fz_err}")
-                                    # [P209] PERSIST IT. Without this the feed above is
-                                    # theatre: run_live() never calls
-                                    # _save_paper_positions() anywhere. The three
-                                    # per-tick calls (17800/18046/18057) are all inside
-                                    # run_paper(); the ones reachable in live
-                                    # (MAX_HOLD_TIMEOUT, FastRiskTick, CORR-0) each
-                                    # require a Kraken _paper_positions entry, and that
-                                    # dict has been {} since the 2026-06-13 flatten. The
-                                    # live file was last written 2026-06-13T02:17Z.
-                                    #
-                                    # So the fuse's 28d rolling window would reset to
-                                    # empty on every deploy and could never accumulate
-                                    # 28 days of anything — the same in-memory-baseline
-                                    # class as P150 (sleeve DD baseline) and P148 (DRL
-                                    # frame buffer), and the reason P140/B2 observed
-                                    # `_peak_equity` re-initialising on restart.
-                                    #
-                                    # Carries the other governors in the same bundle
-                                    # (cascade, failure_memory, confidence_scorer,
-                                    # opportunity_budget, regime_smoother, AC-5 daily
-                                    # fill counters), all equally unpersisted in live.
-                                    # Same family as the main.py:18215 note that
-                                    # run_live() was missing dispatches run_paper() had:
-                                    # run_live is a partial copy and keeps losing things.
-                                    try:
-                                        self._save_paper_positions(force=True)
-                                    except Exception as _sv_err:
-                                        logger.warning(
-                                            f"[P209] state persist failed: "
-                                            f"{type(_sv_err).__name__}: {_sv_err}")
-                                    # [COINBASE-FUNDING] Phase 3 SHADOW: run the 3
-                                    # funding-rate strategies on live perp funding and
-                                    # LOG the combined signal. Observe-only — does NOT
-                                    # drive trades yet (the Coinbase sleeve's eventual
-                                    # independent alpha). fail-soft.
-                                    try:
-                                        if getattr(self, "_funding_strategies", None) is None:
-                                            from strategies.funding_rate_v5_1 import build_phase3_funding_strategies
-                                            self._funding_strategies = build_phase3_funding_strategies()
-                                        for _f_a in self.config.assets:
-                                            _f_pid = to_venue_symbol(_f_a, "coinbase", "perp")
-                                            _f_p = _cb._client.get_product(product_id=_f_pid)
-                                            _f_fpd = _cbg(_f_p, "future_product_details") or {}
-                                            _f_raw = _cbg(_f_fpd, "funding_rate")
-                                            if _f_raw is None:
-                                                continue
-                                            _f_md = {"funding_rate_8h": float(_f_raw) * 8.0}
-                                            # [P218] Publish the venue's own
-                                            # funding so the next tick's
-                                            # market_data can price carry on the
-                                            # venue that actually holds the
-                                            # position. Cached rather than
-                                            # re-fetched in the hot path: this
-                                            # block already pays for the call,
-                                            # CDE funding updates hourly and the
-                                            # decision loop is 4H, so a one-tick
-                                            # lag is immaterial next to fetching
-                                            # three extra products every tick.
-                                            if not hasattr(self, "_coinbase_funding_8h"):
-                                                self._coinbase_funding_8h = {}
-                                            self._coinbase_funding_8h[_f_a] = float(_f_raw) * 8.0
-                                            _f_active = [st.evaluate(_f_a, _f_md) for st in self._funding_strategies]
-                                            _f_active = [s for s in _f_active if s.direction != 0.0]
-                                            if _f_active:
-                                                _f_best = max(_f_active, key=lambda s: s.confidence)
-                                                logger.info(
-                                                    f"[COINBASE-FUNDING] {_f_a}: {_f_best.strategy_name} "
-                                                    f"dir={_f_best.direction:+.0f} conf={_f_best.confidence:.2f} "
-                                                    f"({_f_best.reason})"
-                                                )
-                                    except Exception as _cb_fd_err:
-                                        logger.debug(f"[COINBASE-FUNDING] skipped: {_cb_fd_err}")
-                                    # [COINBASE-MANAGE] per-tick position management:
-                                    # drive each ROUTED asset to the target implied by
-                                    # its fused direction (opens/flips AND flattens on
-                                    # hold) — the sole Coinbase order path, closing the
-                                    # exit gap. INERT unless RoutingPolicy is advanced
-                                    # past SHADOW (default PRE_PHASE_2 -> no routed
-                                    # assets -> no-op). fail-soft.
-                                    try:
-                                        import core.execution_service as _es
-                                        _rp = _es._coinbase_get_routing()
-                                        _flag = getattr(self.config, "coinbase_routing_enabled", False)
-                                        _sl = getattr(self, "_coinbase_sleeve", None)
-                                        # [P155] Record EVERY routed asset's outcome, then log
-                                        # one unconditional summary. The old code logged only
-                                        # non-NOOP/NOT_READY results, so a sleeve that had gone
-                                        # permanently idle (halted, stale reconcile, or target
-                                        # already met) emitted literally nothing — silence was
-                                        # indistinguishable from healthy. Feeds the heartbeat.
-                                        _m_summary = {}
-                                        _cb_stop_summary = {}  # [P197]
-                                        if _flag and _rp is not None and _sl is not None:
-                                            for _m_a in self.config.assets:
-                                                if _rp.venue_for(_m_a) != "coinbase":
-                                                    continue
-                                                # [P206] Pre-gate snapshot (the historical
-                                                # input) — still the fallback, and still what
-                                                # runs when the flag is off.
-                                                _m_pre = float(self._last_quant_directions.get(_m_a, 0.0) or 0.0)
-                                                _m_dir = _m_pre
-                                                _m_src = "pre_gate"
-                                                if getattr(self.config, "coinbase_use_gated_intent", False):
-                                                    _m_tgt, _m_why = sleeve_direction_from_intent(
-                                                        _live_intents.get(_m_a), _m_pre)
-                                                    if _m_tgt is SLEEVE_HOLD:
-                                                        # Leave the position exactly as it is.
-                                                        # Never silently substitute the ungated
-                                                        # value here — that is the gap this
-                                                        # workstream exists to close.
-                                                        _m_summary[_m_a] = (
-                                                            f"HOLD({_m_why},"
-                                                            f"{_sl.signed_contracts(_m_a)}ct)")
-                                                        logger.info(
-                                                            f"[COINBASE-MANAGE] {_m_a}: HOLD "
-                                                            f"({_m_why}) pos="
-                                                            f"{_sl.signed_contracts(_m_a)}ct")
-                                                        _st_res = await _sl.ensure_protective_stop(_m_a)
-                                                        _cb_stop_summary[_m_a] = _st_res.get("status")
-                                                        continue
-                                                    _m_dir = float(_m_tgt)
-                                                    _m_src = _m_why
-                                                _m_res = await _sl.manage_to_signal(_m_a, _m_dir)
-                                                _m_st = _m_res.get("status")
-                                                _m_summary[_m_a] = (
-                                                    f"{_m_st}(dir={_m_dir:+.2f},"
-                                                    f"{_sl.signed_contracts(_m_a)}ct)"
-                                                )
-                                                if _m_st not in ("NOOP", "NOT_READY"):
-                                                    logger.info(
-                                                        f"[COINBASE-MANAGE] {_m_a}: dir={_m_dir:+.2f} "
-                                                        f"src={_m_src} -> "
-                                                        f"{_m_st} pos={_sl.signed_contracts(_m_a)}ct"
-                                                    )
-                                                # [P197] Reconcile the venue-resting
-                                                # protective stop AFTER the position is
-                                                # settled for this asset. Order matters:
-                                                # execute_target cancels ALL resting orders
-                                                # (incl. the old stop) before changing the
-                                                # position, so the stop must be re-placed
-                                                # here, against the NEW position. Inert
-                                                # unless coinbase_protective_stop_pct > 0.
-                                                # [P207] Pass THIS TICK'S intended target.
-                                                # A flatten is a marketable LIMIT that may not
-                                                # have filled yet, so reconcile can still show
-                                                # the position we just closed — which placed a
-                                                # stop on an asset that went flat moments
-                                                # later. On CDE (no reduce_only) that orphan
-                                                # would OPEN a position, and the next
-                                                # reconcile is 4h away. Observed live.
-                                                _st_res = await _sl.ensure_protective_stop(
-                                                    _m_a,
-                                                    intended_target=_sl.target_for_signal(_m_dir))
-                                                _st_st = _st_res.get("status")
-                                                _cb_stop_summary[_m_a] = _st_st
-                                                if _st_st in ("PLACED", "FAILED", "ERROR",
-                                                              "FLAT_CANCELLED", "NO_ANCHOR"):
-                                                    logger.info(
-                                                        f"[COINBASE-STOP] {_m_a}: {_st_st}"
-                                                        + (f" @ {_st_res['stop_price']:.4f}"
-                                                           if _st_res.get("stop_price") else "")
-                                                        + (f" ({_st_res['reason']})"
-                                                           if _st_res.get("reason") else "")
-                                                    )
-                                        self._coinbase_manage_last = _m_summary
-                                        self._coinbase_stop_last = _cb_stop_summary  # [P197]
-                                        # [P197] Two explicit `if`s, deliberately NOT
-                                        # if/else. The P197 stop-summary block below was
-                                        # first written between this `if` and its `else`,
-                                        # which silently re-bound the else to the stop
-                                        # condition: with stops disabled (the default) the
-                                        # engine logged "NO routed assets managed this
-                                        # tick — the order path is inert" immediately after
-                                        # a summary showing all three managed. The log
-                                        # contradicted itself about the one thing this
-                                        # block exists to report. Explicit conditions are
-                                        # immune to that insertion hazard.
-                                        if _m_summary:
-                                            logger.info(
-                                                "[COINBASE-MANAGE] tick summary: "
-                                                + ", ".join(f"{_a}={_v}" for _a, _v in sorted(_m_summary.items()))
-                                            )
-                                        if not _m_summary:
-                                            logger.warning(
-                                                "[COINBASE-MANAGE] NO routed assets managed this tick "
-                                                f"(routing_enabled={_flag}, "
-                                                f"policy={'None' if _rp is None else getattr(_rp, 'phase', '?')}, "
-                                                f"sleeve={'None' if _sl is None else 'ok'}) "
-                                                "— the Coinbase order path is inert"
-                                            )
-                                        # [P197] Log the stop summary whenever the feature
-                                        # is on, so "no stop resting" can never be silent —
-                                        # a position sitting unprotected is the failure that
-                                        # matters, and silence must not be indistinguishable
-                                        # from protected (P155's lesson).
-                                        if _cb_stop_summary and any(
-                                                _v != "DISABLED" for _v in _cb_stop_summary.values()):
-                                            logger.info(
-                                                "[COINBASE-STOP] tick summary: "
-                                                + ", ".join(f"{_a}={_v}" for _a, _v
-                                                            in sorted(_cb_stop_summary.items()))
-                                            )
-                                    except Exception as _cb_mg_err:
-                                        # [P155] WARNING, not DEBUG: this is the sole Coinbase
-                                        # order path. A swallowed exception here means zero
-                                        # trades with no visible cause.
-                                        self._coinbase_manage_last = {"ERROR": str(_cb_mg_err)}
-                                        logger.warning(
-                                            f"[COINBASE-MANAGE] order path FAILED: "
-                                            f"{type(_cb_mg_err).__name__}: {_cb_mg_err}",
-                                            exc_info=True,
-                                        )
-                                else:
-                                    # [P155] WARNING, not DEBUG. With routing enabled, an
-                                    # unconnected adapter means the sleeve cannot trade at
-                                    # all — that is not a debug-level condition.
-                                    self._coinbase_manage_last = {"ERROR": "adapter not connected"}
-                                    logger.warning(
-                                        "[COINBASE-SHADOW] adapter NOT CONNECTED while "
-                                        "coinbase_routing_enabled=true — no Coinbase orders "
-                                        "are possible (check COINBASE_KEY_FILE on the volume)"
-                                    )
-                            except Exception as _cb_err:
-                                # [P155] WARNING + type: this wraps the entire Coinbase
-                                # block, order path included.
-                                logger.warning(
-                                    f"[COINBASE-SHADOW] block FAILED: "
-                                    f"{type(_cb_err).__name__}: {_cb_err}", exc_info=True
-                                )
                 except Exception as _hb_err:
-                    # [P155] This handler wraps the WHOLE heartbeat block, which since
-                    # Phase B contains the only Coinbase order path — not just the
-                    # Discord push. The old "Discord push failed" text sent anyone
-                    # reading the logs after a silent no-trade stretch to the wrong
-                    # subsystem entirely.
+                    # [P227] Since the Coinbase order path moved OUT of this block,
+                    # this handler once again covers ONLY heartbeat composition and
+                    # the Discord push — a failure here no longer stops trading.
                     logger.warning(
-                        f"[HEARTBEAT] block FAILED (includes the Coinbase order path, "
-                        f"NOT just the Discord push): {type(_hb_err).__name__}: {_hb_err}",
+                        f"[HEARTBEAT] block FAILED (Discord/heartbeat only — the "
+                        f"Coinbase order path now runs after this block, P227): "
+                        f"{type(_hb_err).__name__}: {_hb_err}",
                         exc_info=True,
                     )
+
+                # [P227] The Coinbase block below was moved OUT of the heartbeat
+                # try and OUT of `if self.audit_manager:`. Before this, the sole
+                # order venue, the P209 existence-fuse feed, and run_live's only
+                # _save_paper_positions() were all gated on a LOGGING object and
+                # shared one exception handler with ~90 lines of Discord message
+                # composition — audit_manager=None or a heartbeat formatting error
+                # would silently stop trading, fuse feeding, and state persistence.
+                # A logging object must never be load-bearing for order flow.
+                # [COINBASE-SHADOW] Phase A: read-only venue parity.
+                # Flag-gated (default OFF) + fail-soft -> NEVER affects the
+                # Kraken trading path. No Coinbase orders. See
+                # docs/COINBASE_ENGINE_INTEGRATION_PLAN.md.
+                if getattr(self.config, "coinbase_routing_enabled", False):
+                    try:
+                        if getattr(self, "_coinbase_adapter", None) is None:
+                            from exchange.coinbase_adapter import CoinbaseAdapter
+                            self._coinbase_adapter = CoinbaseAdapter()
+                        from exchange.symbol_mapping import to_venue_symbol
+                        _cb = self._coinbase_adapter
+                        if _cb.is_connected():
+                            _cbg = lambda o, k: (o.get(k) if isinstance(o, dict) else getattr(o, k, None))
+                            for _cb_a in self.config.assets:
+                                _cb_pid = to_venue_symbol(_cb_a, "coinbase", "perp")
+                                _cb_p = _cb._client.get_product(product_id=_cb_pid)
+                                _cb_mark = float(_cbg(_cb_p, "mid_market_price") or _cbg(_cb_p, "price") or 0)
+                                _cb_fpd = _cbg(_cb_p, "future_product_details") or {}
+                                _cb_fr = _cbg(_cb_fpd, "funding_rate")
+                                _cb_kr = float(_live_prices.get(_cb_a, 0) or 0)
+                                _cb_basis = ((_cb_mark - _cb_kr) / _cb_kr * 1e4) if _cb_kr else 0.0
+                                logger.info(
+                                    f"[COINBASE-SHADOW] {_cb_a}: CB={_cb_mark:.2f} "
+                                    f"KR={_cb_kr:.2f} basis={_cb_basis:+.1f}bps funding={_cb_fr}"
+                                )
+                            # [COINBASE-SLEEVE] the LIVE sleeve: venue-reconciled
+                            # position/equity state (anti-P139), and the SAME
+                            # instance is the sole order driver — manage_to_signal
+                            # + ensure_protective_stop run on it further down
+                            # this heartbeat block. Fail-soft.
+                            try:
+                                if getattr(self, "_coinbase_sleeve", None) is None:
+                                    from exchange.coinbase_sleeve import CoinbaseSleeve
+                                    self._coinbase_sleeve = CoinbaseSleeve(
+                                        _cb, assets=self.config.assets,
+                                        # [P197] pct<=0 => stops disabled
+                                        protective_stop_pct=float(getattr(
+                                            self.config,
+                                            "coinbase_protective_stop_pct", 0.0) or 0.0),
+                                        protective_stop_assets=(getattr(
+                                            self.config,
+                                            "coinbase_protective_stop_assets", None) or None),
+                                        # [P198] sleeve-side flip persistence
+                                        # (the P142 churn control never reached
+                                        # this path). Default 2 = same as the
+                                        # Kraken-side flip_persist_ticks; 0/1
+                                        # disables. Tightening-only.
+                                        flip_persist_ticks=int(getattr(
+                                            self.config,
+                                            "coinbase_flip_persist_ticks", 2) or 0),
+                                        # [P208] The SAME policy number as P144
+                                        # (risk.max_net_exposure, live 0.50),
+                                        # enforced on the sleeve's own
+                                        # venue-read book. P144's only
+                                        # enforcement site sits past the P152
+                                        # early return and reads Kraken-shaped
+                                        # _paper_positions, `{}` since June — so
+                                        # on the one venue that holds risk it has
+                                        # never been evaluated. None disables.
+                                        max_net_exposure=getattr(
+                                            self.config, "max_net_exposure", None),
+                                        # [P210] Per-asset gross cap, the
+                                        # SAME policy numbers the Kraken
+                                        # path uses (post_leverage_caps),
+                                        # but denominated in sleeve equity.
+                                        # intent.target_exposure is NOT
+                                        # reconnected on purpose: it is
+                                        # multiplied by KRAKEN NAV
+                                        # (unit_system.py:232), so at 0.25
+                                        # it sizes ~$2,457 against the
+                                        # ~$643 this sleeve holds — a ~4x
+                                        # increase, sized out of another
+                                        # venue's capital.
+                                        max_asset_exposure=getattr(
+                                            self.config,
+                                            "post_leverage_caps", None),
+                                    )
+                                _cb_snap = self._coinbase_sleeve.snapshot()
+                                _cb_pos = _cb_snap.get("positions") or {}
+                                _cb_pos_str = ", ".join(
+                                    f"{_a}={_p.get('signed_contracts')}" for _a, _p in _cb_pos.items()
+                                ) or "FLAT"
+                                logger.info(
+                                    f"[COINBASE-SLEEVE] buying_power="
+                                    f"${_cb_snap.get('buying_power_usd', 0):,.2f} positions={_cb_pos_str}"
+                                )
+                                # [P150] record a forward-PnL point so the
+                                # sleeve's live edge is judged on real data
+                                # (the "real test"), and surface PnL + DD +
+                                # halt in the heartbeat stream.
+                                _cb_pnl = self._coinbase_sleeve.log_pnl_point()
+                                _cb_risk = _cb_snap.get("risk") or {}
+                                logger.info(
+                                    f"[COINBASE-PNL] equity=${_cb_pnl.get('equity_usd', 0):,.2f} "
+                                    f"pnl=${_cb_pnl.get('pnl_usd', 0):+,.2f} "
+                                    f"({_cb_pnl.get('pnl_pct', 0) * 100:+.2f}%) "
+                                    f"dd={_cb_risk.get('drawdown_pct', 0) * 100:.1f}% "
+                                    f"halted={_cb_risk.get('halted', False)}"
+                                )
+                            except Exception as _cb_sl_err:
+                                logger.debug(f"[COINBASE-SLEEVE] skipped: {_cb_sl_err}")
+                            # [P209] FEED THE EXISTENCE FUSE THE SLEEVE'S PnL.
+                            # Non-Negotiable Rule #3 (28d window, cumulative
+                            # loss -> halt) has been inert since Phase B: all
+                            # three record_pnl() call sites live in
+                            # execution_service.py PAST the P152 early return,
+                            # so for a Coinbase-routed asset they never run.
+                            # The fuse's pnl_history was literally [] while the
+                            # sleeve carried 100% of the directional risk.
+                            #
+                            # The OUTPUT half is already wired: a suspended
+                            # fuse sets veto_reason=[STRATEGY_SUSPENDED], which
+                            # P206's translator classifies as neither HOLD nor
+                            # venue-NA, so it falls through to veto_flat and the
+                            # sleeve flattens. So this input is the last link.
+                            try:
+                                _fz = getattr(self, "existence_fuse", None)
+                                _fz_sleeve = getattr(self, "_coinbase_sleeve", None)
+                                if _fz is not None and _fz_sleeve is not None:
+                                    _fz_eq = float(
+                                        getattr(_fz_sleeve, "_last_equity_usd", 0.0) or 0.0)
+                                    _fz_fresh = bool(
+                                        getattr(_fz_sleeve, "_reconcile_ok", False))
+                                    if not _fz_fresh or _fz_eq <= 0:
+                                        # sleeve_equity_usd() returns the last
+                                        # KNOWN value on API failure, so a stale
+                                        # read would compute delta=0 and enter
+                                        # the window as "no loss". Skipping
+                                        # leaves a gap; recording a fabricated
+                                        # zero would understate the drawdown.
+                                        logger.debug(
+                                            "[P209] fuse feed skipped: sleeve "
+                                            f"equity not fresh (ok={_fz_fresh}, "
+                                            f"eq=${_fz_eq:,.2f})")
+                                    else:
+                                        _fz_anchor = getattr(
+                                            self, "_fuse_sleeve_anchor_equity", None)
+                                        # First ever point: anchor here and
+                                        # record 0. Deliberately NOT retroactive
+                                        # — seeding the window with the sleeve's
+                                        # inception-to-date loss would suspend on
+                                        # the first tick for PnL earned before
+                                        # the fuse could ever have acted on it.
+                                        _fz_delta = (
+                                            _fz_eq - float(_fz_anchor)
+                                            if _fz_anchor else 0.0)
+                                        self._fuse_sleeve_anchor_equity = _fz_eq
+                                        self._fuse_equity_basis = "coinbase_sleeve"
+                                        # record_pnl ONLY. on_trade_close() is
+                                        # deliberately NOT called: it counts a
+                                        # CONSECUTIVE-LOSS streak and suspends at
+                                        # 10, and a 4H mark-to-market tick is not
+                                        # a trade — ten red ticks (~1.7 days of
+                                        # normal drift) would halt the system.
+                                        _fz.record_pnl(
+                                            realized_pnl=_fz_delta,
+                                            current_equity=_fz_eq,
+                                            trade_count=0,
+                                        )
+                                        _fz_st = _fz.get_status()
+                                        logger.info(
+                                            f"[P209][FUSE-FEED] sleeve "
+                                            f"equity=${_fz_eq:,.2f} "
+                                            f"delta={_fz_delta:+,.2f} "
+                                            f"window={_fz_st.window_pnl_pct * 100:+.2f}% "
+                                            f"state={_fz_st.state.name}"
+                                        )
+                                        if _fz_st.is_suspended:
+                                            logger.critical(
+                                                f"[P209][FUSE-FEED] EXISTENCE FUSE "
+                                                f"SUSPENDED: {_fz_st.suspension_reason} "
+                                                f"— the sleeve will be flattened by "
+                                                f"the STRATEGY_SUSPENDED veto"
+                                            )
+                            except Exception as _fz_err:
+                                logger.warning(
+                                    f"[P209] fuse feed failed: "
+                                    f"{type(_fz_err).__name__}: {_fz_err}")
+                            # [P209] PERSIST IT. Without this the feed above is
+                            # theatre: run_live() never calls
+                            # _save_paper_positions() anywhere. The three
+                            # per-tick calls (17800/18046/18057) are all inside
+                            # run_paper(); the ones reachable in live
+                            # (MAX_HOLD_TIMEOUT, FastRiskTick, CORR-0) each
+                            # require a Kraken _paper_positions entry, and that
+                            # dict has been {} since the 2026-06-13 flatten. The
+                            # live file was last written 2026-06-13T02:17Z.
+                            #
+                            # So the fuse's 28d rolling window would reset to
+                            # empty on every deploy and could never accumulate
+                            # 28 days of anything — the same in-memory-baseline
+                            # class as P150 (sleeve DD baseline) and P148 (DRL
+                            # frame buffer), and the reason P140/B2 observed
+                            # `_peak_equity` re-initialising on restart.
+                            #
+                            # Carries the other governors in the same bundle
+                            # (cascade, failure_memory, confidence_scorer,
+                            # opportunity_budget, regime_smoother, AC-5 daily
+                            # fill counters), all equally unpersisted in live.
+                            # Same family as the main.py:18215 note that
+                            # run_live() was missing dispatches run_paper() had:
+                            # run_live is a partial copy and keeps losing things.
+                            try:
+                                self._save_paper_positions(force=True)
+                            except Exception as _sv_err:
+                                logger.warning(
+                                    f"[P209] state persist failed: "
+                                    f"{type(_sv_err).__name__}: {_sv_err}")
+                            # [COINBASE-FUNDING] Phase 3 SHADOW: run the 3
+                            # funding-rate strategies on live perp funding and
+                            # LOG the combined signal. Observe-only — does NOT
+                            # drive trades yet (the Coinbase sleeve's eventual
+                            # independent alpha). fail-soft.
+                            try:
+                                if getattr(self, "_funding_strategies", None) is None:
+                                    from strategies.funding_rate_v5_1 import build_phase3_funding_strategies
+                                    self._funding_strategies = build_phase3_funding_strategies()
+                                for _f_a in self.config.assets:
+                                    _f_pid = to_venue_symbol(_f_a, "coinbase", "perp")
+                                    _f_p = _cb._client.get_product(product_id=_f_pid)
+                                    _f_fpd = _cbg(_f_p, "future_product_details") or {}
+                                    _f_raw = _cbg(_f_fpd, "funding_rate")
+                                    if _f_raw is None:
+                                        continue
+                                    _f_md = {"funding_rate_8h": float(_f_raw) * 8.0}
+                                    # [P218] Publish the venue's own
+                                    # funding so the next tick's
+                                    # market_data can price carry on the
+                                    # venue that actually holds the
+                                    # position. Cached rather than
+                                    # re-fetched in the hot path: this
+                                    # block already pays for the call,
+                                    # CDE funding updates hourly and the
+                                    # decision loop is 4H, so a one-tick
+                                    # lag is immaterial next to fetching
+                                    # three extra products every tick.
+                                    if not hasattr(self, "_coinbase_funding_8h"):
+                                        self._coinbase_funding_8h = {}
+                                    self._coinbase_funding_8h[_f_a] = float(_f_raw) * 8.0
+                                    _f_active = [st.evaluate(_f_a, _f_md) for st in self._funding_strategies]
+                                    _f_active = [s for s in _f_active if s.direction != 0.0]
+                                    if _f_active:
+                                        _f_best = max(_f_active, key=lambda s: s.confidence)
+                                        logger.info(
+                                            f"[COINBASE-FUNDING] {_f_a}: {_f_best.strategy_name} "
+                                            f"dir={_f_best.direction:+.0f} conf={_f_best.confidence:.2f} "
+                                            f"({_f_best.reason})"
+                                        )
+                            except Exception as _cb_fd_err:
+                                logger.debug(f"[COINBASE-FUNDING] skipped: {_cb_fd_err}")
+                            # [COINBASE-MANAGE] per-tick position management:
+                            # drive each ROUTED asset to the target implied by
+                            # its fused direction (opens/flips AND flattens on
+                            # hold) — the sole Coinbase order path, closing the
+                            # exit gap. INERT unless RoutingPolicy is advanced
+                            # past SHADOW (default PRE_PHASE_2 -> no routed
+                            # assets -> no-op). fail-soft.
+                            try:
+                                import core.execution_service as _es
+                                _rp = _es._coinbase_get_routing()
+                                _flag = getattr(self.config, "coinbase_routing_enabled", False)
+                                _sl = getattr(self, "_coinbase_sleeve", None)
+                                # [P155] Record EVERY routed asset's outcome, then log
+                                # one unconditional summary. The old code logged only
+                                # non-NOOP/NOT_READY results, so a sleeve that had gone
+                                # permanently idle (halted, stale reconcile, or target
+                                # already met) emitted literally nothing — silence was
+                                # indistinguishable from healthy. Feeds the heartbeat.
+                                _m_summary = {}
+                                _cb_stop_summary = {}  # [P197]
+                                if _flag and _rp is not None and _sl is not None:
+                                    for _m_a in self.config.assets:
+                                        if _rp.venue_for(_m_a) != "coinbase":
+                                            continue
+                                        # [P206] Pre-gate snapshot (the historical
+                                        # input) — still the fallback, and still what
+                                        # runs when the flag is off.
+                                        _m_pre = float(self._last_quant_directions.get(_m_a, 0.0) or 0.0)
+                                        _m_dir = _m_pre
+                                        _m_src = "pre_gate"
+                                        if getattr(self.config, "coinbase_use_gated_intent", False):
+                                            _m_tgt, _m_why = sleeve_direction_from_intent(
+                                                _live_intents.get(_m_a), _m_pre)
+                                            if _m_tgt is SLEEVE_HOLD:
+                                                # Leave the position exactly as it is.
+                                                # Never silently substitute the ungated
+                                                # value here — that is the gap this
+                                                # workstream exists to close.
+                                                _m_summary[_m_a] = (
+                                                    f"HOLD({_m_why},"
+                                                    f"{_sl.signed_contracts(_m_a)}ct)")
+                                                logger.info(
+                                                    f"[COINBASE-MANAGE] {_m_a}: HOLD "
+                                                    f"({_m_why}) pos="
+                                                    f"{_sl.signed_contracts(_m_a)}ct")
+                                                _st_res = await _sl.ensure_protective_stop(_m_a)
+                                                _cb_stop_summary[_m_a] = _st_res.get("status")
+                                                continue
+                                            _m_dir = float(_m_tgt)
+                                            _m_src = _m_why
+                                        _m_res = await _sl.manage_to_signal(_m_a, _m_dir)
+                                        _m_st = _m_res.get("status")
+                                        _m_summary[_m_a] = (
+                                            f"{_m_st}(dir={_m_dir:+.2f},"
+                                            f"{_sl.signed_contracts(_m_a)}ct)"
+                                        )
+                                        if _m_st not in ("NOOP", "NOT_READY"):
+                                            logger.info(
+                                                f"[COINBASE-MANAGE] {_m_a}: dir={_m_dir:+.2f} "
+                                                f"src={_m_src} -> "
+                                                f"{_m_st} pos={_sl.signed_contracts(_m_a)}ct"
+                                            )
+                                        # [P197] Reconcile the venue-resting
+                                        # protective stop AFTER the position is
+                                        # settled for this asset. Order matters:
+                                        # execute_target cancels ALL resting orders
+                                        # (incl. the old stop) before changing the
+                                        # position, so the stop must be re-placed
+                                        # here, against the NEW position. Inert
+                                        # unless coinbase_protective_stop_pct > 0.
+                                        # [P207] Pass THIS TICK'S intended target.
+                                        # A flatten is a marketable LIMIT that may not
+                                        # have filled yet, so reconcile can still show
+                                        # the position we just closed — which placed a
+                                        # stop on an asset that went flat moments
+                                        # later. On CDE (no reduce_only) that orphan
+                                        # would OPEN a position, and the next
+                                        # reconcile is 4h away. Observed live.
+                                        _st_res = await _sl.ensure_protective_stop(
+                                            _m_a,
+                                            intended_target=_sl.target_for_signal(_m_dir))
+                                        _st_st = _st_res.get("status")
+                                        _cb_stop_summary[_m_a] = _st_st
+                                        if _st_st in ("PLACED", "FAILED", "ERROR",
+                                                      "FLAT_CANCELLED", "NO_ANCHOR"):
+                                            logger.info(
+                                                f"[COINBASE-STOP] {_m_a}: {_st_st}"
+                                                + (f" @ {_st_res['stop_price']:.4f}"
+                                                   if _st_res.get("stop_price") else "")
+                                                + (f" ({_st_res['reason']})"
+                                                   if _st_res.get("reason") else "")
+                                            )
+                                self._coinbase_manage_last = _m_summary
+                                self._coinbase_stop_last = _cb_stop_summary  # [P197]
+                                # [P197] Two explicit `if`s, deliberately NOT
+                                # if/else. The P197 stop-summary block below was
+                                # first written between this `if` and its `else`,
+                                # which silently re-bound the else to the stop
+                                # condition: with stops disabled (the default) the
+                                # engine logged "NO routed assets managed this
+                                # tick — the order path is inert" immediately after
+                                # a summary showing all three managed. The log
+                                # contradicted itself about the one thing this
+                                # block exists to report. Explicit conditions are
+                                # immune to that insertion hazard.
+                                if _m_summary:
+                                    logger.info(
+                                        "[COINBASE-MANAGE] tick summary: "
+                                        + ", ".join(f"{_a}={_v}" for _a, _v in sorted(_m_summary.items()))
+                                    )
+                                if not _m_summary:
+                                    logger.warning(
+                                        "[COINBASE-MANAGE] NO routed assets managed this tick "
+                                        f"(routing_enabled={_flag}, "
+                                        f"policy={'None' if _rp is None else getattr(_rp, 'phase', '?')}, "
+                                        f"sleeve={'None' if _sl is None else 'ok'}) "
+                                        "— the Coinbase order path is inert"
+                                    )
+                                # [P197] Log the stop summary whenever the feature
+                                # is on, so "no stop resting" can never be silent —
+                                # a position sitting unprotected is the failure that
+                                # matters, and silence must not be indistinguishable
+                                # from protected (P155's lesson).
+                                if _cb_stop_summary and any(
+                                        _v != "DISABLED" for _v in _cb_stop_summary.values()):
+                                    logger.info(
+                                        "[COINBASE-STOP] tick summary: "
+                                        + ", ".join(f"{_a}={_v}" for _a, _v
+                                                    in sorted(_cb_stop_summary.items()))
+                                    )
+                            except Exception as _cb_mg_err:
+                                # [P155] WARNING, not DEBUG: this is the sole Coinbase
+                                # order path. A swallowed exception here means zero
+                                # trades with no visible cause.
+                                self._coinbase_manage_last = {"ERROR": str(_cb_mg_err)}
+                                logger.warning(
+                                    f"[COINBASE-MANAGE] order path FAILED: "
+                                    f"{type(_cb_mg_err).__name__}: {_cb_mg_err}",
+                                    exc_info=True,
+                                )
+                        else:
+                            # [P155] WARNING, not DEBUG. With routing enabled, an
+                            # unconnected adapter means the sleeve cannot trade at
+                            # all — that is not a debug-level condition.
+                            self._coinbase_manage_last = {"ERROR": "adapter not connected"}
+                            logger.warning(
+                                "[COINBASE-SHADOW] adapter NOT CONNECTED while "
+                                "coinbase_routing_enabled=true — no Coinbase orders "
+                                "are possible (check COINBASE_KEY_FILE on the volume)"
+                            )
+                    except Exception as _cb_err:
+                        # [P155] WARNING + type: this wraps the entire Coinbase
+                        # block, order path included.
+                        logger.warning(
+                            f"[COINBASE-SHADOW] block FAILED: "
+                            f"{type(_cb_err).__name__}: {_cb_err}", exc_info=True
+                        )
+
 
                 # [EQUITY-LOG] Append equity snapshot for Sharpe computation
                 try:

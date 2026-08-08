@@ -2,8 +2,9 @@
   "_description": "HMATS Live HIGH_RISK default. Preserves Kraken-only execution, BTC/ETH/SOL scope, 4H loop, and short-biased high-risk baseline.",
   "_created": "2026-03-08",
   "mode": "LIVE",
+  "_mode_note": "P227: `mode` is documentation only — from_file never reads it and main() overwrites config.mode from the CLI unconditionally. The real mode switch is the --mode flag in docker-compose.hetzner.yml.",
   "risk_profile": "HIGH_RISK",
-  "_coinbase_note": "LIVE (updated 2026-08-07; the previous 'Phase A only: read-only' text went stale on 2026-06-13 and was never corrected). coinbase_routing_enabled=true + data/coinbase_routing_state.json phase=DUAL_VENUE routes ALL 3 assets to the Coinbase perp sleeve, which places REAL orders every 4H tick via manage_to_signal (opens/flips/flattens; P198 flip-persistence; P197 protective stop on SOL). Kraken entries for routed assets are skipped (P152) — the sleeve is the SOLE directional path. Revert to Kraken-only: scripts/coinbase_set_assets.sh \"\" (inert routing) — but note Kraken then has no directional driver either; that is a full trading stop, not a venue swap.",
+  "_coinbase_note": "LIVE (updated 2026-08-07; the previous 'Phase A only: read-only' text went stale on 2026-06-13 and was never corrected). coinbase_routing_enabled=true + data/coinbase_routing_state.json phase=DUAL_VENUE routes ALL 3 assets to the Coinbase perp sleeve, which places REAL orders every 4H tick via manage_to_signal (opens/flips/flattens; P198 flip-persistence; P197/P205 protective stops on ALL assets; P206 gated intent; P209 fuse feed). Kraken entries for routed assets are skipped (P152) — the sleeve is the SOLE directional path. Revert to Kraken-only: scripts/coinbase_set_assets.sh \"\" (inert routing) — but note Kraken then has no directional driver either; that is a full trading stop, not a venue swap.",
   "coinbase_routing_enabled": true,
   "_l2_churn_note": "L2-CHURN 2026-06-13: flip-persistence whipsaw guard. Require an opposing direction signal to persist N consecutive 4H ticks before committing a flip. Set flip_persistence_enabled=false to disable. AC thresholds (min-hold/global/daily) tightened in main.py:~2105 literals.",
   "flip_persistence_enabled": true,
@@ -325,14 +326,7 @@
   "stop_order_max_retries": 3,
   "stop_order_backoff_ms": [200, 400, 800],
   "stop_order_failure_policy": "ALERT_ONLY",
-  "single_exchange_mode": true,
-  "allowed_venues": ["kraken"],
-  "logging": {
-    "level": "INFO",
-    "file": "logs/live_high_risk.log",
-    "rotation": "daily",
-    "retention_days": 90
-  },
+  "_p227_dead_keys_removed": "2026-08-08 audit: removed single_exchange_mode (only reader was the orphan core/cloud_config.py, reading a different key), allowed_venues (zero references repo-wide — and it said kraken while the sole order venue is Coinbase), and the logging block (zero consumers; logging is hardcoded at main.py:81-104 to logs/hmats.log, 10MB x 5 rotation — the daily/90-day values here were fiction). None of these keys ever controlled anything; keeping them made the config overstate what it enforces.",
   "sentiment_gate_config": {
     "enabled": true,
     "_note": "2026-04-11: SentimentGate ENABLED. Modulates confidence ±10-15% based on sentiment alignment."

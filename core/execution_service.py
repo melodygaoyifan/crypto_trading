@@ -9,9 +9,10 @@ This is a MECHANICAL EXTRACTION of HMATSProductionRunner._execute_intent().
 All `self.*` references have been replaced with `ctx.*` (ExecutionContext).
 Business logic is UNCHANGED — this is identical behavior in a new location.
 
-SHADOW MODE:
-    main.py runs BOTH the old _execute_intent AND this execute_intent_v2.
-    Results are compared. When identical for 48h, old path is removed.
+HISTORY (stale text corrected P227): the shadow/dual-path phase this docstring
+used to describe ended 2026-04-18 (commit ef4060b) — `_execute_intent` was
+deleted and execute_intent_v2 has been the ONLY execution path since. See
+CLAUDE.md "Execution shadow: RETIRED".
 
 ================================================================================
 """
@@ -183,8 +184,9 @@ except ImportError:
                     return _v
         return default
 
-# P0_MODULES_AVAILABLE: in shadow context, P0 modules are always available
-# (shadow only runs when main path succeeded, which requires P0)
+# P0_MODULES_AVAILABLE: always True on this path. (The "shadow context"
+# rationale that used to live here described the retired 2026-04 dual-path
+# phase — corrected P227.)
 P0_MODULES_AVAILABLE = True
 
 try:

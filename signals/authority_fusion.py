@@ -387,7 +387,11 @@ class AuthorityFusionEngine:
         2. OPPORTUNITY is truly aggressive (regime owns timing)
         3. Clear decision responsibility (no confusion)
     """
-    
+
+    # [P227] one-shot latch for the zero-weighted-ADVISE roster log (class
+    # level on purpose: one line per process, not per engine instance).
+    _p227_zero_weight_logged: bool = False
+
     def __init__(self):
         self._momentum_memory = MomentumMemory()
         # --- [v9-PATCH-6] Confidence scorer for reliability injection ---
@@ -899,6 +903,31 @@ class AuthorityFusionEngine:
             weighted_alignment = 0.0
             total_weight = 0.0
             advise_details = []
+
+            # [P227] Make the silent zero-weighting VISIBLE. ADVISE_WEIGHTS_BY_REGIME
+            # names only 6 agents; every other ADVISE agent in the matrix resolves
+            # to weight 0.0 via the .get default below and is dropped here — 12 of
+            # 18 ADVISE agents as of the 2026-08-08 audit. That may be the intended
+            # design, but a `.get(agent, 0.0)` default makes "not configured"
+            # indistinguishable from "deliberately zero-weighted" (the P2
+            # missing-vs-neutral shape), and nothing anywhere reported it. One
+            # log line per process, so the roster is greppable, not spam.
+            _zero_weighted = [
+                a for a, auth in matrix.items()
+                if auth == Authority.ADVISE and a in signals
+                and advise_weights.get(a, 0.0) <= 0
+            ]
+            if _zero_weighted and not getattr(
+                    AuthorityFusionEngine, "_p227_zero_weight_logged", False):
+                AuthorityFusionEngine._p227_zero_weight_logged = True
+                logger.info(
+                    "[P227-ADVISE-WEIGHTS] %d ADVISE agents carry ZERO regime "
+                    "weight and are excluded from fusion every tick: %s — their "
+                    "signals are computed and attributed but never consumed. If "
+                    "this is intended, record it; if not, add them to "
+                    "ADVISE_WEIGHTS_BY_REGIME.",
+                    len(_zero_weighted), sorted(_zero_weighted),
+                )
 
             for agent, authority in matrix.items():
                 if authority != Authority.ADVISE or agent not in signals:
