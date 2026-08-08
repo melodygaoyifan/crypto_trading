@@ -82,3 +82,21 @@ COINBASE_*.json
 
 # DRL validation per-bar return series (regenerable via scripts/validate_drl_oos.py)
 data/validation_export/*_val_returns.jsonl
+
+# [P230] Locally-generated analysis/report artifacts (test runs + operator
+# tools write here; they are outputs, not sources). Dirs that carry
+# deliberately-committed historical reports (analytics/ic/reports,
+# analytics/sixty_day_review/reports) are ignored via wildcard so the
+# tracked files stay visible while NEW droppings stop polluting git status.
+analytics/promotion_gate/applied/
+analytics/promotion_gate/plans/
+analytics/shadow_ic/reports/
+data/audit_sync/
+training/factor_extraction/reports/
+analytics/ic/reports/*
+!analytics/ic/reports/agent_correlation_matrix_2026-04-28.json
+!analytics/ic/reports/diagnostic_ic_20260425_063*.json
+!analytics/ic/reports/ic_report_20260425_0623.json
+!analytics/ic/reports/strategy_sign_flip_20260425_0641.json
+analytics/sixty_day_review/reports/*
+!analytics/sixty_day_review/reports/sixty_day_review_20260429_05*.json

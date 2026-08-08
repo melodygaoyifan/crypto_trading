@@ -34,12 +34,10 @@
   "assets": ["SOL", "BTC", "ETH"],
   "primary_asset": "SOL",
   "exchange": {
+    "_p230_note": "from_file reads ONLY exchange.primary (absent here -> default 'kraken'). The api_*_env names below are never parsed — ProductionConfig's hardcoded defaults happen to match; kept as documentation. rate_limit/ws_enabled/rest_enabled removed 2026-08-08 (P230): zero consumers repo-wide; real rate limiting lives in defense/rate_limit_manager.py + the infra/kraken_client.py token bucket.",
     "kraken": {
       "api_key_env": "KRAKEN_API_KEY",
-      "api_secret_env": "KRAKEN_API_SECRET",
-      "rate_limit": 15,
-      "ws_enabled": true,
-      "rest_enabled": true
+      "api_secret_env": "KRAKEN_API_SECRET"
     }
   },
   "risk": {

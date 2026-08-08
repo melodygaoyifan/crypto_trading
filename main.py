@@ -7834,6 +7834,13 @@ class HMATSProductionRunner:
                     # so attribution tracker + downstream readers (main.py:11874) see it.
                     agent_signals['micro_direction'] = _micro_sig.get('micro_direction', 0.0)
                     agent_signals['micro_data_quality'] = _micro_sig.get('data_quality', 1.0)
+                    # [P230] Bridge the primary-signal label so attribution's
+                    # reasoning field stops being permanently empty — the
+                    # extractor reads `micro_primary_signal`, which previously
+                    # existed only inside the agent payload, never in
+                    # agent_signals (one of 5 reasoning-key gaps, P227 audit).
+                    agent_signals['micro_primary_signal'] = str(
+                        _micro_sig.get('micro_primary_signal', '') or '')
                     if abs(_micro_sig.get("micro_direction", 0)) > 0.3:
                         logger.info(
                             f"[WIRE-MICRO] {asset}: dir={_micro_sig['micro_direction']:+.2f} "
@@ -9738,22 +9745,38 @@ class HMATSProductionRunner:
                 "soldex": "ADVISE", "onchain_graph": "ADVISE",
             }
             _attr_collected = {
-                "quant": {k: agent_signals.get(k, 0.0) for k in
-                    # [FIX 2026-04-24] 'quant_strategy' is never written; 'primary_strategy' is
-                    # the actual key from pipeline Best-of-N. Keep both for back-compat.
+                # [P230] The extractors read reasoning keys this dict never
+                # passed (quant_strategy / micro_primary_signal /
+                # kq_primary_strategy / model_alpha_reasons), so those agents'
+                # attribution "reasoning" was the empty string for the life of
+                # the tracker. Explicit typed defaults, not the comprehension's
+                # 0.0 — the model_alpha extractor does ", ".join(reasons) and
+                # would raise on a float. (sentiment_source remains unclosed:
+                # NO source key exists anywhere; needs a producer first.)
+                "quant": {**{k: agent_signals.get(k, 0.0) for k in
+                    # [FIX 2026-04-24] 'primary_strategy' is the actual
+                    # Best-of-N key. Kept for back-compat.
                     ["quant_direction", "quant_confidence", "primary_strategy", "data_quality"]},
+                    "quant_strategy": str(agent_signals.get("quant_strategy_id",
+                        agent_signals.get("primary_strategy", "")) or "")},
                 "short_bias": {
                     "direction": agent_signals.get("short_bias_direction", 0.0),
                     "confidence": agent_signals.get("short_bias_confidence", 0.0),
                 },
                 "sentiment": {k: agent_signals.get(k, 0.0) for k in
                     ["sentiment_direction", "sentiment_confidence", "sentiment_data_quality"]},
-                "micro": {k: agent_signals.get(k, 0.0) for k in
+                "micro": {**{k: agent_signals.get(k, 0.0) for k in
                     ["micro_direction", "micro_confidence", "micro_data_quality"]},
-                "model_alpha": {k: agent_signals.get(k, 0.0) for k in
+                    "micro_primary_signal": str(
+                        agent_signals.get("micro_primary_signal", "") or "")},
+                "model_alpha": {**{k: agent_signals.get(k, 0.0) for k in
                     ["model_alpha_direction", "model_alpha_confidence", "model_alpha_data_quality"]},
-                "kraken_quant": {k: agent_signals.get(k, 0.0) for k in
+                    "model_alpha_reasons": list(
+                        agent_signals.get("model_alpha_reasons", []) or [])},
+                "kraken_quant": {**{k: agent_signals.get(k, 0.0) for k in
                     ["kq_direction", "kq_confidence", "kq_data_quality"]},
+                    "kq_primary_strategy": str(
+                        agent_signals.get("kq_primary_strategy", "") or "")},
                 # [P216] `_extract_vol_alpha` reads vol_alpha_implied_direction /
                 # vol_alpha_intensity / vol_alpha_direction_reason (the agent
                 # emits all three, volatility_alpha_agent.py:963). This dict used
