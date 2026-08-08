@@ -1365,7 +1365,50 @@ class HMATSv36Engine:
         # Only block pure NEW entries (no existing position).
         _c1_current_exp = abs(market_data.get("current_exposure", 0.0))
         if not alpha_result.passes_threshold:
-            if _c1_current_exp < 0.001:
+            # [P232] Gate hysteresis (hold band) for the SLEEVE book. C1 below
+            # is the designed hold-on-fail-with-position behavior, but it
+            # reads the Kraken current_exposure ({} since June), so every gate
+            # fail flattened the sleeve — no hold band, 16bps per flap (P231).
+            # Semantics (research: Constantinides no-trade band, hold ~0.65x
+            # enter): a HELD sleeve position survives a gate fail iff
+            #   (a) alpha >= hold_ratio x threshold  (a real exit still exits)
+            #   (b) the signal still AGREES with the held direction (a flip
+            #       is never hold-banded — reversals keep P198 persistence +
+            #       full enter threshold)
+            # SHADOW line always logs the counterfactual; enforcement only
+            # when alpha_gate_hold_ratio > 0 (config, default 0 = OFF —
+            # holding past the enter threshold loosens the EXIT side, P141).
+            _hy_pos = int(market_data.get("sleeve_position_contracts", 0) or 0)
+            _hy_ratio = float(market_data.get("alpha_gate_hold_ratio", 0.0) or 0.0)
+            _hy_dir = float(getattr(intent, "direction", 0.0) or 0.0)
+            if _hy_pos != 0 and _c1_current_exp < 0.001:
+                _hy_agrees = (_hy_dir * _hy_pos) > 0
+                _hy_alpha = float(alpha_result.estimated_alpha_bps or 0.0)
+                _hy_thresh = float(alpha_result.threshold_bps or 0.0)
+                _hy_would_hold = (_hy_agrees and _hy_thresh > 0
+                                  and _hy_alpha >= 0.65 * _hy_thresh)
+                logger.info(
+                    f"[GATE-HYST] sleeve pos={_hy_pos:+d} alpha={_hy_alpha:.1f} "
+                    f"thresh={_hy_thresh:.1f} agrees={_hy_agrees} -> "
+                    f"{'WOULD-HOLD' if _hy_would_hold else 'WOULD-EXIT'} at "
+                    f"ratio 0.65 (enforce={'ON' if _hy_ratio > 0 else 'OFF'})"
+                )
+                if (_hy_ratio > 0 and _hy_agrees and _hy_thresh > 0
+                        and _hy_alpha >= _hy_ratio * _hy_thresh):
+                    intent.veto_active = False
+                    intent.veto_reason = ""
+                    intent.alpha_gate_hold = True  # read by the P232
+                    # FRICTION_EXCEEDS_EDGE exemption in main.py — without
+                    # it the secondary veto overrides the hold band.
+                    logger.info(
+                        f"[GATE-HYST] HOLD: alpha {_hy_alpha:.1f} >= "
+                        f"{_hy_ratio:.2f} x {_hy_thresh:.1f} and direction "
+                        f"agrees with held position — position kept, no "
+                        f"re-entry credit (enter threshold unchanged)"
+                    )
+            if getattr(intent, "alpha_gate_hold", False):
+                pass  # [P232] held — proceed to fusion/tranche like C1
+            elif _c1_current_exp < 0.001:
                 # No existing position - this is a pure new entry, block it
                 intent.veto_active = True
                 intent.veto_reason = f"[v3.6.1] Alpha gate: {alpha_result.reason}"

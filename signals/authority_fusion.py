@@ -876,7 +876,16 @@ class AuthorityFusionEngine:
 
         _consensus_boost = 0.0
         try:
-            _advise_names = ["short_bias", "funding_rate", "onchain", "llm_sentiment", "flow"]
+            # [P232] "sentiment" added — FIX-M6 moved it into
+            # ADVISE_WEIGHTS_BY_REGIME but this roster was never updated, and
+            # since sentiment is currently the ONLY weighted agent that fires
+            # every tick (P215), its omission made the consensus boost
+            # structurally dead: _effective_max was a constant 0.20 for the
+            # boost's whole life. Behavior-neutral on live orders (the
+            # boosted exposure is discarded at integration_v36.py:1524 /
+            # Bug #44) — this fixes the roster's honesty, not the strategy.
+            _advise_names = ["short_bias", "funding_rate", "onchain",
+                             "llm_sentiment", "sentiment", "flow"]
             _c_dirs = []
             _c_confs = []
             _n_bearish = 0

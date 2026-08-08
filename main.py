@@ -1629,6 +1629,20 @@ class ProductionConfig:
     # an operator-watched step (P141). While off, a triggered action logs one
     # warning per asset so the gap stays visible (P155).
     fast_risk_sleeve_enabled: bool = False
+    # [P232] Alpha-gate hold band (hysteresis). 0 = OFF (today's behavior:
+    # any gate fail flattens the sleeve). When > 0 (research value 0.65), a
+    # HELD sleeve position survives a gate fail iff alpha >= ratio x
+    # threshold AND the signal still agrees with the held direction. The
+    # [GATE-HYST] shadow line logs the counterfactual regardless, so enable
+    # only after the WOULD-HOLD evidence accumulates — holding past the
+    # enter threshold loosens the EXIT side (P141).
+    alpha_gate_hold_ratio: float = 0.0
+    # [P232] Sleeve re-entry cooldown (the P168 rebuild-cooldown ported to
+    # the venue that trades). After the sleeve flattens an asset, block NEW
+    # entries (either direction — P168 removed the flip exemption for
+    # cause) for N 4H ticks. Exits and reduces are NEVER deferred (P195).
+    # 0 = OFF.
+    coinbase_reentry_cooldown_ticks: int = 0
     # [v5.1 PROMOTED 2026-06-13] Operator override of Iron Law 7 (shadow >=30d):
     # blend the 4 v5.1 shadow strategy families into a live ADVISE fusion agent
     # with ZERO validation. Default OFF; set true in the live JSON. ADVISE-bounded
@@ -1903,6 +1917,10 @@ class ProductionConfig:
                 data.get("coinbase_use_gated_intent", False)),
             fast_risk_sleeve_enabled=bool(
                 data.get("fast_risk_sleeve_enabled", False)),
+            alpha_gate_hold_ratio=float(
+                data.get("alpha_gate_hold_ratio", 0.0)),
+            coinbase_reentry_cooldown_ticks=int(
+                data.get("coinbase_reentry_cooldown_ticks", 0)),
             # [v5.1 PROMOTED 2026-06-13] live ADVISE promotion of shadow strategies
             v5_1_strategies_live=data.get("v5_1_strategies_live", False),
             # P1-02: Thesis budget parameters (overlay-aware)
@@ -10221,6 +10239,61 @@ class HMATSProductionRunner:
             note='bounded context blend for alpha-gate quiet-regime filter',
         )
 
+        # [P232] Feed the SLEEVE's position + the hold ratio into market_data
+        # so the alpha gate's hold-vs-enter asymmetry (BUGFIX-C1's designed
+        # behavior) can see the book that actually exists. C1 reads
+        # market_data["current_exposure"] — the Kraken book, {} since June —
+        # so post-Phase-B every gate fail was classified "pure new entry" and
+        # flattened the sleeve, with no hold band anywhere (P231: a threshold
+        # flap costs a 16bps round trip per 4H tick). Deliberately a SEPARATE
+        # key — overloading current_exposure would re-arm every Kraken-shaped
+        # consumer of that key with sleeve semantics (P139/P140 class).
+        # Observation-only unless alpha_gate_hold_ratio > 0 (default 0 = off).
+        try:
+            _p232_sl = getattr(self, "_coinbase_sleeve", None)
+            market_data["sleeve_position_contracts"] = (
+                int(_p232_sl.signed_contracts(asset) or 0)
+                if _p232_sl is not None else 0)
+        except Exception:
+            market_data["sleeve_position_contracts"] = 0
+        market_data["alpha_gate_hold_ratio"] = float(
+            getattr(self.config, "alpha_gate_hold_ratio", 0.0) or 0.0)
+
+        # [P232] RegimeICFusion SHADOW wiring. The module (built for the P143
+        # alpha/beta fix, walk-forward-validated as a NON-win for enforce and
+        # correctly left unenforced) had ZERO importers — yet it is the
+        # per-(agent, regime) rolling-IC learner that directly implements the
+        # P228 promotion path's evidence accumulation. Wired LOG-ONLY:
+        # record_outcome() learns from last tick's dirs vs realized return,
+        # shadow_fuse() logs what IC-weighted fusion WOULD say. Fail-open by
+        # module contract; nothing here writes to the trade decision.
+        try:
+            from signals.regime_ic_fusion import RegimeICFusion
+            if not hasattr(self, "_ric_fusion"):
+                self._ric_fusion, self._ric_prev = {}, {}
+            _ric = self._ric_fusion.setdefault(asset, RegimeICFusion())
+            _ric_dirs = {a: float(agent_signals.get(k, 0.0) or 0.0)
+                         for a, k in (("quant", "quant_direction"),
+                                      ("drl", "drl_direction"),
+                                      ("sentiment", "sentiment_direction"),
+                                      ("model_alpha", "model_alpha_direction"),
+                                      ("whale", "whale_flow_direction"),
+                                      ("funding_rate", "funding_direction"),
+                                      ("llm_sentiment", "llm_sentiment_direction"),
+                                      ("kraken_quant", "kq_direction"))}
+            _ric_px = float(market_data.get("current_price", 0.0) or 0.0)
+            _ric_rg = str(market_data.get("regime_state", "UNKNOWN"))
+            _ric_last = self._ric_prev.get(asset)
+            if _ric_last and _ric_last[2] > 0 and _ric_px > 0:
+                _ric.record_outcome(_ric_last[0], _ric_last[1],
+                                    _ric_px / _ric_last[2] - 1.0)
+            self._ric_prev[asset] = (_ric_rg, _ric_dirs, _ric_px)
+            _ric_out = _ric.shadow_fuse(_ric_rg, _ric_dirs)
+            if _ric_out:
+                logger.info(f"[RIC-SHADOW] {asset} {_ric_rg}: {_ric_out}")
+        except Exception as _ric_err:
+            logger.debug(f"[RIC-SHADOW] {asset}: skipped: {_ric_err}")
+
         # Call v3.6 engine
         intent = self.engine.decide(
             asset=asset,
@@ -13394,12 +13467,26 @@ class HMATSProductionRunner:
                     intent.execution_urgency = getattr(intent, 'execution_urgency', 1.0) * 0.5
 
                 if intent.alpha_estimated_bps < _friction_bps:
-                    logger.warning(
-                        f"[v9-PATCH-2] ALPHA_GATE_VETO: {asset} alpha={intent.alpha_estimated_bps:.1f}bps "
-                        f"< friction={_friction_bps:.1f}bps"
-                    )
-                    intent.veto_active = True
-                    intent.veto_reason = "FRICTION_EXCEEDS_EDGE"
+                    if getattr(intent, "alpha_gate_hold", False):
+                        # [P232] The hysteresis hold band deliberately keeps a
+                        # position whose alpha sits between hold and enter
+                        # thresholds; without this exemption the secondary
+                        # veto silently overrides the band and flattens
+                        # anyway (the consistency gap the P231 research
+                        # flagged for main.py's friction veto).
+                        logger.info(
+                            f"[v9-PATCH-2] {asset} alpha "
+                            f"{intent.alpha_estimated_bps:.1f} < friction "
+                            f"{_friction_bps:.1f} but GATE-HYST hold is "
+                            f"active — not overriding the hold band"
+                        )
+                    else:
+                        logger.warning(
+                            f"[v9-PATCH-2] ALPHA_GATE_VETO: {asset} alpha={intent.alpha_estimated_bps:.1f}bps "
+                            f"< friction={_friction_bps:.1f}bps"
+                        )
+                        intent.veto_active = True
+                        intent.veto_reason = "FRICTION_EXCEEDS_EDGE"
             except Exception as e:
                 logger.debug(f"[v9-PATCH-2] Dynamic alpha gate skipped: {e}")
         # --- end [v9-PATCH-2] ---
@@ -15816,6 +15903,13 @@ class HMATSProductionRunner:
                     self._bull_detector.to_dict()
                     if getattr(self, "_bull_detector", None) else {}
                 ),
+                # [P232] RegimeICFusion shadow state — the per-(agent,regime)
+                # rolling-IC windows are the promotion-path evidence; losing
+                # them on every deploy restarts the clock (P150 class).
+                "regime_ic_state": {
+                    a: r.to_dict()
+                    for a, r in getattr(self, "_ric_fusion", {}).items()
+                },
                 # L4-14: Regime smoother state for restart continuity
                 "regime_smoother_state": dict(self._regime_smoother_state) if hasattr(self, '_regime_smoother_state') and self._regime_smoother_state else {},
                 # [AC-5 + AC-2] Persist daily fill budget AND per-asset rate
@@ -17540,6 +17634,23 @@ class HMATSProductionRunner:
                     )
                 except Exception as e:
                     logger.warning(f"[P227b] Bull transition restore failed: {e}")
+
+            # [P232] Restore RegimeICFusion shadow state (fail-soft: a bad
+            # payload only restarts the evidence clock, never blocks boot)
+            ric_data = data.get("regime_ic_state", {})
+            if ric_data:
+                try:
+                    from signals.regime_ic_fusion import RegimeICFusion
+                    self._ric_fusion = {}
+                    for _ra, _rd in ric_data.items():
+                        _ri = RegimeICFusion()
+                        _ri.from_dict(_rd)
+                        self._ric_fusion[_ra] = _ri
+                    logger.info(
+                        f"[P232] Restored RegimeICFusion shadow state for "
+                        f"{sorted(self._ric_fusion)}")
+                except Exception as e:
+                    logger.warning(f"[P232] RegimeICFusion restore failed: {e}")
 
             # Restore AlphaBoost state
             ab_data = data.get("alpha_boost_state", {})
@@ -19414,8 +19525,51 @@ class HMATSProductionRunner:
                                                 continue
                                             _m_dir = float(_m_tgt)
                                             _m_src = _m_why
+                                        # [P232] Re-entry cooldown (P168's
+                                        # rebuild cooldown, ported to the
+                                        # venue that trades). Blocks only a
+                                        # NEW ENTRY FROM FLAT within N ticks
+                                        # of a flatten — exits, reduces and
+                                        # managing an existing position are
+                                        # never deferred (P195). Default 0 =
+                                        # OFF; in-memory (restart only
+                                        # shortens the wait — conservative,
+                                        # same trade-off as P198's streak).
+                                        _cd_n = int(getattr(
+                                            self.config,
+                                            "coinbase_reentry_cooldown_ticks",
+                                            0) or 0)
+                                        _cd_pre = int(_sl.signed_contracts(_m_a) or 0)
+                                        if not hasattr(self, "_sleeve_flatten_tick"):
+                                            self._sleeve_flatten_tick = {}
+                                        if (_cd_n > 0 and _cd_pre == 0
+                                                and abs(_m_dir) >= 0.15):
+                                            _cd_last = self._sleeve_flatten_tick.get(_m_a)
+                                            _cd_age = (self._live_round_count - _cd_last
+                                                       if _cd_last is not None else None)
+                                            if _cd_age is not None and _cd_age < _cd_n:
+                                                _m_summary[_m_a] = (
+                                                    f"COOLDOWN({_cd_age}/{_cd_n}t,"
+                                                    f"dir={_m_dir:+.2f})")
+                                                logger.info(
+                                                    f"[COINBASE-COOLDOWN] {_m_a}: entry "
+                                                    f"suppressed {_cd_age}/{_cd_n} ticks "
+                                                    f"after flatten (dir={_m_dir:+.2f}) — "
+                                                    f"P168 semantics, exits never deferred")
+                                                _st_res = await _sl.ensure_protective_stop(
+                                                    _m_a, intended_target=0)
+                                                _cb_stop_summary[_m_a] = _st_res.get("status")
+                                                continue
                                         _m_res = await _sl.manage_to_signal(_m_a, _m_dir)
                                         _m_st = _m_res.get("status")
+                                        # [P232] record flattens for the cooldown
+                                        try:
+                                            if (_cd_pre != 0 and
+                                                    int(_sl.signed_contracts(_m_a) or 0) == 0):
+                                                self._sleeve_flatten_tick[_m_a] = (
+                                                    self._live_round_count)
+                                        except Exception:
+                                            pass
                                         _m_summary[_m_a] = (
                                             f"{_m_st}(dir={_m_dir:+.2f},"
                                             f"{_sl.signed_contracts(_m_a)}ct)"
