@@ -172,7 +172,31 @@ class Candidate:
                              early_stopping=True, random_state=SEED).fit(
                 sc.transform(Xtr), ytr)
             return m.predict(sc.transform(Xpred)), float(np.std(m.predict(sc.transform(Xtr))))
+        if self.family == "lgbm":
+            import lightgbm as lgb
+            m = lgb.LGBMRegressor(
+                n_estimators=self.params.get("iters", 200),
+                num_leaves=self.params.get("leaves", 15),
+                max_depth=self.params.get("depth", 3),
+                learning_rate=self.params.get("lr", 0.05),
+                subsample=0.8, colsample_bytree=0.8,
+                random_state=SEED, verbosity=-1).fit(Xtr, ytr)
+            return m.predict(Xpred), float(np.std(m.predict(Xtr)))
+        if self.family == "composite":
+            # [P243] Regime-switched composite: the bear/chop leg is a ridge
+            # forecast; the bull leg is applied at POSITION level (see
+            # positions_from_z) — every fold showed nothing beats holding in
+            # a bull and nothing beats the model in a bear, so the composite
+            # uses a different model CLASS per regime instead of asking one
+            # function to be both.
+            sc = StandardScaler().fit(Xtr)
+            m = Ridge(alpha=self.params.get("alpha", 30.0)).fit(sc.transform(Xtr), ytr)
+            return m.predict(sc.transform(Xpred)), float(np.std(m.predict(sc.transform(Xtr))))
         raise ValueError(self.family)
+
+    @property
+    def is_composite(self):
+        return self.family == "composite"
 
 
 def build_zoo(diag, asset):
@@ -182,7 +206,15 @@ def build_zoo(diag, asset):
         Candidate("ridge_adaptive", "ridge", "ret", "pruned_all"),
         Candidate("ridge_volscaled", "ridge", "volscaled", "pruned_all"),
         Candidate("hgb_small", "hgb", "ret", "pruned_all", refit=180),
+        Candidate("lgbm_small", "lgbm", "ret", "pruned_all", refit=180),
         Candidate("mlp_small", "mlp", "ret", "top24"),
+        # [P243] Regime-switched composites (operator direction): bull regime
+        # -> hold long, bear/chop regime -> the directional forecast. The
+        # switch is close>SMA200 — runtime-available, no lookahead, and the
+        # same signal the sma_200bar baseline uses, so the composite's edge
+        # over that baseline is exactly the value of the bear-leg model.
+        Candidate("composite_bull_ridge", "composite", "ret", "pruned_all"),
+        Candidate("composite_bull_volscaled", "composite", "volscaled", "pruned_all"),
     ]
     disp = (diag.get(asset, {}).get("regime", {}) or {}).get("dispersion")
     if disp is not None and disp >= 0.04:
@@ -216,14 +248,28 @@ def walk_forward_z(cand, X, y, regime, fsets, start, end):
     return z
 
 
-def positions_from_z(z_seg):
+def positions_from_z(z_seg, bull_seg=None):
+    """bull_seg (composite only): boolean bull-regime flag aligned with
+    z_seg. On decision bars a bull regime holds +1 regardless of the
+    forecast; bear/chop uses the deadbanded z. Checked only on decision
+    bars — the composite honors the same DI cadence as everything else."""
     pos = np.zeros(len(z_seg))
     last = 0.0
     for i in range(len(z_seg)):
-        if not np.isnan(z_seg[i]) and i % DI == 0:
-            last = 0.0 if abs(z_seg[i]) < DEADBAND else float(np.clip(z_seg[i], -1, 1))
+        if i % DI == 0:
+            if bull_seg is not None and bull_seg[i]:
+                last = 1.0
+            elif not np.isnan(z_seg[i]):
+                last = 0.0 if abs(z_seg[i]) < DEADBAND else float(np.clip(z_seg[i], -1, 1))
+            elif bull_seg is not None:
+                last = 0.0
         pos[i] = last
     return pos
+
+
+def bull_flag(close):
+    sma = pd.Series(close).rolling(200).mean().to_numpy()
+    return close > sma
 
 
 def evaluate_segment(close, pos_full, cost_bps, s, e):
@@ -282,6 +328,9 @@ def run_asset(asset, tag, diag):
                                      "refit_every_bars": REFIT_EVERY},
                "folds": {}}
 
+    bull = bull_flag(close)
+    fold_series = {}
+
     for fold, (train_end, val_start, val_end) in fold_splits(n).items():
         fsets = select_features(X, targets["ret"], train_end, feats)
         # ---- Stage 5a: inner selection on the train tail (never sees val)
@@ -290,11 +339,13 @@ def run_asset(asset, tag, diag):
         for cand in zoo:
             y = targets[cand.target]
             z = walk_forward_z(cand, X, y, regime, fsets, inner_start, train_end)
-            pos = np.zeros(n); pos[inner_start:train_end] = positions_from_z(z[inner_start:train_end])
+            pos = np.zeros(n)
+            pos[inner_start:train_end] = positions_from_z(
+                z[inner_start:train_end],
+                bull[inner_start:train_end] if cand.is_composite else None)
             ev = evaluate_segment(close, pos, COST_BPS[asset], inner_start, train_end)
             table[cand.name] = {"inner_pnl_pct": round(ev["pnl_pct"], 2),
                                 "inner_sharpe": round(ev["sharpe"], 3)}
-        # ensemble: z-mean of ridge_adaptive + hgb_small on the inner window
         sel_metric = {k: v["inner_sharpe"] for k, v in table.items()}
         winner_name = max(sel_metric, key=sel_metric.get)
         winner = next(c for c in zoo if c.name == winner_name)
@@ -302,18 +353,25 @@ def run_asset(asset, tag, diag):
         # ---- Stage 5b: winner walk-forward on the val window
         y = targets[winner.target]
         z = walk_forward_z(winner, X, y, regime, fsets, val_start, val_end)
-        pos = np.zeros(n); pos[val_start:val_end] = positions_from_z(z[val_start:val_end])
+        pos = np.zeros(n)
+        pos[val_start:val_end] = positions_from_z(
+            z[val_start:val_end],
+            bull[val_start:val_end] if winner.is_composite else None)
         ev = evaluate_segment(close, pos, COST_BPS[asset], val_start, val_end)
-        lo, hi = block_bootstrap_ci(ev.pop("series"))
+        model_series = ev.pop("series")
+        lo, hi = block_bootstrap_ci(model_series)
 
         # ---- Stage 6: gate vs baselines on the same window/costs
         base = {}
+        base_series = {}
         for bname in ("buy_and_hold", "sma_200bar"):
             bpos = baseline_positions(bname, close, val_start, val_end)
             bev = evaluate_segment(close, bpos, COST_BPS[asset], val_start, val_end)
-            bev.pop("series")
+            base_series[bname] = bev.pop("series")
             base[bname] = {k: round(v, 3) if isinstance(v, float) else v
                            for k, v in bev.items()}
+        fold_series[fold] = {"start": val_start, "model": model_series,
+                             **{f"b_{k}": v for k, v in base_series.items()}}
         beats = [b for b in base if ev["pnl_pct"] > base[b]["pnl_pct"]]
         passes = len(beats) == len(base) and lo is not None and lo > 0
 
@@ -339,6 +397,43 @@ def run_asset(asset, tag, diag):
               f"vs B&H {base['buy_and_hold']['pnl_pct']:+.1f}% "
               f"SMA {base['sma_200bar']['pnl_pct']:+.1f}% "
               f"-> {'PASS' if passes else 'FAIL'}", flush=True)
+
+    # ---- Stage 6b: POOLED certification view. Per-fold ~1,964-bar windows
+    # cannot certify anything (P242: the CI needs Sharpe ~2.5-3 that no
+    # baseline reaches either); pooling the fold vals chronologically gives
+    # a full-cycle window comparable to the protocol lockbox, where the
+    # same family DID certify. Reported alongside, never replacing, the
+    # per-fold gate — which bar governs promotion is an operator decision.
+    if fold_series:
+        ordered = sorted(fold_series.values(), key=lambda d: d["start"])
+        pooled = {}
+        for key, label in (("model", "selected_per_fold"),
+                           ("b_buy_and_hold", "buy_and_hold"),
+                           ("b_sma_200bar", "sma_200bar")):
+            seg = np.concatenate([d[key] for d in ordered])
+            sd = float(np.nanstd(seg))
+            lo, hi = block_bootstrap_ci(seg)
+            pooled[label] = {
+                "pnl_pct": round(float(np.nansum(seg)) * 100, 2),
+                "sharpe": round(float(np.nanmean(seg) / sd * math.sqrt(BARS_PER_YEAR)), 3) if sd > 0 else 0.0,
+                "sharpe_ci": [lo, hi],
+            }
+        mdl = pooled["selected_per_fold"]
+        beats = [b for b in ("buy_and_hold", "sma_200bar")
+                 if mdl["pnl_pct"] > pooled[b]["pnl_pct"]]
+        mdl_lo = mdl["sharpe_ci"][0]
+        pooled["verdict"] = {
+            "beats": beats,
+            "ci_excludes_zero": bool(mdl_lo is not None and mdl_lo > 0),
+            "passes_pooled": bool(len(beats) == 2 and mdl_lo is not None and mdl_lo > 0),
+        }
+        results["pooled"] = pooled
+        print(f"  POOLED ({len(ordered)} folds): model pnl={mdl['pnl_pct']:+.1f}% "
+              f"sharpe={mdl['sharpe']:+.2f} CI{mdl['sharpe_ci']} vs "
+              f"B&H {pooled['buy_and_hold']['pnl_pct']:+.1f}% "
+              f"SMA {pooled['sma_200bar']['pnl_pct']:+.1f}% -> "
+              f"{'POOLED-PASS' if pooled['verdict']['passes_pooled'] else 'POOLED-FAIL'}",
+              flush=True)
 
     out = REPO / "models" / "supervised" / asset / tag
     out.mkdir(parents=True, exist_ok=True)
