@@ -126,8 +126,24 @@ class FastRiskTick:
             f"emergency exit. Reason: {reason or '(no message)'}"
         )
 
-    def evaluate(self, asset: str, market_data: Dict[str, Any]) -> FastRiskResult:
-        """Evaluate whether emergency action is needed."""
+    def evaluate(self, asset: str, market_data: Dict[str, Any],
+                 has_position: Optional[bool] = None) -> FastRiskResult:
+        """Evaluate whether emergency action is needed.
+
+        [P240] `has_position` affects the ALERT SEVERITY ONLY — never the action.
+        A REDUCE_50 on a flat asset is unactionable by construction (the P227
+        sleeve handler already returns FLAT / "no sleeve position" and does
+        nothing), so escalating it to CRITICAL and forwarding it to Discord
+        teaches everyone to ignore the channel. Live evidence: 74 CRITICALs for
+        `SOL: REDUCE_50 - depth_drop` on 2026-08-08 while SOL was flat and zero
+        reduces executed. That is the P202 pattern — an alert nobody can act on.
+
+        FAIL-SAFE, and this is the load-bearing part: only an EXPLICIT False
+        downgrades. `None` means "the caller does not know", and an unknown
+        position must still alert at full severity — a downgrade must never be
+        the DEFAULT, or a caller that simply forgets to pass it silences a real
+        emergency. The returned action is byte-identical in every case.
+        """
         now = time.time()
         current_price = market_data.get('current_price', 0)
         anchor_price = self._last_4h_prices.get(asset, current_price)
@@ -231,7 +247,14 @@ class FastRiskTick:
             if streak >= self.DEPTH_DROP_CONFIRM_STREAK:
                 if action == FastRiskAction.HOLD:
                     action = FastRiskAction.REDUCE_50
-                reason = reason or f"depth_drop={drop_pct:.0%}({streak}x)"
+                # [P240] Carry the RAW values. "depth_drop=69%" alone cannot
+                # distinguish a genuine liquidity collapse from a degraded feed
+                # reading, which is exactly the question the 2026-08-08 burst
+                # left unanswered and nobody could settle from the log.
+                reason = reason or (
+                    f"depth_drop={drop_pct:.0%}({streak}x) "
+                    f"[depth=${current_depth:,.0f} vs baseline=${baseline_depth:,.0f}]"
+                )
         else:
             self._depth_drop_streak[asset] = 0
 
@@ -258,6 +281,14 @@ class FastRiskTick:
                 logger.warning(
                     f"[FastRiskTick][SHADOW] {asset}: WOULD {action.value} - {reason} "
                     f"(anchor=${anchor_price:,.0f} -> ${current_price:,.0f})"
+                )
+            elif has_position is False:
+                # [P240] Nothing to reduce — the action is returned unchanged,
+                # but this is not an emergency anyone can act on.
+                logger.info(
+                    f"[FastRiskTick][LIVE] {asset}: {action.value} - {reason} "
+                    f"(asset is FLAT — no position to act on; action still "
+                    f"returned, alert downgraded from CRITICAL)"
                 )
             else:
                 logger.critical(

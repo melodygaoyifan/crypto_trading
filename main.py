@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """
 ================================================================================
 HMATS -CANONICAL PRODUCTION ENTRYPOINT
@@ -18754,7 +18754,27 @@ class HMATSProductionRunner:
                         for frt_asset in self.config.assets:
                             try:
                                 frt_md = await self._prepare_market_data(frt_asset)
-                                frt_result = self.fast_risk_tick.evaluate(frt_asset, frt_md)
+                                # [P240] Tell evaluate() whether there is anything
+                                # to act on, so a REDUCE on a FLAT asset logs at
+                                # INFO instead of CRITICAL. SEVERITY ONLY — the
+                                # action is unchanged and the P227 sleeve handler
+                                # still makes the real decision.
+                                #
+                                # None (not False) on any doubt: an unknown
+                                # position must keep alerting at full severity.
+                                # Reads the sleeve's LAST RECONCILED book rather
+                                # than forcing a venue call — this runs every 30s
+                                # and the P227 handler reconciles before acting.
+                                _frt_has_pos = None
+                                try:
+                                    _frt_sl = getattr(self, "_coinbase_sleeve", None)
+                                    if _frt_sl is not None and getattr(_frt_sl, "_reconcile_ok", False):
+                                        _frt_has_pos = abs(float(
+                                            _frt_sl.signed_contracts(frt_asset) or 0.0)) > 0
+                                except Exception:  # noqa: silent-swallow — severity hint only; None keeps full-severity alerting
+                                    _frt_has_pos = None
+                                frt_result = self.fast_risk_tick.evaluate(
+                                    frt_asset, frt_md, has_position=_frt_has_pos)
                                 # Act on result when not in shadow mode
                                 if not self.fast_risk_tick.shadow_mode:
                                     await self._handle_fast_risk_action(frt_asset, frt_result, frt_md)
@@ -19973,7 +19993,27 @@ class HMATSProductionRunner:
                         for frt_asset in self.config.assets:
                             try:
                                 frt_md = await self._prepare_market_data(frt_asset)
-                                frt_result = self.fast_risk_tick.evaluate(frt_asset, frt_md)
+                                # [P240] Tell evaluate() whether there is anything
+                                # to act on, so a REDUCE on a FLAT asset logs at
+                                # INFO instead of CRITICAL. SEVERITY ONLY — the
+                                # action is unchanged and the P227 sleeve handler
+                                # still makes the real decision.
+                                #
+                                # None (not False) on any doubt: an unknown
+                                # position must keep alerting at full severity.
+                                # Reads the sleeve's LAST RECONCILED book rather
+                                # than forcing a venue call — this runs every 30s
+                                # and the P227 handler reconciles before acting.
+                                _frt_has_pos = None
+                                try:
+                                    _frt_sl = getattr(self, "_coinbase_sleeve", None)
+                                    if _frt_sl is not None and getattr(_frt_sl, "_reconcile_ok", False):
+                                        _frt_has_pos = abs(float(
+                                            _frt_sl.signed_contracts(frt_asset) or 0.0)) > 0
+                                except Exception:  # noqa: silent-swallow — severity hint only; None keeps full-severity alerting
+                                    _frt_has_pos = None
+                                frt_result = self.fast_risk_tick.evaluate(
+                                    frt_asset, frt_md, has_position=_frt_has_pos)
                                 if not self.fast_risk_tick.shadow_mode:
                                     await self._handle_fast_risk_action(frt_asset, frt_result, frt_md)
                             except Exception as e:
