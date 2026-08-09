@@ -350,15 +350,26 @@ def run_asset(asset, tag, diag):
         winner_name = max(sel_metric, key=sel_metric.get)
         winner = next(c for c in zoo if c.name == winner_name)
 
-        # ---- Stage 5b: winner walk-forward on the val window
-        y = targets[winner.target]
-        z = walk_forward_z(winner, X, y, regime, fsets, val_start, val_end)
-        pos = np.zeros(n)
-        pos[val_start:val_end] = positions_from_z(
-            z[val_start:val_end],
-            bull[val_start:val_end] if winner.is_composite else None)
-        ev = evaluate_segment(close, pos, COST_BPS[asset], val_start, val_end)
-        model_series = ev.pop("series")
+        # ---- Stage 5b: EVERY candidate walk-forward on the val window.
+        # The winner's row feeds the per-fold gate; all rows feed the pooled
+        # per-candidate table — a regime-switched composite is an all-weather
+        # claim, and inner-window selection structurally mis-serves it (the
+        # inner window's regime mix dictates the pick while the val regime
+        # differs), so the full-cycle pooled view is its honest test.
+        cand_val_series = {}
+        ev = None
+        for cand in zoo:
+            y = targets[cand.target]
+            z = walk_forward_z(cand, X, y, regime, fsets, val_start, val_end)
+            pos = np.zeros(n)
+            pos[val_start:val_end] = positions_from_z(
+                z[val_start:val_end],
+                bull[val_start:val_end] if cand.is_composite else None)
+            cev = evaluate_segment(close, pos, COST_BPS[asset], val_start, val_end)
+            cand_val_series[cand.name] = cev.pop("series")
+            if cand.name == winner_name:
+                ev = cev
+        model_series = cand_val_series[winner_name]
         lo, hi = block_bootstrap_ci(model_series)
 
         # ---- Stage 6: gate vs baselines on the same window/costs
@@ -371,6 +382,7 @@ def run_asset(asset, tag, diag):
             base[bname] = {k: round(v, 3) if isinstance(v, float) else v
                            for k, v in bev.items()}
         fold_series[fold] = {"start": val_start, "model": model_series,
+                             "cands": cand_val_series,
                              **{f"b_{k}": v for k, v in base_series.items()}}
         beats = [b for b in base if ev["pnl_pct"] > base[b]["pnl_pct"]]
         passes = len(beats) == len(base) and lo is not None and lo > 0
@@ -427,13 +439,38 @@ def run_asset(asset, tag, diag):
             "ci_excludes_zero": bool(mdl_lo is not None and mdl_lo > 0),
             "passes_pooled": bool(len(beats) == 2 and mdl_lo is not None and mdl_lo > 0),
         }
+        # per-candidate pooled full-cycle rows (the composite's honest test)
+        cand_pooled = {}
+        for cand in zoo:
+            try:
+                seg = np.concatenate([d["cands"][cand.name] for d in ordered])
+            except KeyError:
+                continue
+            sd = float(np.nanstd(seg))
+            clo, chi = block_bootstrap_ci(seg)
+            cand_pooled[cand.name] = {
+                "pnl_pct": round(float(np.nansum(seg)) * 100, 2),
+                "sharpe": round(float(np.nanmean(seg) / sd * math.sqrt(BARS_PER_YEAR)), 3) if sd > 0 else 0.0,
+                "sharpe_ci": [clo, chi],
+                "beats_bh": bool(float(np.nansum(seg)) * 100 > pooled["buy_and_hold"]["pnl_pct"]),
+                "beats_sma": bool(float(np.nansum(seg)) * 100 > pooled["sma_200bar"]["pnl_pct"]),
+                "ci_excludes_zero": bool(clo is not None and clo > 0),
+            }
+        pooled["per_candidate"] = cand_pooled
         results["pooled"] = pooled
-        print(f"  POOLED ({len(ordered)} folds): model pnl={mdl['pnl_pct']:+.1f}% "
+        print(f"  POOLED ({len(ordered)} folds): selected-path pnl={mdl['pnl_pct']:+.1f}% "
               f"sharpe={mdl['sharpe']:+.2f} CI{mdl['sharpe_ci']} vs "
               f"B&H {pooled['buy_and_hold']['pnl_pct']:+.1f}% "
               f"SMA {pooled['sma_200bar']['pnl_pct']:+.1f}% -> "
               f"{'POOLED-PASS' if pooled['verdict']['passes_pooled'] else 'POOLED-FAIL'}",
               flush=True)
+        for cname, row in sorted(cand_pooled.items(), key=lambda kv: -kv[1]["sharpe"]):
+            marks = ("BH+" if row["beats_bh"] else "bh-") + \
+                    ("SMA+" if row["beats_sma"] else "sma-") + \
+                    ("CI+" if row["ci_excludes_zero"] else "ci-")
+            print(f"    pooled {cname:<26} pnl={row['pnl_pct']:+8.1f}% "
+                  f"sharpe={row['sharpe']:+.2f} CI[{row['sharpe_ci'][0]:.2f},"
+                  f"{row['sharpe_ci'][1]:.2f}] {marks}", flush=True)
 
     out = REPO / "models" / "supervised" / asset / tag
     out.mkdir(parents=True, exist_ok=True)
