@@ -178,13 +178,51 @@ ridge/LGBM rungs (GPU only enters at rung 5+). Full 6-cell ladder for all
      CPU-parallel for the entire ridge/tree/walk-forward layer; no
      CUDA-stream engineering (wrong bottleneck).
 
-## 7. Execution order
+## 7. Execution order — AMENDED after the P247 fresh-eyes review
 
-1. **E1** — extend the lab to the 6-cell matrix (spot instrument economics:
-   long/flat, Kraken costs, no carry) + per-cell EDA. [hours]
-2. **E2** — model-ladder engine with early stopping + learning curves
-   (rungs 1–6), GPU batching for rung 6. [1 day build]
-3. **E3** — full run: 3 assets × 6 cells × ladder; standard reports.
-   [~1 GPU-day]
-4. **E4** — assemblies + the single validation shots + batteries.
-5. **E5** — GP2 shadow harness for survivors; forward gate begins.
+1. **E1 — DONE** (6-cell matrix, instrument-true economics).
+2. **E1b — DONE (was not in the original plan; the review forced it):**
+   fresh-mind adversarial evaluation → found the 16h funding look-ahead
+   under every funding cell → leak fixed (causal previous-day funding,
+   shifted carry), battery moved off the validation window, pre-design era
+   scored, trend-only ablation added, stats overlap-corrected, provenance
+   completed → full leak-corrected rerun.
+3. **E2 — model-ladder engine, now CONDITIONED (review F-D):** rungs 5+
+   (nets, GPU) are funded PER CELL only where rungs 3/4 show positive,
+   cost-cleared CV realized gain on the corrected data — enforcing this
+   plan's own "sub-breakeven searches are not funded" rule, which the
+   original "full 18-cell ladder, ~1 GPU-day" violated. On p247 results,
+   few cells qualify; the GPU ladder shrinks accordingly. vmap
+   engineering waits until any cell actually earns rung 5.
+4. **E3 — GP2 shadow harness for the LEAK-CORRECTED roster** (all three
+   books are cheap rules + causal funding — no weights to ship):
+   **SOL perp assembly, BTC perp assembly, ETH trend-only.** Rides the
+   next scheduled deploy.
+5. **E4 — 30d P166 forward gate**, treated as the candidates' FIRST real
+   exam (the validation window is at 4 ledgered reads; multiplicity
+   discounts every backtest number above).
+
+## 8. Amendments of record (P247 review — what changed in this plan)
+
+- **Candidate roster rewritten by the leak fix:** the §3 table's "BTC
+  assembly sole survivor" is superseded — with causal funding, SOL perp
+  (hold-bull + ridge_defensive-bear + ~flat peace; positive in all three
+  eras, validation +64.2% vs B&H −21.2 and trend-only −3.7, gap +0.04) is
+  the lead candidate; BTC perp beats its trend-only by +17pts; **ETH's
+  strategy IS the trend filter** (+35.7% — assemblies subtract there).
+  All P244–P246 funding-cell numbers are void; the leaked signal was
+  TOXIC out-of-sample, not flattering.
+- **§1's quantitative dressing corrected:** the bull-drift t-stats were
+  overlap-inflated ~2× (real t ≈ 1.3–1.4). The beta-timing conclusion
+  stands on the era-stability evidence, not on those t's.
+- **New standing stage: fresh-mind adversarial review at every
+  research→train boundary.** One review caught a leak, a protocol
+  violation, and a statistics error before any GPU-hour was spent.
+- **New Stage-0 prerequisite for ANY DRL retraining:**
+  `rebuild_pipeline`'s funding merge still carries the timestamp leak
+  into the DRL feature set (`funding_rate_zscore`) — the parquets must be
+  rebuilt with day-close-stamped funding before any future RL run, or it
+  trains on the same look-ahead.
+- **Claim language:** per the review, backtest winners are "unrejected
+  candidates worth a free shadow slot" — the word "survivor" is retired
+  until the forward gate has spoken.
