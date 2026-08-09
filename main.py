@@ -5269,6 +5269,22 @@ class HMATSProductionRunner:
                 f"{type(_maf_err).__name__}: {_maf_err}"
             )
 
+        # [P248] Regime-book shadow (GP2): records the P247 leak-corrected
+        # roster (BTC full book / ETH trend-only / SOL parity-gated) to
+        # data/strategy_shadow/regimebook_*.jsonl every loop, feeding the
+        # 30d P166 forward gate. SELF-CONTAINED (own Kraken-public closes +
+        # Binance funding backfill) so a fault here can never touch the
+        # order path. Observation-only (Iron Law 7).
+        self._regime_book_shadow = None
+        try:
+            from defense.regime_book_shadow import RegimeBookShadow
+            self._regime_book_shadow = RegimeBookShadow(data_dir="data")
+            logger.info("  [P248] RegimeBookShadow: ACTIVE (observation-only; "
+                        "SOL bear leg parity-gated)")
+        except Exception as _rbs_err:
+            logger.warning(f"  [P248] RegimeBookShadow init failed: "
+                           f"{type(_rbs_err).__name__}: {_rbs_err}")
+
         # =====================================================================
         # [v5.1 Phase 6] ML factor fusion agent shadow harness (SHADOW)
         # MLFactorDispatcher per-asset routes to MLFactorFusionAgent (BTC/ETH/SOL).
@@ -10056,6 +10072,14 @@ class HMATSProductionRunner:
                 logger.info(f"[AGENT-TRACE] {_attr_asset}: " + " | ".join(_trace_parts))
             except Exception as _trace_err:
                 logger.debug(f"[AGENT-TRACE] skipped: {_trace_err}")
+
+            # [P248] Feed the regime-book shadow's SOL parity leg the tick's
+            # live feature dicts. Coverage is COUNTED inside the harness (P2
+            # class: a missing key must be observable, never a silent zero);
+            # the method is internally fail-soft and touches nothing else.
+            if self._regime_book_shadow is not None:
+                self._regime_book_shadow.observe_features(
+                    _attr_asset, market_data, agent_signals)
 
             # Store for next tick's outcome resolution
             self._attribution_prev_tick_id[_attr_asset] = _attr_tick_id
@@ -19975,6 +19999,19 @@ class HMATSProductionRunner:
                     logger.warning(
                         f"[KQ-DIAG] persist failed ({type(_kq_err).__name__}: {_kq_err})"
                     )
+
+                # [P248] Regime-book shadow tick (GP2): one self-contained
+                # loop-level call — its own closes/funding fetches, its own
+                # ledger, internally fail-soft per asset, observation-only.
+                # Placed at loop level so no sleeve/heartbeat branch can
+                # starve it (the P227 lesson).
+                if self._regime_book_shadow is not None:
+                    try:
+                        self._regime_book_shadow.tick(("BTC", "ETH", "SOL"))
+                    except Exception as _rbs_e:  # noqa: silent-swallow
+                        logger.warning(f"[REGIMEBOOK] tick failed: "
+                                       f"{type(_rbs_e).__name__} — ledger "
+                                       f"stale this cycle")
 
                 _wait_secs_live = self._seconds_until_next_4h_candle(offset_seconds=90)
                 logger.info(f"[LIVE] Next 4H candle in {_wait_secs_live:.0f}s")

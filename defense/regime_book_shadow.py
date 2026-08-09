@@ -118,16 +118,34 @@ def book_target(asset: str, regime: str, funding_z: Optional[float]) -> tuple:
     return 0.0, "flat"
 
 
-class RegimeBookShadow:
-    """Per-tick recorder. Fail-soft: a broken ledger write must never
-    touch the tick (but it logs — P160: writers may swallow, never
-    silently)."""
+KRAKEN_PAIRS = {"BTC": "XBTUSD", "ETH": "ETHUSD", "SOL": "SOLUSD"}
+BINANCE_SYMBOLS = {"BTC": "BTCUSDT", "ETH": "ETHUSDT", "SOL": "SOLUSDT"}
+SOL_MODEL_PATH = Path("configs") / "regimebook" / "SOL_bear_ridge.json"
+FEATURE_STASH_MAX_AGE_S = 2 * 3600   # one 4H tick's worth of tolerance
 
-    def __init__(self, data_dir: str = "data"):
+
+def _http_json(url: str, timeout: float = 10.0):
+    import urllib.request
+    req = urllib.request.Request(url, headers={"User-Agent": "hmats-regimebook"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read().decode("utf-8"))
+
+
+class RegimeBookShadow:
+    """Per-tick recorder. SELF-CONTAINED by design: fetches its own closes
+    (Kraken public OHLC) and funding history (Binance fapi, best-effort) so
+    the wiring into main.py is minimal and a fault here can never touch the
+    order path. Fail-soft everywhere, but never silent (P160)."""
+
+    def __init__(self, data_dir: str = "data", repo_root: Optional[Path] = None):
         self._dir = Path(data_dir) / "strategy_shadow"
         self._dir.mkdir(parents=True, exist_ok=True)
         self._fund_hist_path = Path(data_dir) / "regimebook_funding_daily.json"
         self._fund_hist = self._load_funding_history()
+        self._last_funding_refresh_day = None
+        self._feature_stash = {}          # asset -> (ts, {name: value})
+        self._sol_model = self._load_sol_model(repo_root)
+        self._warned = set()
 
     # ---------------- funding history (persisted, P154 rule) ----------
     def _load_funding_history(self):
@@ -164,6 +182,126 @@ class RegimeBookShadow:
             return None
         return [h[k] for k in sorted(h)]
 
+    # ---------------- self-contained data fetches ----------------------
+    def fetch_closes_4h(self, asset: str):
+        """~720 4H closes from Kraken's PUBLIC OHLC endpoint (the proven
+        trend_regime_review pattern). None on any failure."""
+        pair = KRAKEN_PAIRS.get(asset)
+        if not pair:
+            return None
+        try:
+            data = _http_json(
+                f"https://api.kraken.com/0/public/OHLC?pair={pair}&interval=240")
+            if data.get("error"):
+                raise RuntimeError(str(data["error"])[:80])
+            result = data.get("result", {})
+            key = next((k for k in result if k != "last"), None)
+            rows = result.get(key, [])
+            closes = [float(r[4]) for r in rows]
+            return closes if len(closes) >= MIN_BARS else None
+        except Exception as e:  # noqa: BLE001
+            self._warn_once(f"closes:{asset}",
+                            f"[REGIMEBOOK] {asset}: OHLC fetch failed "
+                            f"({type(e).__name__}) — tick skipped")
+            return None
+
+    def refresh_funding_daily(self, asset: str):
+        """Once per UTC day: pull the last ~1000 8h funding events from
+        Binance fapi, aggregate to daily closes, record every COMPLETED day
+        (today is excluded — appending an in-progress day is the P247-F1
+        leak). Best-effort: geo-blocks or outages leave the funding cells
+        flat-with-reason, never a fabricated z."""
+        today = datetime.now(timezone.utc).date().isoformat()
+        if self._last_funding_refresh_day == today:
+            return
+        sym = BINANCE_SYMBOLS.get(asset)
+        if not sym:
+            return
+        try:
+            rows = _http_json("https://fapi.binance.com/fapi/v1/fundingRate"
+                              f"?symbol={sym}&limit=1000", timeout=15.0)
+            by_day = {}
+            for r in rows:
+                d = datetime.fromtimestamp(
+                    int(r["fundingTime"]) / 1000, tz=timezone.utc).date().isoformat()
+                by_day[d] = float(r["fundingRate"])   # last event of the day wins
+            for d in sorted(by_day):
+                if d < today:                          # completed days only
+                    self.record_daily_funding(asset, d, by_day[d])
+            self._last_funding_refresh_day = today
+        except Exception as e:  # noqa: BLE001
+            self._warn_once(f"funding:{asset}",
+                            f"[REGIMEBOOK] {asset}: funding backfill failed "
+                            f"({type(e).__name__}) — funding cells stay flat "
+                            f"until history accrues")
+
+    def _warn_once(self, key, msg):
+        if key not in self._warned:
+            self._warned.add(key)
+            logger.warning(msg)
+
+    # ---------------- SOL full-parity bear leg -------------------------
+    def _load_sol_model(self, repo_root):
+        path = (Path(repo_root) / SOL_MODEL_PATH) if repo_root else SOL_MODEL_PATH
+        try:
+            if path.exists():
+                m = json.loads(path.read_text(encoding="utf-8"))
+                if {"features", "mean", "scale", "coef", "intercept",
+                    "train_sigma"} <= set(m):
+                    logger.info("[REGIMEBOOK] SOL bear ridge loaded "
+                                f"({len(m['features'])} features, "
+                                f"fitted {m.get('fitted_at', '?')})")
+                    return m
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[REGIMEBOOK] SOL model unreadable: {type(e).__name__}")
+        return None
+
+    def observe_features(self, asset: str, market_data: dict,
+                         agent_signals: Optional[dict] = None):
+        """Stash the SOL model's named features from the tick's live dicts.
+        Coverage is COUNTED, never assumed (P2 class): the bear leg only
+        activates at 100% coverage, and rows report what is missing."""
+        try:
+            if self._sol_model is None or asset != "SOL":
+                return
+            vals = {}
+            for name in self._sol_model["features"]:
+                v = (market_data or {}).get(name)
+                if v is None and agent_signals:
+                    v = agent_signals.get(name)
+                if v is not None:
+                    try:
+                        vals[name] = float(v)
+                    except (TypeError, ValueError):
+                        pass
+            self._feature_stash[asset] = (time.time(), vals)
+        except Exception as e:  # noqa: BLE001
+            self._warn_once("stash", f"[REGIMEBOOK] feature stash failed: "
+                                     f"{type(e).__name__}")
+
+    def _sol_bear_target(self):
+        """(target, leg, version, coverage_note). Falls back to the declared
+        degraded flat unless model + FRESH stash + 100% coverage all hold."""
+        m = self._sol_model
+        if m is None:
+            return 0.0, "flat_degraded_no_model", "v1_degraded_no_bear_leg", None
+        ts_vals = self._feature_stash.get("SOL")
+        if not ts_vals or (time.time() - ts_vals[0]) > FEATURE_STASH_MAX_AGE_S:
+            return 0.0, "flat_degraded_stale_features", "v1_degraded_no_bear_leg", None
+        vals = ts_vals[1]
+        missing = [f for f in m["features"] if f not in vals]
+        if missing:
+            note = f"missing {len(missing)}/{len(m['features'])}: {missing[:5]}"
+            return 0.0, "flat_degraded_parity_gap", "v1_degraded_no_bear_leg", note
+        x = [(vals[f] - mu) / (sc or 1.0)
+             for f, mu, sc in zip(m["features"], m["mean"], m["scale"])]
+        pred = sum(xi * c for xi, c in zip(x, m["coef"])) + m["intercept"]
+        z = pred / (m["train_sigma"] or 1e-9)
+        if abs(z) < 0.25:                       # the lab's deadband
+            return 0.0, "ridge_defensive_flat", "v2_full_bear", None
+        tgt = max(-1.0, min(0.0, z))            # defensive: short-only clip
+        return tgt, "ridge_defensive", "v2_full_bear", None
+
     # ---------------- per-tick record ---------------------------------
     def record_tick(self, asset: str, closes, price: float,
                     carry_rate_bar: Optional[float] = None):
@@ -173,14 +311,19 @@ class RegimeBookShadow:
             regime = regime_label(closes)
             fz = causal_funding_z(self._funding_series(asset))
             target, leg = book_target(asset, regime, fz)
+            version = BOOKS_VERSION.get(asset, "unknown")
+            coverage_note = None
+            if asset == "SOL" and regime == "bear":
+                target, leg, version, coverage_note = self._sol_bear_target()
             rec = {
                 "ts": time.time(),
                 "iso": datetime.now(timezone.utc).isoformat(),
                 "strategy": "regimebook",
                 "asset": asset,
-                "book_version": BOOKS_VERSION.get(asset, "unknown"),
+                "book_version": version,
                 "regime": regime,
                 "leg": leg,
+                "coverage_note": coverage_note,
                 "funding_z": None if fz is None else round(fz, 4),
                 "direction": float(target),
                 # scorer multiplies direction x confidence (P236): |target|,
@@ -198,3 +341,25 @@ class RegimeBookShadow:
                            "ledger is STALE for this tick", asset,
                            type(e).__name__)
             return None
+
+    # ---------------- one-call orchestrator for main.py ----------------
+    def tick(self, assets=("BTC", "ETH", "SOL")):
+        """The single loop-level entry point: per asset, refresh funding
+        (daily), fetch closes, record. Every failure is per-asset and
+        fail-soft; a summary line makes silence impossible (P155)."""
+        summary = []
+        for asset in assets:
+            try:
+                self.refresh_funding_daily(asset)
+                closes = self.fetch_closes_4h(asset)
+                if closes is None:
+                    summary.append(f"{asset}=SKIP(no_closes)")
+                    continue
+                rec = self.record_tick(asset, closes, price=closes[-1])
+                summary.append(
+                    f"{asset}={rec['regime']}/{rec['leg']}/{rec['direction']:+.1f}"
+                    if rec else f"{asset}=SKIP(write_failed)")
+            except Exception as e:  # noqa: BLE001
+                summary.append(f"{asset}=SKIP({type(e).__name__})")
+        logger.info("[REGIMEBOOK] " + " | ".join(summary))
+        return summary

@@ -139,3 +139,115 @@ def test_broken_write_is_failsoft(harness, monkeypatch):
                         lambda *a, **k: (_ for _ in ()).throw(OSError("disk")))
     rec = harness.record_tick("BTC", _mk_closes("bull"), price=60000.0)
     assert rec is None   # logged, swallowed — the tick must survive
+
+
+# ---------------------------------------------------------- SOL parity leg
+def _fake_sol_model(features):
+    n = len(features)
+    return {"asset": "SOL", "cell": "bear", "family": "ridge_defensive",
+            "features": features, "mean": [0.0] * n, "scale": [1.0] * n,
+            "coef": [-1.0] + [0.0] * (n - 1),   # pred = -x0
+            "intercept": 0.0, "train_sigma": 1.0}
+
+
+def _sol_harness(tmp_path, features=("f_a", "f_b")):
+    mdir = tmp_path / "configs" / "regimebook"
+    mdir.mkdir(parents=True)
+    (mdir / "SOL_bear_ridge.json").write_text(
+        json.dumps(_fake_sol_model(list(features))), encoding="utf-8")
+    return RegimeBookShadow(data_dir=str(tmp_path / "data"),
+                            repo_root=str(tmp_path))
+
+
+def test_sol_bear_stays_degraded_without_features(tmp_path):
+    h = _sol_harness(tmp_path)
+    rec = h.record_tick("SOL", _mk_closes("bear"), price=80.0)
+    assert rec["direction"] == 0.0
+    assert rec["book_version"] == "v1_degraded_no_bear_leg"
+    assert rec["leg"] == "flat_degraded_stale_features"
+
+
+def test_sol_bear_refuses_on_partial_coverage(tmp_path):
+    """Coverage is COUNTED — a missing feature must never become a silent
+    zero in the dot product (P2 class)."""
+    h = _sol_harness(tmp_path)
+    h.observe_features("SOL", {"f_a": 2.0}, {})     # f_b missing
+    rec = h.record_tick("SOL", _mk_closes("bear"), price=80.0)
+    assert rec["direction"] == 0.0
+    assert rec["leg"] == "flat_degraded_parity_gap"
+    assert "f_b" in str(rec["coverage_note"])
+
+
+def test_sol_bear_activates_at_full_coverage(tmp_path):
+    h = _sol_harness(tmp_path)
+    h.observe_features("SOL", {"f_a": 2.0, "f_b": 0.1}, {})
+    rec = h.record_tick("SOL", _mk_closes("bear"), price=80.0)
+    # pred = -2.0, z = -2.0 -> short-only clip -> -1.0
+    assert rec["direction"] == -1.0 and rec["leg"] == "ridge_defensive"
+    assert rec["book_version"] == "v2_full_bear"
+
+
+def test_sol_bear_deadband_and_short_only_clip(tmp_path):
+    h = _sol_harness(tmp_path)
+    h.observe_features("SOL", {"f_a": 0.1, "f_b": 0.0}, {})   # z = -0.1 < deadband
+    rec = h.record_tick("SOL", _mk_closes("bear"), price=80.0)
+    assert rec["direction"] == 0.0 and rec["leg"] == "ridge_defensive_flat"
+    h.observe_features("SOL", {"f_a": -3.0, "f_b": 0.0}, {})  # z = +3 -> long forecast
+    rec = h.record_tick("SOL", _mk_closes("bear"), price=80.0)
+    assert rec["direction"] == 0.0, "defensive leg must never go LONG in a bear"
+
+
+def test_sol_bull_ignores_the_bear_model(tmp_path):
+    h = _sol_harness(tmp_path)
+    h.observe_features("SOL", {"f_a": 5.0, "f_b": 5.0}, {})
+    rec = h.record_tick("SOL", _mk_closes("bull"), price=80.0)
+    assert rec["direction"] == 1.0 and rec["leg"] == "hold"
+
+
+def test_stale_stash_degrades(tmp_path, monkeypatch):
+    from defense import regime_book_shadow as mod
+    h = _sol_harness(tmp_path)
+    h.observe_features("SOL", {"f_a": 2.0, "f_b": 0.1}, {})
+    ts, vals = h._feature_stash["SOL"]
+    h._feature_stash["SOL"] = (ts - mod.FEATURE_STASH_MAX_AGE_S - 10, vals)
+    rec = h.record_tick("SOL", _mk_closes("bear"), price=80.0)
+    assert rec["leg"] == "flat_degraded_stale_features", (
+        "a stale feature snapshot must degrade, not trade on old data"
+    )
+
+
+# ---------------------------------------------------------- orchestrator
+def test_tick_orchestrator_is_per_asset_failsoft(harness, monkeypatch):
+    calls = {}
+
+    def fake_fetch(asset):
+        calls[asset] = True
+        if asset == "ETH":
+            return None                       # feed outage for one asset
+        return _mk_closes("bull")
+
+    monkeypatch.setattr(harness, "fetch_closes_4h", fake_fetch)
+    monkeypatch.setattr(harness, "refresh_funding_daily", lambda a: None)
+    summary = harness.tick(("BTC", "ETH", "SOL"))
+    assert calls == {"BTC": True, "ETH": True, "SOL": True}
+    assert any(s.startswith("ETH=SKIP") for s in summary), (
+        "an outage must be a visible SKIP, not silence (P155)"
+    )
+    assert any(s.startswith("BTC=bull") for s in summary)
+
+
+# ---------------------------------------------------------- wiring pins
+def test_mainpy_wiring_exists():
+    src = (REPO / "main.py").read_text(encoding="utf-8", errors="ignore")
+    assert "RegimeBookShadow(data_dir=" in src, "init missing (P152 shape)"
+    assert "._regime_book_shadow.tick((" in src, "loop-level tick call missing"
+    assert "observe_features(" in src, "SOL parity stash missing"
+
+
+def test_scorer_registers_regimebook_at_both_sites():
+    src = (REPO / "analytics" / "shadow_ic" / "compute_shadow_ic.py"
+           ).read_text(encoding="utf-8", errors="ignore")
+    assert src.count('"regimebook"') + src.count("regimebook") >= 2, (
+        "prefix must be registered at BOTH default sites (P192/P236) or the "
+        "ledger accumulates forever and is never scored"
+    )
