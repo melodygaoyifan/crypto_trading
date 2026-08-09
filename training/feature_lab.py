@@ -103,7 +103,12 @@ def generate_candidates(X, close, lab, fz, feats, y, design=DESIGN_ERA,
     add(pd.Series(fz).diff(30).to_numpy(), "funding_z_mom5d", "funding")
     add(fz * trend, "funding_x_trend", "funding")
 
-    F = np.column_stack([np.nan_to_num(v) for v in cols])
+    # inf -> 0 (a zero denominator is "no information", not a huge value —
+    # nan_to_num's 1e308 default overflowed StandardScaler's variance into
+    # NaN and crashed Ridge on ETH), then winsorize to a sane range.
+    F = np.column_stack([
+        np.clip(np.nan_to_num(v, nan=0.0, posinf=0.0, neginf=0.0), -1e6, 1e6)
+        for v in cols])
     return F, names, fam, top
 
 
