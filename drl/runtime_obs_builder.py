@@ -49,6 +49,7 @@ class RuntimeObsBuilder:
     def __init__(
         self,
         manifest_path: str = "configs/feature_manifest.json",
+        include_fv2: bool = False,  # [P1b] serve a 139-obs (fv2-era) model
         scaler_dir: str = "models/retrained",
         assets: Optional[List[str]] = None,
     ):
@@ -63,7 +64,22 @@ class RuntimeObsBuilder:
         self._external_features: List[str] = []
         self._regime_proba_features: List[str] = []
         self._no_scale: set = set()
+        self._include_fv2 = bool(include_fv2)
         self._load_manifest()
+        if self._include_fv2:
+            # [P1b] Mirror the trainer's --include-fv2 EXACTLY: the 13 fv2
+            # features are inserted BEFORE the trailing regime_proba block
+            # (the FiLM extractor slices regime as obs[-12:-4], END-relative).
+            from data_mgmt.flow_features import FV2_COLUMNS
+            tail = self._all_features[-8:]
+            assert all(c.startswith("regime_proba") for c in tail), (
+                "manifest tail is not the 8 regime_proba columns — the FiLM "
+                "slice contract has changed; do not insert fv2 blindly")
+            self._fv2_features = sorted(FV2_COLUMNS)
+            self._all_features = (self._all_features[:-8]
+                                  + self._fv2_features + tail)
+        else:
+            self._fv2_features = []
 
         # Per-asset scalers
         self._scalers: Dict[str, dict] = {}
@@ -147,7 +163,8 @@ class RuntimeObsBuilder:
         market_data: dict,
         gmm_probs: list,
         env_state: list,
-    ) -> np.ndarray:
+        fv2: "Optional[dict]" = None,   # [P1b] required when include_fv2
+    ) -> "Optional[np.ndarray]":
         """Build 126-dim observation vector.
 
         Args:
@@ -160,6 +177,13 @@ class RuntimeObsBuilder:
         Returns:
             np.ndarray of shape (126,) float32
         """
+        if self._include_fv2 and not fv2:
+            # A 139-obs model without fv2 values cannot infer. Refuse loudly
+            # rather than zero-fill: 13 fabricated zeros is a fake observation
+            # (P160/P170 — absence must never look like a measurement).
+            logger.warning(f"[ObsBuilder] {asset}: fv2 features unavailable "
+                           f"this tick — obs NOT built, model must skip")
+            return None
         features_122 = np.zeros(len(self._all_features), dtype=np.float32)
 
         # 1. Base features (102) via FeatureEngineer
@@ -188,8 +212,14 @@ class RuntimeObsBuilder:
             val = market_data.get(feat_name, 0.0)
             features_122[idx] = float(val) if val is not None else 0.0
 
+        # 3b. [P1b] fv2 flow features (13) — from the BinanceFlowFeed
+        fv2_offset = ext_offset + len(self._external_features)
+        for j, feat_name in enumerate(self._fv2_features):
+            val = (fv2 or {}).get(feat_name)
+            features_122[fv2_offset + j] = float(val) if val is not None else 0.0
+
         # 4. Regime proba (8) - from GMM predictions
-        regime_offset = ext_offset + len(self._external_features)
+        regime_offset = fv2_offset + len(self._fv2_features)
         for j in range(len(self._regime_proba_features)):
             idx = regime_offset + j
             if j < len(gmm_probs):

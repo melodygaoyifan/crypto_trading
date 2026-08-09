@@ -139,8 +139,20 @@ class TQCInference:
                 logger.info(f"[DRL_BUFFER] {self._asset}: saved buffer stale "
                             f"({age/3600:.1f}h) -> warmup fresh (zero-pad)")
                 return
+            _dim = getattr(self, "single_obs_dim", SINGLE_OBS_DIM)  # [P1b]
             for f in z["frames"]:
-                self._obs_buffer.append(np.asarray(f, dtype=np.float32))
+                arr = np.asarray(f, dtype=np.float32)
+                if len(arr) != _dim:
+                    # A buffer persisted under a different obs width (e.g. a
+                    # 126-frame buffer restored into a 139 model after a
+                    # Rung-3 deploy) would poison the stack. Warmup fresh.
+                    logger.warning(
+                        f"[DRL_BUFFER] {self._asset}: saved frames are "
+                        f"{len(arr)}-dim but the model expects {_dim} — "
+                        f"discarding buffer, warming up fresh (P1b)")
+                    self._obs_buffer.clear()
+                    return
+                self._obs_buffer.append(arr)
             logger.info(f"[DRL_BUFFER] {self._asset}: restored {len(self._obs_buffer)}/{N_STACK} "
                         f"frames (age {age/3600:.1f}h) -> no 32h warmup")
         except Exception as e:  # noqa: silent-swallow — bad/old buffer file; fall back to empty (warmup) + log
@@ -190,9 +202,41 @@ class TQCInference:
             load_path = path[:-4] if path.endswith(".zip") else path
             self._tqc_model = TQC.load(load_path, device=device)
 
+            # [P1b] The checkpoint declares its own input width. Old models
+            # are 126x8=1008; fv2-era models (P200-LADDER Rung 3) are
+            # 139x8=1112. Deriving from the model's observation_space makes
+            # the loader dimension-agnostic while VALIDATING the result —
+            # an unexpected width is a hard refuse, not a squeeze.
+            try:
+                _total = int(np.prod(self._tqc_model.observation_space.shape))
+                if _total % N_STACK != 0:
+                    raise ValueError(f"obs width {_total} not divisible by n_stack {N_STACK}")
+                self.single_obs_dim = _total // N_STACK
+                if self.single_obs_dim not in (126, 139):
+                    raise ValueError(
+                        f"checkpoint single_obs_dim {self.single_obs_dim} is neither "
+                        f"126 (legacy) nor 139 (fv2) — refusing to serve it")
+            except Exception as _dim_err:
+                logger.error(f"[P1b] obs-dim derivation failed: {_dim_err}")
+                self._tqc_model = None
+                return
+            if self.single_obs_dim != SINGLE_OBS_DIM:
+                logger.warning(
+                    f"[P1b] checkpoint uses single_obs_dim={self.single_obs_dim} "
+                    f"(fv2-era); the obs builder MUST supply fv2 features or "
+                    f"prediction will be skipped every tick")
+            # _restore_buffer ran in __init__ BEFORE the dim was known —
+            # re-validate the restored frames against the true width now.
+            if self._obs_buffer and len(self._obs_buffer[0]) != self.single_obs_dim:
+                logger.warning(
+                    f"[DRL_BUFFER] {self._asset}: restored frames are "
+                    f"{len(self._obs_buffer[0])}-dim but the checkpoint expects "
+                    f"{self.single_obs_dim} — discarding, warming up fresh (P1b)")
+                self._obs_buffer.clear()
+
             # Smoke test: predict on zeros to verify model is functional
             try:
-                _test_obs = np.zeros((1, SINGLE_OBS_DIM * N_STACK), dtype=np.float32)
+                _test_obs = np.zeros((1, self.single_obs_dim * N_STACK), dtype=np.float32)
                 _test_action, _ = self._tqc_model.predict(_test_obs, deterministic=True)
                 if np.isnan(_test_action).any() or np.isinf(_test_action).any():
                     logger.error(f"[FIX-DRL-VALIDATE] Model produces NaN/Inf on smoke test: {path}")
@@ -236,21 +280,22 @@ class TQCInference:
         if self._tqc_model is not None:
             try:
                 obs_126 = obs.astype(np.float32)
-                _expected_stacked = SINGLE_OBS_DIM * N_STACK  # 1008
+                _dim = getattr(self, "single_obs_dim", SINGLE_OBS_DIM)  # [P1b]
+                _expected_stacked = _dim * N_STACK
                 if len(obs_126) == _expected_stacked:
                     # [FIX-M7] Pre-stacked observation — validate exact dimension
                     stacked = obs_126.reshape(1, -1)
-                elif len(obs_126) != SINGLE_OBS_DIM:
+                elif len(obs_126) != _dim:
                     logger.error(
                         f"[TQC] Invalid obs dimension {len(obs_126)}, "
-                        f"expected {SINGLE_OBS_DIM} or {_expected_stacked}"
+                        f"expected {_dim} or {_expected_stacked}"
                     )
                     stacked = np.zeros((1, _expected_stacked), dtype=np.float32)
                 else:
                     self._obs_buffer.append(obs_126.copy())
                     self._save_buffer()  # [P148] persist so a restart doesn't zero-pad 32h
                     if len(self._obs_buffer) < N_STACK:
-                        padded = [np.zeros(SINGLE_OBS_DIM, dtype=np.float32)] * (
+                        padded = [np.zeros(_dim, dtype=np.float32)] * (
                             N_STACK - len(self._obs_buffer)
                         )
                         padded.extend(self._obs_buffer)
