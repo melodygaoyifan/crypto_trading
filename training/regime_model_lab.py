@@ -226,6 +226,34 @@ def _grid(spec):
     return out
 
 
+from training.train_supervised_full import DATA_DIR as _DATA_DIR  # noqa: E402
+_FUND_DIR = REPO / "training" / "training_data" / "coinglass_history"
+
+
+def _bar_carry_rate(asset, n):
+    """[P245] Per-4H-bar funding rate (FRACTION; positive -> longs PAY).
+
+    On a perp, realized gain = price PnL + funding carry — every prior
+    evaluation credited price PnL only, systematically understating
+    strategies short during high funding and overstating longs held
+    through it. Source: Binance Vision daily funding history (full 2020->
+    now) as a PROXY for the CDE contract — P218 measured the two venues'
+    signs can differ at a moment in time, so carry here is an estimate,
+    not the venue's ledger. Daily close rate covers 3 events/day spread
+    over 6 bars -> rate/2 per bar."""
+    p = _FUND_DIR / f"{asset}_funding_1d.parquet"
+    if not p.exists():
+        return np.zeros(n)
+    px = pd.read_parquet(_DATA_DIR / f"{asset}_4H_full.parquet", columns=["timestamp"])
+    f = pd.read_parquet(p)
+    daily = f.assign(d=pd.to_datetime(f["timestamp"]).dt.date).set_index("d")["funding_close"]
+    dates = pd.to_datetime(px["timestamp"]).dt.date
+    rate = dates.map(daily).to_numpy(dtype=float)[:n]
+    if len(rate) < n:
+        rate = np.pad(rate, (0, n - len(rate)))
+    return np.nan_to_num(rate, nan=0.0) / 2.0
+
+
 def _ctx(asset):
     X, targets, close, gmm, feats = load_asset(asset)
     n = len(close)
@@ -234,7 +262,8 @@ def _ctx(asset):
     ret6 = np.full(n, np.nan); ret6[6:] = close[6:] / close[:-6] - 1.0
     lr1 = np.full(n, np.nan); lr1[1:] = np.log(close[1:] / close[:-1])
     return dict(X=X, y=targets["ret"], close=close, lab=lab, fz=fz,
-                ret6=ret6, lr1=lr1, n=n, feats=feats)
+                ret6=ret6, lr1=lr1, n=n, feats=feats,
+                carry_rate=_bar_carry_rate(asset, n))
 
 
 def _ridge_z(ctx, regime_id, s, e, alpha, fit_lt=None):
@@ -334,7 +363,10 @@ def cell_series(kind, params, ctx, regime, s, e, cost_mult=1.0, fit_lt=None,
     strat = np.zeros(ctx["n"]); strat[1:] = pos[:-1] * ret[1:]
     cost = np.zeros(ctx["n"])
     cost[1:] = np.abs(np.diff(pos)) * _COST[ctx["asset"]] * cost_mult / 1e4
-    return (strat - cost)[s:e]
+    # [P245] perp funding carry: shorts COLLECT when funding is positive.
+    carry = np.zeros(ctx["n"])
+    carry[1:] = -pos[:-1] * ctx["carry_rate"][1:]
+    return (strat - cost + carry)[s:e]
 
 
 def stage_select(assets, tag):
@@ -349,24 +381,28 @@ def stage_select(assets, tag):
             rows = []
             for kind, spec in cands:
                 for params in _grid(spec):
-                    cv = []
+                    cv_pnl, cv_sh = [], []
                     for tr, va in purged_folds(s, e):
                         fit_lt = int(va[0])
                         seg = cell_series(kind, params, ctx, regime,
                                           int(va[0]), int(va[-1] + 1), fit_lt=fit_lt)
                         m = seg_metrics(seg)
-                        cv.append(m["sharpe"])
+                        cv_pnl.append(m["pnl_pct"]); cv_sh.append(m["sharpe"])
                     train_seg = cell_series(kind, params, ctx, regime, s, e)
                     row = standard_row(f"{kind}{params or ''}", train_seg,
-                                       float(np.mean(cv)) if cv else 0.0)
+                                       float(np.mean(cv_sh)) if cv_sh else 0.0)
+                    # [P245] objective = REALIZED after-cost gain (incl. perp
+                    # carry); risk stats stay reported but do not decide.
+                    row["cv_pnl_pct"] = round(float(np.mean(cv_pnl)), 2) if cv_pnl else 0.0
                     row.update({"kind": kind, "params": params})
                     rows.append(row)
-            rows.sort(key=lambda r: -r["cv_sharpe"])
+            rows.sort(key=lambda r: -r["cv_pnl_pct"])
             out[regime] = {"table": rows, "winner": rows[0]}
             w = rows[0]
-            print(f"  {regime:<6} winner={w['name']:<32} cv={w['cv_sharpe']:+.2f} "
-                  f"train={w['train_sharpe']:+.2f} gap={w['overfit_gap']:+.2f} "
-                  f"| runner-up {rows[1]['name']} cv={rows[1]['cv_sharpe']:+.2f}", flush=True)
+            print(f"  {regime:<6} winner={w['name']:<32} cv_pnl={w['cv_pnl_pct']:+.1f}% "
+                  f"cv_sh={w['cv_sharpe']:+.2f} train={w['train_sharpe']:+.2f} "
+                  f"gap={w['overfit_gap']:+.2f} | runner-up {rows[1]['name']} "
+                  f"cv_pnl={rows[1]['cv_pnl_pct']:+.1f}%", flush=True)
         all_out[asset] = out
     rpt = REPO / "training" / "reports" / f"regime_lab_select_{tag}.json"
     payload = {"results": all_out, "provenance": provenance_stamp(
@@ -411,11 +447,12 @@ def stage_assemble(assets, tag):
         # deploys nothing — flat. A model that loses in its own design-era CV
         # has no claim to a live position.
         for r, w in winners.items():
-            if w["cv_sharpe"] < 0:
-                print(f"  floor rule: {r} winner {w['name']} cv={w['cv_sharpe']:+.2f} < 0 "
+            metric = w.get("cv_pnl_pct", w["cv_sharpe"])
+            if metric < 0:
+                print(f"  floor rule: {r} winner {w['name']} cv={metric:+.2f} < 0 "
                       f"-> replaced by flat", flush=True)
                 winners[r] = {"name": "flat(floored)", "kind": "flat", "params": {},
-                              "cv_sharpe": 0.0}
+                              "cv_sharpe": 0.0, "cv_pnl_pct": 0.0}
         print(f"\n########## {asset} Stage 3 ##########", flush=True)
         print(f"  winners: " + ", ".join(f"{r}={winners[r]['name']}"
                                          for r in ("bull", "bear", "peace")), flush=True)
