@@ -95,6 +95,54 @@
    "start": 9100,
    "end": 13034,
    "purpose": "validation"
+  },
+  {
+   "ts": "2026-08-09T21:41:34.087751+00:00",
+   "experiment": "regime_lab:p246_sixcell",
+   "asset": "BTC",
+   "start": 3000,
+   "end": 9100,
+   "purpose": "design"
+  },
+  {
+   "ts": "2026-08-09T21:42:59.614559+00:00",
+   "experiment": "regime_lab:p246_sixcell",
+   "asset": "ETH",
+   "start": 3000,
+   "end": 9100,
+   "purpose": "design"
+  },
+  {
+   "ts": "2026-08-09T21:44:17.676416+00:00",
+   "experiment": "regime_lab:p246_sixcell",
+   "asset": "SOL",
+   "start": 3000,
+   "end": 9100,
+   "purpose": "design"
+  },
+  {
+   "ts": "2026-08-09T21:45:55.445063+00:00",
+   "experiment": "regime_lab:p246_sixcell",
+   "asset": "BTC",
+   "start": 9100,
+   "end": 13095,
+   "purpose": "validation"
+  },
+  {
+   "ts": "2026-08-09T21:45:55.543865+00:00",
+   "experiment": "regime_lab:p246_sixcell",
+   "asset": "ETH",
+   "start": 9100,
+   "end": 13095,
+   "purpose": "validation"
+  },
+  {
+   "ts": "2026-08-09T21:46:45.617954+00:00",
+   "experiment": "regime_lab:p246_sixcell",
+   "asset": "SOL",
+   "start": 9100,
+   "end": 13034,
+   "purpose": "validation"
   }
  ]
 }

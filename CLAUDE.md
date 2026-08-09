@@ -339,6 +339,18 @@ driver. Neither needs a code change.
 
 ### Recent pitfalls (last ~30 days)
 
+### P246. [MEASURED 2026-08-09] The research-first pipeline (Plan V3) ran the full six-cell matrix — the BTC perp assembly is still the sole survivor; spot books lose on costs; ETH fails on both vehicles
+Operator reset: all in-flight training killed (SOL churn Optuna at 2/24, sqlite study resumable), research phase run (live 3-month analysis: sleeve −5.5%, last-14d −2.6% post-hardening; **90d per-agent live IC ALL ≈ 0**, model_alpha's +0.289 fully decayed to +0.034), methodology brief produced and merged (`docs/research/METHODOLOGY_BRIEF_2026-08-09.md` — external corroboration: market-wide carry Sharpe 6.45 → NEGATIVE in 2025, so the P244 funding inversion was the market re-pricing; binding rules: funding = income always/signal never; break-even IC ≈ 0.13 alpha bar; linear-first settled; TCN if any net; jump-model switch; DSR/trial counting + learning curves + capacity sweeps in every model report; vmap GPU pattern). Plan: `docs/TRAINING_PIPELINE_PLAN_V3.md` (P246).
+- **Six-cell matrix run (E1, tag p246_sixcell): {bull,bear,peace} × {perp,spot} per asset, instrument-true economics** (spot = long/flat, 20–26bps/side, no carry; two spot-only candidates added). Validation shots (window's 3rd read for perp books, ledger-flagged):
+  | asset | perp validation | spot validation | flags |
+  |---|---|---|---|
+  | BTC | **+44.1% vs B&H +20.6 — NONE** | +8.8% (COST-FRAGILE ×2) | perp survives |
+  | ETH | −85.8% | −72.3% | ERA-FRAGILE both |
+  | SOL | −37.1% | −28.6% | ERA+PARAM both |
+- **Instrument findings:** spot holds dodge the perp funding tax in bulls (BTC/SOL spot bull CV gain > perp), but at 20–26bps/side the spot books are COST-FRAGILE and lose the assembly comparison — perp is the right execution vehicle at this turnover; spot only makes sense for near-zero-turnover holds. **ETH's long-only funding_long ALSO failed validation** (−72.3%) — even the structurally-cannot-short variant of the funding family collapsed there.
+- **Honesty note on the BTC survivor:** its peace cell is the funding-contrarian family that failed on ETH/SOL — cross-asset fragility of the family is evidence the per-asset battery cannot see. The forward gate (30d P166, GP2 shadow harness) remains its only exam; nothing here promotes from backtest.
+- **Mitigation pattern:** an instrument dimension is not a modeling nicety — carry, shortability, and the cost tier CHANGE which policies are expressible and which survive; and a candidate family's failure on sibling assets is era-fragility evidence even when the home asset's battery is clean.
+
 ### P245. [MEASURED 2026-08-09] Realized-gain objective + perp funding carry — and the first candidate to survive the full pipeline: the BTC assembly beat B&H out-of-sample with ZERO fragility flags
 Operator direction: ignore model cost, pursue REALIZED gain, specialize per trend × asset × instrument. Two lab changes: (1) selection + floor rule key on after-cost realized PnL (risk stats reported, not deciding); (2) **perp funding carry wired into every cell's PnL** — on a perp, realized gain = price PnL + carry, and every prior evaluation in this repo credited price PnL only. Carry from Binance Vision full-history daily funding (documented PROXY for the CDE contract — P218 measured venue signs can differ), rate/2 per 4H bar, shorts collect when funding positive.
 - **Objective switch changed selections observably:** BTC/SOL bull cells flipped to plain `hold` (SOL: CV realized gain +21.1% at CV Sharpe **−0.19** — raw gain takes the bumpy bull ride Sharpe refused); SOL bear flipped funding_short → ridge_defensive once carry was counted.
