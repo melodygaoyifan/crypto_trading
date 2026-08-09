@@ -89,10 +89,20 @@ def _rank_ic(a, b):
 
 
 # ---------------------------------------------------------------- stage 1
-def stage_eda(assets):
+def stage_eda(assets, engineered=False):
     report = {}
     for asset in assets:
         X, targets, close, gmm_regime, feats = load_asset(asset)
+        if engineered:
+            # [P250] EDA on the ENRICHED set: the per-regime feature
+            # rankings must see the screened engineered features too, or
+            # the zoo trains on features the EDA never profiled.
+            _c = _ctx(asset); _c["asset"] = asset
+            from training.feature_lab import build_screened
+            _F, _names, _ = build_screened(_c)
+            X = np.column_stack([X, _F])
+            feats = list(feats) + _names
+            print(f"  [feature-lab] EDA on enriched set (+{len(_names)})", flush=True)
         n = len(close)
         lab = regime_labels(close)
         y = targets["ret"]
@@ -211,26 +221,44 @@ from training.train_supervised_full import COST_BPS as _COST  # noqa: E402
 # spot's cost level (~20-26bps/side vs perp 3) makes low-turnover
 # candidates the only sane entrants. flat is universal: every cell must be
 # allowed to conclude "no model earns a position here".
+# [P250] The zoo is the FULL ladder per cell — rules, then linear (ridge/
+# elastic net), then trees (LightGBM), then nets (small MLP), each with a
+# cell-appropriate position CLIP (long-only in bull/spot cells, short-only
+# defensive in bears, full-range in peace). Capacity must earn its keep:
+# the per-cell table carries every rung's train/CV/overfit-gap and trial
+# counts are printed for the DSR line. ridge_long/ridge_defensive remain
+# as aliases of mdl_long/mdl_short(family=ridge) for the export/probe.
 CELL_CANDIDATES = {
     "perp": {
         "bull": [("flat", {}), ("hold", {}),
-                 ("ridge_long", {"alpha": [10.0, 30.0, 100.0]}),
-                 ("dip_buy", {"thr": [0.02, 0.04]})],
-        "bear": [("flat", {}), ("ridge_defensive", {"alpha": [10.0, 30.0, 100.0]}),
-                 ("funding_short", {"thr": [0.5, 1.0]})],
+                 ("dip_buy", {"thr": [0.02, 0.04]}),
+                 ("mdl_long", {"family": ["ridge"], "alpha": [30.0, 100.0]}),
+                 ("mdl_long", {"family": ["enet"]}),
+                 ("mdl_long", {"family": ["lgbm"]}),
+                 ("mdl_long", {"family": ["mlp"]})],
+        "bear": [("flat", {}), ("funding_short", {"thr": [0.5, 1.0]}),
+                 ("mdl_short", {"family": ["ridge"], "alpha": [10.0, 30.0]}),
+                 ("mdl_short", {"family": ["enet"]}),
+                 ("mdl_short", {"family": ["lgbm"]}),
+                 ("mdl_short", {"family": ["mlp"]})],
         "peace": [("flat", {}), ("funding_contrarian", {"thr": [0.5, 1.0]}),
-                  ("meanrev", {"thr": [0.02, 0.04]}), ("ar_p", {"p": [3, 6]})],
+                  ("meanrev", {"thr": [0.02, 0.04]}), ("ar_p", {"p": [3, 6]}),
+                  ("mdl_full", {"family": ["ridge"], "alpha": [30.0]}),
+                  ("mdl_full", {"family": ["lgbm"]}),
+                  ("mdl_full", {"family": ["mlp"]})],
     },
     "spot": {
         "bull": [("flat", {}), ("hold", {}),
-                 ("ridge_long", {"alpha": [30.0, 100.0]}),
-                 ("dip_buy", {"thr": [0.02, 0.04]})],
-        # long/flat in a bear: hold is the honest losing reference; ridge_long
-        # is exit-timing (long only when the forecast is strongly positive).
+                 ("dip_buy", {"thr": [0.02, 0.04]}),
+                 ("mdl_long", {"family": ["ridge"], "alpha": [100.0]}),
+                 ("mdl_long", {"family": ["lgbm"]})],
+        # long/flat in a bear: hold is the honest losing reference; models
+        # are exit-timing (long only on a strongly positive forecast).
         "bear": [("flat", {}), ("hold", {}),
-                 ("ridge_long", {"alpha": [30.0, 100.0]})],
+                 ("mdl_long", {"family": ["ridge"], "alpha": [100.0]})],
         "peace": [("flat", {}), ("funding_long", {"thr": [0.5, 1.0]}),
-                  ("meanrev_long", {"thr": [0.02, 0.04]})],
+                  ("meanrev_long", {"thr": [0.02, 0.04]}),
+                  ("mdl_long", {"family": ["lgbm"]})],
     },
 }
 REGIME_ID = {"peace": 0, "bull": 1, "bear": 2}
@@ -314,11 +342,72 @@ def _ctx(asset):
     n = len(close)
     lab = regime_labels(close)
     fz = _causal_funding_z(asset, n)   # [P247-F1] never the leaked parquet feature
+    # [P250-F1b] The P247 leak's THIRD tentacle: the parquet's
+    # funding_rate_zscore column sat in X itself, so every MODEL cell
+    # (ridge/enet/lgbm/mlp — including the deployed SOL bear export) was
+    # training on the 16h look-ahead, and the feature lab was deriving
+    # crosses/transforms of it. Replace the column IN PLACE with the causal
+    # series — same semantic, honest timing.
+    if "funding_rate_zscore" in feats:
+        X = X.copy()
+        X[:, feats.index("funding_rate_zscore")] = fz
     ret6 = np.full(n, np.nan); ret6[6:] = close[6:] / close[:-6] - 1.0
     lr1 = np.full(n, np.nan); lr1[1:] = np.log(close[1:] / close[:-1])
     return dict(X=X, y=targets["ret"], close=close, lab=lab, fz=fz,
                 ret6=ret6, lr1=lr1, n=n, feats=feats,
                 carry_rate=_bar_carry_rate(asset, n))
+
+
+def _make_model(family, params):
+    """[P250] Family dispatch for the per-cell ladder. Returns
+    (needs_scaling, model, refit_bars). Tree/net families refit monthly
+    (180 bars) to bound walk-forward cost; linear refits weekly (42)."""
+    if family == "ridge":
+        return True, Ridge(alpha=params.get("alpha", 30.0)), REFIT
+    if family == "enet":
+        from sklearn.linear_model import ElasticNet
+        return True, ElasticNet(alpha=1e-4, l1_ratio=0.5, max_iter=2000), REFIT
+    if family == "lgbm":
+        import lightgbm as lgb
+        return False, lgb.LGBMRegressor(
+            n_estimators=150, num_leaves=15, max_depth=3, learning_rate=0.05,
+            subsample=0.8, colsample_bytree=0.8, random_state=7,
+            verbosity=-1), 180
+    if family == "mlp":
+        from sklearn.neural_network import MLPRegressor
+        return True, MLPRegressor(hidden_layer_sizes=(32,), alpha=1e-2,
+                                  max_iter=200, early_stopping=True,
+                                  random_state=7), 180
+    raise ValueError(family)
+
+
+def _model_z(ctx, family, params, regime_id, s, e, fit_lt=None):
+    """Generic walk-forward z over [s,e): refit every family-appropriate
+    cadence on REGIME-MATCHED history (the per-cell training set)."""
+    X, y, lab, n = ctx["X"], ctx["y"], ctx["lab"], ctx["n"]
+    z = np.full(n, np.nan)
+    needs_scale, _, refit = _make_model(family, params)
+    for t0 in range(s, e, refit):
+        lim = t0 - H if fit_lt is None else min(t0 - H, fit_lt)
+        idx = np.where((lab[:lim] == regime_id)
+                       & ~np.isnan(X[:lim]).any(axis=1) & ~np.isnan(y[:lim]))[0]
+        if len(idx) < 400:
+            continue
+        _, model, _ = _make_model(family, params)
+        if needs_scale:
+            sc = StandardScaler().fit(X[idx])
+            model.fit(sc.transform(X[idx]), y[idx])
+            preds_tr = model.predict(sc.transform(X[idx]))
+            t1 = min(t0 + refit, e)
+            preds = model.predict(sc.transform(np.nan_to_num(X[t0:t1])))
+        else:
+            model.fit(X[idx], y[idx])
+            preds_tr = model.predict(X[idx])
+            t1 = min(t0 + refit, e)
+            preds = model.predict(np.nan_to_num(X[t0:t1]))
+        sig = float(np.std(preds_tr)) or 1e-9
+        z[t0:t1] = preds / sig
+    return z
 
 
 def _ridge_z(ctx, regime_id, s, e, alpha, fit_lt=None):
@@ -395,6 +484,16 @@ def desired_positions(kind, params, ctx, regime_id, s, e, fit_lt=None):
         z = (_ridge_z(ctx, regime_id, s, e, params["alpha"], fit_lt))[s:e]
         raw = np.where(np.isnan(z) | (np.abs(z) < DEADBAND), 0.0, np.clip(z, -1, 1))
         pos[s:e] = np.clip(raw, 0.0, 1.0) if kind == "ridge_long" else np.clip(raw, -1.0, 0.0)
+    elif kind in ("mdl_long", "mdl_short", "mdl_full"):
+        # [P250] generic family ladder: same z contract, cell-appropriate clip
+        z = (_model_z(ctx, params["family"], params, regime_id, s, e, fit_lt))[s:e]
+        raw = np.where(np.isnan(z) | (np.abs(z) < DEADBAND), 0.0, np.clip(z, -1, 1))
+        if kind == "mdl_long":
+            pos[s:e] = np.clip(raw, 0.0, 1.0)
+        elif kind == "mdl_short":
+            pos[s:e] = np.clip(raw, -1.0, 0.0)
+        else:
+            pos[s:e] = raw
     elif kind == "ar_p":
         z = (_ar_z(ctx, s, e, params["p"]))[s:e]
         pos[s:e] = np.where(np.isnan(z) | (np.abs(z) < DEADBAND), 0.0, np.clip(z, -1, 1))
@@ -436,11 +535,26 @@ def cell_series(kind, params, ctx, regime, s, e, cost_mult=1.0, fit_lt=None,
     return (strat - cost + carry)[s:e]
 
 
-def stage_select(assets, tag):
+def _enrich(ctx):
+    """[P250] Append the feature lab's screened engineered features —
+    generated, causality-gated, screened (design era only) — so the model
+    zoo trains on the enriched set. Deterministic and self-contained."""
+    from training.feature_lab import build_screened
+    F, names, _ = build_screened(ctx)
+    ctx["X"] = np.column_stack([ctx["X"], F])
+    ctx["feats"] = list(ctx["feats"]) + names
+    print(f"  [feature-lab] +{len(names)} engineered features "
+          f"(total {ctx['X'].shape[1]})", flush=True)
+    return ctx
+
+
+def stage_select(assets, tag, engineered=False):
     s, e = DESIGN_ERA
     all_out = {}
     for asset in assets:
         ctx = _ctx(asset); ctx["asset"] = asset
+        if engineered:
+            ctx = _enrich(ctx)
         record_window_usage(f"regime_lab:{tag}", asset, s, e, "design")
         print(f"\n########## {asset} Stage 2 (design era [{s},{e})) ##########", flush=True)
         out = {}
@@ -468,13 +582,15 @@ def stage_select(assets, tag):
                         row.update({"kind": kind, "params": params})
                         rows.append(row)
                 rows.sort(key=lambda r: -r["cv_pnl_pct"])
-                out[instrument][regime] = {"table": rows, "winner": rows[0]}
+                out[instrument][regime] = {"table": rows, "winner": rows[0],
+                                           "trials": len(rows)}
                 w = rows[0]
                 print(f"  {instrument:<4} {regime:<6} winner={w['name']:<30} "
                       f"cv_pnl={w['cv_pnl_pct']:+.1f}% cv_sh={w['cv_sharpe']:+.2f} "
                       f"train={w['train_sharpe']:+.2f} gap={w['overfit_gap']:+.2f} "
                       f"| runner-up {rows[1]['name']} "
-                      f"cv_pnl={rows[1]['cv_pnl_pct']:+.1f}%", flush=True)
+                      f"cv_pnl={rows[1]['cv_pnl_pct']:+.1f}% "
+                      f"[{len(rows)} trials]", flush=True)
         all_out[asset] = out
     rpt = REPO / "training" / "reports" / f"regime_lab_select_{tag}.json"
     _data_files = [p for a in assets for p in
@@ -513,13 +629,15 @@ def assembled_series(ctx, winners, s, e, cost_mult=1.0, sma_w=SMA_W, mom_w=MOM_W
     return total
 
 
-def stage_assemble(assets, tag):
+def stage_assemble(assets, tag, engineered=False):
     rpt_in = REPO / "training" / "reports" / f"regime_lab_select_{tag}.json"
     sel = json.loads(rpt_in.read_text(encoding="utf-8"))["results"]
     ds, de = DESIGN_ERA
     out = {}
     for asset in assets:
         ctx = _ctx(asset); ctx["asset"] = asset
+        if engineered:
+            ctx = _enrich(ctx)
         n = ctx["n"]
         out[asset] = {}
         prior = record_window_usage(f"regime_lab:{tag}", asset,
@@ -607,14 +725,18 @@ def main():
     ap.add_argument("--stage", choices=["eda", "select", "assemble"], required=True)
     ap.add_argument("--assets", default="BTC,ETH,SOL")
     ap.add_argument("--tag", default="p244")
+    ap.add_argument("--engineered", action="store_true",
+                    help="[P250] enrich the feature matrix with the feature "
+                         "lab's screened engineered features (generated -> "
+                         "causality-gated -> screened, design era only)")
     args = ap.parse_args()
     assets = [a.strip().upper() for a in args.assets.split(",")]
     if args.stage == "eda":
-        stage_eda(assets)
+        stage_eda(assets, engineered=args.engineered)
     elif args.stage == "select":
-        stage_select(assets, args.tag)
+        stage_select(assets, args.tag, engineered=args.engineered)
     elif args.stage == "assemble":
-        stage_assemble(assets, args.tag)
+        stage_assemble(assets, args.tag, engineered=args.engineered)
 
 
 if __name__ == "__main__":
