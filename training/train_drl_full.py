@@ -752,6 +752,13 @@ class TradingEnvFull(gym.Env):
         sol_vol_multiplier: float = 1.0,
         reward_mode: str = "classic",
         decision_interval: int = 1,   # [P200-followup] act every N bars; see below
+        # [CHURN-TIER] Suppress position ADJUSTMENTS smaller than this
+        # fraction of max_position on decision bars (0.0 = off, historical
+        # behavior). Motivated by the official_p221b measurement: the policy
+        # changed position at ~96% of decision points and paid $40-72K/fold
+        # in trade costs. A deadband lets small forecast wobble hold the
+        # position while flips (|change| ~ 2.0) always pass.
+        action_deadband: float = 0.0,
         # Reward hyperparams (Optuna-searchable)
         dd_threshold: float = 0.0866,       # Config 1 Optuna winner (was 0.10)
         dd_penalty_mult: float = 2.8243,     # Config 1 Optuna winner (was 2.0)
@@ -815,6 +822,10 @@ class TradingEnvFull(gym.Env):
         # where signal exists. 1 = every bar (historical behavior).
         self._decision_interval = max(1, int(decision_interval or 1))
         self._bars_since_decision = 0
+        # [CHURN-TIER] clamp to [0, 1): a deadband >= max_position would make
+        # every position permanent including exits, which is not a tuning
+        # value, it is a broken env.
+        self._action_deadband = min(max(float(action_deadband or 0.0), 0.0), 0.99)
 
         # [P179] Venue fee resolution. Fail loudly on an unknown venue rather
         # than falling back to zero — a typo silently restoring the old
@@ -1067,6 +1078,16 @@ class TradingEnvFull(gym.Env):
         current_price = self.df.iloc[self.current_step]["close"]
 
         target_position = action_val * self.max_position
+        # [CHURN-TIER] Deadband on decision bars: a sub-threshold ADJUSTMENT
+        # holds the current position (no trade, no cost). Flips and exits
+        # from a full position are changes of ~1.0-2.0 x max_position and
+        # always pass any deadband < 1.0 — this suppresses wobble, never an
+        # exit. Applied after the decision_interval hold override, where it
+        # is a no-op (held action == current position by construction).
+        if (self._action_deadband > 0.0
+                and abs(target_position - self.position)
+                < self._action_deadband * self.max_position):
+            target_position = self.position
         position_change = target_position - self.position
 
         old_position = self.position
@@ -2319,6 +2340,13 @@ def run_optuna_tuning(
     reward_mode: str = "classic",
     extractor: str = "lstm_film_a",
     tier3: bool = False,
+    # [CHURN-TIER] Focused search on the levers the official_p221b cost
+    # diagnosis named: decision cadence, action deadband, churn penalty —
+    # plus lr. Everything else is FIXED at the Config-1 winners so a small
+    # trial budget covers 4 dims instead of thrashing 12.
+    churn_tier: bool = False,
+    venue: Optional[str] = None,
+    fee_side: Optional[str] = None,
 ):
     """
     Stage 8: Optuna hyperparameter search for TQC + FiLM PosA extractor.
@@ -2388,7 +2416,9 @@ def run_optuna_tuning(
     results_dir.mkdir(parents=True, exist_ok=True)
 
     # SQLite storage for crash recovery
-    tier_tag = "_t3" if tier3 else ""
+    # [CHURN-TIER] distinct study: mixing param spaces in one TPE study breaks
+    # both the sampler and crash-recovery resume.
+    tier_tag = "_t3" if tier3 else ("_churn" if churn_tier else "")
     db_path = Path(output_dir) / asset / f"optuna_hmats_v8{tier_tag}.db"
     storage = f"sqlite:///{db_path}"
     study_name = f"hmats_v8_{asset.lower()}{tier_tag}"
@@ -2412,11 +2442,17 @@ def run_optuna_tuning(
         logger.info(f"    net_arch=[256,256]  n_critics=2  top_drop=2")
     else:
         logger.info(f"    (Tier 3 active - net_arch, n_critics, top_drop SEARCHED)")
-    logger.info(f"  SEARCHED - Tier 1:")
-    logger.info(f"    lr=[1e-5, 1e-4]  buffer=[500K,1M,2M]  "
-                f"learning_starts=[10K,30K,50K]  n_quantiles=[20,40,step=4]")
-    logger.info(f"  SEARCHED - Tier 2 (classic):")
-    logger.info(f"    dd_threshold  dd_penalty_mult  reward_clip  regime_weight_range")
+    if churn_tier:
+        logger.info(f"  SEARCHED - [CHURN-TIER] (4 dims, everything else at "
+                    f"Config-1 winners):")
+        logger.info(f"    lr=[1e-5,1e-4]  decision_interval=[4,6,8]  "
+                    f"action_deadband=[0.0,0.5]  turnover_cost_mult=[0.5,4.0]")
+    else:
+        logger.info(f"  SEARCHED - Tier 1:")
+        logger.info(f"    lr=[1e-5, 1e-4]  buffer=[500K,1M,2M]  "
+                    f"learning_starts=[10K,30K,50K]  n_quantiles=[20,40,step=4]")
+        logger.info(f"  SEARCHED - Tier 2 (classic):")
+        logger.info(f"    dd_threshold  dd_penalty_mult  reward_clip  regime_weight_range")
     if tier3:
         logger.info(f"  SEARCHED - Tier 3 (architecture):")
         logger.info(f"    net_arch=[256x2, 384x3, 512x3]  n_critics=[2,3]  top_drop=[1-4]")
@@ -2459,6 +2495,18 @@ def run_optuna_tuning(
             'turnover_min_change': trial.suggest_float('turnover_min_change', 0.005, 0.05),
         })
         return params
+
+    def _suggest_churn(trial):
+        """[CHURN-TIER] The three levers from the official_p221b cost
+        diagnosis (SOL: 96% of decision points traded, $40-72K cost/fold,
+        an 11% cost cut flips fold_2's PnL verdict)."""
+        return {
+            'decision_interval': trial.suggest_categorical(
+                'decision_interval', [4, 6, 8]),
+            'action_deadband': trial.suggest_float('action_deadband', 0.0, 0.5),
+            'turnover_cost_mult': trial.suggest_float(
+                'turnover_cost_mult', 0.5, 4.0, log=True),
+        }
 
     # === Tier 3: Architecture (optional) ===
     NET_ARCH_MAP = {
@@ -2509,31 +2557,49 @@ def run_optuna_tuning(
     def objective(trial):
         t_start = time.time()
 
-        # === Tier 1: Core hyperparams ===
-        t1 = _suggest_tier1(trial)
-
-        # === Tier 2: Reward shaping (always classic) ===
-        t2 = _suggest_tier2_classic(trial)
-
-        # === Tier 3: Architecture (optional) ===
-        t3 = _suggest_tier3(trial) if tier3 else {}
-
-        # Log trial params
-        tier3_str = ""
-        if tier3:
-            tier3_str = (
-                f", arch={t3['net_arch_choice']}, "
-                f"critics={t3['n_critics']}, drop={t3['top_quantiles_to_drop']}"
+        if churn_tier:
+            # [CHURN-TIER] 4-dim focused search: churn levers + lr. Reward
+            # shaping stays at the Config-1 winners (the env dataclass
+            # defaults ARE those winners, so omitting t2 keys applies them).
+            t1 = {'lr': trial.suggest_float('lr', 1e-5, 1e-4, log=True),
+                  'buffer_size': 500_000, 'learning_starts': 10_000,
+                  'n_quantiles': 24}
+            t2 = {}
+            tc = _suggest_churn(trial)
+            t3 = {}
+            logger.info(
+                f"\n  Trial {trial.number} [churn]: lr={t1['lr']:.2e}, "
+                f"di={tc['decision_interval']}, "
+                f"deadband={tc['action_deadband']:.2f}, "
+                f"to_mult={tc['turnover_cost_mult']:.2f}"
             )
-        logger.info(
-            f"\n  Trial {trial.number}: "
-            f"lr={t1['lr']:.2e}, buf={t1['buffer_size']//1000}K, "
-            f"starts={t1['learning_starts']//1000}K, quant={t1['n_quantiles']}, "
-            f"dd_thr={t2['dd_threshold']:.3f}, dd_mult={t2['dd_penalty_mult']:.1f}, "
-            f"clip={t2['reward_clip']}, "
-            f"rw=[{t2['regime_weight_min']:.1f},{t2['regime_weight_max']:.1f}]"
-            f"{tier3_str}"
-        )
+        else:
+            # === Tier 1: Core hyperparams ===
+            t1 = _suggest_tier1(trial)
+
+            # === Tier 2: Reward shaping (always classic) ===
+            t2 = _suggest_tier2_classic(trial)
+
+            # === Tier 3: Architecture (optional) ===
+            t3 = _suggest_tier3(trial) if tier3 else {}
+            tc = {}
+
+            # Log trial params
+            tier3_str = ""
+            if tier3:
+                tier3_str = (
+                    f", arch={t3['net_arch_choice']}, "
+                    f"critics={t3['n_critics']}, drop={t3['top_quantiles_to_drop']}"
+                )
+            logger.info(
+                f"\n  Trial {trial.number}: "
+                f"lr={t1['lr']:.2e}, buf={t1['buffer_size']//1000}K, "
+                f"starts={t1['learning_starts']//1000}K, quant={t1['n_quantiles']}, "
+                f"dd_thr={t2['dd_threshold']:.3f}, dd_mult={t2['dd_penalty_mult']:.1f}, "
+                f"clip={t2['reward_clip']}, "
+                f"rw=[{t2['regime_weight_min']:.1f},{t2['regime_weight_max']:.1f}]"
+                f"{tier3_str}"
+            )
 
         # === Create environments with reward params ===
         env_kwargs = dict(
@@ -2542,19 +2608,22 @@ def run_optuna_tuning(
             bull_reward_multiplier=bull_mult,
             sol_vol_multiplier=sol_vol_mult,
             reward_mode="classic",
-            dd_threshold=t2['dd_threshold'],
-            dd_penalty_mult=t2['dd_penalty_mult'],
-            reward_clip=t2['reward_clip'],
-            regime_weight_min=t2['regime_weight_min'],
-            regime_weight_max=t2['regime_weight_max'],
             # Stage 9: Friction enabled in Optuna trials too
             asset=asset,
             friction_enabled=True,
             # [P179] venue/fee_side default to kraken/taker, so Optuna trials
-            # are now scored against 26bps like everything else. Trials tuned
-            # before P179 were tuned at half the friction and their winners do
-            # not carry over.
+            # are scored against 26bps UNLESS the caller passes the venue —
+            # [CHURN-TIER] run_optuna_tuning now accepts venue/fee_side so
+            # trials are priced at the venue that will actually trade the
+            # model. Tuning churn levers at the wrong venue's fees selects
+            # the wrong deadband.
+            **t2,   # empty under churn_tier -> Config-1 winner defaults
+            **tc,   # decision_interval / action_deadband / turnover_cost_mult
         )
+        if venue:
+            env_kwargs["venue"] = venue
+        if fee_side:
+            env_kwargs["fee_side"] = fee_side
 
         model = None
         train_env = None
@@ -3045,6 +3114,11 @@ def main():
                         help="Eval frequency for Optuna trials (default: 10K)")
     parser.add_argument("--optuna-tier3", action="store_true",
                         help="Stage 8: enable Tier 3 architecture search (net_arch, n_critics, top_drop)")
+    parser.add_argument("--optuna-churn", action="store_true",
+                        help="[CHURN-TIER] 4-dim focused search (decision_interval, "
+                             "action_deadband, turnover_cost_mult, lr); everything "
+                             "else fixed at Config-1 winners. Motivated by the "
+                             "official_p221b cost diagnosis.")
 
     args = parser.parse_args()
 
@@ -3191,6 +3265,8 @@ def main():
         logger.info(f"  [CHECK] reward_mode = classic (forced)")
         logger.info(f"  [CHECK] extractor = {optuna_ext}")
         logger.info(f"  [CHECK] Tier 3 = {args.optuna_tier3}")
+        logger.info(f"  [CHECK] Churn tier = {args.optuna_churn}")
+        logger.info(f"  [CHECK] Venue fees = {args.venue}/{args.fee_side}")
         run_optuna_tuning(
             asset=args.asset,
             data=data,
@@ -3207,6 +3283,9 @@ def main():
             reward_mode="classic",
             extractor=optuna_ext,
             tier3=args.optuna_tier3,
+            churn_tier=args.optuna_churn,
+            venue=args.venue,
+            fee_side=args.fee_side,
         )
         return
 

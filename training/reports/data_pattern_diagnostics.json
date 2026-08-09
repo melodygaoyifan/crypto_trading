@@ -1,0 +1,209 @@
+{
+  "BTC": {
+    "trend": {
+      "VR4": 0.9883317142613841,
+      "VR8": 0.9680513878851911,
+      "AC1_16h": -0.00973866993797041,
+      "kurtosis_16h": 4.4904926308499284,
+      "vol_cluster_AC1": 0.19805974719226263
+    },
+    "decay": {
+      "ic_by_month": [
+        -0.0176,
+        0.054,
+        0.0455,
+        -0.0183,
+        0.0446,
+        0.0635,
+        0.0697,
+        0.0229
+      ],
+      "ic_month1": -0.0176,
+      "half_life_bars": null,
+      "n_anchor_fits": 10
+    },
+    "linearity": {
+      "ridge_ic_mean": 0.0262,
+      "hgb_ic_mean": 0.0144,
+      "gap_mean": -0.0119,
+      "gap_per_fold": [
+        0.0629,
+        0.012,
+        -0.0272,
+        -0.1128,
+        0.0058
+      ]
+    },
+    "regime": {
+      "regime_0": {
+        "n": 1204,
+        "mom_ic": -0.0971
+      },
+      "regime_1": {
+        "n": 3934,
+        "mom_ic": -0.0074
+      },
+      "regime_2": {
+        "n": 1295,
+        "mom_ic": 0.0408
+      },
+      "regime_3": {
+        "n": 2699,
+        "mom_ic": -0.0534
+      },
+      "regime_4": {
+        "n": 3696,
+        "mom_ic": 0.0537
+      },
+      "regime_5": {
+        "n": 267,
+        "mom_ic": -0.109
+      },
+      "dispersion": 0.063
+    },
+    "verdict": [
+      "LINEAR family suffices (gap -0.012): extra capacity buys overfit, not signal"
+    ]
+  },
+  "ETH": {
+    "trend": {
+      "VR4": 1.005762909756564,
+      "VR8": 0.9877963045423174,
+      "AC1_16h": -0.020192002835922006,
+      "kurtosis_16h": 4.983461506375942,
+      "vol_cluster_AC1": 0.21571441737240887
+    },
+    "decay": {
+      "ic_by_month": [
+        -0.0041,
+        0.0397,
+        0.074,
+        0.0069,
+        -0.0101,
+        0.0449,
+        0.0249,
+        -0.0145
+      ],
+      "ic_month1": -0.0041,
+      "half_life_bars": null,
+      "n_anchor_fits": 10
+    },
+    "linearity": {
+      "ridge_ic_mean": 0.0106,
+      "hgb_ic_mean": 0.0071,
+      "gap_mean": -0.0035,
+      "gap_per_fold": [
+        0.0163,
+        0.0178,
+        -0.0408,
+        -0.0328,
+        0.0219
+      ]
+    },
+    "regime": {
+      "regime_0": {
+        "n": 2943,
+        "mom_ic": -0.0198
+      },
+      "regime_1": {
+        "n": 2473,
+        "mom_ic": -0.0169
+      },
+      "regime_2": {
+        "n": 1689,
+        "mom_ic": 0.0134
+      },
+      "regime_3": {
+        "n": 1049,
+        "mom_ic": 0.1097
+      },
+      "regime_4": {
+        "n": 1492,
+        "mom_ic": -0.0175
+      },
+      "regime_5": {
+        "n": 266,
+        "mom_ic": -0.1374
+      },
+      "regime_6": {
+        "n": 3183,
+        "mom_ic": -0.0055
+      },
+      "dispersion": 0.0669
+    },
+    "verdict": [
+      "linearity gap inconclusive (-0.004)"
+    ]
+  },
+  "SOL": {
+    "trend": {
+      "VR4": 0.9553899343607628,
+      "VR8": 0.9356077793712502,
+      "AC1_16h": -0.042982165838241555,
+      "kurtosis_16h": 8.655065229490944,
+      "vol_cluster_AC1": 0.24559801210470525
+    },
+    "decay": {
+      "ic_by_month": [
+        0.0748,
+        0.0426,
+        0.0777,
+        -0.0252,
+        0.0593,
+        0.0235,
+        0.0331,
+        0.0236
+      ],
+      "ic_month1": 0.0748,
+      "half_life_bars": 540,
+      "n_anchor_fits": 10
+    },
+    "linearity": {
+      "ridge_ic_mean": 0.0297,
+      "hgb_ic_mean": 0.014,
+      "gap_mean": -0.0157,
+      "gap_per_fold": [
+        -0.0439,
+        -0.0847,
+        -0.0244,
+        0.0924,
+        -0.0177
+      ]
+    },
+    "regime": {
+      "regime_0": {
+        "n": 365,
+        "mom_ic": -0.0128
+      },
+      "regime_1": {
+        "n": 1210,
+        "mom_ic": 0.0485
+      },
+      "regime_2": {
+        "n": 2865,
+        "mom_ic": 0.0217
+      },
+      "regime_3": {
+        "n": 4235,
+        "mom_ic": 0.0388
+      },
+      "regime_4": {
+        "n": 1308,
+        "mom_ic": -0.0119
+      },
+      "regime_5": {
+        "n": 2783,
+        "mom_ic": -0.0209
+      },
+      "regime_6": {
+        "n": 268,
+        "mom_ic": -0.0801
+      },
+      "dispersion": 0.0404
+    },
+    "verdict": [
+      "ADAPTIVE REFIT MANDATORY (half-life 540 bars <= 720); frozen deep models will decay before deployment matures",
+      "LINEAR family suffices (gap -0.016): extra capacity buys overfit, not signal"
+    ]
+  }
+}
