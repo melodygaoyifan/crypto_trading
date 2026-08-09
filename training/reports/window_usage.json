@@ -143,6 +143,54 @@
    "start": 9100,
    "end": 13034,
    "purpose": "validation"
+  },
+  {
+   "ts": "2026-08-09T22:00:00.230109+00:00",
+   "experiment": "regime_lab:p247_leakfix",
+   "asset": "BTC",
+   "start": 3000,
+   "end": 9100,
+   "purpose": "design"
+  },
+  {
+   "ts": "2026-08-09T22:01:25.693409+00:00",
+   "experiment": "regime_lab:p247_leakfix",
+   "asset": "ETH",
+   "start": 3000,
+   "end": 9100,
+   "purpose": "design"
+  },
+  {
+   "ts": "2026-08-09T22:02:43.438124+00:00",
+   "experiment": "regime_lab:p247_leakfix",
+   "asset": "SOL",
+   "start": 3000,
+   "end": 9100,
+   "purpose": "design"
+  },
+  {
+   "ts": "2026-08-09T22:04:17.556067+00:00",
+   "experiment": "regime_lab:p247_leakfix",
+   "asset": "BTC",
+   "start": 9100,
+   "end": 13095,
+   "purpose": "validation"
+  },
+  {
+   "ts": "2026-08-09T22:04:17.670140+00:00",
+   "experiment": "regime_lab:p247_leakfix",
+   "asset": "ETH",
+   "start": 9100,
+   "end": 13095,
+   "purpose": "validation"
+  },
+  {
+   "ts": "2026-08-09T22:04:52.294111+00:00",
+   "experiment": "regime_lab:p247_leakfix",
+   "asset": "SOL",
+   "start": 9100,
+   "end": 13034,
+   "purpose": "validation"
   }
  ]
 }

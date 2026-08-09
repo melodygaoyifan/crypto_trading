@@ -1,0 +1,1556 @@
+{
+ "results": {
+  "BTC": {
+   "perp": {
+    "bull": {
+     "table": [
+      {
+       "name": "hold",
+       "train_pnl_pct": 54.76,
+       "train_sharpe": 0.704,
+       "cv_sharpe": 0.0,
+       "overfit_gap": 0.704,
+       "cv_pnl_pct": 10.42,
+       "kind": "hold",
+       "params": {}
+      },
+      {
+       "name": "ridge_long{'alpha': 100.0}",
+       "train_pnl_pct": 46.61,
+       "train_sharpe": 1.178,
+       "cv_sharpe": 1.114,
+       "overfit_gap": 0.064,
+       "cv_pnl_pct": 9.72,
+       "kind": "ridge_long",
+       "params": {
+        "alpha": 100.0
+       }
+      },
+      {
+       "name": "ridge_long{'alpha': 30.0}",
+       "train_pnl_pct": 39.05,
+       "train_sharpe": 0.965,
+       "cv_sharpe": 0.83,
+       "overfit_gap": 0.135,
+       "cv_pnl_pct": 7.75,
+       "kind": "ridge_long",
+       "params": {
+        "alpha": 30.0
+       }
+      },
+      {
+       "name": "ridge_long{'alpha': 10.0}",
+       "train_pnl_pct": 41.06,
+       "train_sharpe": 0.97,
+       "cv_sharpe": 0.552,
+       "overfit_gap": 0.418,
+       "cv_pnl_pct": 6.27,
+       "kind": "ridge_long",
+       "params": {
+        "alpha": 10.0
+       }
+      },
+      {
+       "name": "dip_buy{'thr': 0.04}",
+       "train_pnl_pct": 0.56,
+       "train_sharpe": 0.023,
+       "cv_sharpe": 0.112,
+       "overfit_gap": -0.089,
+       "cv_pnl_pct": 1.03,
+       "kind": "dip_buy",
+       "params": {
+        "thr": 0.04
+       }
+      },
+      {
+       "name": "flat",
+       "train_pnl_pct": 0.0,
+       "train_sharpe": 0.0,
+       "cv_sharpe": 0.0,
+       "overfit_gap": 0.0,
+       "cv_pnl_pct": 0.0,
+       "kind": "flat",
+       "params": {}
+      },
+      {
+       "name": "dip_buy{'thr': 0.02}",
+       "train_pnl_pct": 0.02,
+       "train_sharpe": 0.0,
+       "cv_sharpe": -0.049,
+       "overfit_gap": 0.049,
+       "cv_pnl_pct": 0.0,
+       "kind": "dip_buy",
+       "params": {
+        "thr": 0.02
+       }
+      }
+     ],
+     "winner": {
+      "name": "hold",
+      "train_pnl_pct": 54.76,
+      "train_sharpe": 0.704,
+      "cv_sharpe": 0.0,
+      "overfit_gap": 0.704,
+      "cv_pnl_pct": 10.42,
+      "kind": "hold",
+      "params": {}
+     }
+    },
+    "bear": {
+     "table": [
+      {
+       "name": "funding_short{'thr': 1.0}",
+       "train_pnl_pct": 12.81,
+       "train_sharpe": 0.429,
+       "cv_sharpe": -0.077,
+       "overfit_gap": 0.506,
+       "cv_pnl_pct": 2.56,
+       "kind": "funding_short",
+       "params": {
+        "thr": 1.0
+       }
+      },
+      {
+       "name": "funding_short{'thr': 0.5}",
+       "train_pnl_pct": 3.17,
+       "train_sharpe": 0.068,
+       "cv_sharpe": 0.108,
+       "overfit_gap": -0.04,
+       "cv_pnl_pct": 0.64,
+       "kind": "funding_short",
+       "params": {
+        "thr": 0.5
+       }
+      },
+      {
+       "name": "flat",
+       "train_pnl_pct": 0.0,
+       "train_sharpe": 0.0,
+       "cv_sharpe": 0.0,
+       "overfit_gap": 0.0,
+       "cv_pnl_pct": 0.0,
+       "kind": "flat",
+       "params": {}
+      },
+      {
+       "name": "ridge_defensive{'alpha': 10.0}",
+       "train_pnl_pct": -18.01,
+       "train_sharpe": -0.461,
+       "cv_sharpe": -0.902,
+       "overfit_gap": 0.441,
+       "cv_pnl_pct": -2.48,
+       "kind": "ridge_defensive",
+       "params": {
+        "alpha": 10.0
+       }
+      },
+      {
+       "name": "ridge_defensive{'alpha': 30.0}",
+       "train_pnl_pct": -24.84,
+       "train_sharpe": -0.632,
+       "cv_sharpe": -1.164,
+       "overfit_gap": 0.532,
+       "cv_pnl_pct": -4.57,
+       "kind": "ridge_defensive",
+       "params": {
+        "alpha": 30.0
+       }
+      },
+      {
+       "name": "ridge_defensive{'alpha': 100.0}",
+       "train_pnl_pct": -38.91,
+       "train_sharpe": -0.984,
+       "cv_sharpe": -1.27,
+       "overfit_gap": 0.286,
+       "cv_pnl_pct": -5.9,
+       "kind": "ridge_defensive",
+       "params": {
+        "alpha": 100.0
+       }
+      }
+     ],
+     "winner": {
+      "name": "funding_short{'thr': 1.0}",
+      "train_pnl_pct": 12.81,
+      "train_sharpe": 0.429,
+      "cv_sharpe": -0.077,
+      "overfit_gap": 0.506,
+      "cv_pnl_pct": 2.56,
+      "kind": "funding_short",
+      "params": {
+       "thr": 1.0
+      }
+     }
+    },
+    "peace": {
+     "table": [
+      {
+       "name": "funding_contrarian{'thr': 0.5}",
+       "train_pnl_pct": 56.56,
+       "train_sharpe": 0.881,
+       "cv_sharpe": 0.791,
+       "overfit_gap": 0.09,
+       "cv_pnl_pct": 11.31,
+       "kind": "funding_contrarian",
+       "params": {
+        "thr": 0.5
+       }
+      },
+      {
+       "name": "meanrev{'thr': 0.04}",
+       "train_pnl_pct": 25.08,
+       "train_sharpe": 0.685,
+       "cv_sharpe": 0.742,
+       "overfit_gap": -0.057,
+       "cv_pnl_pct": 5.02,
+       "kind": "meanrev",
+       "params": {
+        "thr": 0.04
+       }
+      },
+      {
+       "name": "funding_contrarian{'thr': 1.0}",
+       "train_pnl_pct": 11.16,
+       "train_sharpe": 0.258,
+       "cv_sharpe": 0.47,
+       "overfit_gap": -0.212,
+       "cv_pnl_pct": 2.23,
+       "kind": "funding_contrarian",
+       "params": {
+        "thr": 1.0
+       }
+      },
+      {
+       "name": "ar_p{'p': 6}",
+       "train_pnl_pct": 0.22,
+       "train_sharpe": 0.468,
+       "cv_sharpe": 0.209,
+       "overfit_gap": 0.259,
+       "cv_pnl_pct": 0.04,
+       "kind": "ar_p",
+       "params": {
+        "p": 6
+       }
+      },
+      {
+       "name": "flat",
+       "train_pnl_pct": 0.0,
+       "train_sharpe": 0.0,
+       "cv_sharpe": 0.0,
+       "overfit_gap": 0.0,
+       "cv_pnl_pct": 0.0,
+       "kind": "flat",
+       "params": {}
+      },
+      {
+       "name": "ar_p{'p': 3}",
+       "train_pnl_pct": 0.0,
+       "train_sharpe": 0.0,
+       "cv_sharpe": 0.0,
+       "overfit_gap": 0.0,
+       "cv_pnl_pct": 0.0,
+       "kind": "ar_p",
+       "params": {
+        "p": 3
+       }
+      },
+      {
+       "name": "meanrev{'thr': 0.02}",
+       "train_pnl_pct": -12.81,
+       "train_sharpe": -0.235,
+       "cv_sharpe": -0.22,
+       "overfit_gap": -0.015,
+       "cv_pnl_pct": -2.56,
+       "kind": "meanrev",
+       "params": {
+        "thr": 0.02
+       }
+      }
+     ],
+     "winner": {
+      "name": "funding_contrarian{'thr': 0.5}",
+      "train_pnl_pct": 56.56,
+      "train_sharpe": 0.881,
+      "cv_sharpe": 0.791,
+      "overfit_gap": 0.09,
+      "cv_pnl_pct": 11.31,
+      "kind": "funding_contrarian",
+      "params": {
+       "thr": 0.5
+      }
+     }
+    }
+   },
+   "spot": {
+    "bull": {
+     "table": [
+      {
+       "name": "hold",
+       "train_pnl_pct": 59.33,
+       "train_sharpe": 0.761,
+       "cv_sharpe": 0.019,
+       "overfit_gap": 0.742,
+       "cv_pnl_pct": 11.27,
+       "kind": "hold",
+       "params": {}
+      },
+      {
+       "name": "ridge_long{'alpha': 100.0}",
+       "train_pnl_pct": 34.26,
+       "train_sharpe": 0.864,
+       "cv_sharpe": 0.786,
+       "overfit_gap": 0.078,
+       "cv_pnl_pct": 7.38,
+       "kind": "ridge_long",
+       "params": {
+        "alpha": 100.0
+       }
+      },
+      {
+       "name": "ridge_long{'alpha': 30.0}",
+       "train_pnl_pct": 27.5,
+       "train_sharpe": 0.679,
+       "cv_sharpe": 0.528,
+       "overfit_gap": 0.151,
+       "cv_pnl_pct": 5.63,
+       "kind": "ridge_long",
+       "params": {
+        "alpha": 30.0
+       }
+      },
+      {
+       "name": "dip_buy{'thr': 0.04}",
+       "train_pnl_pct": -3.24,
+       "train_sharpe": -0.132,
+       "cv_sharpe": -0.089,
+       "overfit_gap": -0.043,
+       "cv_pnl_pct": 0.26,
+       "kind": "dip_buy",
+       "params": {
+        "thr": 0.04
+       }
+      },
+      {
+       "name": "flat",
+       "train_pnl_pct": 0.0,
+       "train_sharpe": 0.0,
+       "cv_sharpe": 0.0,
+       "overfit_gap": 0.0,
+       "cv_pnl_pct": 0.0,
+       "kind": "flat",
+       "params": {}
+      },
+      {
+       "name": "dip_buy{'thr': 0.02}",
+       "train_pnl_pct": -11.14,
+       "train_sharpe": -0.258,
+       "cv_sharpe": -0.291,
+       "overfit_gap": 0.033,
+       "cv_pnl_pct": -2.23,
+       "kind": "dip_buy",
+       "params": {
+        "thr": 0.02
+       }
+      }
+     ],
+     "winner": {
+      "name": "hold",
+      "train_pnl_pct": 59.33,
+      "train_sharpe": 0.761,
+      "cv_sharpe": 0.019,
+      "overfit_gap": 0.742,
+      "cv_pnl_pct": 11.27,
+      "kind": "hold",
+      "params": {}
+     }
+    },
+    "bear": {
+     "table": [
+      {
+       "name": "flat",
+       "train_pnl_pct": 0.0,
+       "train_sharpe": 0.0,
+       "cv_sharpe": 0.0,
+       "overfit_gap": 0.0,
+       "cv_pnl_pct": 0.0,
+       "kind": "flat",
+       "params": {}
+      },
+      {
+       "name": "hold",
+       "train_pnl_pct": -19.69,
+       "train_sharpe": -0.202,
+       "cv_sharpe": 0.409,
+       "overfit_gap": -0.611,
+       "cv_pnl_pct": -4.27,
+       "kind": "hold",
+       "params": {}
+      },
+      {
+       "name": "ridge_long{'alpha': 30.0}",
+       "train_pnl_pct": -57.48,
+       "train_sharpe": -0.864,
+       "cv_sharpe": -0.165,
+       "overfit_gap": -0.699,
+       "cv_pnl_pct": -10.74,
+       "kind": "ridge_long",
+       "params": {
+        "alpha": 30.0
+       }
+      },
+      {
+       "name": "ridge_long{'alpha': 100.0}",
+       "train_pnl_pct": -55.71,
+       "train_sharpe": -0.877,
+       "cv_sharpe": -0.238,
+       "overfit_gap": -0.639,
+       "cv_pnl_pct": -11.22,
+       "kind": "ridge_long",
+       "params": {
+        "alpha": 100.0
+       }
+      }
+     ],
+     "winner": {
+      "name": "flat",
+      "train_pnl_pct": 0.0,
+      "train_sharpe": 0.0,
+      "cv_sharpe": 0.0,
+      "overfit_gap": 0.0,
+      "cv_pnl_pct": 0.0,
+      "kind": "flat",
+      "params": {}
+     }
+    },
+    "peace": {
+     "table": [
+      {
+       "name": "funding_long{'thr': 1.0}",
+       "train_pnl_pct": 9.81,
+       "train_sharpe": 0.294,
+       "cv_sharpe": 0.228,
+       "overfit_gap": 0.066,
+       "cv_pnl_pct": 1.96,
+       "kind": "funding_long",
+       "params": {
+        "thr": 1.0
+       }
+      },
+      {
+       "name": "funding_long{'thr': 0.5}",
+       "train_pnl_pct": 6.65,
+       "train_sharpe": 0.153,
+       "cv_sharpe": 0.056,
+       "overfit_gap": 0.097,
+       "cv_pnl_pct": 1.33,
+       "kind": "funding_long",
+       "params": {
+        "thr": 0.5
+       }
+      },
+      {
+       "name": "meanrev_long{'thr': 0.04}",
+       "train_pnl_pct": 1.59,
+       "train_sharpe": 0.09,
+       "cv_sharpe": -0.222,
+       "overfit_gap": 0.312,
+       "cv_pnl_pct": 0.32,
+       "kind": "meanrev_long",
+       "params": {
+        "thr": 0.04
+       }
+      },
+      {
+       "name": "flat",
+       "train_pnl_pct": 0.0,
+       "train_sharpe": 0.0,
+       "cv_sharpe": 0.0,
+       "overfit_gap": 0.0,
+       "cv_pnl_pct": 0.0,
+       "kind": "flat",
+       "params": {}
+      },
+      {
+       "name": "meanrev_long{'thr': 0.02}",
+       "train_pnl_pct": -21.47,
+       "train_sharpe": -0.633,
+       "cv_sharpe": -0.583,
+       "overfit_gap": -0.05,
+       "cv_pnl_pct": -4.29,
+       "kind": "meanrev_long",
+       "params": {
+        "thr": 0.02
+       }
+      }
+     ],
+     "winner": {
+      "name": "funding_long{'thr': 1.0}",
+      "train_pnl_pct": 9.81,
+      "train_sharpe": 0.294,
+      "cv_sharpe": 0.228,
+      "overfit_gap": 0.066,
+      "cv_pnl_pct": 1.96,
+      "kind": "funding_long",
+      "params": {
+       "thr": 1.0
+      }
+     }
+    }
+   }
+  },
+  "ETH": {
+   "perp": {
+    "bull": {
+     "table": [
+      {
+       "name": "flat",
+       "train_pnl_pct": 0.0,
+       "train_sharpe": 0.0,
+       "cv_sharpe": 0.0,
+       "overfit_gap": 0.0,
+       "cv_pnl_pct": 0.0,
+       "kind": "flat",
+       "params": {}
+      },
+      {
+       "name": "dip_buy{'thr': 0.02}",
+       "train_pnl_pct": -4.97,
+       "train_sharpe": -0.099,
+       "cv_sharpe": -0.297,
+       "overfit_gap": 0.198,
+       "cv_pnl_pct": -0.99,
+       "kind": "dip_buy",
+       "params": {
+        "thr": 0.02
+       }
+      },
+      {
+       "name": "ridge_long{'alpha': 100.0}",
+       "train_pnl_pct": -12.76,
+       "train_sharpe": -0.281,
+       "cv_sharpe": -0.436,
+       "overfit_gap": 0.155,
+       "cv_pnl_pct": -1.45,
+       "kind": "ridge_long",
+       "params": {
+        "alpha": 100.0
+       }
+      },
+      {
+       "name": "ridge_long{'alpha': 10.0}",
+       "train_pnl_pct": -16.96,
+       "train_sharpe": -0.347,
+       "cv_sharpe": -0.542,
+       "overfit_gap": 0.195,
+       "cv_pnl_pct": -2.17,
+       "kind": "ridge_long",
+       "params": {
+        "alpha": 10.0
+       }
+      },
+      {
+       "name": "dip_buy{'thr': 0.04}",
+       "train_pnl_pct": -19.02,
+       "train_sharpe": -0.678,
+       "cv_sharpe": -0.501,
+       "overfit_gap": -0.177,
+       "cv_pnl_pct": -2.79,
+       "kind": "dip_buy",
+       "params": {
+        "thr": 0.04
+       }
+      },
+      {
+       "name": "ridge_long{'alpha': 30.0}",
+       "train_pnl_pct": -19.5,
+       "train_sharpe": -0.422,
+       "cv_sharpe": -0.617,
+       "overfit_gap": 0.195,
+       "cv_pnl_pct": -3.15,
+       "kind": "ridge_long",
+       "params": {
+        "alpha": 30.0
+       }
+      },
+      {
+       "name": "hold",
+       "train_pnl_pct": -16.98,
+       "train_sharpe": -0.203,
+       "cv_sharpe": -0.506,
+       "overfit_gap": 0.303,
+       "cv_pnl_pct": -3.85,
+       "kind": "hold",
+       "params": {}
+      }
+     ],
+     "winner": {
+      "name": "flat",
+      "train_pnl_pct": 0.0,
+      "train_sharpe": 0.0,
+      "cv_sharpe": 0.0,
+      "overfit_gap": 0.0,
+      "cv_pnl_pct": 0.0,
+      "kind": "flat",
+      "params": {}
+     }
+    },
+    "bear": {
+     "table": [
+      {
+       "name": "funding_short{'thr': 0.5}",
+       "train_pnl_pct": 92.1,
+       "train_sharpe": 1.316,
+       "cv_sharpe": 0.67,
+       "overfit_gap": 0.646,
+       "cv_pnl_pct": 18.42,
+       "kind": "funding_short",
+       "params": {
+        "thr": 0.5
+       }
+      },
+      {
+       "name": "funding_short{'thr': 1.0}",
+       "train_pnl_pct": 34.09,
+       "train_sharpe": 0.901,
+       "cv_sharpe": 0.477,
+       "overfit_gap": 0.424,
+       "cv_pnl_pct": 6.82,
+       "kind": "funding_short",
+       "params": {
+        "thr": 1.0
+       }
+      },
+      {
+       "name": "flat",
+       "train_pnl_pct": 0.0,
+       "train_sharpe": 0.0,
+       "cv_sharpe": 0.0,
+       "overfit_gap": 0.0,
+       "cv_pnl_pct": 0.0,
+       "kind": "flat",
+       "params": {}
+      },
+      {
+       "name": "ridge_defensive{'alpha': 30.0}",
+       "train_pnl_pct": 21.18,
+       "train_sharpe": 0.444,
+       "cv_sharpe": -0.188,
+       "overfit_gap": 0.632,
+       "cv_pnl_pct": -1.89,
+       "kind": "ridge_defensive",
+       "params": {
+        "alpha": 30.0
+       }
+      },
+      {
+       "name": "ridge_defensive{'alpha': 10.0}",
+       "train_pnl_pct": 18.24,
+       "train_sharpe": 0.361,
+       "cv_sharpe": -0.274,
+       "overfit_gap": 0.635,
+       "cv_pnl_pct": -2.43,
+       "kind": "ridge_defensive",
+       "params": {
+        "alpha": 10.0
+       }
+      },
+      {
+       "name": "ridge_defensive{'alpha': 100.0}",
+       "train_pnl_pct": 7.5,
+       "train_sharpe": 0.159,
+       "cv_sharpe": -0.339,
+       "overfit_gap": 0.498,
+       "cv_pnl_pct": -3.34,
+       "kind": "ridge_defensive",
+       "params": {
+        "alpha": 100.0
+       }
+      }
+     ],
+     "winner": {
+      "name": "funding_short{'thr': 0.5}",
+      "train_pnl_pct": 92.1,
+      "train_sharpe": 1.316,
+      "cv_sharpe": 0.67,
+      "overfit_gap": 0.646,
+      "cv_pnl_pct": 18.42,
+      "kind": "funding_short",
+      "params": {
+       "thr": 0.5
+      }
+     }
+    },
+    "peace": {
+     "table": [
+      {
+       "name": "funding_contrarian{'thr': 0.5}",
+       "train_pnl_pct": 81.09,
+       "train_sharpe": 0.973,
+       "cv_sharpe": 0.927,
+       "overfit_gap": 0.046,
+       "cv_pnl_pct": 16.22,
+       "kind": "funding_contrarian",
+       "params": {
+        "thr": 0.5
+       }
+      },
+      {
+       "name": "funding_contrarian{'thr': 1.0}",
+       "train_pnl_pct": 47.04,
+       "train_sharpe": 0.799,
+       "cv_sharpe": 0.393,
+       "overfit_gap": 0.406,
+       "cv_pnl_pct": 9.41,
+       "kind": "funding_contrarian",
+       "params": {
+        "thr": 1.0
+       }
+      },
+      {
+       "name": "meanrev{'thr': 0.04}",
+       "train_pnl_pct": 21.83,
+       "train_sharpe": 0.392,
+       "cv_sharpe": 0.207,
+       "overfit_gap": 0.185,
+       "cv_pnl_pct": 4.37,
+       "kind": "meanrev",
+       "params": {
+        "thr": 0.04
+       }
+      },
+      {
+       "name": "ar_p{'p': 6}",
+       "train_pnl_pct": 0.7,
+       "train_sharpe": 0.442,
+       "cv_sharpe": 0.198,
+       "overfit_gap": 0.244,
+       "cv_pnl_pct": 0.14,
+       "kind": "ar_p",
+       "params": {
+        "p": 6
+       }
+      },
+      {
+       "name": "flat",
+       "train_pnl_pct": 0.0,
+       "train_sharpe": 0.0,
+       "cv_sharpe": 0.0,
+       "overfit_gap": 0.0,
+       "cv_pnl_pct": 0.0,
+       "kind": "flat",
+       "params": {}
+      },
+      {
+       "name": "ar_p{'p': 3}",
+       "train_pnl_pct": 0.0,
+       "train_sharpe": 0.0,
+       "cv_sharpe": 0.0,
+       "overfit_gap": 0.0,
+       "cv_pnl_pct": 0.0,
+       "kind": "ar_p",
+       "params": {
+        "p": 3
+       }
+      },
+      {
+       "name": "meanrev{'thr': 0.02}",
+       "train_pnl_pct": -39.0,
+       "train_sharpe": -0.5,
+       "cv_sharpe": -0.714,
+       "overfit_gap": 0.214,
+       "cv_pnl_pct": -7.8,
+       "kind": "meanrev",
+       "params": {
+        "thr": 0.02
+       }
+      }
+     ],
+     "winner": {
+      "name": "funding_contrarian{'thr': 0.5}",
+      "train_pnl_pct": 81.09,
+      "train_sharpe": 0.973,
+      "cv_sharpe": 0.927,
+      "overfit_gap": 0.046,
+      "cv_pnl_pct": 16.22,
+      "kind": "funding_contrarian",
+      "params": {
+       "thr": 0.5
+      }
+     }
+    }
+   },
+   "spot": {
+    "bull": {
+     "table": [
+      {
+       "name": "flat",
+       "train_pnl_pct": 0.0,
+       "train_sharpe": 0.0,
+       "cv_sharpe": 0.0,
+       "overfit_gap": 0.0,
+       "cv_pnl_pct": 0.0,
+       "kind": "flat",
+       "params": {}
+      },
+      {
+       "name": "dip_buy{'thr': 0.02}",
+       "train_pnl_pct": -17.99,
+       "train_sharpe": -0.355,
+       "cv_sharpe": -0.543,
+       "overfit_gap": 0.188,
+       "cv_pnl_pct": -3.6,
+       "kind": "dip_buy",
+       "params": {
+        "thr": 0.02
+       }
+      },
+      {
+       "name": "ridge_long{'alpha': 100.0}",
+       "train_pnl_pct": -23.7,
+       "train_sharpe": -0.52,
+       "cv_sharpe": -0.659,
+       "overfit_gap": 0.139,
+       "cv_pnl_pct": -3.61,
+       "kind": "ridge_long",
+       "params": {
+        "alpha": 100.0
+       }
+      },
+      {
+       "name": "dip_buy{'thr': 0.04}",
+       "train_pnl_pct": -23.03,
+       "train_sharpe": -0.817,
+       "cv_sharpe": -0.665,
+       "overfit_gap": -0.152,
+       "cv_pnl_pct": -3.61,
+       "kind": "dip_buy",
+       "params": {
+        "thr": 0.04
+       }
+      },
+      {
+       "name": "hold",
+       "train_pnl_pct": -16.71,
+       "train_sharpe": -0.199,
+       "cv_sharpe": -0.524,
+       "overfit_gap": 0.325,
+       "cv_pnl_pct": -3.85,
+       "kind": "hold",
+       "params": {}
+      },
+      {
+       "name": "ridge_long{'alpha': 30.0}",
+       "train_pnl_pct": -30.44,
+       "train_sharpe": -0.657,
+       "cv_sharpe": -0.821,
+       "overfit_gap": 0.164,
+       "cv_pnl_pct": -5.31,
+       "kind": "ridge_long",
+       "params": {
+        "alpha": 30.0
+       }
+      }
+     ],
+     "winner": {
+      "name": "flat",
+      "train_pnl_pct": 0.0,
+      "train_sharpe": 0.0,
+      "cv_sharpe": 0.0,
+      "overfit_gap": 0.0,
+      "cv_pnl_pct": 0.0,
+      "kind": "flat",
+      "params": {}
+     }
+    },
+    "bear": {
+     "table": [
+      {
+       "name": "ridge_long{'alpha': 100.0}",
+       "train_pnl_pct": -22.44,
+       "train_sharpe": -0.3,
+       "cv_sharpe": -0.008,
+       "overfit_gap": -0.292,
+       "cv_pnl_pct": 1.82,
+       "kind": "ridge_long",
+       "params": {
+        "alpha": 100.0
+       }
+      },
+      {
+       "name": "ridge_long{'alpha': 30.0}",
+       "train_pnl_pct": -29.56,
+       "train_sharpe": -0.373,
+       "cv_sharpe": -0.181,
+       "overfit_gap": -0.192,
+       "cv_pnl_pct": 0.43,
+       "kind": "ridge_long",
+       "params": {
+        "alpha": 30.0
+       }
+      },
+      {
+       "name": "flat",
+       "train_pnl_pct": 0.0,
+       "train_sharpe": 0.0,
+       "cv_sharpe": 0.0,
+       "overfit_gap": 0.0,
+       "cv_pnl_pct": 0.0,
+       "kind": "flat",
+       "params": {}
+      },
+      {
+       "name": "hold",
+       "train_pnl_pct": -68.77,
+       "train_sharpe": -0.545,
+       "cv_sharpe": -0.179,
+       "overfit_gap": -0.366,
+       "cv_pnl_pct": -14.27,
+       "kind": "hold",
+       "params": {}
+      }
+     ],
+     "winner": {
+      "name": "ridge_long{'alpha': 100.0}",
+      "train_pnl_pct": -22.44,
+      "train_sharpe": -0.3,
+      "cv_sharpe": -0.008,
+      "overfit_gap": -0.292,
+      "cv_pnl_pct": 1.82,
+      "kind": "ridge_long",
+      "params": {
+       "alpha": 100.0
+      }
+     }
+    },
+    "peace": {
+     "table": [
+      {
+       "name": "funding_long{'thr': 0.5}",
+       "train_pnl_pct": 44.64,
+       "train_sharpe": 0.794,
+       "cv_sharpe": 0.579,
+       "overfit_gap": 0.215,
+       "cv_pnl_pct": 8.93,
+       "kind": "funding_long",
+       "params": {
+        "thr": 0.5
+       }
+      },
+      {
+       "name": "funding_long{'thr': 1.0}",
+       "train_pnl_pct": 13.81,
+       "train_sharpe": 0.331,
+       "cv_sharpe": 0.217,
+       "overfit_gap": 0.114,
+       "cv_pnl_pct": 2.76,
+       "kind": "funding_long",
+       "params": {
+        "thr": 1.0
+       }
+      },
+      {
+       "name": "meanrev_long{'thr': 0.04}",
+       "train_pnl_pct": 8.06,
+       "train_sharpe": 0.201,
+       "cv_sharpe": -0.313,
+       "overfit_gap": 0.514,
+       "cv_pnl_pct": 1.61,
+       "kind": "meanrev_long",
+       "params": {
+        "thr": 0.04
+       }
+      },
+      {
+       "name": "flat",
+       "train_pnl_pct": 0.0,
+       "train_sharpe": 0.0,
+       "cv_sharpe": 0.0,
+       "overfit_gap": 0.0,
+       "cv_pnl_pct": 0.0,
+       "kind": "flat",
+       "params": {}
+      },
+      {
+       "name": "meanrev_long{'thr': 0.02}",
+       "train_pnl_pct": -10.75,
+       "train_sharpe": -0.191,
+       "cv_sharpe": -0.334,
+       "overfit_gap": 0.143,
+       "cv_pnl_pct": -2.15,
+       "kind": "meanrev_long",
+       "params": {
+        "thr": 0.02
+       }
+      }
+     ],
+     "winner": {
+      "name": "funding_long{'thr': 0.5}",
+      "train_pnl_pct": 44.64,
+      "train_sharpe": 0.794,
+      "cv_sharpe": 0.579,
+      "overfit_gap": 0.215,
+      "cv_pnl_pct": 8.93,
+      "kind": "funding_long",
+      "params": {
+       "thr": 0.5
+      }
+     }
+    }
+   }
+  },
+  "SOL": {
+   "perp": {
+    "bull": {
+     "table": [
+      {
+       "name": "hold",
+       "train_pnl_pct": 106.2,
+       "train_sharpe": 0.718,
+       "cv_sharpe": -0.188,
+       "overfit_gap": 0.906,
+       "cv_pnl_pct": 21.12,
+       "kind": "hold",
+       "params": {}
+      },
+      {
+       "name": "dip_buy{'thr': 0.02}",
+       "train_pnl_pct": 25.93,
+       "train_sharpe": 0.238,
+       "cv_sharpe": -0.283,
+       "overfit_gap": 0.521,
+       "cv_pnl_pct": 5.19,
+       "kind": "dip_buy",
+       "params": {
+        "thr": 0.02
+       }
+      },
+      {
+       "name": "dip_buy{'thr': 0.04}",
+       "train_pnl_pct": 17.75,
+       "train_sharpe": 0.199,
+       "cv_sharpe": -0.293,
+       "overfit_gap": 0.492,
+       "cv_pnl_pct": 3.55,
+       "kind": "dip_buy",
+       "params": {
+        "thr": 0.04
+       }
+      },
+      {
+       "name": "ridge_long{'alpha': 100.0}",
+       "train_pnl_pct": 39.4,
+       "train_sharpe": 0.517,
+       "cv_sharpe": -0.306,
+       "overfit_gap": 0.823,
+       "cv_pnl_pct": 2.15,
+       "kind": "ridge_long",
+       "params": {
+        "alpha": 100.0
+       }
+      },
+      {
+       "name": "flat",
+       "train_pnl_pct": 0.0,
+       "train_sharpe": 0.0,
+       "cv_sharpe": 0.0,
+       "overfit_gap": 0.0,
+       "cv_pnl_pct": 0.0,
+       "kind": "flat",
+       "params": {}
+      },
+      {
+       "name": "ridge_long{'alpha': 30.0}",
+       "train_pnl_pct": 25.57,
+       "train_sharpe": 0.331,
+       "cv_sharpe": -0.542,
+       "overfit_gap": 0.873,
+       "cv_pnl_pct": -3.64,
+       "kind": "ridge_long",
+       "params": {
+        "alpha": 30.0
+       }
+      },
+      {
+       "name": "ridge_long{'alpha': 10.0}",
+       "train_pnl_pct": 21.84,
+       "train_sharpe": 0.277,
+       "cv_sharpe": -0.575,
+       "overfit_gap": 0.852,
+       "cv_pnl_pct": -4.6,
+       "kind": "ridge_long",
+       "params": {
+        "alpha": 10.0
+       }
+      }
+     ],
+     "winner": {
+      "name": "hold",
+      "train_pnl_pct": 106.2,
+      "train_sharpe": 0.718,
+      "cv_sharpe": -0.188,
+      "overfit_gap": 0.906,
+      "cv_pnl_pct": 21.12,
+      "kind": "hold",
+      "params": {}
+     }
+    },
+    "bear": {
+     "table": [
+      {
+       "name": "ridge_defensive{'alpha': 30.0}",
+       "train_pnl_pct": 38.72,
+       "train_sharpe": 0.365,
+       "cv_sharpe": 0.216,
+       "overfit_gap": 0.149,
+       "cv_pnl_pct": 5.5,
+       "kind": "ridge_defensive",
+       "params": {
+        "alpha": 30.0
+       }
+      },
+      {
+       "name": "ridge_defensive{'alpha': 10.0}",
+       "train_pnl_pct": 13.3,
+       "train_sharpe": 0.126,
+       "cv_sharpe": 0.143,
+       "overfit_gap": -0.017,
+       "cv_pnl_pct": 4.98,
+       "kind": "ridge_defensive",
+       "params": {
+        "alpha": 10.0
+       }
+      },
+      {
+       "name": "ridge_defensive{'alpha': 100.0}",
+       "train_pnl_pct": 51.69,
+       "train_sharpe": 0.476,
+       "cv_sharpe": -0.035,
+       "overfit_gap": 0.511,
+       "cv_pnl_pct": 3.16,
+       "kind": "ridge_defensive",
+       "params": {
+        "alpha": 100.0
+       }
+      },
+      {
+       "name": "funding_short{'thr': 1.0}",
+       "train_pnl_pct": 0.79,
+       "train_sharpe": 0.02,
+       "cv_sharpe": -0.467,
+       "overfit_gap": 0.487,
+       "cv_pnl_pct": 0.16,
+       "kind": "funding_short",
+       "params": {
+        "thr": 1.0
+       }
+      },
+      {
+       "name": "flat",
+       "train_pnl_pct": 0.0,
+       "train_sharpe": 0.0,
+       "cv_sharpe": 0.0,
+       "overfit_gap": 0.0,
+       "cv_pnl_pct": 0.0,
+       "kind": "flat",
+       "params": {}
+      },
+      {
+       "name": "funding_short{'thr': 0.5}",
+       "train_pnl_pct": -36.08,
+       "train_sharpe": -0.445,
+       "cv_sharpe": -0.988,
+       "overfit_gap": 0.543,
+       "cv_pnl_pct": -7.21,
+       "kind": "funding_short",
+       "params": {
+        "thr": 0.5
+       }
+      }
+     ],
+     "winner": {
+      "name": "ridge_defensive{'alpha': 30.0}",
+      "train_pnl_pct": 38.72,
+      "train_sharpe": 0.365,
+      "cv_sharpe": 0.216,
+      "overfit_gap": 0.149,
+      "cv_pnl_pct": 5.5,
+      "kind": "ridge_defensive",
+      "params": {
+       "alpha": 30.0
+      }
+     }
+    },
+    "peace": {
+     "table": [
+      {
+       "name": "ar_p{'p': 6}",
+       "train_pnl_pct": 0.94,
+       "train_sharpe": 0.241,
+       "cv_sharpe": -0.182,
+       "overfit_gap": 0.423,
+       "cv_pnl_pct": 0.19,
+       "kind": "ar_p",
+       "params": {
+        "p": 6
+       }
+      },
+      {
+       "name": "flat",
+       "train_pnl_pct": 0.0,
+       "train_sharpe": 0.0,
+       "cv_sharpe": 0.0,
+       "overfit_gap": 0.0,
+       "cv_pnl_pct": 0.0,
+       "kind": "flat",
+       "params": {}
+      },
+      {
+       "name": "ar_p{'p': 3}",
+       "train_pnl_pct": 0.0,
+       "train_sharpe": 0.0,
+       "cv_sharpe": 0.0,
+       "overfit_gap": 0.0,
+       "cv_pnl_pct": 0.0,
+       "kind": "ar_p",
+       "params": {
+        "p": 3
+       }
+      },
+      {
+       "name": "funding_contrarian{'thr': 1.0}",
+       "train_pnl_pct": -46.63,
+       "train_sharpe": -0.651,
+       "cv_sharpe": -0.933,
+       "overfit_gap": 0.282,
+       "cv_pnl_pct": -9.53,
+       "kind": "funding_contrarian",
+       "params": {
+        "thr": 1.0
+       }
+      },
+      {
+       "name": "meanrev{'thr': 0.04}",
+       "train_pnl_pct": -52.86,
+       "train_sharpe": -0.526,
+       "cv_sharpe": -0.738,
+       "overfit_gap": 0.212,
+       "cv_pnl_pct": -10.37,
+       "kind": "meanrev",
+       "params": {
+        "thr": 0.04
+       }
+      },
+      {
+       "name": "funding_contrarian{'thr': 0.5}",
+       "train_pnl_pct": -58.5,
+       "train_sharpe": -0.503,
+       "cv_sharpe": -0.636,
+       "overfit_gap": 0.133,
+       "cv_pnl_pct": -12.14,
+       "kind": "funding_contrarian",
+       "params": {
+        "thr": 0.5
+       }
+      },
+      {
+       "name": "meanrev{'thr': 0.02}",
+       "train_pnl_pct": -139.06,
+       "train_sharpe": -1.109,
+       "cv_sharpe": -1.073,
+       "overfit_gap": -0.036,
+       "cv_pnl_pct": -27.83,
+       "kind": "meanrev",
+       "params": {
+        "thr": 0.02
+       }
+      }
+     ],
+     "winner": {
+      "name": "ar_p{'p': 6}",
+      "train_pnl_pct": 0.94,
+      "train_sharpe": 0.241,
+      "cv_sharpe": -0.182,
+      "overfit_gap": 0.423,
+      "cv_pnl_pct": 0.19,
+      "kind": "ar_p",
+      "params": {
+       "p": 6
+      }
+     }
+    }
+   },
+   "spot": {
+    "bull": {
+     "table": [
+      {
+       "name": "hold",
+       "train_pnl_pct": 109.31,
+       "train_sharpe": 0.738,
+       "cv_sharpe": -0.2,
+       "overfit_gap": 0.938,
+       "cv_pnl_pct": 21.71,
+       "kind": "hold",
+       "params": {}
+      },
+      {
+       "name": "dip_buy{'thr': 0.02}",
+       "train_pnl_pct": 14.03,
+       "train_sharpe": 0.129,
+       "cv_sharpe": -0.423,
+       "overfit_gap": 0.552,
+       "cv_pnl_pct": 2.81,
+       "kind": "dip_buy",
+       "params": {
+        "thr": 0.02
+       }
+      },
+      {
+       "name": "dip_buy{'thr': 0.04}",
+       "train_pnl_pct": 9.01,
+       "train_sharpe": 0.101,
+       "cv_sharpe": -0.412,
+       "overfit_gap": 0.513,
+       "cv_pnl_pct": 1.8,
+       "kind": "dip_buy",
+       "params": {
+        "thr": 0.04
+       }
+      },
+      {
+       "name": "ridge_long{'alpha': 100.0}",
+       "train_pnl_pct": 30.61,
+       "train_sharpe": 0.402,
+       "cv_sharpe": -0.41,
+       "overfit_gap": 0.812,
+       "cv_pnl_pct": 0.77,
+       "kind": "ridge_long",
+       "params": {
+        "alpha": 100.0
+       }
+      },
+      {
+       "name": "flat",
+       "train_pnl_pct": 0.0,
+       "train_sharpe": 0.0,
+       "cv_sharpe": 0.0,
+       "overfit_gap": 0.0,
+       "cv_pnl_pct": 0.0,
+       "kind": "flat",
+       "params": {}
+      },
+      {
+       "name": "ridge_long{'alpha': 30.0}",
+       "train_pnl_pct": 16.74,
+       "train_sharpe": 0.216,
+       "cv_sharpe": -0.643,
+       "overfit_gap": 0.859,
+       "cv_pnl_pct": -4.99,
+       "kind": "ridge_long",
+       "params": {
+        "alpha": 30.0
+       }
+      }
+     ],
+     "winner": {
+      "name": "hold",
+      "train_pnl_pct": 109.31,
+      "train_sharpe": 0.738,
+      "cv_sharpe": -0.2,
+      "overfit_gap": 0.938,
+      "cv_pnl_pct": 21.71,
+      "kind": "hold",
+      "params": {}
+     }
+    },
+    "bear": {
+     "table": [
+      {
+       "name": "flat",
+       "train_pnl_pct": 0.0,
+       "train_sharpe": 0.0,
+       "cv_sharpe": 0.0,
+       "overfit_gap": 0.0,
+       "cv_pnl_pct": 0.0,
+       "kind": "flat",
+       "params": {}
+      },
+      {
+       "name": "ridge_long{'alpha': 30.0}",
+       "train_pnl_pct": 11.8,
+       "train_sharpe": 0.105,
+       "cv_sharpe": 0.077,
+       "overfit_gap": 0.028,
+       "cv_pnl_pct": -0.89,
+       "kind": "ridge_long",
+       "params": {
+        "alpha": 30.0
+       }
+      },
+      {
+       "name": "ridge_long{'alpha': 100.0}",
+       "train_pnl_pct": -17.6,
+       "train_sharpe": -0.162,
+       "cv_sharpe": -0.019,
+       "overfit_gap": -0.143,
+       "cv_pnl_pct": -2.76,
+       "kind": "ridge_long",
+       "params": {
+        "alpha": 100.0
+       }
+      },
+      {
+       "name": "hold",
+       "train_pnl_pct": -84.85,
+       "train_sharpe": -0.428,
+       "cv_sharpe": 0.016,
+       "overfit_gap": -0.444,
+       "cv_pnl_pct": -17.17,
+       "kind": "hold",
+       "params": {}
+      }
+     ],
+     "winner": {
+      "name": "flat",
+      "train_pnl_pct": 0.0,
+      "train_sharpe": 0.0,
+      "cv_sharpe": 0.0,
+      "overfit_gap": 0.0,
+      "cv_pnl_pct": 0.0,
+      "kind": "flat",
+      "params": {}
+     }
+    },
+    "peace": {
+     "table": [
+      {
+       "name": "flat",
+       "train_pnl_pct": 0.0,
+       "train_sharpe": 0.0,
+       "cv_sharpe": 0.0,
+       "overfit_gap": 0.0,
+       "cv_pnl_pct": 0.0,
+       "kind": "flat",
+       "params": {}
+      },
+      {
+       "name": "meanrev_long{'thr': 0.04}",
+       "train_pnl_pct": -34.45,
+       "train_sharpe": -0.523,
+       "cv_sharpe": -0.54,
+       "overfit_gap": 0.017,
+       "cv_pnl_pct": -6.66,
+       "kind": "meanrev_long",
+       "params": {
+        "thr": 0.04
+       }
+      },
+      {
+       "name": "funding_long{'thr': 0.5}",
+       "train_pnl_pct": -37.99,
+       "train_sharpe": -0.498,
+       "cv_sharpe": -0.752,
+       "overfit_gap": 0.254,
+       "cv_pnl_pct": -7.85,
+       "kind": "funding_long",
+       "params": {
+        "thr": 0.5
+       }
+      },
+      {
+       "name": "funding_long{'thr': 1.0}",
+       "train_pnl_pct": -50.31,
+       "train_sharpe": -0.854,
+       "cv_sharpe": -1.155,
+       "overfit_gap": 0.301,
+       "cv_pnl_pct": -10.06,
+       "kind": "funding_long",
+       "params": {
+        "thr": 1.0
+       }
+      },
+      {
+       "name": "meanrev_long{'thr': 0.02}",
+       "train_pnl_pct": -52.03,
+       "train_sharpe": -0.659,
+       "cv_sharpe": -0.529,
+       "overfit_gap": -0.13,
+       "cv_pnl_pct": -10.43,
+       "kind": "meanrev_long",
+       "params": {
+        "thr": 0.02
+       }
+      }
+     ],
+     "winner": {
+      "name": "flat",
+      "train_pnl_pct": 0.0,
+      "train_sharpe": 0.0,
+      "cv_sharpe": 0.0,
+      "overfit_gap": 0.0,
+      "cv_pnl_pct": 0.0,
+      "kind": "flat",
+      "params": {}
+     }
+    }
+   }
+  }
+ },
+ "provenance": {
+  "git_commit": "524482a",
+  "git_dirty": true,
+  "data_hashes": {
+   "BTC_4H_full.parquet": "23ccb170d4fda05f",
+   "BTC_funding_1d.parquet": "3796f6e08bec371a",
+   "ETH_4H_full.parquet": "a8329acebb27d2d3",
+   "ETH_funding_1d.parquet": "fb16f6d2329aa50e",
+   "SOL_4H_full.parquet": "69a25e39dc4e4721",
+   "SOL_funding_1d.parquet": "2e9c3ac67841600f"
+  },
+  "config": {
+   "design_era": [
+    3000,
+    9100
+   ],
+   "candidates": {
+    "perp": {
+     "bull": [
+      "flat",
+      "hold",
+      "ridge_long",
+      "dip_buy"
+     ],
+     "bear": [
+      "flat",
+      "ridge_defensive",
+      "funding_short"
+     ],
+     "peace": [
+      "flat",
+      "funding_contrarian",
+      "meanrev",
+      "ar_p"
+     ]
+    },
+    "spot": {
+     "bull": [
+      "flat",
+      "hold",
+      "ridge_long",
+      "dip_buy"
+     ],
+     "bear": [
+      "flat",
+      "hold",
+      "ridge_long"
+     ],
+     "peace": [
+      "flat",
+      "funding_long",
+      "meanrev_long"
+     ]
+    }
+   }
+  },
+  "stamped_at": "2026-08-09T22:04:04.896365+00:00"
+ }
+}

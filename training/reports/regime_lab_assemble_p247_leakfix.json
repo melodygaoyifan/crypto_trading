@@ -1,0 +1,703 @@
+{
+ "results": {
+  "BTC": {
+   "perp": {
+    "winners": {
+     "peace": {
+      "name": "funding_contrarian{'thr': 0.5}",
+      "train_pnl_pct": 56.56,
+      "train_sharpe": 0.881,
+      "cv_sharpe": 0.791,
+      "overfit_gap": 0.09,
+      "cv_pnl_pct": 11.31,
+      "kind": "funding_contrarian",
+      "params": {
+       "thr": 0.5
+      }
+     },
+     "bull": {
+      "name": "hold",
+      "train_pnl_pct": 54.76,
+      "train_sharpe": 0.704,
+      "cv_sharpe": 0.0,
+      "overfit_gap": 0.704,
+      "cv_pnl_pct": 10.42,
+      "kind": "hold",
+      "params": {}
+     },
+     "bear": {
+      "name": "funding_short{'thr': 1.0}",
+      "train_pnl_pct": 12.81,
+      "train_sharpe": 0.429,
+      "cv_sharpe": -0.077,
+      "overfit_gap": 0.506,
+      "cv_pnl_pct": 2.56,
+      "kind": "funding_short",
+      "params": {
+       "thr": 1.0
+      }
+     }
+    },
+    "report_row": {
+     "name": "assembled",
+     "train_pnl_pct": 124.13,
+     "train_sharpe": 1.18,
+     "cv_sharpe": 1.18,
+     "overfit_gap": 0.0,
+     "test_pnl_pct": 33.61,
+     "test_sharpe": 0.583,
+     "train_test_gap": 0.597
+    },
+    "bh_validation_pnl_pct": 20.55,
+    "trend_only_validation": {
+     "pnl_pct": 16.57,
+     "sharpe": 0.384,
+     "n_bars": 3995
+    },
+    "battery": {
+     "windows": {
+      "design": {
+       "pnl_pct": 124.13,
+       "sharpe": 1.18,
+       "n_bars": 6100
+      },
+      "validation": {
+       "pnl_pct": 33.61,
+       "sharpe": 0.583,
+       "n_bars": 3995
+      },
+      "pre_design": {
+       "pnl_pct": 46.86,
+       "sharpe": 0.649,
+       "n_bars": 2200
+      }
+     },
+     "params": {
+      "sma_w=150": {
+       "pnl_pct": 85.09,
+       "sharpe": 0.803,
+       "n_bars": 6100
+      },
+      "sma_w=250": {
+       "pnl_pct": 123.37,
+       "sharpe": 1.18,
+       "n_bars": 6100
+      },
+      "mom_w=360": {
+       "pnl_pct": 120.11,
+       "sharpe": 1.147,
+       "n_bars": 6100
+      },
+      "mom_w=720": {
+       "pnl_pct": 127.93,
+       "sharpe": 1.231,
+       "n_bars": 6100
+      }
+     },
+     "costs": {
+      "x0.5": {
+       "pnl_pct": 134.66,
+       "sharpe": 1.281,
+       "n_bars": 6100
+      },
+      "x1.0": {
+       "pnl_pct": 124.13,
+       "sharpe": 1.18,
+       "n_bars": 6100
+      },
+      "x2.0": {
+       "pnl_pct": 103.07,
+       "sharpe": 0.98,
+       "n_bars": 6100
+      }
+     },
+     "flags": []
+    }
+   },
+   "spot": {
+    "winners": {
+     "peace": {
+      "name": "funding_long{'thr': 1.0}",
+      "train_pnl_pct": 9.81,
+      "train_sharpe": 0.294,
+      "cv_sharpe": 0.228,
+      "overfit_gap": 0.066,
+      "cv_pnl_pct": 1.96,
+      "kind": "funding_long",
+      "params": {
+       "thr": 1.0
+      }
+     },
+     "bull": {
+      "name": "hold",
+      "train_pnl_pct": 59.33,
+      "train_sharpe": 0.761,
+      "cv_sharpe": 0.019,
+      "overfit_gap": 0.742,
+      "cv_pnl_pct": 11.27,
+      "kind": "hold",
+      "params": {}
+     },
+     "bear": {
+      "name": "flat",
+      "train_pnl_pct": 0.0,
+      "train_sharpe": 0.0,
+      "cv_sharpe": 0.0,
+      "overfit_gap": 0.0,
+      "cv_pnl_pct": 0.0,
+      "kind": "flat",
+      "params": {}
+     }
+    },
+    "report_row": {
+     "name": "assembled",
+     "train_pnl_pct": 69.14,
+     "train_sharpe": 0.816,
+     "cv_sharpe": 0.816,
+     "overfit_gap": 0.0,
+     "test_pnl_pct": 18.12,
+     "test_sharpe": 0.39,
+     "train_test_gap": 0.426
+    },
+    "bh_validation_pnl_pct": 20.55,
+    "trend_only_validation": {
+     "pnl_pct": 14.09,
+     "sharpe": 0.326,
+     "n_bars": 3995
+    },
+    "battery": {
+     "windows": {
+      "design": {
+       "pnl_pct": 69.14,
+       "sharpe": 0.816,
+       "n_bars": 6100
+      },
+      "validation": {
+       "pnl_pct": 18.12,
+       "sharpe": 0.39,
+       "n_bars": 3995
+      },
+      "pre_design": {
+       "pnl_pct": 68.59,
+       "sharpe": 1.079,
+       "n_bars": 2200
+      }
+     },
+     "params": {
+      "sma_w=150": {
+       "pnl_pct": 31.98,
+       "sharpe": 0.38,
+       "n_bars": 6100
+      },
+      "sma_w=250": {
+       "pnl_pct": 86.52,
+       "sharpe": 1.018,
+       "n_bars": 6100
+      },
+      "mom_w=360": {
+       "pnl_pct": 70.24,
+       "sharpe": 0.813,
+       "n_bars": 6100
+      },
+      "mom_w=720": {
+       "pnl_pct": 87.46,
+       "sharpe": 1.06,
+       "n_bars": 6100
+      }
+     },
+     "costs": {
+      "x0.5": {
+       "pnl_pct": 84.04,
+       "sharpe": 0.993,
+       "n_bars": 6100
+      },
+      "x1.0": {
+       "pnl_pct": 69.14,
+       "sharpe": 0.816,
+       "n_bars": 6100
+      },
+      "x2.0": {
+       "pnl_pct": 39.34,
+       "sharpe": 0.462,
+       "n_bars": 6100
+      }
+     },
+     "flags": []
+    }
+   }
+  },
+  "ETH": {
+   "perp": {
+    "winners": {
+     "peace": {
+      "name": "funding_contrarian{'thr': 0.5}",
+      "train_pnl_pct": 81.09,
+      "train_sharpe": 0.973,
+      "cv_sharpe": 0.927,
+      "overfit_gap": 0.046,
+      "cv_pnl_pct": 16.22,
+      "kind": "funding_contrarian",
+      "params": {
+       "thr": 0.5
+      }
+     },
+     "bull": {
+      "name": "flat",
+      "train_pnl_pct": 0.0,
+      "train_sharpe": 0.0,
+      "cv_sharpe": 0.0,
+      "overfit_gap": 0.0,
+      "cv_pnl_pct": 0.0,
+      "kind": "flat",
+      "params": {}
+     },
+     "bear": {
+      "name": "funding_short{'thr': 0.5}",
+      "train_pnl_pct": 92.1,
+      "train_sharpe": 1.316,
+      "cv_sharpe": 0.67,
+      "overfit_gap": 0.646,
+      "cv_pnl_pct": 18.42,
+      "kind": "funding_short",
+      "params": {
+       "thr": 0.5
+      }
+     }
+    },
+    "report_row": {
+     "name": "assembled",
+     "train_pnl_pct": 173.19,
+     "train_sharpe": 1.591,
+     "cv_sharpe": 1.591,
+     "overfit_gap": 0.0,
+     "test_pnl_pct": 1.06,
+     "test_sharpe": 0.015,
+     "train_test_gap": 1.576
+    },
+    "bh_validation_pnl_pct": 16.61,
+    "trend_only_validation": {
+     "pnl_pct": 35.7,
+     "sharpe": 0.643,
+     "n_bars": 3995
+    },
+    "battery": {
+     "windows": {
+      "design": {
+       "pnl_pct": 173.19,
+       "sharpe": 1.591,
+       "n_bars": 6100
+      },
+      "validation": {
+       "pnl_pct": 1.06,
+       "sharpe": 0.015,
+       "n_bars": 3995
+      },
+      "pre_design": {
+       "pnl_pct": 70.07,
+       "sharpe": 1.433,
+       "n_bars": 2200
+      }
+     },
+     "params": {
+      "sma_w=150": {
+       "pnl_pct": 179.38,
+       "sharpe": 1.647,
+       "n_bars": 6100
+      },
+      "sma_w=250": {
+       "pnl_pct": 162.51,
+       "sharpe": 1.5,
+       "n_bars": 6100
+      },
+      "mom_w=360": {
+       "pnl_pct": 150.33,
+       "sharpe": 1.377,
+       "n_bars": 6100
+      },
+      "mom_w=720": {
+       "pnl_pct": 176.63,
+       "sharpe": 1.613,
+       "n_bars": 6100
+      }
+     },
+     "costs": {
+      "x0.5": {
+       "pnl_pct": 188.83,
+       "sharpe": 1.736,
+       "n_bars": 6100
+      },
+      "x1.0": {
+       "pnl_pct": 173.19,
+       "sharpe": 1.591,
+       "n_bars": 6100
+      },
+      "x2.0": {
+       "pnl_pct": 141.91,
+       "sharpe": 1.302,
+       "n_bars": 6100
+      }
+     },
+     "flags": []
+    }
+   },
+   "spot": {
+    "winners": {
+     "peace": {
+      "name": "funding_long{'thr': 0.5}",
+      "train_pnl_pct": 44.64,
+      "train_sharpe": 0.794,
+      "cv_sharpe": 0.579,
+      "overfit_gap": 0.215,
+      "cv_pnl_pct": 8.93,
+      "kind": "funding_long",
+      "params": {
+       "thr": 0.5
+      }
+     },
+     "bull": {
+      "name": "flat",
+      "train_pnl_pct": 0.0,
+      "train_sharpe": 0.0,
+      "cv_sharpe": 0.0,
+      "overfit_gap": 0.0,
+      "cv_pnl_pct": 0.0,
+      "kind": "flat",
+      "params": {}
+     },
+     "bear": {
+      "name": "ridge_long{'alpha': 100.0}",
+      "train_pnl_pct": -22.44,
+      "train_sharpe": -0.3,
+      "cv_sharpe": -0.008,
+      "overfit_gap": -0.292,
+      "cv_pnl_pct": 1.82,
+      "kind": "ridge_long",
+      "params": {
+       "alpha": 100.0
+      }
+     }
+    },
+    "report_row": {
+     "name": "assembled",
+     "train_pnl_pct": 22.2,
+     "train_sharpe": 0.237,
+     "cv_sharpe": 0.237,
+     "overfit_gap": 0.0,
+     "test_pnl_pct": -42.94,
+     "test_sharpe": -0.687,
+     "train_test_gap": 0.924
+    },
+    "bh_validation_pnl_pct": 16.61,
+    "trend_only_validation": {
+     "pnl_pct": 34.89,
+     "sharpe": 0.627,
+     "n_bars": 3995
+    },
+    "battery": {
+     "windows": {
+      "design": {
+       "pnl_pct": 22.2,
+       "sharpe": 0.237,
+       "n_bars": 6100
+      },
+      "validation": {
+       "pnl_pct": -42.94,
+       "sharpe": -0.687,
+       "n_bars": 3995
+      },
+      "pre_design": {
+       "pnl_pct": 67.83,
+       "sharpe": 1.666,
+       "n_bars": 2200
+      }
+     },
+     "params": {
+      "sma_w=150": {
+       "pnl_pct": 22.26,
+       "sharpe": 0.237,
+       "n_bars": 6100
+      },
+      "sma_w=250": {
+       "pnl_pct": -5.0,
+       "sharpe": -0.054,
+       "n_bars": 6100
+      },
+      "mom_w=360": {
+       "pnl_pct": -12.78,
+       "sharpe": -0.133,
+       "n_bars": 6100
+      },
+      "mom_w=720": {
+       "pnl_pct": 34.3,
+       "sharpe": 0.368,
+       "n_bars": 6100
+      }
+     },
+     "costs": {
+      "x0.5": {
+       "pnl_pct": 48.07,
+       "sharpe": 0.514,
+       "n_bars": 6100
+      },
+      "x1.0": {
+       "pnl_pct": 22.2,
+       "sharpe": 0.237,
+       "n_bars": 6100
+      },
+      "x2.0": {
+       "pnl_pct": -29.55,
+       "sharpe": -0.315,
+       "n_bars": 6100
+      }
+     },
+     "flags": [
+      "COST-FRAGILE(x2.0)",
+      "ERA-FRAGILE",
+      "PARAM-FRAGILE(mom_w=360)",
+      "PARAM-FRAGILE(sma_w=250)"
+     ]
+    }
+   }
+  },
+  "SOL": {
+   "perp": {
+    "winners": {
+     "peace": {
+      "name": "ar_p{'p': 6}",
+      "train_pnl_pct": 0.94,
+      "train_sharpe": 0.241,
+      "cv_sharpe": -0.182,
+      "overfit_gap": 0.423,
+      "cv_pnl_pct": 0.19,
+      "kind": "ar_p",
+      "params": {
+       "p": 6
+      }
+     },
+     "bull": {
+      "name": "hold",
+      "train_pnl_pct": 106.2,
+      "train_sharpe": 0.718,
+      "cv_sharpe": -0.188,
+      "overfit_gap": 0.906,
+      "cv_pnl_pct": 21.12,
+      "kind": "hold",
+      "params": {}
+     },
+     "bear": {
+      "name": "ridge_defensive{'alpha': 30.0}",
+      "train_pnl_pct": 38.72,
+      "train_sharpe": 0.365,
+      "cv_sharpe": 0.216,
+      "overfit_gap": 0.149,
+      "cv_pnl_pct": 5.5,
+      "kind": "ridge_defensive",
+      "params": {
+       "alpha": 30.0
+      }
+     }
+    },
+    "report_row": {
+     "name": "assembled",
+     "train_pnl_pct": 145.85,
+     "train_sharpe": 0.801,
+     "cv_sharpe": 0.801,
+     "overfit_gap": 0.0,
+     "test_pnl_pct": 64.17,
+     "test_sharpe": 0.758,
+     "train_test_gap": 0.043
+    },
+    "bh_validation_pnl_pct": -21.18,
+    "trend_only_validation": {
+     "pnl_pct": -3.69,
+     "sharpe": -0.054,
+     "n_bars": 3934
+    },
+    "battery": {
+     "windows": {
+      "design": {
+       "pnl_pct": 145.85,
+       "sharpe": 0.801,
+       "n_bars": 6100
+      },
+      "validation": {
+       "pnl_pct": 64.17,
+       "sharpe": 0.758,
+       "n_bars": 3934
+      },
+      "pre_design": {
+       "pnl_pct": 276.54,
+       "sharpe": 1.954,
+       "n_bars": 2200
+      }
+     },
+     "params": {
+      "sma_w=150": {
+       "pnl_pct": 129.71,
+       "sharpe": 0.724,
+       "n_bars": 6100
+      },
+      "sma_w=250": {
+       "pnl_pct": 160.21,
+       "sharpe": 0.869,
+       "n_bars": 6100
+      },
+      "mom_w=360": {
+       "pnl_pct": 156.46,
+       "sharpe": 0.801,
+       "n_bars": 6100
+      },
+      "mom_w=720": {
+       "pnl_pct": 210.48,
+       "sharpe": 1.151,
+       "n_bars": 6100
+      }
+     },
+     "costs": {
+      "x0.5": {
+       "pnl_pct": 161.36,
+       "sharpe": 0.886,
+       "n_bars": 6100
+      },
+      "x1.0": {
+       "pnl_pct": 145.85,
+       "sharpe": 0.801,
+       "n_bars": 6100
+      },
+      "x2.0": {
+       "pnl_pct": 114.84,
+       "sharpe": 0.63,
+       "n_bars": 6100
+      }
+     },
+     "flags": []
+    }
+   },
+   "spot": {
+    "winners": {
+     "peace": {
+      "name": "flat",
+      "train_pnl_pct": 0.0,
+      "train_sharpe": 0.0,
+      "cv_sharpe": 0.0,
+      "overfit_gap": 0.0,
+      "cv_pnl_pct": 0.0,
+      "kind": "flat",
+      "params": {}
+     },
+     "bull": {
+      "name": "hold",
+      "train_pnl_pct": 109.31,
+      "train_sharpe": 0.738,
+      "cv_sharpe": -0.2,
+      "overfit_gap": 0.938,
+      "cv_pnl_pct": 21.71,
+      "kind": "hold",
+      "params": {}
+     },
+     "bear": {
+      "name": "flat",
+      "train_pnl_pct": 0.0,
+      "train_sharpe": 0.0,
+      "cv_sharpe": 0.0,
+      "overfit_gap": 0.0,
+      "cv_pnl_pct": 0.0,
+      "kind": "flat",
+      "params": {}
+     }
+    },
+    "report_row": {
+     "name": "assembled",
+     "train_pnl_pct": 109.31,
+     "train_sharpe": 0.738,
+     "cv_sharpe": 0.738,
+     "overfit_gap": 0.0,
+     "test_pnl_pct": -5.05,
+     "test_sharpe": -0.074,
+     "train_test_gap": 0.812
+    },
+    "bh_validation_pnl_pct": -21.18,
+    "trend_only_validation": {
+     "pnl_pct": -5.05,
+     "sharpe": -0.074,
+     "n_bars": 3934
+    },
+    "battery": {
+     "windows": {
+      "design": {
+       "pnl_pct": 109.31,
+       "sharpe": 0.738,
+       "n_bars": 6100
+      },
+      "validation": {
+       "pnl_pct": -5.05,
+       "sharpe": -0.074,
+       "n_bars": 3934
+      },
+      "pre_design": {
+       "pnl_pct": 307.75,
+       "sharpe": 2.19,
+       "n_bars": 2200
+      }
+     },
+     "params": {
+      "sma_w=150": {
+       "pnl_pct": 114.16,
+       "sharpe": 0.785,
+       "n_bars": 6100
+      },
+      "sma_w=250": {
+       "pnl_pct": 132.47,
+       "sharpe": 0.876,
+       "n_bars": 6100
+      },
+      "mom_w=360": {
+       "pnl_pct": 144.51,
+       "sharpe": 0.884,
+       "n_bars": 6100
+      },
+      "mom_w=720": {
+       "pnl_pct": 172.24,
+       "sharpe": 1.189,
+       "n_bars": 6100
+      }
+     },
+     "costs": {
+      "x0.5": {
+       "pnl_pct": 119.45,
+       "sharpe": 0.807,
+       "n_bars": 6100
+      },
+      "x1.0": {
+       "pnl_pct": 109.31,
+       "sharpe": 0.738,
+       "n_bars": 6100
+      },
+      "x2.0": {
+       "pnl_pct": 89.03,
+       "sharpe": 0.6,
+       "n_bars": 6100
+      }
+     },
+     "flags": [
+      "ERA-FRAGILE"
+     ]
+    }
+   }
+  }
+ },
+ "provenance": {
+  "git_commit": "524482a",
+  "git_dirty": true,
+  "data_hashes": {
+   "BTC_4H_full.parquet": "23ccb170d4fda05f",
+   "BTC_funding_1d.parquet": "3796f6e08bec371a",
+   "ETH_4H_full.parquet": "a8329acebb27d2d3",
+   "ETH_funding_1d.parquet": "fb16f6d2329aa50e",
+   "SOL_4H_full.parquet": "69a25e39dc4e4721",
+   "SOL_funding_1d.parquet": "2e9c3ac67841600f"
+  },
+  "config": {},
+  "stamped_at": "2026-08-09T22:05:40.399451+00:00"
+ }
+}
