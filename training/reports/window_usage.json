@@ -1,0 +1,20 @@
+{
+ "records": [
+  {
+   "ts": "2026-08-09T21:16:50.992927+00:00",
+   "experiment": "regime_lab:p244",
+   "asset": "BTC",
+   "start": 3000,
+   "end": 9100,
+   "purpose": "design"
+  },
+  {
+   "ts": "2026-08-09T21:17:44.601546+00:00",
+   "experiment": "regime_lab:p244",
+   "asset": "ETH",
+   "start": 3000,
+   "end": 9100,
+   "purpose": "design"
+  }
+ ]
+}
