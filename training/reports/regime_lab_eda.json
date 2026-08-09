@@ -1,0 +1,542 @@
+{
+  "BTC": {
+    "labels_pct": {
+      "peace": 33.9,
+      "bull": 32.4,
+      "bear": 33.7
+    },
+    "durations": {
+      "peace": {
+        "mean_bars": 13.5,
+        "median_bars": 2.0
+      },
+      "bull": {
+        "mean_bars": 27.5,
+        "median_bars": 3.0
+      },
+      "bear": {
+        "mean_bars": 24.5,
+        "median_bars": 4.5
+      }
+    },
+    "transition": {
+      "peace": {
+        "peace": 0.926,
+        "bull": 0.034,
+        "bear": 0.04
+      },
+      "bull": {
+        "peace": 0.035,
+        "bull": 0.964,
+        "bear": 0.001
+      },
+      "bear": {
+        "peace": 0.04,
+        "bull": 0.0,
+        "bear": 0.959
+      }
+    },
+    "target": {
+      "peace": {
+        "n": 2067,
+        "fwd16h_mean_bps": 0.8,
+        "fwd16h_vol_bps": 213.0,
+        "t": 0.17,
+        "skew": 0.21,
+        "kurt": 3.4
+      },
+      "bull": {
+        "n": 1978,
+        "fwd16h_mean_bps": 12.6,
+        "fwd16h_vol_bps": 211.2,
+        "t": 2.66,
+        "skew": 0.48,
+        "kurt": 3.5
+      },
+      "bear": {
+        "n": 2055,
+        "fwd16h_mean_bps": -0.6,
+        "fwd16h_vol_bps": 257.1,
+        "t": -0.11,
+        "skew": -0.23,
+        "kurt": 4.6
+      }
+    },
+    "signal_ic": {
+      "peace": {
+        "momentum_7d": -0.045,
+        "reversal_24h": -0.0024
+      },
+      "bull": {
+        "momentum_7d": 0.0245,
+        "reversal_24h": 0.1085
+      },
+      "bear": {
+        "momentum_7d": -0.0292,
+        "reversal_24h": 0.0388
+      }
+    },
+    "top_features": {
+      "peace": [
+        [
+          "funding_rate_zscore",
+          -0.091
+        ],
+        [
+          "bb_width_20_denoised",
+          0.081
+        ],
+        [
+          "bb_width_20",
+          0.078
+        ],
+        [
+          "ret_120h",
+          -0.067
+        ],
+        [
+          "mom_120h",
+          -0.067
+        ]
+      ],
+      "bull": [
+        [
+          "ret_6h",
+          -0.108
+        ],
+        [
+          "vol_720h",
+          -0.094
+        ],
+        [
+          "vol_expansion",
+          0.09
+        ],
+        [
+          "vol_ret_int",
+          0.083
+        ],
+        [
+          "rsi_7",
+          -0.082
+        ]
+      ],
+      "bear": [
+        [
+          "vol_6h",
+          0.072
+        ],
+        [
+          "bb_width_20_denoised",
+          -0.065
+        ],
+        [
+          "trend_str",
+          -0.063
+        ],
+        [
+          "bb_width_20",
+          -0.063
+        ],
+        [
+          "fv2_dow_cos",
+          0.053
+        ]
+      ]
+    },
+    "funding_cut": {
+      "peace": {
+        "q1": 42.0,
+        "q2": 1.9,
+        "q3": -40.0,
+        "q4": -1.5
+      },
+      "bull": {
+        "q1": 10.5,
+        "q2": 17.4,
+        "q3": 15.3,
+        "q4": 8.1
+      },
+      "bear": {
+        "q1": 21.3,
+        "q2": 5.3,
+        "q3": -27.9,
+        "q4": -1.2
+      }
+    },
+    "gmm_agreement": {
+      "peace": {
+        "dominant_gmm_cluster": 1,
+        "share": 0.36
+      },
+      "bull": {
+        "dominant_gmm_cluster": 1,
+        "share": 0.35
+      },
+      "bear": {
+        "dominant_gmm_cluster": 4,
+        "share": 0.27
+      }
+    }
+  },
+  "ETH": {
+    "labels_pct": {
+      "peace": 37.7,
+      "bull": 27.2,
+      "bear": 35.0
+    },
+    "durations": {
+      "peace": {
+        "mean_bars": 19.8,
+        "median_bars": 4.0
+      },
+      "bull": {
+        "mean_bars": 23.7,
+        "median_bars": 3.5
+      },
+      "bear": {
+        "mean_bars": 44.5,
+        "median_bars": 9.0
+      }
+    },
+    "transition": {
+      "peace": {
+        "peace": 0.95,
+        "bull": 0.03,
+        "bear": 0.02
+      },
+      "bull": {
+        "peace": 0.042,
+        "bull": 0.958,
+        "bear": 0.001
+      },
+      "bear": {
+        "peace": 0.022,
+        "bull": 0.0,
+        "bear": 0.978
+      }
+    },
+    "target": {
+      "peace": {
+        "n": 2302,
+        "fwd16h_mean_bps": 6.5,
+        "fwd16h_vol_bps": 272.2,
+        "t": 1.15,
+        "skew": 0.13,
+        "kurt": 3.2
+      },
+      "bull": {
+        "n": 1662,
+        "fwd16h_mean_bps": 4.8,
+        "fwd16h_vol_bps": 246.8,
+        "t": 0.79,
+        "skew": 1.12,
+        "kurt": 7.5
+      },
+      "bear": {
+        "n": 2136,
+        "fwd16h_mean_bps": -8.5,
+        "fwd16h_vol_bps": 325.3,
+        "t": -1.21,
+        "skew": -0.52,
+        "kurt": 5.6
+      }
+    },
+    "signal_ic": {
+      "peace": {
+        "momentum_7d": -0.0391,
+        "reversal_24h": 0.0472
+      },
+      "bull": {
+        "momentum_7d": 0.079,
+        "reversal_24h": 0.0786
+      },
+      "bear": {
+        "momentum_7d": -0.0585,
+        "reversal_24h": 0.0127
+      }
+    },
+    "top_features": {
+      "peace": [
+        [
+          "regime_proba_5",
+          0.089
+        ],
+        [
+          "vol_regime_f",
+          0.085
+        ],
+        [
+          "regime_proba_6",
+          -0.076
+        ],
+        [
+          "regime_proba_2",
+          -0.074
+        ],
+        [
+          "regime_proba_4",
+          0.072
+        ]
+      ],
+      "bull": [
+        [
+          "vol_168h",
+          -0.101
+        ],
+        [
+          "vol_trend_v",
+          0.1
+        ],
+        [
+          "vol_120h",
+          -0.098
+        ],
+        [
+          "vol_96h",
+          -0.098
+        ],
+        [
+          "vol_72h",
+          -0.095
+        ]
+      ],
+      "bear": [
+        [
+          "trend_down",
+          0.087
+        ],
+        [
+          "trend_up",
+          -0.087
+        ],
+        [
+          "trend_accel",
+          -0.079
+        ],
+        [
+          "funding_rate_zscore",
+          -0.076
+        ],
+        [
+          "long_score",
+          -0.071
+        ]
+      ]
+    },
+    "funding_cut": {
+      "peace": {
+        "q1": 28.1,
+        "q2": -2.1,
+        "q3": 5.0,
+        "q4": -5.1
+      },
+      "bull": {
+        "q1": -4.9,
+        "q2": -22.6,
+        "q3": 16.4,
+        "q4": 30.3
+      },
+      "bear": {
+        "q1": 9.0,
+        "q2": 23.9,
+        "q3": -34.4,
+        "q4": -32.6
+      }
+    },
+    "gmm_agreement": {
+      "peace": {
+        "dominant_gmm_cluster": 6,
+        "share": 0.31
+      },
+      "bull": {
+        "dominant_gmm_cluster": 6,
+        "share": 0.35
+      },
+      "bear": {
+        "dominant_gmm_cluster": 6,
+        "share": 0.27
+      }
+    }
+  },
+  "SOL": {
+    "labels_pct": {
+      "peace": 32.0,
+      "bull": 30.0,
+      "bear": 38.0
+    },
+    "durations": {
+      "peace": {
+        "mean_bars": 12.3,
+        "median_bars": 3.0
+      },
+      "bull": {
+        "mean_bars": 25.8,
+        "median_bars": 7.0
+      },
+      "bear": {
+        "mean_bars": 25.8,
+        "median_bars": 5.0
+      }
+    },
+    "transition": {
+      "peace": {
+        "peace": 0.919,
+        "bull": 0.036,
+        "bear": 0.045
+      },
+      "bull": {
+        "peace": 0.037,
+        "bull": 0.961,
+        "bear": 0.002
+      },
+      "bear": {
+        "peace": 0.038,
+        "bull": 0.0,
+        "bear": 0.961
+      }
+    },
+    "target": {
+      "peace": {
+        "n": 1950,
+        "fwd16h_mean_bps": 11.1,
+        "fwd16h_vol_bps": 426.3,
+        "t": 1.15,
+        "skew": 1.26,
+        "kurt": 9.9
+      },
+      "bull": {
+        "n": 1829,
+        "fwd16h_mean_bps": 25.8,
+        "fwd16h_vol_bps": 394.3,
+        "t": 2.8,
+        "skew": 0.6,
+        "kurt": 1.9
+      },
+      "bear": {
+        "n": 2321,
+        "fwd16h_mean_bps": -6.7,
+        "fwd16h_vol_bps": 476.5,
+        "t": -0.68,
+        "skew": -0.63,
+        "kurt": 7.0
+      }
+    },
+    "signal_ic": {
+      "peace": {
+        "momentum_7d": 0.0196,
+        "reversal_24h": 0.0185
+      },
+      "bull": {
+        "momentum_7d": 0.0361,
+        "reversal_24h": -0.0179
+      },
+      "bear": {
+        "momentum_7d": -0.0119,
+        "reversal_24h": 0.0518
+      }
+    },
+    "top_features": {
+      "peace": [
+        [
+          "fv2_dow_cos",
+          -0.104
+        ],
+        [
+          "atr_14",
+          0.068
+        ],
+        [
+          "vol_trend_v",
+          0.068
+        ],
+        [
+          "atr_14_denoised",
+          0.066
+        ],
+        [
+          "above_ma50",
+          0.058
+        ]
+      ],
+      "bull": [
+        [
+          "vol_720h",
+          -0.08
+        ],
+        [
+          "ret_1000h",
+          0.077
+        ],
+        [
+          "greed_4h",
+          0.076
+        ],
+        [
+          "vol_skew",
+          -0.075
+        ],
+        [
+          "fv2_hour_cos",
+          -0.075
+        ]
+      ],
+      "bear": [
+        [
+          "fv2_dow_cos",
+          0.088
+        ],
+        [
+          "vol_regime",
+          0.067
+        ],
+        [
+          "vol_skew",
+          0.064
+        ],
+        [
+          "ret_6h",
+          -0.052
+        ],
+        [
+          "regime_proba_3",
+          -0.045
+        ]
+      ]
+    },
+    "funding_cut": {
+      "peace": {
+        "q1": 9.4,
+        "q2": -2.0,
+        "q3": 58.5,
+        "q4": -21.2
+      },
+      "bull": {
+        "q1": 39.9,
+        "q2": 3.7,
+        "q3": -10.0,
+        "q4": 69.7
+      },
+      "bear": {
+        "q1": -48.9,
+        "q2": 13.5,
+        "q3": -9.0,
+        "q4": 17.5
+      }
+    },
+    "gmm_agreement": {
+      "peace": {
+        "dominant_gmm_cluster": 3,
+        "share": 0.35
+      },
+      "bull": {
+        "dominant_gmm_cluster": 3,
+        "share": 0.39
+      },
+      "bear": {
+        "dominant_gmm_cluster": 3,
+        "share": 0.32
+      }
+    }
+  }
+}
