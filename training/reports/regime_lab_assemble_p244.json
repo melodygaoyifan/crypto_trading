@@ -1,0 +1,311 @@
+{
+ "results": {
+  "BTC": {
+   "winners": {
+    "peace": {
+     "name": "funding_contrarian{'thr': 1.0}",
+     "train_pnl_pct": 63.59,
+     "train_sharpe": 1.32,
+     "cv_sharpe": 1.262,
+     "overfit_gap": 0.058,
+     "kind": "funding_contrarian",
+     "params": {
+      "thr": 1.0
+     }
+    },
+    "bull": {
+     "name": "ridge_long{'alpha': 100.0}",
+     "train_pnl_pct": 49.77,
+     "train_sharpe": 1.257,
+     "cv_sharpe": 1.186,
+     "overfit_gap": 0.071,
+     "kind": "ridge_long",
+     "params": {
+      "alpha": 100.0
+     }
+    },
+    "bear": {
+     "name": "flat",
+     "train_pnl_pct": 0.0,
+     "train_sharpe": 0.0,
+     "cv_sharpe": 0.0,
+     "overfit_gap": 0.0,
+     "kind": "flat",
+     "params": {}
+    }
+   },
+   "report_row": {
+    "name": "assembled",
+    "train_pnl_pct": 113.36,
+    "train_sharpe": 1.818,
+    "cv_sharpe": 1.818,
+    "overfit_gap": 0.0,
+    "test_pnl_pct": 19.87,
+    "test_sharpe": 0.622,
+    "train_test_gap": 1.196
+   },
+   "bh_validation_pnl_pct": 20.55,
+   "battery": {
+    "windows": {
+     "validation": {
+      "pnl_pct": 19.87,
+      "sharpe": 0.622,
+      "n_bars": 3995
+     },
+     "design": {
+      "pnl_pct": 113.36,
+      "sharpe": 1.818,
+      "n_bars": 6100
+     }
+    },
+    "params": {
+     "sma_w=150": {
+      "pnl_pct": 21.33,
+      "sharpe": 0.654,
+      "n_bars": 3995
+     },
+     "sma_w=250": {
+      "pnl_pct": 23.14,
+      "sharpe": 0.702,
+      "n_bars": 3995
+     },
+     "mom_w=360": {
+      "pnl_pct": -6.94,
+      "sharpe": -0.214,
+      "n_bars": 3995
+     },
+     "mom_w=720": {
+      "pnl_pct": 34.97,
+      "sharpe": 0.923,
+      "n_bars": 3995
+     }
+    },
+    "costs": {
+     "x0.5": {
+      "pnl_pct": 25.86,
+      "sharpe": 0.81,
+      "n_bars": 3995
+     },
+     "x1.0": {
+      "pnl_pct": 19.87,
+      "sharpe": 0.622,
+      "n_bars": 3995
+     },
+     "x2.0": {
+      "pnl_pct": 7.9,
+      "sharpe": 0.247,
+      "n_bars": 3995
+     }
+    },
+    "flags": [
+     "PARAM-FRAGILE(mom_w=360)"
+    ]
+   }
+  },
+  "ETH": {
+   "winners": {
+    "peace": {
+     "name": "funding_contrarian{'thr': 1.0}",
+     "train_pnl_pct": 95.76,
+     "train_sharpe": 1.721,
+     "cv_sharpe": 1.744,
+     "overfit_gap": -0.023,
+     "kind": "funding_contrarian",
+     "params": {
+      "thr": 1.0
+     }
+    },
+    "bull": {
+     "name": "flat(floored)",
+     "kind": "flat",
+     "params": {},
+     "cv_sharpe": 0.0
+    },
+    "bear": {
+     "name": "funding_short{'thr': 0.5}",
+     "train_pnl_pct": 57.04,
+     "train_sharpe": 0.82,
+     "cv_sharpe": 0.389,
+     "overfit_gap": 0.431,
+     "kind": "funding_short",
+     "params": {
+      "thr": 0.5
+     }
+    }
+   },
+   "report_row": {
+    "name": "assembled",
+    "train_pnl_pct": 152.8,
+    "train_sharpe": 1.716,
+    "cv_sharpe": 1.716,
+    "overfit_gap": 0.0,
+    "test_pnl_pct": -87.49,
+    "test_sharpe": -1.407,
+    "train_test_gap": 3.123
+   },
+   "bh_validation_pnl_pct": 16.61,
+   "battery": {
+    "windows": {
+     "validation": {
+      "pnl_pct": -87.49,
+      "sharpe": -1.407,
+      "n_bars": 3995
+     },
+     "design": {
+      "pnl_pct": 152.8,
+      "sharpe": 1.716,
+      "n_bars": 6100
+     }
+    },
+    "params": {
+     "sma_w=150": {
+      "pnl_pct": -94.33,
+      "sharpe": -1.518,
+      "n_bars": 3995
+     },
+     "sma_w=250": {
+      "pnl_pct": -79.59,
+      "sharpe": -1.288,
+      "n_bars": 3995
+     },
+     "mom_w=360": {
+      "pnl_pct": -50.98,
+      "sharpe": -0.927,
+      "n_bars": 3995
+     },
+     "mom_w=720": {
+      "pnl_pct": -100.83,
+      "sharpe": -1.609,
+      "n_bars": 3995
+     }
+    },
+    "costs": {
+     "x0.5": {
+      "pnl_pct": -79.53,
+      "sharpe": -1.279,
+      "n_bars": 3995
+     },
+     "x1.0": {
+      "pnl_pct": -87.49,
+      "sharpe": -1.407,
+      "n_bars": 3995
+     },
+     "x2.0": {
+      "pnl_pct": -103.41,
+      "sharpe": -1.664,
+      "n_bars": 3995
+     }
+    },
+    "flags": [
+     "ERA-FRAGILE"
+    ]
+   }
+  },
+  "SOL": {
+   "winners": {
+    "peace": {
+     "name": "funding_contrarian{'thr': 0.5}",
+     "train_pnl_pct": 13.28,
+     "train_sharpe": 0.11,
+     "cv_sharpe": 0.057,
+     "overfit_gap": 0.053,
+     "kind": "funding_contrarian",
+     "params": {
+      "thr": 0.5
+     }
+    },
+    "bull": {
+     "name": "flat(floored)",
+     "kind": "flat",
+     "params": {},
+     "cv_sharpe": 0.0
+    },
+    "bear": {
+     "name": "funding_short{'thr': 1.0}",
+     "train_pnl_pct": 9.52,
+     "train_sharpe": 0.228,
+     "cv_sharpe": 0.54,
+     "overfit_gap": -0.312,
+     "kind": "funding_short",
+     "params": {
+      "thr": 1.0
+     }
+    }
+   },
+   "report_row": {
+    "name": "assembled",
+    "train_pnl_pct": 22.8,
+    "train_sharpe": 0.178,
+    "cv_sharpe": 0.178,
+    "overfit_gap": 0.0,
+    "test_pnl_pct": -162.56,
+    "test_sharpe": -2.191,
+    "train_test_gap": 2.369
+   },
+   "bh_validation_pnl_pct": -21.18,
+   "battery": {
+    "windows": {
+     "validation": {
+      "pnl_pct": -162.56,
+      "sharpe": -2.191,
+      "n_bars": 3934
+     },
+     "design": {
+      "pnl_pct": 22.8,
+      "sharpe": 0.178,
+      "n_bars": 6100
+     }
+    },
+    "params": {
+     "sma_w=150": {
+      "pnl_pct": -164.24,
+      "sharpe": -2.157,
+      "n_bars": 3934
+     },
+     "sma_w=250": {
+      "pnl_pct": -118.67,
+      "sharpe": -1.636,
+      "n_bars": 3934
+     },
+     "mom_w=360": {
+      "pnl_pct": -112.18,
+      "sharpe": -1.611,
+      "n_bars": 3934
+     },
+     "mom_w=720": {
+      "pnl_pct": -147.01,
+      "sharpe": -1.923,
+      "n_bars": 3934
+     }
+    },
+    "costs": {
+     "x0.5": {
+      "pnl_pct": -146.57,
+      "sharpe": -1.976,
+      "n_bars": 3934
+     },
+     "x1.0": {
+      "pnl_pct": -162.56,
+      "sharpe": -2.191,
+      "n_bars": 3934
+     },
+     "x2.0": {
+      "pnl_pct": -194.54,
+      "sharpe": -2.618,
+      "n_bars": 3934
+     }
+    },
+    "flags": [
+     "ERA-FRAGILE"
+    ]
+   }
+  }
+ },
+ "provenance": {
+  "git_commit": "c7bed5f",
+  "git_dirty": true,
+  "data_hashes": {},
+  "config": {},
+  "stamped_at": "2026-08-09T21:21:07.340195+00:00"
+ }
+}

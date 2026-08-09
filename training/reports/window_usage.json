@@ -15,6 +15,38 @@
    "start": 3000,
    "end": 9100,
    "purpose": "design"
+  },
+  {
+   "ts": "2026-08-09T21:18:34.133142+00:00",
+   "experiment": "regime_lab:p244",
+   "asset": "SOL",
+   "start": 3000,
+   "end": 9100,
+   "purpose": "design"
+  },
+  {
+   "ts": "2026-08-09T21:19:53.772876+00:00",
+   "experiment": "regime_lab:p244",
+   "asset": "BTC",
+   "start": 9100,
+   "end": 13095,
+   "purpose": "validation"
+  },
+  {
+   "ts": "2026-08-09T21:21:07.225876+00:00",
+   "experiment": "regime_lab:p244",
+   "asset": "ETH",
+   "start": 9100,
+   "end": 13095,
+   "purpose": "validation"
+  },
+  {
+   "ts": "2026-08-09T21:21:07.267966+00:00",
+   "experiment": "regime_lab:p244",
+   "asset": "SOL",
+   "start": 9100,
+   "end": 13034,
+   "purpose": "validation"
   }
  ]
 }

@@ -202,7 +202,11 @@ from training.train_supervised_full import COST_BPS as _COST  # noqa: E402
 # default (EDA: no significant short drift anywhere) and a conditional
 # short so the data rules.
 CELL_CANDIDATES = {
-    "bull": [("hold", {}), ("ridge_long", {"alpha": [10.0, 30.0, 100.0]}),
+    # flat is a universal candidate: every cell must be allowed to conclude
+    # "no model earns a position here" (ETH's bull cell proved it — every
+    # directional candidate had negative CV).
+    "bull": [("flat", {}), ("hold", {}),
+             ("ridge_long", {"alpha": [10.0, 30.0, 100.0]}),
              ("dip_buy", {"thr": [0.02, 0.04]})],
     "bear": [("flat", {}), ("ridge_defensive", {"alpha": [10.0, 30.0, 100.0]}),
              ("funding_short", {"thr": [0.5, 1.0]})],
@@ -403,6 +407,15 @@ def stage_assemble(assets, tag):
         ctx = _ctx(asset); ctx["asset"] = asset
         n = ctx["n"]
         winners = {r: sel[asset][r]["winner"] for r in ("peace", "bull", "bear")}
+        # Floor rule: a cell whose best candidate has NEGATIVE cross-validation
+        # deploys nothing — flat. A model that loses in its own design-era CV
+        # has no claim to a live position.
+        for r, w in winners.items():
+            if w["cv_sharpe"] < 0:
+                print(f"  floor rule: {r} winner {w['name']} cv={w['cv_sharpe']:+.2f} < 0 "
+                      f"-> replaced by flat", flush=True)
+                winners[r] = {"name": "flat(floored)", "kind": "flat", "params": {},
+                              "cv_sharpe": 0.0}
         print(f"\n########## {asset} Stage 3 ##########", flush=True)
         print(f"  winners: " + ", ".join(f"{r}={winners[r]['name']}"
                                          for r in ("bull", "bear", "peace")), flush=True)
