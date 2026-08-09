@@ -201,19 +201,44 @@ from training.train_supervised_full import COST_BPS as _COST  # noqa: E402
 # EDA-prescribed candidate grids per regime cell. Bear keeps BOTH the flat
 # default (EDA: no significant short drift anywhere) and a conditional
 # short so the data rules.
+# [P246-E1] The 6-cell matrix: {bull,bear,peace} x {perp,spot}. Each
+# instrument gets its TRUE economics and its own candidate lists — half the
+# perp candidates are unexpressible on spot (no shorts, no carry), and
+# spot's cost level (~20-26bps/side vs perp 3) makes low-turnover
+# candidates the only sane entrants. flat is universal: every cell must be
+# allowed to conclude "no model earns a position here".
 CELL_CANDIDATES = {
-    # flat is a universal candidate: every cell must be allowed to conclude
-    # "no model earns a position here" (ETH's bull cell proved it — every
-    # directional candidate had negative CV).
-    "bull": [("flat", {}), ("hold", {}),
-             ("ridge_long", {"alpha": [10.0, 30.0, 100.0]}),
-             ("dip_buy", {"thr": [0.02, 0.04]})],
-    "bear": [("flat", {}), ("ridge_defensive", {"alpha": [10.0, 30.0, 100.0]}),
-             ("funding_short", {"thr": [0.5, 1.0]})],
-    "peace": [("flat", {}), ("funding_contrarian", {"thr": [0.5, 1.0]}),
-              ("meanrev", {"thr": [0.02, 0.04]}), ("ar_p", {"p": [3, 6]})],
+    "perp": {
+        "bull": [("flat", {}), ("hold", {}),
+                 ("ridge_long", {"alpha": [10.0, 30.0, 100.0]}),
+                 ("dip_buy", {"thr": [0.02, 0.04]})],
+        "bear": [("flat", {}), ("ridge_defensive", {"alpha": [10.0, 30.0, 100.0]}),
+                 ("funding_short", {"thr": [0.5, 1.0]})],
+        "peace": [("flat", {}), ("funding_contrarian", {"thr": [0.5, 1.0]}),
+                  ("meanrev", {"thr": [0.02, 0.04]}), ("ar_p", {"p": [3, 6]})],
+    },
+    "spot": {
+        "bull": [("flat", {}), ("hold", {}),
+                 ("ridge_long", {"alpha": [30.0, 100.0]}),
+                 ("dip_buy", {"thr": [0.02, 0.04]})],
+        # long/flat in a bear: hold is the honest losing reference; ridge_long
+        # is exit-timing (long only when the forecast is strongly positive).
+        "bear": [("flat", {}), ("hold", {}),
+                 ("ridge_long", {"alpha": [30.0, 100.0]})],
+        "peace": [("flat", {}), ("funding_long", {"thr": [0.5, 1.0]}),
+                  ("meanrev_long", {"thr": [0.02, 0.04]})],
+    },
 }
 REGIME_ID = {"peace": 0, "bull": 1, "bear": 2}
+
+# Instrument economics. Spot = Kraken maker-first + slippage (per side,
+# bps); no shorts; no funding carry. Perp = Coinbase CDE taker + slip,
+# carry credited/charged. Break-even edge per round trip = 2x these.
+INSTRUMENTS = {
+    "perp": {"cost_bps": None, "long_only": False, "carry": True},   # per-asset _COST
+    "spot": {"cost_bps": {"BTC": 20.0, "ETH": 22.0, "SOL": 26.0},
+             "long_only": True, "carry": False},
+}
 
 
 def _grid(spec):
@@ -332,6 +357,10 @@ def desired_positions(kind, params, ctx, regime_id, s, e, fit_lt=None):
         r = ctx["ret6"][s:e]
         pos[s:e] = np.where(r < -params["thr"], 1.0,
                             np.where(r > params["thr"], -1.0, 0.0))
+    elif kind == "funding_long":       # spot: long when funding deeply negative
+        pos[s:e] = np.where(ctx["fz"][s:e] < -params["thr"], 1.0, 0.0)
+    elif kind == "meanrev_long":       # spot: buy dips only, never short
+        pos[s:e] = np.where(ctx["ret6"][s:e] < -params["thr"], 1.0, 0.0)
     elif kind in ("ridge_long", "ridge_defensive"):
         z = (_ridge_z(ctx, regime_id, s, e, params["alpha"], fit_lt))[s:e]
         raw = np.where(np.isnan(z) | (np.abs(z) < DEADBAND), 0.0, np.clip(z, -1, 1))
@@ -345,12 +374,17 @@ def desired_positions(kind, params, ctx, regime_id, s, e, fit_lt=None):
 
 
 def cell_series(kind, params, ctx, regime, s, e, cost_mult=1.0, fit_lt=None,
-                lab_override=None):
+                lab_override=None, instrument="perp"):
     """After-cost per-bar PnL of one cell candidate active ONLY in its
-    regime's bars, DI cadence applied, costs on every position change."""
+    regime's bars, DI cadence applied, costs on every position change.
+    [P246-E1] instrument-true economics: spot = long/flat clip, Kraken-level
+    costs, NO carry; perp = +-1, CDE costs, funding carry."""
+    inst = INSTRUMENTS[instrument]
     lab = ctx["lab"] if lab_override is None else lab_override
     rid = REGIME_ID[regime]
     want = desired_positions(kind, params, ctx, rid, s, e, fit_lt)
+    if inst["long_only"]:
+        want = np.clip(want, 0.0, 1.0)
     want = np.where(lab == rid, want, 0.0)
     pos = np.zeros(ctx["n"])
     last = 0.0
@@ -361,11 +395,14 @@ def cell_series(kind, params, ctx, regime, s, e, cost_mult=1.0, fit_lt=None,
     close = ctx["close"]
     ret = np.zeros(ctx["n"]); ret[1:] = close[1:] / close[:-1] - 1.0
     strat = np.zeros(ctx["n"]); strat[1:] = pos[:-1] * ret[1:]
+    cost_bps = (_COST[ctx["asset"]] if inst["cost_bps"] is None
+                else inst["cost_bps"][ctx["asset"]])
     cost = np.zeros(ctx["n"])
-    cost[1:] = np.abs(np.diff(pos)) * _COST[ctx["asset"]] * cost_mult / 1e4
+    cost[1:] = np.abs(np.diff(pos)) * cost_bps * cost_mult / 1e4
     # [P245] perp funding carry: shorts COLLECT when funding is positive.
     carry = np.zeros(ctx["n"])
-    carry[1:] = -pos[:-1] * ctx["carry_rate"][1:]
+    if inst["carry"]:
+        carry[1:] = -pos[:-1] * ctx["carry_rate"][1:]
     return (strat - cost + carry)[s:e]
 
 
@@ -377,32 +414,37 @@ def stage_select(assets, tag):
         record_window_usage(f"regime_lab:{tag}", asset, s, e, "design")
         print(f"\n########## {asset} Stage 2 (design era [{s},{e})) ##########", flush=True)
         out = {}
-        for regime, cands in CELL_CANDIDATES.items():
-            rows = []
-            for kind, spec in cands:
-                for params in _grid(spec):
-                    cv_pnl, cv_sh = [], []
-                    for tr, va in purged_folds(s, e):
-                        fit_lt = int(va[0])
-                        seg = cell_series(kind, params, ctx, regime,
-                                          int(va[0]), int(va[-1] + 1), fit_lt=fit_lt)
-                        m = seg_metrics(seg)
-                        cv_pnl.append(m["pnl_pct"]); cv_sh.append(m["sharpe"])
-                    train_seg = cell_series(kind, params, ctx, regime, s, e)
-                    row = standard_row(f"{kind}{params or ''}", train_seg,
-                                       float(np.mean(cv_sh)) if cv_sh else 0.0)
-                    # [P245] objective = REALIZED after-cost gain (incl. perp
-                    # carry); risk stats stay reported but do not decide.
-                    row["cv_pnl_pct"] = round(float(np.mean(cv_pnl)), 2) if cv_pnl else 0.0
-                    row.update({"kind": kind, "params": params})
-                    rows.append(row)
-            rows.sort(key=lambda r: -r["cv_pnl_pct"])
-            out[regime] = {"table": rows, "winner": rows[0]}
-            w = rows[0]
-            print(f"  {regime:<6} winner={w['name']:<32} cv_pnl={w['cv_pnl_pct']:+.1f}% "
-                  f"cv_sh={w['cv_sharpe']:+.2f} train={w['train_sharpe']:+.2f} "
-                  f"gap={w['overfit_gap']:+.2f} | runner-up {rows[1]['name']} "
-                  f"cv_pnl={rows[1]['cv_pnl_pct']:+.1f}%", flush=True)
+        for instrument, cells in CELL_CANDIDATES.items():
+            out[instrument] = {}
+            for regime, cands in cells.items():
+                rows = []
+                for kind, spec in cands:
+                    for params in _grid(spec):
+                        cv_pnl, cv_sh = [], []
+                        for tr, va in purged_folds(s, e):
+                            fit_lt = int(va[0])
+                            seg = cell_series(kind, params, ctx, regime,
+                                              int(va[0]), int(va[-1] + 1),
+                                              fit_lt=fit_lt, instrument=instrument)
+                            m = seg_metrics(seg)
+                            cv_pnl.append(m["pnl_pct"]); cv_sh.append(m["sharpe"])
+                        train_seg = cell_series(kind, params, ctx, regime, s, e,
+                                                instrument=instrument)
+                        row = standard_row(f"{kind}{params or ''}", train_seg,
+                                           float(np.mean(cv_sh)) if cv_sh else 0.0)
+                        # [P245] objective = REALIZED after-cost gain (incl.
+                        # carry); risk stats reported, not deciding.
+                        row["cv_pnl_pct"] = round(float(np.mean(cv_pnl)), 2) if cv_pnl else 0.0
+                        row.update({"kind": kind, "params": params})
+                        rows.append(row)
+                rows.sort(key=lambda r: -r["cv_pnl_pct"])
+                out[instrument][regime] = {"table": rows, "winner": rows[0]}
+                w = rows[0]
+                print(f"  {instrument:<4} {regime:<6} winner={w['name']:<30} "
+                      f"cv_pnl={w['cv_pnl_pct']:+.1f}% cv_sh={w['cv_sharpe']:+.2f} "
+                      f"train={w['train_sharpe']:+.2f} gap={w['overfit_gap']:+.2f} "
+                      f"| runner-up {rows[1]['name']} "
+                      f"cv_pnl={rows[1]['cv_pnl_pct']:+.1f}%", flush=True)
         all_out[asset] = out
     rpt = REPO / "training" / "reports" / f"regime_lab_select_{tag}.json"
     payload = {"results": all_out, "provenance": provenance_stamp(
@@ -416,7 +458,8 @@ def stage_select(assets, tag):
 # =====================================================================
 # Stage 3 — assembly, ONE validation shot, robustness battery
 # =====================================================================
-def assembled_series(ctx, winners, s, e, cost_mult=1.0, sma_w=SMA_W, mom_w=MOM_W):
+def assembled_series(ctx, winners, s, e, cost_mult=1.0, sma_w=SMA_W, mom_w=MOM_W,
+                     instrument="perp"):
     close = ctx["close"]
     sma = pd.Series(close).rolling(sma_w).mean().to_numpy()
     mom = np.full(ctx["n"], np.nan)
@@ -430,7 +473,8 @@ def assembled_series(ctx, winners, s, e, cost_mult=1.0, sma_w=SMA_W, mom_w=MOM_W
     for regime in ("peace", "bull", "bear"):
         w = winners[regime]
         total += cell_series(w["kind"], w["params"], ctx, regime, s, e,
-                             cost_mult=cost_mult, lab_override=lab)
+                             cost_mult=cost_mult, lab_override=lab,
+                             instrument=instrument)
     return total
 
 
@@ -442,51 +486,57 @@ def stage_assemble(assets, tag):
     for asset in assets:
         ctx = _ctx(asset); ctx["asset"] = asset
         n = ctx["n"]
-        winners = {r: sel[asset][r]["winner"] for r in ("peace", "bull", "bear")}
-        # Floor rule: a cell whose best candidate has NEGATIVE cross-validation
-        # deploys nothing — flat. A model that loses in its own design-era CV
-        # has no claim to a live position.
-        for r, w in winners.items():
-            metric = w.get("cv_pnl_pct", w["cv_sharpe"])
-            if metric < 0:
-                print(f"  floor rule: {r} winner {w['name']} cv={metric:+.2f} < 0 "
-                      f"-> replaced by flat", flush=True)
-                winners[r] = {"name": "flat(floored)", "kind": "flat", "params": {},
-                              "cv_sharpe": 0.0, "cv_pnl_pct": 0.0}
-        print(f"\n########## {asset} Stage 3 ##########", flush=True)
-        print(f"  winners: " + ", ".join(f"{r}={winners[r]['name']}"
-                                         for r in ("bull", "bear", "peace")), flush=True)
-        design_seg = assembled_series(ctx, winners, ds, de)
+        out[asset] = {}
         prior = record_window_usage(f"regime_lab:{tag}", asset,
                                     VALIDATION_ERA_START, n, "validation")
         if prior:
-            print(f"  !! VALIDATION SPEND WARNING: this window was already read "
+            print(f"  !! VALIDATION SPEND WARNING ({asset}): window already read "
                   f"by {prior} prior experiment(s) — discount accordingly", flush=True)
-        val_seg = assembled_series(ctx, winners, VALIDATION_ERA_START, n)
-        row = standard_row("assembled", design_seg,
-                           seg_metrics(design_seg)["sharpe"], val_seg)
-        # baselines on the validation window
-        close = ctx["close"]
-        bh = (close[1:] / close[:-1] - 1)[VALIDATION_ERA_START:n - 1]
-        bh_pnl = round(float(np.nansum(bh)) * 100, 2)
-        print(f"  design: pnl={row['train_pnl_pct']:+.1f}% sharpe={row['train_sharpe']:+.2f} | "
-              f"VALIDATION: pnl={row['test_pnl_pct']:+.1f}% sharpe={row['test_sharpe']:+.2f} "
-              f"(B&H {bh_pnl:+.1f}%) train-test gap={row['train_test_gap']:+.2f}", flush=True)
+        for instrument in CELL_CANDIDATES:
+            winners = {r: sel[asset][instrument][r]["winner"]
+                       for r in ("peace", "bull", "bear")}
+            # Floor rule: a cell whose best candidate has NEGATIVE design-era
+            # CV realized gain deploys nothing — flat.
+            for r, w in winners.items():
+                metric = w.get("cv_pnl_pct", w["cv_sharpe"])
+                if metric < 0:
+                    print(f"  floor rule: {instrument}/{r} winner {w['name']} "
+                          f"cv={metric:+.2f} < 0 -> replaced by flat", flush=True)
+                    winners[r] = {"name": "flat(floored)", "kind": "flat",
+                                  "params": {}, "cv_sharpe": 0.0, "cv_pnl_pct": 0.0}
+            print(f"\n########## {asset} [{instrument}] Stage 3 ##########", flush=True)
+            print(f"  winners: " + ", ".join(f"{r}={winners[r]['name']}"
+                                             for r in ("bull", "bear", "peace")), flush=True)
+            design_seg = assembled_series(ctx, winners, ds, de, instrument=instrument)
+            val_seg = assembled_series(ctx, winners, VALIDATION_ERA_START, n,
+                                       instrument=instrument)
+            row = standard_row("assembled", design_seg,
+                               seg_metrics(design_seg)["sharpe"], val_seg)
+            close = ctx["close"]
+            bh = (close[1:] / close[:-1] - 1)[VALIDATION_ERA_START:n - 1]
+            bh_pnl = round(float(np.nansum(bh)) * 100, 2)
+            print(f"  design: pnl={row['train_pnl_pct']:+.1f}% "
+                  f"sharpe={row['train_sharpe']:+.2f} | "
+                  f"VALIDATION: pnl={row['test_pnl_pct']:+.1f}% "
+                  f"sharpe={row['test_sharpe']:+.2f} (B&H {bh_pnl:+.1f}%) "
+                  f"train-test gap={row['train_test_gap']:+.2f}", flush=True)
 
-        def run_fn(params, window, cost_mult):
-            seg = assembled_series(ctx, winners, window[0], window[1],
-                                   cost_mult=cost_mult,
-                                   sma_w=params.get("sma_w", SMA_W),
-                                   mom_w=params.get("mom_w", MOM_W))
-            return seg_metrics(seg)
+            def run_fn(params, window, cost_mult, _w=winners, _i=instrument):
+                seg = assembled_series(ctx, _w, window[0], window[1],
+                                       cost_mult=cost_mult,
+                                       sma_w=params.get("sma_w", SMA_W),
+                                       mom_w=params.get("mom_w", MOM_W),
+                                       instrument=_i)
+                return seg_metrics(seg)
 
-        battery = robustness_battery(
-            run_fn, {"sma_w": SMA_W, "mom_w": MOM_W},
-            {"sma_w": [150, 250], "mom_w": [360, 720]},
-            {"validation": (VALIDATION_ERA_START, n), "design": (ds, de)})
-        print(f"  robustness flags: {battery['flags'] or 'NONE'}", flush=True)
-        out[asset] = {"winners": winners, "report_row": row,
-                      "bh_validation_pnl_pct": bh_pnl, "battery": battery}
+            battery = robustness_battery(
+                run_fn, {"sma_w": SMA_W, "mom_w": MOM_W},
+                {"sma_w": [150, 250], "mom_w": [360, 720]},
+                {"validation": (VALIDATION_ERA_START, n), "design": (ds, de)})
+            print(f"  robustness flags: {battery['flags'] or 'NONE'}", flush=True)
+            out[asset][instrument] = {"winners": winners, "report_row": row,
+                                      "bh_validation_pnl_pct": bh_pnl,
+                                      "battery": battery}
     rpt = REPO / "training" / "reports" / f"regime_lab_assemble_{tag}.json"
     rpt.write_text(json.dumps({"results": out, "provenance": provenance_stamp()},
                               indent=1, default=str), encoding="utf-8")

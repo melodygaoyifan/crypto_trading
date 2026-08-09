@@ -144,8 +144,39 @@ ridge/LGBM rungs (GPU only enters at rung 5+). Full 6-cell ladder for all
   at best, and only with a new signal basis.
 - **Kraken spot cells** are model-ready but venue-dormant (P152 structural
   flatness); building them keeps the option real without deploying.
-- **Research brief** (methodology agent, in flight) merges here as an
-  addendum when it lands.
+- **Research brief: MERGED** (full text:
+  `docs/research/METHODOLOGY_BRIEF_2026-08-09.md`). Binding adjustments:
+  1. **External corroboration of the funding inversion** — market-wide
+     crypto carry Sharpe fell 6.45 → 4.06 (2024) → negative (2025), and
+     the ETF-era basis trade compressed to ~zero (BIS WP1087 + 2025/26
+     survey). The P244 era-fragility was the market re-pricing, not a lab
+     artifact. **Funding = income always, signal never** (until forward
+     data says otherwise).
+  2. **The alpha bar, arithmetically:** break-even IC ≈ 0.13 per decision
+     at 16h vol and 6–13bps/side. No measured in-house IC clears it
+     unconditionally — directional research targets only regime-cells that
+     could clear it, turnover-reduced expressions, or trend-filter on/off
+     conditioning. Sub-breakeven searches are not funded.
+  3. **Linear-first is externally settled** (Grinsztajn 2022: trees beat
+     nets at ~10k tabular samples; in-house even trees lose to ridge).
+     **TCN** is the designated sequence architecture if a net is ever
+     justified; transformers are not candidates at this n. Params ≤
+     ~n_cell/10, dropout+weight-decay, patience 5–10 with best-weights
+     restore, early stopping on POOLED multi-segment validation loss (a
+     single fixed val window re-creates P243 inside the training loop).
+  4. **Regime conditioning: coarse cells, policy-class switching, and the
+     jump-model switch** (persistence-penalty clustering, CV-tuned, judged
+     on ONLINE-inferred labels with trade delay — arXiv:2402.05272) as the
+     upgrade for SMA200's turn lag. Forecasts prefer regime-as-FEATURE
+     pooled models; hard switches only where the policy CLASS differs.
+  5. **Model reports gain three missing artifacts:** learning curve,
+     capacity-sweep curve (report the plateau, never the argmax), and a
+     **DSR/trial-count line** — the pipeline logs every configuration
+     evaluated.
+  6. **GPU pattern:** `torch.vmap` + stacked module states for batched
+     small-net sweeps (asset × regime × seed × config in one job);
+     CPU-parallel for the entire ridge/tree/walk-forward layer; no
+     CUDA-stream engineering (wrong bottleneck).
 
 ## 7. Execution order
 
