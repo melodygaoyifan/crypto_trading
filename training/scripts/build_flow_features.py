@@ -62,76 +62,20 @@ _TRAINING_DIR = Path(__file__).resolve().parent.parent
 RAW_DIR = _TRAINING_DIR / "training_data" / "raw"
 OUT_DIR = _TRAINING_DIR / "training_data" / "drl_training"
 
-Z_WINDOW = 180        # 30 days of 4H bars
-Z_MIN = 42            # 1 week minimum before a z-score is emitted
-MOM_BARS = 30         # 5 days
+# [P1a] The implementation moved to data_mgmt/flow_features.py — the ONE
+# source of truth shared with the live feed (training -> runtime import is
+# the safe direction; the reverse is the P214 class). This script keeps only
+# the parquet-writing orchestration.
+import sys as _sys
+_repo = str(Path(__file__).resolve().parent.parent.parent)
+if _repo not in _sys.path:
+    _sys.path.insert(0, _repo)
+from data_mgmt.flow_features import (  # noqa: E402
+    Z_WINDOW, Z_MIN, MOM_BARS, REF, FLOW_COLS, FV2_COLUMNS,
+    _roll_z, _agg_4h, flow_features_4h, cross_asset_features,
+)
+
 ASSETS = ("BTC", "ETH", "SOL")
-REF = {"BTC": "ETH", "ETH": "BTC", "SOL": "BTC"}
-FLOW_COLS = ["quote_volume", "count", "taker_buy_base", "taker_buy_quote"]
-
-
-def _roll_z(s: pd.Series, window: int = Z_WINDOW, min_periods: int = Z_MIN) -> pd.Series:
-    """Trailing z-score. shift(0) semantics: the bar's own value enters its
-    window — acceptable because the STATISTIC uses only bars <= t."""
-    m = s.rolling(window, min_periods=min_periods).mean()
-    sd = s.rolling(window, min_periods=min_periods).std()
-    return ((s - m) / sd.replace(0, np.nan)).clip(-6, 6)
-
-
-def _agg_4h(raw: pd.DataFrame) -> pd.DataFrame:
-    df = raw.copy()
-    df["timestamp"] = pd.to_datetime(df["timestamp"])
-    agg = {"volume": "sum", "close": "last", "open": "first"}
-    for c in FLOW_COLS:
-        agg[c] = "sum"
-    out = (df.set_index("timestamp").resample("4h").agg(agg)).dropna(subset=["close"])
-    return out.reset_index()
-
-
-def flow_features_4h(raw: pd.DataFrame) -> pd.DataFrame:
-    """4H flow feature frame from a 1H raw frame carrying the flow columns."""
-    g = _agg_4h(raw)
-    out = pd.DataFrame({"timestamp": g["timestamp"]})
-    ret_4h = g["close"].pct_change()
-
-    vol = g["volume"].replace(0, np.nan)
-    qv = g["quote_volume"].replace(0, np.nan)
-    cnt = g["count"].replace(0, np.nan)
-
-    taker_ratio = (g["taker_buy_base"] / vol).clip(0, 1)
-    out["fv2_taker_ratio_z"] = _roll_z(taker_ratio)
-    out["fv2_taker_ratio_mom"] = (taker_ratio
-                                  - taker_ratio.rolling(MOM_BARS, min_periods=MOM_BARS).mean())
-    out["fv2_count_z"] = _roll_z(np.log1p(cnt))
-    out["fv2_avg_trade_size_z"] = _roll_z(np.log1p(qv / cnt))
-    out["fv2_amihud_z"] = _roll_z(np.log1p(ret_4h.abs() / qv * 1e9))
-    out["fv2_quote_vol_z"] = _roll_z(np.log1p(qv))
-    out["fv2_taker_quote_share_z"] = _roll_z((g["taker_buy_quote"] / qv).clip(0, 1))
-
-    ts = pd.to_datetime(out["timestamp"])
-    hour_phase = ts.dt.hour / 24.0 * 2 * np.pi
-    dow_phase = ts.dt.dayofweek / 7.0 * 2 * np.pi
-    out["fv2_hour_sin"] = np.sin(hour_phase)
-    out["fv2_hour_cos"] = np.cos(hour_phase)
-    out["fv2_dow_sin"] = np.sin(dow_phase)
-    out["fv2_dow_cos"] = np.cos(dow_phase)
-    return out
-
-
-def cross_asset_features(asset: str, closes: dict) -> pd.DataFrame:
-    """Relative strength vs the reference asset + the reference's LAGGED
-    return (lead-lag). The lag is what keeps it causal: the reference's
-    CURRENT bar is contemporaneous, its previous bar is information."""
-    ref = REF[asset]
-    a = closes[asset]
-    r = closes[ref]
-    m = a.merge(r, on="timestamp", how="left", suffixes=("", "_ref"))
-    out = pd.DataFrame({"timestamp": m["timestamp"]})
-    ret24_a = m["close"].pct_change(6)
-    ret24_r = m["close_ref"].pct_change(6)
-    out["fv2_rel_strength_24h"] = (ret24_a - ret24_r).clip(-1, 1)
-    out["fv2_ref_lag_ret_4h"] = m["close_ref"].pct_change().shift(1).clip(-0.5, 0.5)
-    return out
 
 
 def main() -> int:

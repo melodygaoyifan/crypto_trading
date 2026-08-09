@@ -100,6 +100,21 @@ def test_cross_asset_uses_lagged_reference_return(bf):
 
 
 def test_z_window_matches_documented_30d():
+    # [P1a] The implementation (and its constants) moved to the shared
+    # runtime module data_mgmt/flow_features.py — the single source of truth
+    # for training AND the live feed.
+    src = (REPO / "data_mgmt" / "flow_features.py").read_text(encoding="utf-8")
+    assert "Z_WINDOW = 180" in src and "Z_MIN = 42" in src
+
+
+def test_builder_imports_the_shared_module_not_a_copy():
+    """Training must consume data_mgmt.flow_features, never carry its own
+    copy — two implementations of the same feature is the P179 fallback-copy
+    trap (agreement by value proves nothing; identity does)."""
     src = (REPO / "training" / "scripts" / "build_flow_features.py").read_text(
         encoding="utf-8")
-    assert "Z_WINDOW = 180" in src and "Z_MIN = 42" in src
+    assert "from data_mgmt.flow_features import" in src
+    assert "def flow_features_4h" not in src, (
+        "build_flow_features.py has grown its own flow_features_4h again — "
+        "delete it and import the shared one"
+    )
