@@ -1,0 +1,101 @@
+{
+ "results": [
+  {
+   "asset": "BTC",
+   "base_rate": 0.5187,
+   "cv": {
+    "logistic_thr0.45": {
+     "gated_pnl": 5.88,
+     "raw_pnl": 7.94,
+     "delta": -2.06
+    },
+    "logistic_thr0.55": {
+     "gated_pnl": 5.94,
+     "raw_pnl": 7.94,
+     "delta": -2.0
+    },
+    "lgbm_thr0.45": {
+     "gated_pnl": -1.97,
+     "raw_pnl": 7.94,
+     "delta": -9.91
+    },
+    "lgbm_thr0.55": {
+     "gated_pnl": 0.36,
+     "raw_pnl": 7.94,
+     "delta": -7.58
+    }
+   },
+   "trials": 4
+  },
+  {
+   "asset": "ETH",
+   "base_rate": 0.4615,
+   "cv": {
+    "logistic_thr0.45": {
+     "gated_pnl": -5.08,
+     "raw_pnl": -2.05,
+     "delta": -3.03
+    },
+    "logistic_thr0.55": {
+     "gated_pnl": -8.28,
+     "raw_pnl": -2.05,
+     "delta": -6.23
+    },
+    "lgbm_thr0.45": {
+     "gated_pnl": -6.11,
+     "raw_pnl": -2.05,
+     "delta": -4.06
+    },
+    "lgbm_thr0.55": {
+     "gated_pnl": -3.2,
+     "raw_pnl": -2.05,
+     "delta": -1.15
+    }
+   },
+   "trials": 4
+  },
+  {
+   "asset": "SOL",
+   "base_rate": 0.4899,
+   "cv": {
+    "logistic_thr0.45": {
+     "gated_pnl": 5.0,
+     "raw_pnl": 19.6,
+     "delta": -14.61
+    },
+    "logistic_thr0.55": {
+     "gated_pnl": 4.79,
+     "raw_pnl": 19.6,
+     "delta": -14.82
+    },
+    "lgbm_thr0.45": {
+     "gated_pnl": -4.02,
+     "raw_pnl": 19.6,
+     "delta": -23.63
+    },
+    "lgbm_thr0.55": {
+     "gated_pnl": 0.29,
+     "raw_pnl": 19.6,
+     "delta": -19.32
+    }
+   },
+   "trials": 4
+  }
+ ],
+ "config": {
+  "k": 1.5,
+  "T": 24,
+  "vol_win": 42,
+  "thresholds": [
+   0.45,
+   0.55
+  ]
+ },
+ "provenance": {
+  "git_commit": "20f4490",
+  "git_dirty": true,
+  "data_hashes": {},
+  "config": {},
+  "stamped_at": "2026-08-09T22:31:59.772269+00:00"
+ }
+}

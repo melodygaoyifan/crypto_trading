@@ -191,6 +191,54 @@
    "start": 9100,
    "end": 13034,
    "purpose": "validation"
+  },
+  {
+   "ts": "2026-08-09T22:31:55.921536+00:00",
+   "experiment": "residual_pass:p249",
+   "asset": "BTC",
+   "start": 3000,
+   "end": 9100,
+   "purpose": "design"
+  },
+  {
+   "ts": "2026-08-09T22:31:55.994503+00:00",
+   "experiment": "label_lab:p249",
+   "asset": "BTC",
+   "start": 3000,
+   "end": 9100,
+   "purpose": "design"
+  },
+  {
+   "ts": "2026-08-09T22:31:56.322837+00:00",
+   "experiment": "residual_pass:p249",
+   "asset": "ETH",
+   "start": 3000,
+   "end": 9100,
+   "purpose": "design"
+  },
+  {
+   "ts": "2026-08-09T22:31:56.718205+00:00",
+   "experiment": "residual_pass:p249",
+   "asset": "SOL",
+   "start": 3000,
+   "end": 9100,
+   "purpose": "design"
+  },
+  {
+   "ts": "2026-08-09T22:31:58.207816+00:00",
+   "experiment": "label_lab:p249",
+   "asset": "ETH",
+   "start": 3000,
+   "end": 9100,
+   "purpose": "design"
+  },
+  {
+   "ts": "2026-08-09T22:31:58.979138+00:00",
+   "experiment": "label_lab:p249",
+   "asset": "SOL",
+   "start": 3000,
+   "end": 9100,
+   "purpose": "design"
   }
  ]
 }

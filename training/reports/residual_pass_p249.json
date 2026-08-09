@@ -1,0 +1,73 @@
+{
+ "assets": {
+  "BTC": {
+   "engineered": [
+    "x_vol_720h_bull",
+    "x_vol_720h_bear",
+    "x_funding_rate_zscore_bull",
+    "x_funding_rate_zscore_bear",
+    "x_ret_6h_bull",
+    "x_ret_6h_bear",
+    "x_vol_expansion_bull",
+    "x_vol_expansion_bear",
+    "x_vol_regime_f_bull",
+    "x_vol_regime_f_bear",
+    "x_vol_6h_bull",
+    "x_vol_6h_bear",
+    "dd_from_20d_high",
+    "vol_of_vol_7d",
+    "funding_x_trend"
+   ]
+  },
+  "ETH": {
+   "engineered": [
+    "x_regime_proba_4_bull",
+    "x_regime_proba_4_bear",
+    "x_regime_proba_2_bull",
+    "x_regime_proba_2_bear",
+    "x_regime_proba_6_bull",
+    "x_regime_proba_6_bear",
+    "x_consecutive_red_bull",
+    "x_consecutive_red_bear",
+    "x_regime_proba_5_bull",
+    "x_regime_proba_5_bear",
+    "x_regime_proba_0_bull",
+    "x_regime_proba_0_bear",
+    "dd_from_20d_high",
+    "vol_of_vol_7d",
+    "funding_x_trend"
+   ]
+  },
+  "SOL": {
+   "engineered": [
+    "x_fv2_count_z_bull",
+    "x_fv2_count_z_bear",
+    "x_vol_ret_int_bull",
+    "x_vol_ret_int_bear",
+    "x_fv2_quote_vol_z_bull",
+    "x_fv2_quote_vol_z_bear",
+    "x_vol_720h_bull",
+    "x_vol_720h_bear",
+    "x_vol_6h_bull",
+    "x_vol_6h_bear",
+    "x_vol_regime_f_bull",
+    "x_vol_regime_f_bear",
+    "dd_from_20d_high",
+    "vol_of_vol_7d",
+    "funding_x_trend"
+   ],
+   "sol_bear_ladder": {
+    "base": 5.5,
+    "base+engineered": 5.85,
+    "verdict": "EARNED"
+   }
+  }
+ },
+ "provenance": {
+  "git_commit": "20f4490",
+  "git_dirty": true,
+  "data_hashes": {},
+  "config": {},
+  "stamped_at": "2026-08-09T22:31:55.829287+00:00"
+ }
+}
