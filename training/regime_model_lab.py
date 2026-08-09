@@ -235,16 +235,21 @@ CELL_CANDIDATES = {
                  ("mdl_long", {"family": ["ridge"], "alpha": [30.0, 100.0]}),
                  ("mdl_long", {"family": ["enet"]}),
                  ("mdl_long", {"family": ["lgbm"]}),
+                 ("mdl_long", {"family": ["rf"]}),
+                 ("mdl_long", {"family": ["knn"], "k": [50]}),
                  ("mdl_long", {"family": ["mlp"]})],
         "bear": [("flat", {}), ("funding_short", {"thr": [0.5, 1.0]}),
                  ("mdl_short", {"family": ["ridge"], "alpha": [10.0, 30.0]}),
                  ("mdl_short", {"family": ["enet"]}),
                  ("mdl_short", {"family": ["lgbm"]}),
+                 ("mdl_short", {"family": ["rf"]}),
+                 ("mdl_short", {"family": ["knn"], "k": [50]}),
                  ("mdl_short", {"family": ["mlp"]})],
         "peace": [("flat", {}), ("funding_contrarian", {"thr": [0.5, 1.0]}),
                   ("meanrev", {"thr": [0.02, 0.04]}), ("ar_p", {"p": [3, 6]}),
                   ("mdl_full", {"family": ["ridge"], "alpha": [30.0]}),
                   ("mdl_full", {"family": ["lgbm"]}),
+                  ("mdl_full", {"family": ["rf"]}),
                   ("mdl_full", {"family": ["mlp"]})],
     },
     "spot": {
@@ -378,7 +383,25 @@ def _make_model(family, params):
         return True, MLPRegressor(hidden_layer_sizes=(32,), alpha=1e-2,
                                   max_iter=200, early_stopping=True,
                                   random_state=7), 180
+    # [P250b] small-data nonparametrics the operator asked after — a
+    # different variance profile than boosting (RF) and the classic low-n
+    # benchmark (kNN). Same ladder rule: they earn cells or they don't.
+    if family == "rf":
+        from sklearn.ensemble import RandomForestRegressor
+        return False, RandomForestRegressor(
+            n_estimators=200, max_depth=4, min_samples_leaf=20,
+            max_features=0.3, random_state=7, n_jobs=2), 180
+    if family == "knn":
+        from sklearn.neighbors import KNeighborsRegressor
+        return True, KNeighborsRegressor(
+            n_neighbors=int(params.get("k", 50)), weights="distance"), 180
     raise ValueError(family)
+    # NOT here, with reasons on record: transformers (data-hungry at these
+    # n — brief §2), RL (0/9 folds twice), GPs (O(n^3) at 4k rows makes
+    # walk-forward refits infeasible), GAN augmentation (era-baking risk).
+    # The TCN/GRU sequence rung is the CONDITIONED rung 6 of the plan —
+    # implemented as a targeted challenge for cells whose simpler rungs
+    # first clear costs, never as a blanket grid entry.
 
 
 def _model_z(ctx, family, params, regime_id, s, e, fit_lt=None):
