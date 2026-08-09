@@ -118,7 +118,7 @@ def stage_eda(assets):
 
         mom7 = np.full(n, np.nan); mom7[42:] = close[42:] / close[:-42] - 1.0
         rev1 = np.full(n, np.nan); rev1[6:] = -(close[6:] / close[:-6] - 1.0)
-        fund_i = feats.index("funding_rate_zscore") if "funding_rate_zscore" in feats else None
+        fzc = _causal_funding_z(asset, n)   # [P247-F1] causal, never the parquet feature
 
         for r in (0, 1, 2):
             m = (lab == r) & (np.arange(n) >= s) & (np.arange(n) < e)
@@ -126,7 +126,11 @@ def stage_eda(assets):
             rlens = [ln for v, ln in runs if v == r]
             yr = y[m]
             mu, sd = float(np.nanmean(yr)) * 1e4, float(np.nanstd(yr)) * 1e4
-            tstat = mu / (sd / math.sqrt(max(1, (~np.isnan(yr)).sum())))
+            # [P247-F4] 16h labels sampled every 4h overlap 4x -> n_eff = n/4.
+            # The uncorrected t repeated the exact error P231 fixed in
+            # agent_ic_review; this tool now corrects it at the source.
+            n_eff = max(1.0, (~np.isnan(yr)).sum() / H)
+            tstat = mu / (sd / math.sqrt(n_eff))
             rep["labels_pct"][NAMES[r]] = round(100 * nseg / (e - s), 1)
             rep["durations"][NAMES[r]] = {"mean_bars": round(float(np.mean(rlens)), 1) if rlens else 0,
                                           "median_bars": float(np.median(rlens)) if rlens else 0}
@@ -147,8 +151,8 @@ def stage_eda(assets):
             ics.sort(reverse=True)
             rep["top_features"][NAMES[r]] = [(f, round(ic, 3)) for _, ic, f in ics[:5]]
             # derivatives cut: fwd return by funding-zscore quartile
-            if fund_i is not None and nseg > 400:
-                fz = X[m][:, fund_i]
+            if nseg > 400:
+                fz = fzc[m]
                 q = pd.qcut(pd.Series(fz), 4, labels=False, duplicates="drop").to_numpy()
                 rep["funding_cut"][NAMES[r]] = {
                     f"q{int(k)+1}": round(float(np.nanmean(yr[q == k])) * 1e4, 1)
@@ -255,6 +259,29 @@ from training.train_supervised_full import DATA_DIR as _DATA_DIR  # noqa: E402
 _FUND_DIR = REPO / "training" / "training_data" / "coinglass_history"
 
 
+def _causal_funding_z(asset, n, window=30):
+    """[P247-F1] CAUSAL funding z-score: bars on day D read day D-1's close
+    rate, z-scored over a trailing 30d window. Replaces the parquet's
+    funding_rate_zscore for SIGNAL use — that feature carries up to 16h of
+    look-ahead (daily rows are stamped at day-OPEN while funding_close is
+    the day's LAST 16:00 UTC event; merge_asof backward then hands bars at
+    00:00-12:00 the future print). Found by the P247 fresh-eyes review;
+    third instance of the P164/P221 timestamp-leak class."""
+    p = _FUND_DIR / f"{asset}_funding_1d.parquet"
+    if not p.exists():
+        return np.zeros(n)
+    px = pd.read_parquet(_DATA_DIR / f"{asset}_4H_full.parquet", columns=["timestamp"])
+    f = pd.read_parquet(p)
+    daily = f.assign(d=pd.to_datetime(f["timestamp"]).dt.date).set_index("d")["funding_close"]
+    z = (daily - daily.rolling(window).mean()) / daily.rolling(window).std()
+    z = z.shift(1)          # <- the fix: previous day's completed value only
+    dates = pd.to_datetime(px["timestamp"]).dt.date
+    out = dates.map(z).to_numpy(dtype=float)[:n]
+    if len(out) < n:
+        out = np.pad(out, (0, n - len(out)))
+    return np.nan_to_num(out, nan=0.0)
+
+
 def _bar_carry_rate(asset, n):
     """[P245] Per-4H-bar funding rate (FRACTION; positive -> longs PAY).
 
@@ -272,6 +299,9 @@ def _bar_carry_rate(asset, n):
     px = pd.read_parquet(_DATA_DIR / f"{asset}_4H_full.parquet", columns=["timestamp"])
     f = pd.read_parquet(p)
     daily = f.assign(d=pd.to_datetime(f["timestamp"]).dt.date).set_index("d")["funding_close"]
+    # [P247-F1] previous-day rate as the accrual estimate — the same-day map
+    # read the day's 16:00 print from its 00:00-12:00 bars (look-ahead).
+    daily = daily.shift(1)
     dates = pd.to_datetime(px["timestamp"]).dt.date
     rate = dates.map(daily).to_numpy(dtype=float)[:n]
     if len(rate) < n:
@@ -283,7 +313,7 @@ def _ctx(asset):
     X, targets, close, gmm, feats = load_asset(asset)
     n = len(close)
     lab = regime_labels(close)
-    fz = X[:, feats.index("funding_rate_zscore")] if "funding_rate_zscore" in feats else np.zeros(n)
+    fz = _causal_funding_z(asset, n)   # [P247-F1] never the leaked parquet feature
     ret6 = np.full(n, np.nan); ret6[6:] = close[6:] / close[:-6] - 1.0
     lr1 = np.full(n, np.nan); lr1[1:] = np.log(close[1:] / close[:-1])
     return dict(X=X, y=targets["ret"], close=close, lab=lab, fz=fz,
@@ -447,9 +477,14 @@ def stage_select(assets, tag):
                       f"cv_pnl={rows[1]['cv_pnl_pct']:+.1f}%", flush=True)
         all_out[asset] = out
     rpt = REPO / "training" / "reports" / f"regime_lab_select_{tag}.json"
+    _data_files = [p for a in assets for p in
+                   (_DATA_DIR / f"{a}_4H_full.parquet",
+                    _FUND_DIR / f"{a}_funding_1d.parquet")]
     payload = {"results": all_out, "provenance": provenance_stamp(
+        data_files=_data_files,
         config={"design_era": DESIGN_ERA, "candidates": {
-            k: [c[0] for c in v] for k, v in CELL_CANDIDATES.items()}})}
+            k: {r: [c[0] for c in v] for r, v in cells.items()}
+            for k, cells in CELL_CANDIDATES.items()}})}
     rpt.write_text(json.dumps(payload, indent=1, default=str), encoding="utf-8")
     print(f"\nStage 2 -> {rpt}", flush=True)
     return all_out
@@ -515,10 +550,20 @@ def stage_assemble(assets, tag):
             close = ctx["close"]
             bh = (close[1:] / close[:-1] - 1)[VALIDATION_ERA_START:n - 1]
             bh_pnl = round(float(np.nansum(bh)) * 100, 2)
+            # [P247-F2] The decisive ablation the review demanded: the assembly
+            # must beat the ALREADY-KNOWN era-stable baseline (trend filter =
+            # hold-bull + flat elsewhere), not just B&H. If the excess comes
+            # from the trend legs, the assembly adds nothing new.
+            trend_only = {r: {"name": "trend_only", "kind": ("hold" if r == "bull" else "flat"),
+                              "params": {}} for r in ("bull", "bear", "peace")}
+            tf_val = seg_metrics(assembled_series(ctx, trend_only,
+                                                  VALIDATION_ERA_START, n,
+                                                  instrument=instrument))
             print(f"  design: pnl={row['train_pnl_pct']:+.1f}% "
                   f"sharpe={row['train_sharpe']:+.2f} | "
                   f"VALIDATION: pnl={row['test_pnl_pct']:+.1f}% "
-                  f"sharpe={row['test_sharpe']:+.2f} (B&H {bh_pnl:+.1f}%) "
+                  f"sharpe={row['test_sharpe']:+.2f} (B&H {bh_pnl:+.1f}%, "
+                  f"TREND-ONLY {tf_val['pnl_pct']:+.1f}%) "
                   f"train-test gap={row['train_test_gap']:+.2f}", flush=True)
 
             def run_fn(params, window, cost_mult, _w=winners, _i=instrument):
@@ -529,16 +574,30 @@ def stage_assemble(assets, tag):
                                        instrument=_i)
                 return seg_metrics(seg)
 
+            # [P247-F3] design window FIRST: param/cost perturbations run on
+            # w0, and mining the validation window through the battery was
+            # exactly the unledgered re-reading the review caught.
+            # [P247-F5] pre-design era [800,3000) added — the third era the
+            # docstring promised and the code never scored.
             battery = robustness_battery(
                 run_fn, {"sma_w": SMA_W, "mom_w": MOM_W},
                 {"sma_w": [150, 250], "mom_w": [360, 720]},
-                {"validation": (VALIDATION_ERA_START, n), "design": (ds, de)})
-            print(f"  robustness flags: {battery['flags'] or 'NONE'}", flush=True)
+                {"design": (ds, de),
+                 "validation": (VALIDATION_ERA_START, n),
+                 "pre_design": (800, 3000)})
+            print(f"  robustness flags: {battery['flags'] or 'NONE'} "
+                  f"(pre-design era: {battery['windows']['pre_design']['pnl_pct']:+.1f}%)",
+                  flush=True)
             out[asset][instrument] = {"winners": winners, "report_row": row,
                                       "bh_validation_pnl_pct": bh_pnl,
+                                      "trend_only_validation": tf_val,
                                       "battery": battery}
     rpt = REPO / "training" / "reports" / f"regime_lab_assemble_{tag}.json"
-    rpt.write_text(json.dumps({"results": out, "provenance": provenance_stamp()},
+    _data_files = [p for a in assets for p in
+                   (_DATA_DIR / f"{a}_4H_full.parquet",
+                    _FUND_DIR / f"{a}_funding_1d.parquet")]
+    rpt.write_text(json.dumps({"results": out,
+                               "provenance": provenance_stamp(data_files=_data_files)},
                               indent=1, default=str), encoding="utf-8")
     print(f"\nStage 3 -> {rpt}", flush=True)
 
