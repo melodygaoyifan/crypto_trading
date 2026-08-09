@@ -1,0 +1,236 @@
+{
+ "assets": {
+  "BTC": {
+   "screened": [
+    {
+     "name": "d6_vol_336h",
+     "ic": 0.073
+    },
+    {
+     "name": "x_ret_6h_bull",
+     "ic": -0.0583
+    },
+    {
+     "name": "d6_vol_6h",
+     "ic": 0.0581
+    },
+    {
+     "name": "funding_z_mom5d",
+     "ic": -0.0572
+    },
+    {
+     "name": "x_vol_expansion_bull",
+     "ic": 0.0514
+    },
+    {
+     "name": "z42_vol_6h",
+     "ic": 0.0505
+    },
+    {
+     "name": "p_vol_regime_f__vol_6h",
+     "ic": 0.0482
+    },
+    {
+     "name": "p_vol_expansion__vol_6h",
+     "ic": 0.0421
+    },
+    {
+     "name": "z42_vol_ret_int",
+     "ic": 0.0418
+    },
+    {
+     "name": "d6_ret_6h",
+     "ic": -0.0414
+    },
+    {
+     "name": "x_trend_str_bear",
+     "ic": -0.04
+    },
+    {
+     "name": "x_vol_ret_int_bull",
+     "ic": 0.0388
+    },
+    {
+     "name": "p_ret_6h__vol_expansion",
+     "ic": -0.0373
+    },
+    {
+     "name": "x_vol_regime_f_bull",
+     "ic": 0.0364
+    },
+    {
+     "name": "z42_vol_336h",
+     "ic": 0.0346
+    },
+    {
+     "name": "x_fv2_amihud_z_bull",
+     "ic": 0.0328
+    },
+    {
+     "name": "d6_vol_720h",
+     "ic": 0.0315
+    }
+   ]
+  },
+  "ETH": {
+   "screened": [
+    {
+     "name": "z42_funding_rate_zscore",
+     "ic": -0.0801
+    },
+    {
+     "name": "funding_z_mom5d",
+     "ic": -0.0738
+    },
+    {
+     "name": "p_regime_proba_4__regime_proba_5",
+     "ic": 0.0664
+    },
+    {
+     "name": "p_regime_proba_2__regime_proba_6",
+     "ic": -0.0617
+    },
+    {
+     "name": "p_regime_proba_4__funding_rate_zscore",
+     "ic": -0.0563
+    },
+    {
+     "name": "p_funding_rate_zscore__regime_proba_2",
+     "ic": -0.0545
+    },
+    {
+     "name": "x_funding_rate_zscore_bear",
+     "ic": -0.0525
+    },
+    {
+     "name": "p_regime_proba_4__regime_proba_2",
+     "ic": 0.0496
+    },
+    {
+     "name": "p_funding_rate_zscore__regime_proba_5",
+     "ic": -0.049
+    },
+    {
+     "name": "range_compression",
+     "ic": 0.0467
+    },
+    {
+     "name": "d6_regime_proba_6",
+     "ic": -0.0463
+    },
+    {
+     "name": "p_funding_rate_zscore__regime_proba_6",
+     "ic": -0.0454
+    },
+    {
+     "name": "d6_consecutive_red",
+     "ic": 0.0447
+    },
+    {
+     "name": "p_regime_proba_6__regime_proba_5",
+     "ic": -0.0438
+    },
+    {
+     "name": "d6_regime_proba_4",
+     "ic": 0.0438
+    },
+    {
+     "name": "z42_regime_proba_6",
+     "ic": -0.0398
+    },
+    {
+     "name": "d6_regime_proba_5",
+     "ic": 0.0365
+    },
+    {
+     "name": "x_fv2_count_z_bull",
+     "ic": 0.035
+    },
+    {
+     "name": "x_ret_6h_bull",
+     "ic": -0.0339
+    },
+    {
+     "name": "z42_vol_regime_f",
+     "ic": 0.0327
+    },
+    {
+     "name": "d6_ret_6h",
+     "ic": -0.0304
+    }
+   ]
+  },
+  "SOL": {
+   "screened": [
+    {
+     "name": "d6_vol_336h",
+     "ic": 0.0714
+    },
+    {
+     "name": "z42_vol_6h",
+     "ic": 0.0593
+    },
+    {
+     "name": "z42_zscore_48h",
+     "ic": 0.055
+    },
+    {
+     "name": "z42_vol_720h",
+     "ic": 0.0534
+    },
+    {
+     "name": "p_fv2_count_z__vol_6h",
+     "ic": 0.0489
+    },
+    {
+     "name": "d6_vol_720h",
+     "ic": 0.0486
+    },
+    {
+     "name": "z42_rsi_21",
+     "ic": 0.0478
+    },
+    {
+     "name": "d6_vol_6h",
+     "ic": 0.0451
+    },
+    {
+     "name": "p_vol_6h__vol_regime_f",
+     "ic": 0.0444
+    },
+    {
+     "name": "range_compression",
+     "ic": 0.0353
+    },
+    {
+     "name": "z42_fv2_count_z",
+     "ic": 0.0348
+    },
+    {
+     "name": "x_vol_trend_v_bear",
+     "ic": 0.0332
+    },
+    {
+     "name": "z42_vol_ret_int",
+     "ic": 0.032
+    },
+    {
+     "name": "d6_vol_regime_f",
+     "ic": 0.0316
+    }
+   ]
+  }
+ },
+ "provenance": {
+  "git_commit": "372d08c",
+  "git_dirty": true,
+  "data_hashes": {},
+  "config": {},
+  "stamped_at": "2026-08-09T23:01:23.671952+00:00"
+ },
+ "config": {
+  "ic_floor": 0.03,
+  "max_corr": 0.85,
+  "max_keep": 25
+ }
+}
