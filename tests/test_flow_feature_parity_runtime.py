@@ -100,9 +100,24 @@ def test_feed_caches_per_ttl(monkeypatch):
 def test_fv2_columns_match_the_parquet_contract():
     """The 13 names the feed serves must be exactly the columns the training
     parquets carry (order included — the obs builder will consume them
-    positionally)."""
-    df = pd.read_parquet(REPO / "training" / "training_data" / "drl_training"
-                         / "BTC_4H_full.parquet")
+    positionally).
+
+    [P252] The parquets are OPERATOR-LOCAL (training/training_data/ is
+    gitignored, P199/P213), so CI structurally cannot run this parity check
+    — it was the red test-suite's cause from the moment it landed (the P194
+    class: a test whose outcome depends on a gitignored path is invisible
+    to CI and carries its whole signal locally). Skip loudly with the
+    reason; the 13-name contract itself is still pinned unconditionally
+    below so CI keeps THAT half."""
+    assert len(FV2_COLUMNS) == 13
+    pq = (REPO / "training" / "training_data" / "drl_training"
+          / "BTC_4H_full.parquet")
+    if not pq.exists():
+        pytest.skip(
+            "training parquets are operator-local (gitignored, P199/P213) — "
+            "the parquet half of the parity check only runs where the "
+            "training data lives"
+        )
+    df = pd.read_parquet(pq)
     parquet_fv2 = [c for c in df.columns if c.startswith("fv2_")]
     assert sorted(parquet_fv2) == sorted(FV2_COLUMNS)
-    assert len(FV2_COLUMNS) == 13
