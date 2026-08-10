@@ -69,21 +69,36 @@ def main() -> int:
     fired_any = False
     for a in ASSETS:
         closed = 0
+        nodata = 0
         for d in window:
             rep = by_day[d]
+            # [P253] Only horizons that RENDERED a verdict count. An
+            # INSUFFICIENT/DEGENERATE horizon has no vs_threshold key, and
+            # the old `h.get("vs_threshold", "")` turned that absence into ""
+            # -> "not TRADEABLE" -> the day counted as GATE-CLOSED. "Not
+            # enough data" must never read as "the gate closed" — that is the
+            # P199 refusal principle, and this module's own docstring states
+            # it (a tripwire that can fire on missing data deactivates a live
+            # asset on an outage, not on evidence).
             verdicts = [
-                h.get("vs_threshold", "")
-                for h in rep.get("assets", {}).get(a, {}).values()
-                if isinstance(h, dict)
+                v for v in (
+                    h.get("vs_threshold")
+                    for h in rep.get("assets", {}).get(a, {}).values()
+                    if isinstance(h, dict)
+                ) if v
             ]
-            # GATE-CLOSED for the asset = no horizon says TRADEABLE
-            if verdicts and not any("TRADEABLE" in v for v in verdicts):
+            if not verdicts:
+                nodata += 1
+                continue
+            # GATE-CLOSED for the asset = no rendered horizon says TRADEABLE
+            if not any("TRADEABLE" in v for v in verdicts):
                 closed += 1
         fired = (len(window) >= REPORTS_REQUIRED
                  and closed >= REPORTS_REQUIRED
                  and today >= TRIPWIRE_DATE)
         status = ("FIRED" if fired else
-                  f"armed {closed}/{len(window)} closed")
+                  f"armed {closed}/{len(window)} closed"
+                  + (f" ({nodata} no-data day(s) NOT counted)" if nodata else ""))
         print(f"  {a}: {status}")
         if fired:
             fired_any = True

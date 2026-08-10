@@ -1880,6 +1880,15 @@ class MarketDataPipeline:
             _fetch_completed_ts = _time.time()
             _latest_bar_open_ts_ms = int(ohlcv_raw[-1][0]) if ohlcv_raw else 0
 
+            # [P253] These two lines sat AFTER the return below for their
+            # whole life — unreachable, so the failure counter accumulated
+            # LIFETIME failures instead of consecutive ones, and the
+            # "reset CCXT after 10 consecutive failures" control at the
+            # except branch actually recreated a healthy session on every
+            # 10th lifetime failure. Success must reset the streak.
+            self._global_fetch_failure_count = 0
+            self._global_fetch_success_count += 1
+
             return {
                 "current_price": current_price,
                 "prices": prices, "volumes": volumes, "ohlcv_raw": ohlcv_raw,
@@ -1928,9 +1937,8 @@ class MarketDataPipeline:
                 "recent_sell_trade_volume_usd": _trade_sell_notional_usd,
                 "trade_metrics_source": _trade_metrics_source,
             }
-            # [2026-04-10] Reset global failure counter on successful fetch
-            self._global_fetch_failure_count = 0
-            self._global_fetch_success_count += 1
+            # [P253] The [2026-04-10] "reset on success" lines that lived HERE
+            # (after the return = dead code) moved ABOVE the return.
 
         except Exception as e:
             # [P132 2026-04-29] Add type+streak count to the warning so the

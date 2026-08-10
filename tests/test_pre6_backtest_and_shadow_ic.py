@@ -195,8 +195,11 @@ def test_verdict_promote_when_long_window_clean():
     # 12bps cost bar — it is not a clean promote, it is noise that the old gate
     # could not tell apart from an edge. A genuine PROMOTE now needs an IC that
     # is both statistically real and economically positive.
+    # [P253] n rescaled for the overlap correction (t uses n_eff = n / h):
+    # flat n=400 gave n_eff 100/33/16, which the corrected gate rightly
+    # calls insignificant. Inputs rescaled, assertion untouched (P167 rule).
     v = determine_verdict({4: 0.12, 12: 0.13, 24: 0.14},
-                          {4: 400, 12: 400, 24: 400},
+                          {4: 2000, 12: 4000, 24: 6000},
                           sharpe=0.8, window_days=30,
                           fwd_vol_bps_per_h={4: 400.0, 12: 400.0, 24: 400.0})
     assert v is Verdict.PROMOTE

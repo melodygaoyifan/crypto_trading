@@ -206,20 +206,13 @@ except ImportError:
 # the phase (a separate, explicit, operator-gated step). All fail-closed to
 # Kraken. See docs/COINBASE_ENGINE_INTEGRATION_PLAN.md.
 # =====================================================================
-_CB_SLEEVE = None
+# [P253] `_CB_SLEEVE` + `_coinbase_get_sleeve()` DELETED. Zero production
+# callers, and if anything ever had called it, it would have built a SECOND
+# CoinbaseSleeve with ctor defaults — no protective stop, no net-exposure
+# cap, flip_persist=0 — beside the fully-configured one run_live owns: a
+# P139-shaped duplicate-book hazard parked as dead code. The runner's
+# `_coinbase_sleeve` is the only sleeve.
 _CB_ROUTING = None
-
-
-def _coinbase_get_sleeve():
-    global _CB_SLEEVE
-    if _CB_SLEEVE is None:
-        try:
-            from exchange.coinbase_adapter import CoinbaseAdapter
-            from exchange.coinbase_sleeve import CoinbaseSleeve
-            _CB_SLEEVE = CoinbaseSleeve(CoinbaseAdapter())
-        except Exception:
-            _CB_SLEEVE = None
-    return _CB_SLEEVE
 
 
 def _coinbase_get_routing():
@@ -230,13 +223,22 @@ def _coinbase_get_routing():
             import os
             from exchange.routing import RoutingPolicy, CutoverPhase
             _CB_ROUTING = RoutingPolicy()
-            sf = "data/coinbase_routing_state.json"
+            # [P253] Honour HMATS_DATA_DIR like the sleeve does — the old
+            # hardcoded relative path only worked because WORKDIR happens to
+            # sit above the data volume; and close the file handle.
+            sf = os.path.join(os.environ.get("HMATS_DATA_DIR", "data"),
+                              "coinbase_routing_state.json")
             if os.path.exists(sf):
-                d = json.load(open(sf))
+                with open(sf) as fh:
+                    d = json.load(fh)
                 _CB_ROUTING.phase = CutoverPhase(d.get("phase", "PRE_PHASE_2"))
                 if d.get("coinbase_assets"):
                     _CB_ROUTING.coinbase_assets = d["coinbase_assets"]
-        except Exception:
+        except Exception as e:
+            # [P253] A CORRUPT/unreadable state file must be loud and must
+            # not quietly become "nothing is routed" — see _coinbase_routed.
+            logger.error(f"[COINBASE-ROUTING] routing state unreadable: "
+                         f"{type(e).__name__}: {e}")
             _CB_ROUTING = None
     return _CB_ROUTING
 
@@ -245,6 +247,10 @@ def _coinbase_get_routing():
 # Was a single global bool for the retired DRL clause, which meant the first
 # asset consumed the one shot for all of them.
 _CB_GUARD_WARNED: set = set()
+
+# [P253] One-shot latch for the routing fail-safe CRITICAL (routing state
+# unreadable while the flag is ON -> treat as routed / block Kraken entries).
+_CB_ROUTED_FAILSAFE_WARNED: bool = False
 
 
 # [P202] `_resolve_drl_authority_level` lived here. It was P193's fix for the
@@ -466,13 +472,32 @@ def _coinbase_fee_model_warning(ctx) -> None:
 
 def _coinbase_routed(ctx, asset: str) -> bool:
     """True only when the flag is on AND RoutingPolicy routes this asset to
-    Coinbase. Fail-closed to Kraken on any error."""
+    Coinbase.
+
+    [P253] Failure direction REVERSED from the original "fail-closed to
+    Kraken". That comment predates Phase B: with the routing flag ON, an
+    unreadable routing-state file returning False here would silently RESUME
+    KRAKEN SPOT ENTRIES for assets whose real positions live on the Coinbase
+    sleeve — reopening the venue P152 closed, on a file-read error. Post
+    Phase B the safe reading of "flag on but state unreadable" is ROUTED
+    (True): it only ever BLOCKS new Kraken entries; the sleeve driver does
+    its own routing read and simply holds when that also fails. Freeze beats
+    reopening the wrong venue. Flag OFF still returns False (pre-Phase-2
+    behavior unchanged)."""
+    global _CB_ROUTED_FAILSAFE_WARNED
     try:
         if not getattr(ctx.config, "coinbase_routing_enabled", False):
             return False
         rp = _coinbase_get_routing()
         if rp is None:
-            return False
+            if not _CB_ROUTED_FAILSAFE_WARNED:
+                _CB_ROUTED_FAILSAFE_WARNED = True
+                logger.critical(
+                    "[COINBASE-ROUTING] routing flag is ON but the routing "
+                    "state is unreadable — treating ALL assets as "
+                    "Coinbase-routed (Kraken entries BLOCKED, sleeve holds). "
+                    "FIX: restore data/coinbase_routing_state.json")
+            return True
         _routed = rp.venue_for(asset) == "coinbase"
         if _routed:
             # [P202] Only meaningful for an asset that IS routed — the retired
@@ -481,8 +506,20 @@ def _coinbase_routed(ctx, asset: str) -> bool:
             _coinbase_check_cutover_guards(ctx, rp, asset)
             _coinbase_fee_model_warning(ctx)
         return _routed
-    except Exception:  # noqa: silent-swallow — intentional fail-closed to Kraken (default venue) on any routing error
-        return False
+    except Exception as e:  # noqa: silent-swallow — deliberate: routing resolution must never kill execution; logged + fail-safe below
+        # NB: ctx.config may be exactly what raised — read it defensively
+        # here, or the handler re-raises out of the fail-safe.
+        _flag = bool(getattr(getattr(ctx, "config", None),
+                             "coinbase_routing_enabled", False))
+        if not _CB_ROUTED_FAILSAFE_WARNED:
+            _CB_ROUTED_FAILSAFE_WARNED = True
+            logger.critical(
+                f"[COINBASE-ROUTING] routing resolution raised "
+                f"{type(e).__name__}: {e} — "
+                + ("with the flag ON this fails SAFE to routed=True (Kraken "
+                   "entries blocked)" if _flag else
+                   "flag unreadable/off -> not routed (historical behavior)"))
+        return _flag
 
 
 def rebuild_cooldown_decision(

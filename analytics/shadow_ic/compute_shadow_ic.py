@@ -555,15 +555,25 @@ def assess_promotion(
         n_h = int(n_per_h[h])
         detail: Dict[str, Any] = {"ic": ic_h, "n": n_h}
 
-        # (2) Significance. t = IC * sqrt(n - 1) is the standard large-sample
-        # approximation for a rank correlation.
-        t_stat = abs(ic_h) * math.sqrt(max(n_h - 1, 0))
+        # (2) Significance. t = IC * sqrt(n_eff - 1), where n_eff = n / h is
+        # the OVERLAP-corrected effective sample count. [P253] The P231
+        # correction (h-bar forward returns sampled every bar overlap h-fold,
+        # inflating a naive t by ~sqrt(h)) was applied to agent_ic_review and
+        # slope_calibrator but NOT here — so this gate, citing the same P166
+        # doctrine, was holding strategies to a ~2x weaker significance bar at
+        # h=4 than the agent gate. Same arithmetic as agent_ic_review.py.
+        n_eff = max(n_h // max(int(h), 1), 0)
+        t_stat = abs(ic_h) * math.sqrt(max(n_eff - 1, 0))
         detail["t_stat"] = t_stat
+        detail["n_eff"] = n_eff
         if t_stat < min_ic_t_stat:
+            _n_req = int(math.ceil(
+                max(int(h), 1)
+                * ((min_ic_t_stat / max(abs(ic_h), 1e-9)) ** 2 + 1)))
             blockers.append(
                 f"h={h}: IC {ic_h:+.4f} is {t_stat:.2f} SE from zero "
-                f"(need |t| >= {min_ic_t_stat}; n={n_h}, "
-                f"n_required~={int(math.ceil((min_ic_t_stat / max(abs(ic_h), 1e-9)) ** 2)) + 1})"
+                f"(need |t| >= {min_ic_t_stat}; n={n_h}, n_eff={n_eff} "
+                f"overlap-corrected, n_required~={_n_req})"
             )
 
         # (1) Costs. Absent vol => FAIL CLOSED. A cost check that could not run

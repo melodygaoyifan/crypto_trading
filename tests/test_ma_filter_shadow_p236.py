@@ -95,13 +95,18 @@ class TestConfigContract:
         """P201: a flag read via getattr but never parsed silently no-ops."""
         assert 'data.get("coinbase_ma_filter_enforce"' in MAIN
 
-    def test_absent_from_live_profile(self):
+    def test_explicit_false_in_live_profile(self):
+        # [P253] was "absent from the profile" — the flag's state was
+        # invisible from the production config (the one sleeve flag with no
+        # key), so it is now declared EXPLICITLY at its live value. The
+        # guard's intent is unchanged and stronger: enforcement must not
+        # silently flip on.
         live = json.loads((REPO / "configs" / "live_high_risk.json"
                            ).read_text(encoding="utf-8-sig"))
-        assert "coinbase_ma_filter_enforce" not in live, (
-            "enforcement flipped on in the live profile — that is an operator "
-            "decision requiring P166 forward evidence from the ma_filter "
-            "ledger + its own P-entry"
+        assert live.get("coinbase_ma_filter_enforce") is False, (
+            "coinbase_ma_filter_enforce is not explicitly false in the live "
+            "profile — flipping it on is an operator decision requiring P166 "
+            "forward evidence from the ma_filter ledger + its own P-entry"
         )
 
 

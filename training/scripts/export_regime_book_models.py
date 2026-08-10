@@ -1,15 +1,26 @@
 """[P248-GP2] Export the SOL bear-cell ridge for the runtime shadow harness.
 
-The adaptive model's artifact is its CONFIG + current coefficients (Plan V3:
-the refit job IS the model). This script fits ridge_defensive (alpha=30, the
-p247_leakfix winner) on ALL SOL bear-regime rows to date — causal funding,
-redundancy-pruned features — and writes feature names + scaler + coefficients
-+ train sigma to configs/regimebook/SOL_bear_ridge.json (TRACKED, so it
-rides git deploys and its history is its provenance).
+╔════════════════════════════════════════════════════════════════════════╗
+║ [P253] THIS EXPORT IS RETIRED ON EVIDENCE (P250-F1b). Do not re-run    ║
+║ without --force-retired and a NEW P-entry recording why.               ║
+╠════════════════════════════════════════════════════════════════════════╣
+║ The "p247_leakfix winner" this docstring used to celebrate WAS the     ║
+║ leak: the parquet's funding_rate_zscore column sat inside X itself, so ║
+║ the SOL bear ridge trained on a 16h look-ahead. On clean X its CV      ║
+║ collapsed +5.5% -> +0.3% and the SOL perp assembly's validation went   ║
+║ +64.2% -> -22.9% (P250). The deployed artifact                         ║
+║ (configs/regimebook/SOL_bear_ridge.json) was DELETED in commit 816ce56 ║
+║ and the shadow harness deliberately degrades SOL to                    ║
+║ hold-bull/flat (v1_degraded_no_bear_leg). Re-running this script       ║
+║ would silently RESURRECT the retired leg on the next deploy.           ║
+╚════════════════════════════════════════════════════════════════════════╝
 
-Re-run weekly (or after any parquet refresh) and commit the diff. The
-runtime harness activates the leg only when it can produce 100% of the
-named features live — coverage is counted per tick, never assumed.
+Original mechanics (kept for the day a leg EARNS re-export): fits
+ridge_defensive (alpha=30) on ALL SOL bear-regime rows to date — causal
+funding, redundancy-pruned features — and writes feature names + scaler +
+coefficients + train sigma to configs/regimebook/SOL_bear_ridge.json. The
+runtime harness activates the leg only when it can produce 100% of the named
+features live — coverage is counted per tick, never assumed.
 """
 from __future__ import annotations
 
@@ -35,6 +46,19 @@ ALPHA = 30.0
 
 
 def main():
+    # [P253] Refusal gate — see the banner above. The cell was retired on
+    # P250's clean-X measurement; an accidental re-run must not quietly put
+    # the leg back on the deploy path.
+    if "--force-retired" not in sys.argv:
+        print(
+            "REFUSING: the SOL bear ridge export was RETIRED on evidence "
+            "(P250-F1b: the +64.2% was the funding leak; clean validation "
+            "-22.9%). configs/regimebook/SOL_bear_ridge.json was deleted in "
+            "816ce56 and the shadow harness runs SOL as hold-bull/flat by "
+            "design. If a retrained candidate has EARNED re-export (P166 "
+            "forward evidence + its own P-entry), re-run with "
+            "--force-retired.")
+        return 3
     ctx = _ctx("SOL"); ctx["asset"] = "SOL"
     X, y, lab, feats = ctx["X"], ctx["y"], ctx["lab"], ctx["feats"]
     rid = REGIME_ID["bear"]

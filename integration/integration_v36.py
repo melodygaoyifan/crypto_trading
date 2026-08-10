@@ -1705,8 +1705,15 @@ class HMATSv36Engine:
                 not intent.is_reduce_intent and
                 not intent.force_execution):
             _n_rev_pre_sign = 1 if _pre_direction == "long" else -1
-            _n_rev_intent_sign = 1 if intent.direction > 0 else -1
-            if _n_rev_pre_sign != _n_rev_intent_sign:
+            # [P253] direction == 0.0 is "no opinion", NOT a reversal. The old
+            # `1 if > 0 else -1` collapsed flat into SHORT, so a flat signal
+            # force-closed LONG positions (0 read as opposite sign) while
+            # leaving SHORT positions untouched (0 read as same sign) — an
+            # asymmetry this reversal detector never intended. A genuine
+            # no-signal exit belongs to the deadlock/exit paths, not here.
+            _n_rev_intent_sign = (1 if intent.direction > 0
+                                  else (-1 if intent.direction < 0 else 0))
+            if _n_rev_intent_sign != 0 and _n_rev_pre_sign != _n_rev_intent_sign:
                 # Signal direction has reversed vs existing position.
                 # Use same direction as existing position so main.py partial_exit
                 # branch fires correctly (close direction = position direction, target=0).
@@ -2598,6 +2605,13 @@ class HMATSv36Engine:
 
         # [FIX-L1-07] Ghost signals - previously written but never read by fusion
         # structure_confirmed: bool from OFI/orderbook higher_lows -> CONFIRM signal
+        # [P253] STATED PLAINLY (the P228 `regime` decision, same shape): this
+        # CONFIRM's direction is COPIED from quant_direction, so the direction
+        # vote can never disagree with a quant-led decider — a tautology.
+        # structure still acts through its PRESENCE (absent when
+        # structure_confirmed is False -> the neutral-CONFIRM dampen), which
+        # is the boolean the producer actually computes. Giving structure an
+        # independent direction is a NEW signal: shadow + P166 first.
         _struct = agent_signals.get("structure_confirmed", False)
         if _struct:
             signals["structure"] = AgentSignal(

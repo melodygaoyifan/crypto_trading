@@ -2034,7 +2034,15 @@ class ProductionConfig:
 # guard exists to hold. Latent today only because the guard reads the empty
 # Kraken _paper_positions and cannot fire — the exact P206-docstring failure
 # class, found by the P231 calibration research, defused before it can arm.
-_SLEEVE_HOLD_VETOES = ("EXPOSURE_DELTA_BELOW_THRESHOLD", "FLIP_PERSIST_HOLD")
+# [P253] TICK_CRASH_HOLD / EXCHANGE_DISCONNECTED_HOLD added: the crash and
+# Kraken-disconnect early returns in process_4h_tick used to return a BARE
+# TradeIntentV36() (veto_active=False, target_exposure=0), which fell through
+# to the zero_target_exposure branch below -> target 0.0 -> the sleeve
+# FLATTENED all routed assets on any tick crash or Kraken API outage. Those
+# returns now carry these markers so the sleeve holds instead. "State unknown"
+# must never be read as "no position wanted".
+_SLEEVE_HOLD_VETOES = ("EXPOSURE_DELTA_BELOW_THRESHOLD", "FLIP_PERSIST_HOLD",
+                       "TICK_CRASH_HOLD", "EXCHANGE_DISCONNECTED_HOLD")
 
 # Vetoes that exist only because KRAKEN SPOT cannot express the position. They
 # do not apply to a perp venue, which can. B1 blocks short entries when
@@ -2114,6 +2122,15 @@ def sleeve_snapshot_is_post_flatten_stale(pos_contracts, flatten_tick,
     that is actually flat. If the flatten genuinely failed, the next
     reconcile shows the real position and the band re-arms honestly one
     tick later.
+
+    [P253] Window width, stated precisely (the original "last round" was
+    off by one): _live_round_count increments AFTER the decide loop but the
+    flatten is stamped post-increment, so decide on the next round reads
+    round k against a flatten stamped k+1... i.e. `<= 1` here spans the
+    TWO decide passes after a flatten, not one. Deliberately kept: the
+    wider window only ever reads a phantom as flat for one extra tick
+    (conservative — it can only WITHHOLD a hold-band loosening, never grant
+    one), and narrowing it would reopen the exact live incident P251 fixed.
     """
     if not pos_contracts or flatten_tick is None or round_count is None:
         return False
@@ -2173,6 +2190,30 @@ def sleeve_ma_filter_decision(current_contracts, raw_target, ma_dir):
     if raw * pos < 0:
         return 0, "flip_to_flat", "ma_disagrees_flip"
     return 0, "", "ma_disagrees_hold_kept"
+
+
+def stop_reconcile_intended_target(manage_status, intended_target):
+    """[P253] Decide what `intended_target` to pass to ensure_protective_stop
+    after this tick's manage_to_signal.
+
+    The P207 carve-out ("intent beats the snapshot") is only valid when the
+    intent was actually ACTED ON: a flatten that was sent (OK) may not have
+    filled yet, so the snapshot lags and the intent governs. But if the manage
+    call was BLOCKED / FAILED / ERROR / SKIPPED_STALE / FLIP_DEFERRED, the
+    position is whatever it was — passing intended_target=0 there forces
+    `cur=0` inside ensure_protective_stop, which CANCELS every resting stop on
+    a position that still exists, leaving it unprotected for 4 hours. The
+    exact INVERSE of the P207 orphan the carve-out was written to fix.
+
+    OK   -> the order was sent; intent governs (the P207 window).
+    NOOP -> already at target; intent == snapshot, passing it is harmless and
+            keeps the flatten-race protection when target is 0.
+    anything else -> the venue refused or we could not act; the SNAPSHOT is
+            the truth, so pass None and let reconcile govern.
+    """
+    if manage_status in ("OK", "NOOP"):
+        return intended_target
+    return None
 
 
 async def sleeve_fast_risk_action(sleeve, asset: str, action_name: str,
@@ -5629,7 +5670,19 @@ class HMATSProductionRunner:
             self._proof_logs.append(
                 f"[{tick_id}] SKIPPED_DISCONNECTED asset={asset}"
             )
-            return TradeIntentV36()  # Empty non-actionable intent
+            # [P253] NOT a bare TradeIntentV36(): an empty intent has
+            # veto_active=False + target_exposure=0, which the sleeve
+            # translator reads as "hold NOTHING" -> flatten. This gate is the
+            # KRAKEN execution manager — a Kraken disconnect must never
+            # liquidate the Coinbase book (rule 5 of
+            # sleeve_direction_from_intent, arriving through a door its
+            # docstring didn't cover). EXCHANGE_DISCONNECTED_HOLD is in
+            # _SLEEVE_HOLD_VETOES, so the sleeve leaves the position and its
+            # venue-resting stop untouched.
+            return TradeIntentV36(
+                veto_active=True,
+                veto_reason="[TICK] EXCHANGE_DISCONNECTED_HOLD - kraken exec "
+                            "manager not ready; sleeve holds")
 
         # =================================================================
         # [SOTA-G6] Periodic weight re-evaluation every 24h
@@ -5694,8 +5747,18 @@ class HMATSProductionRunner:
                 self.engine._last_phase_result = None
             except Exception:
                 pass  # Engine may not be available
-            # FAIL-CLOSED: no trade on crash, continue to next asset
-            return TradeIntentV36()
+            # FAIL-CLOSED: no NEW trade on crash, continue to next asset.
+            # [P253] Marked as a HOLD veto: a bare TradeIntentV36() reads to
+            # the sleeve translator as target_exposure=0 -> "hold nothing" ->
+            # FLATTEN, so a single tick crash liquidated the Coinbase book at
+            # whatever price the crash landed on. A crash means "state
+            # unknown", and unknown must mean HOLD, not 0 (the P206 rule 5 /
+            # P141 doctrine). The venue-resting stop still caps the risk while
+            # we hold, and PATCH-8 halts LIVE after 3 consecutive crashes.
+            return TradeIntentV36(
+                veto_active=True,
+                veto_reason="[TICK_FATAL] TICK_CRASH_HOLD - tick crashed; "
+                            "sleeve holds")
 
     def _compute_crack_weight(self, asset: str, market_data: dict) -> float:
         """
@@ -6154,11 +6217,41 @@ class HMATSProductionRunner:
                     asset: market_data.get("current_price", 0.0)
                 }
 
+                # [P253] realized_pnl_today PRODUCER. The old read —
+                # market_data.get("realized_pnl_today", 0.0) — had NO writer
+                # anywhere, so SOTARiskController.daily_pnl was permanently
+                # 0.0 and the 10% daily-loss kill switch could never fire
+                # (P170 shape: orphan read with a reassuring default). The
+                # honest measure available every tick is mark-to-market day
+                # PnL: combined equity now vs combined equity at the first
+                # tick of the UTC day. Anchor is persisted (see
+                # _save_paper_positions payload "daily_pnl_anchor") so a
+                # mid-day restart does not silently forgive the day's loss.
+                _dp_day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                if (getattr(self, "_daily_pnl_day", None) != _dp_day
+                        or getattr(self, "_daily_pnl_anchor", None) is None):
+                    self._daily_pnl_day = _dp_day
+                    self._daily_pnl_anchor = float(equity)
+                    logger.info(
+                        f"[P253] daily-PnL anchor set: ${equity:,.2f} "
+                        f"for UTC day {_dp_day}")
+                _dp_today = float(equity) - float(self._daily_pnl_anchor)
+
+                # [P253] Stale-data honesty: pre_tick_update used to stamp the
+                # kraken feed timestamps UNCONDITIONALLY, so the P0 stale-data
+                # guard could only ever report "fresh" — a check that cannot
+                # fail. Only a tick whose market_data is genuinely live may
+                # refresh the guard; a synthetic/invalid fetch lets it age.
+                _dp_fresh = bool(
+                    market_data.get("data_valid", False)
+                    and market_data.get("_source") != "synthetic_fallback")
+
                 self.p0_integrator.pre_tick_update(
                     equity=equity,
                     prices=prices_dict,
-                    realized_pnl_today=market_data.get("realized_pnl_today", 0.0),
+                    realized_pnl_today=_dp_today,
                     regime=market_data.get("regime_state", ""),
+                    data_fresh=_dp_fresh,
                 )
             except Exception as e:
                 logger.warning(f"[P0] Pre-tick update failed: {e}")
@@ -9286,10 +9379,16 @@ class HMATSProductionRunner:
                 # operators see effective threshold drift across the cliff.
                 # Threshold = 1.5 * (fee_bps + slippage + latency); friction
                 # already updated above so just log the resulting taker-side number.
+                # [P253] The field is `latency_cost_bps` — the old
+                # "latency_bps" read never resolved, so this log always used
+                # the 1.0 default (P170 shape, log-only). Note this line's
+                # ×1.5 single-leg arithmetic is the AP-4 era display formula
+                # and does NOT match the P167 gate (2 legs × 1.10) — it is a
+                # log, not the gate.
                 _ap4_friction = float(taker_fee_bps) + float(getattr(
                     self.engine.guarantees.alpha_calculator.FRICTION, "slippage_bps", 5.0
                 )) + float(getattr(
-                    self.engine.guarantees.alpha_calculator.FRICTION, "latency_bps", 1.0
+                    self.engine.guarantees.alpha_calculator.FRICTION, "latency_cost_bps", 1.0
                 ))
                 _ap4_threshold = _ap4_friction * 1.5
                 _ap4_zone = (
@@ -15326,6 +15425,12 @@ class HMATSProductionRunner:
                                          # — vetoes new longs, doesn't flatten
             "PATCH 5] T",                # [PATCH-5] T<n> deadlock :12707
                                          # — only fires when no position exists
+            # [P253] the crash/disconnect early returns in process_4h_tick.
+            # HOLD by construction: they exist precisely so a crashed tick
+            # holds the sleeve instead of flattening it, and they carry
+            # target_exposure=0 anyway (INV-1 cannot fire on them).
+            "TICK CRASH HOLD",
+            "EXCHANGE DISCONNECTED HOLD",
         }
         _veto_reason = getattr(intent, 'veto_reason', '') or ''
         _veto_reason_norm = _veto_reason.upper().replace("_", " ").replace("-", " ")
@@ -15463,8 +15568,15 @@ class HMATSProductionRunner:
         # LOG the skip so "watchdog fired and did nothing" is observable
         # rather than indistinguishable from healthy (P155).
         _frs_sleeve = getattr(self, "_coinbase_sleeve", None)
-        if _frs_sleeve is not None and int(
-                _frs_sleeve.signed_contracts(asset) or 0) != 0:
+        # [P253] Gate on "sleeve exists", NOT on the cached contract count.
+        # signed_contracts() reads _last_positions without checking
+        # _reconcile_ok — a stale-zero cache (e.g. no successful reconcile yet
+        # this process) used to route an EXIT_ONLY past this branch into the
+        # Kraken body, which returned at `cur_exposure <= 0` and silently did
+        # NOTHING while a live sleeve position existed. sleeve_fast_risk_action
+        # does its own fresh reconcile and reports FLAT honestly, so a genuine
+        # flat falls through to the legacy body below.
+        if _frs_sleeve is not None:
             _frs_enabled = bool(getattr(
                 self.config, "fast_risk_sleeve_enabled", False))
             _frs_st, _frs_why = await sleeve_fast_risk_action(
@@ -15481,11 +15593,21 @@ class HMATSProductionRunner:
                         f"sleeve position is protected only by the venue "
                         f"resting stop between 4H ticks"
                     )
-            else:
+            elif _frs_st != "FLAT":
                 logger.warning(
                     f"[FastRiskTick][SLEEVE] {asset}: {result.action.name} "
                     f"-> {_frs_st} ({_frs_why}) - {result.reason}"
                 )
+                if _frs_st == "EXITED":
+                    # [P253] A watchdog flatten must arm the P232 re-entry
+                    # cooldown exactly like a 4H-tick flatten — previously
+                    # only the tick-loop flatten recorded here, so the very
+                    # exits taken under stress were followed by an
+                    # un-cooled-down re-entry 4h later.
+                    if not hasattr(self, "_sleeve_flatten_tick"):
+                        self._sleeve_flatten_tick: Dict[str, int] = {}
+                    self._sleeve_flatten_tick[asset] = int(
+                        getattr(self, "_live_round_count", 0) or 0)
                 if self.fast_risk_tick:
                     if _frs_st in ("EXITED", "REDUCED"):
                         self.fast_risk_tick.on_reduce_executed(
@@ -15498,9 +15620,13 @@ class HMATSProductionRunner:
                         # [P110] failure-detection complement: an urgent
                         # trigger that cannot act must back off, not storm.
                         self.fast_risk_tick.on_exit_failed(asset, _frs_why)
-            # The sleeve holds the position; the Kraken branch below has
-            # nothing to act on either way.
-            return
+            if _frs_st != "FLAT":
+                # The sleeve holds (or held) the position; the Kraken branch
+                # below has nothing to act on either way.
+                return
+            # [P253] FLAT is a fresh venue-confirmed "no sleeve position" —
+            # fall through to the legacy (Kraken) body, which is a no-op for
+            # routed assets but keeps a hypothetical Kraken-held asset covered.
 
         pos = self._paper_positions.get(asset, {})
         cur_exposure = pos.get("exposure", 0.0)
@@ -16102,6 +16228,24 @@ class HMATSProductionRunner:
                 # every loss that happened while the process was down).
                 "fuse_sleeve_anchor_equity": getattr(
                     self, "_fuse_sleeve_anchor_equity", None),
+                # [P253] UTC-day equity anchor for the daily-loss kill switch's
+                # realized_pnl_today producer. Without persistence a mid-day
+                # restart re-anchors to current equity and silently forgives
+                # the day's loss so far.
+                "daily_pnl_anchor": {
+                    "day": getattr(self, "_daily_pnl_day", None),
+                    "equity": getattr(self, "_daily_pnl_anchor", None),
+                },
+                # [P253] SOTARiskController peak/halt/kill-switch state. Was
+                # RAM-only: every restart re-anchored the peak and CLEARED an
+                # active kill switch (the only 35% one in the system).
+                "sota_risk_state": (
+                    self.p0_integrator.risk_controller.to_dict()
+                    if (getattr(self, "p0_integrator", None)
+                        and getattr(self.p0_integrator, "risk_controller", None)
+                        and hasattr(self.p0_integrator.risk_controller, "to_dict"))
+                    else {}
+                ),
                 "cascade_state": cascade_state,
                 "failure_memory_state": failure_memory_state,
                 "confidence_scorer_state": confidence_scorer_state,
@@ -17852,6 +17996,38 @@ class HMATSProductionRunner:
                 except Exception as e:
                     logger.warning(f"[P227b] Bull transition restore failed: {e}")
 
+            # [P253] Restore the daily-PnL anchor (same-UTC-day only — a stale
+            # day's anchor must not measure today's PnL against yesterday).
+            dpa = data.get("daily_pnl_anchor") or {}
+            try:
+                if (dpa.get("day")
+                        and dpa.get("day") == datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                        and dpa.get("equity")):
+                    self._daily_pnl_day = str(dpa["day"])
+                    self._daily_pnl_anchor = float(dpa["equity"])
+                    logger.info(
+                        f"[P253] Restored daily-PnL anchor "
+                        f"${self._daily_pnl_anchor:,.2f} for {self._daily_pnl_day}")
+            except Exception as e:
+                logger.warning(f"[P253] daily-PnL anchor restore failed: {e}")
+
+            # [P253] Restore SOTARiskController peak/halt/kill state.
+            # from_dict is one-directional (can raise the peak / re-arm a
+            # halt, never lower / clear), so a malformed payload cannot
+            # weaken the control.
+            sota_data = data.get("sota_risk_state", {})
+            if (sota_data and getattr(self, "p0_integrator", None)
+                    and getattr(self.p0_integrator, "risk_controller", None)):
+                try:
+                    self.p0_integrator.risk_controller.from_dict(sota_data)
+                    logger.info(
+                        f"[P253] Restored SOTA risk state: "
+                        f"peak=${sota_data.get('peak_equity', 0):,.2f} "
+                        f"state={sota_data.get('risk_state', '?')} "
+                        f"kill={sota_data.get('kill_switch_active', False)}")
+                except Exception as e:
+                    logger.warning(f"[P253] SOTA risk restore failed: {e}")
+
             # [P232] Restore RegimeICFusion shadow state (fail-soft: a bad
             # payload only restarts the evidence clock, never blocks boot)
             ric_data = data.get("regime_ic_state", {})
@@ -19222,6 +19398,13 @@ class HMATSProductionRunner:
                             f"[LIVE] {asset}: prefetch FAILED: {_pf} — "
                             f"SKIPPING asset this tick (refuse to trade on synthetic data)"
                         )
+                        # [P253] Stamp the dashboard status so the heartbeat
+                        # does not keep rendering the PREVIOUS tick's value
+                        # (e.g. a stale "FILLED") for an asset that was
+                        # skipped this tick.
+                        if hasattr(self, "_dashboard_asset_runtime"):
+                            self._dashboard_asset_runtime.setdefault(
+                                asset, {})["execution_status"] = "SKIPPED_PREFETCH"
                         continue
                     else:
                         market_data = _pf
@@ -19324,13 +19507,29 @@ class HMATSProductionRunner:
                 # Root cause: fixed 14400s sleep drifts from Kraken 4H candle boundaries.
                 # Paper loop already uses _seconds_until_next_4h_candle(); live must match.
                 # [HEARTBEAT] 4H tick deep summary → Discord
+                # [P253] _hb_equity/_hb_positions/_hb_eq_valid are initialized
+                # HERE, before the heartbeat try and outside the audit_manager
+                # gate. They used to be bound only inside `if
+                # self.audit_manager:`, so the EQUITY-LOG below either
+                # NameError'd (no audit_manager — swallowed at debug, no
+                # equity history at all) or, after a heartbeat exception,
+                # logged the PREVIOUS iteration's equity under the current
+                # tick number.
+                _hb_equity = 0.0
+                _hb_eq_valid = False
+                _hb_positions = {}
                 try:
                     if self.audit_manager:
-                        _hb_equity = 0.0
                         if self.account_sync:
                             try:
                                 _hb_eq, _hb_valid = self.account_sync.get_equity_safe()
-                                _hb_equity = _hb_eq if _hb_valid else _hb_eq
+                                # [P253] Was `_hb_eq if _hb_valid else _hb_eq`
+                                # — both branches identical, validity
+                                # discarded. Keep the value either way (a
+                                # stale reading beats a fabricated 0.0) but
+                                # CARRY the flag into the history record.
+                                _hb_equity = _hb_eq
+                                _hb_eq_valid = bool(_hb_valid)
                             except Exception:
                                 pass
                         _hb_positions = {
@@ -19575,7 +19774,20 @@ class HMATSProductionRunner:
                                     f"halted={_cb_risk.get('halted', False)}"
                                 )
                             except Exception as _cb_sl_err:
-                                logger.debug(f"[COINBASE-SLEEVE] skipped: {_cb_sl_err}")
+                                # [P253] Was logger.debug — dropped at
+                                # production log level. A failure HERE is not
+                                # cosmetic: snapshot() is the tick's only call
+                                # into update_risk (the 15% sleeve DD halt is
+                                # not evaluated without it) and the only
+                                # refresher of _last_equity_usd (the P208/P210
+                                # caps silently no-op on a stale value) —
+                                # while the order path below keeps running.
+                                logger.error(
+                                    f"[COINBASE-SLEEVE] snapshot/equity "
+                                    f"refresh FAILED: "
+                                    f"{type(_cb_sl_err).__name__}: {_cb_sl_err}"
+                                    f" — DD halt NOT evaluated and exposure "
+                                    f"caps priced on stale equity this tick")
                             # [P209] FEED THE EXISTENCE FUSE THE SLEEVE'S PnL.
                             # Non-Negotiable Rule #3 (28d window, cumulative
                             # loss -> halt) has been inert since Phase B: all
@@ -19941,9 +20153,16 @@ class HMATSProductionRunner:
                                         # later. On CDE (no reduce_only) that orphan
                                         # would OPEN a position, and the next
                                         # reconcile is 4h away. Observed live.
+                                        # [P253] ...but ONLY when the manage call
+                                        # actually acted (OK/NOOP). A BLOCKED/FAILED
+                                        # flatten leaves the position live, and
+                                        # trusting intended_target=0 there cancels
+                                        # its stop — the inverse P207 failure.
                                         _st_res = await _sl.ensure_protective_stop(
                                             _m_a,
-                                            intended_target=_sl.target_for_signal(_m_dir))
+                                            intended_target=stop_reconcile_intended_target(
+                                                _m_st,
+                                                _sl.target_for_signal(_m_dir)))
                                         _st_st = _st_res.get("status")
                                         _cb_stop_summary[_m_a] = _st_st
                                         if _st_st in ("PLACED", "FAILED", "ERROR",
@@ -20022,6 +20241,20 @@ class HMATSProductionRunner:
                         )
 
 
+                # [P253] Persist governor/fuse state at LOOP LEVEL. The only
+                # other run_live save sits inside the Coinbase connectivity
+                # branches — adapter down meant the fuse's 28d window (P209)
+                # and every governor stopped being written, the exact failure
+                # P209 fixed re-armed on a different condition. Idempotent
+                # with the in-branch save; atomic write; fail-soft.
+                try:
+                    self._save_paper_positions(force=True)
+                except Exception as _sv_err:
+                    logger.error(
+                        f"[P253] loop-level state save FAILED: "
+                        f"{type(_sv_err).__name__}: {_sv_err} — governor/fuse "
+                        f"state is STALE on disk")
+
                 # [EQUITY-LOG] Append equity snapshot for Sharpe computation
                 try:
                     if _hb_equity > 0:
@@ -20031,13 +20264,18 @@ class HMATSProductionRunner:
                         _eq_rec = {
                             "ts": datetime.now(timezone.utc).isoformat(),
                             "equity": round(_hb_equity, 4),
+                            # [P253] validity travels with the number — a
+                            # stale equity must be distinguishable downstream
+                            "equity_valid": _hb_eq_valid,
                             "tick": self._live_round_count,
                             "positions": len(_hb_positions),
                         }
                         with open(_eq_path, "a") as _eqf:
                             _eqf.write(json.dumps(_eq_rec) + "\n")
                 except Exception as _eq_err:
-                    logger.debug(f"[EQUITY-LOG] {_eq_err}")
+                    # [P253] was debug — a writer's silent failure makes the
+                    # history file quietly stop (P160 shape)
+                    logger.warning(f"[EQUITY-LOG] append failed: {_eq_err}")
 
                 # [KQ-DIAG] Persist per-strategy firing stats for offline inspection.
                 # [P128 2026-04-28 v3 1.0] DUAL writer:

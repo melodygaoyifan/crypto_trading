@@ -333,6 +333,7 @@ class P0SafetyIntegrator:
         prices: Dict[str, float],
         realized_pnl_today: float = 0.0,
         regime: str = "",
+        data_fresh: bool = True,
     ):
         """
         Update P0 modules at the start of each tick.
@@ -344,6 +345,15 @@ class P0SafetyIntegrator:
             prices: Dict of asset prices
             realized_pnl_today: Today's realized P&L
             regime: R6 - current regime name for DD threshold scaling
+            data_fresh: [P253] whether this tick's market data is genuinely
+                live (data_valid and not the synthetic fallback). The guard
+                timestamps used to be stamped UNCONDITIONALLY here, which made
+                the stale-data guard a check that could never fail — every
+                tick, including one running on a failed fetch's synthetic
+                data, refreshed the very timestamps the guard compares
+                against. Defaults True so callers that predate the parameter
+                keep their behavior; the production caller passes the real
+                freshness.
         """
         self._tick_count += 1
 
@@ -351,9 +361,9 @@ class P0SafetyIntegrator:
         if self.risk_controller:
             self.risk_controller.update_equity(equity, realized_pnl_today, regime=regime)
             self.risk_controller.update_prices(prices)
-        
-        # 2. Update stale data guard timestamps
-        if self.stale_guard:
+
+        # 2. Update stale data guard timestamps — ONLY on genuinely fresh data
+        if self.stale_guard and data_fresh:
             for source in ["kraken_ws", "kraken_rest"]:
                 self.stale_guard.update_timestamp(source)
         

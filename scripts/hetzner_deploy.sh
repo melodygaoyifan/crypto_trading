@@ -28,7 +28,11 @@ echo "=== HMATS Deploy to ${SERVER} ==="
 # revert → push → deploy". Same scanners, different timing.
 if command -v python &>/dev/null; then
     echo "[0/5] Running local CI gate (scanner baselines)..."
-    if ! python -X utf8 tools/ci_check_invariants.py; then
+    # [P253] --require-all-gates: without it, "mypy not installed" is a
+    # silent SKIP + exit 0 (the exact P187 hole, still open on the one path
+    # that actually deploys). With it, a gate that cannot run FAILS the
+    # deploy instead of quietly passing.
+    if ! python -X utf8 tools/ci_check_invariants.py --require-all-gates; then
         echo "ERROR: Local CI gate FAILED. Either:"
         echo "  - rebaseline if intentional: python -X utf8 tools/ci_check_invariants.py --update"
         echo "  - or fix the new findings before deploying."

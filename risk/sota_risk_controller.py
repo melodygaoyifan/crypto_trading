@@ -180,9 +180,72 @@ class SOTARiskController:
                    f"correlation_spike={self.config.spike_threshold}")
     
     # =========================================================================
+    # [P253] PERSISTENCE
+    # =========================================================================
+    # peak_equity, kill_switch_active and risk_state were RAM-only: every
+    # restart re-anchored the peak to current equity (erasing accumulated
+    # drawdown) and silently CLEARED an active HALT/kill-switch — the one 35%
+    # kill switch in the system self-disarmed on every deploy (P150 class).
+
+    def to_dict(self) -> dict:
+        return {
+            "risk_state": self.risk_state.value,
+            "kill_switch_active": bool(self.kill_switch_active),
+            "kill_switch_reason": (
+                self.kill_switch_reason.value
+                if self.kill_switch_reason is not None else None),
+            "kill_switch_time": (
+                self.kill_switch_time.isoformat()
+                if self.kill_switch_time is not None else None),
+            "peak_equity": float(self.peak_equity),
+        }
+
+    def from_dict(self, data: dict) -> None:
+        """Restore persisted state. Deliberately one-directional: this can
+        RAISE the peak and RE-ARM a halt/kill-switch, but a malformed payload
+        can never lower the peak or clear a live halt — the conservative
+        failure direction for a loss-capping control."""
+        if not isinstance(data, dict):
+            return
+        try:
+            saved_peak = float(data.get("peak_equity") or 0.0)
+            if saved_peak > self.peak_equity:
+                self.peak_equity = saved_peak
+        except (TypeError, ValueError):  # noqa: silent-swallow — P223-class value coercion; a malformed peak keeps the current (never-lower) value, which is the stated contract
+            pass
+        try:
+            rs = data.get("risk_state")
+            if rs:
+                restored = RiskState(rs)
+                # Only restore a MORE restrictive state than NORMAL; never
+                # relax the current one.
+                if restored != RiskState.NORMAL and self.risk_state == RiskState.NORMAL:
+                    self.risk_state = restored
+        except (ValueError, KeyError):  # noqa: silent-swallow — unknown enum keeps the current state; restore is one-directional by contract
+            pass
+        if data.get("kill_switch_active"):
+            self.kill_switch_active = True
+            try:
+                r = data.get("kill_switch_reason")
+                self.kill_switch_reason = KillSwitchReason(r) if r else self.kill_switch_reason
+            except (ValueError, KeyError):  # noqa: silent-swallow — the ARMED bit above is the load-bearing restore; reason is best-effort metadata
+                pass
+            try:
+                t = data.get("kill_switch_time")
+                self.kill_switch_time = (
+                    datetime.fromisoformat(t) if t else self.kill_switch_time)
+            except (TypeError, ValueError):  # noqa: silent-swallow — same: metadata only, the CRITICAL log below still fires
+                pass
+            logger.critical(
+                "[SOTA] Kill switch RESTORED as ACTIVE from persisted state "
+                f"(reason={data.get('kill_switch_reason')}, "
+                f"since={data.get('kill_switch_time')}) — manual reset required, "
+                "a restart no longer clears it")
+
+    # =========================================================================
     # REGISTRATION
     # =========================================================================
-    
+
     def register_alert_callback(self, callback: Callable):
         """Register callback for risk alerts."""
         self._alert_callbacks.append(callback)

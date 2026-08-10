@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import time
 from typing import Any, Dict, Optional
@@ -165,8 +166,28 @@ class CoinbaseSleeve:
                     except KeyError:
                         continue
                 side = str(_g(pos, "side") or "").upper()
-                contracts = _f(_g(pos, "number_of_contracts") or _g(pos, "net_size"))
-                signed = contracts if side == "LONG" else -contracts
+                # [P253] Magnitude and sign are derived SEPARATELY, and an
+                # unrecognized side REFUSES rather than guesses. The old
+                # `contracts if side == "LONG" else -contracts` turned ANY
+                # unexpected side string (an SDK enum rename, a missing key,
+                # "FUTURES_POSITION_SIDE_LONG") into a phantom SHORT — the
+                # same reader/writer class as the entry_vwap bug documented
+                # below. abs() on the magnitude also defuses a signed
+                # `net_size` doubling the sign (SHORT + net_size=-2 used to
+                # read as +2). Raising here lands in the except below ->
+                # _reconcile_ok=False -> callers refuse to act on this
+                # snapshot, which is the correct failure direction: a refusal
+                # is recoverable, a fabricated position is not.
+                contracts = abs(_f(_g(pos, "number_of_contracts")
+                                   or _g(pos, "net_size")))
+                if "SHORT" in side:
+                    signed = -contracts
+                elif "LONG" in side:
+                    signed = contracts
+                else:
+                    raise ValueError(
+                        f"unrecognized position side {side!r} for {pid} — "
+                        f"refusing to guess a sign")
                 out[asset] = {
                     "product_id": pid,
                     "side": side,
@@ -887,6 +908,16 @@ class CoinbaseSleeve:
         if not self.is_ready():
             return {"status": "NOT_READY", "asset": asset}
         self.reconcile_positions()
+        # [P253] Same stale-snapshot rule as manage_to_signal. execute_target
+        # is also called DIRECTLY (FORCE_FLAT, sleeve_fast_risk_action), and
+        # sizing `delta` off a failed reconcile's last-known snapshot can
+        # overshoot into an OPPOSITE position on a venue with no reduce_only.
+        # P141: never trade on last-known state — refuse and retry next pass.
+        if not self._reconcile_ok:
+            logger.warning(f"[COINBASE_SLEEVE] execute_target {asset}: skip "
+                           f"(reconcile failed; not acting on stale snapshot)")
+            return {"status": "SKIPPED_STALE", "asset": asset,
+                    "reason": "reconcile_failed"}
         cur = self.signed_contracts(asset)
         delta = int(round(target_signed_contracts - cur))
         if delta == 0:
@@ -905,6 +936,15 @@ class CoinbaseSleeve:
             # marketable limit: cross slightly so it fills; adapter rounds to tick
             prod = self._adapter._client.get_product(product_id=pid)
             mid = _f(_g(prod, "mid_market_price") or _g(prod, "price"))
+            # [P253] A failed/empty get_product yields mid=0.0, and a SELL
+            # limit priced at ~0 is "sell at any price". _notional_usd guards
+            # exactly this case; the ORDER path did not. No price -> no order.
+            if not (mid and math.isfinite(mid) and mid > 0):
+                logger.error(f"[COINBASE_SLEEVE] execute_target {asset}: no "
+                             f"usable price from venue (mid={mid!r}) — "
+                             f"refusing to place a priceless order")
+                return {"status": "ERROR", "asset": asset,
+                        "reason": f"no_price:mid={mid!r}"}
             px = mid * (1.002 if side == "BUY" else 0.998)
             req = OrderRequest(symbol=pid, side=side, size=base_size,
                                order_type=order_type, price=px, post_only=False)

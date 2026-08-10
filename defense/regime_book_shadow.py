@@ -41,7 +41,7 @@ import logging
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -142,7 +142,11 @@ class RegimeBookShadow:
         self._dir.mkdir(parents=True, exist_ok=True)
         self._fund_hist_path = Path(data_dir) / "regimebook_funding_daily.json"
         self._fund_hist = self._load_funding_history()
-        self._last_funding_refresh_day: Optional[str] = None
+        # [P253] PER-ASSET, was a single scalar: the first asset to succeed
+        # set it for the day, so ETH/SOL were skipped until tomorrow and
+        # their funding history could never accrue. Harmless while only BTC
+        # has funding legs; latent the moment another asset gains one.
+        self._last_funding_refresh_day: Dict[str, str] = {}
         self._feature_stash: dict = {}    # asset -> (ts, {name: value})
         self._sol_model = self._load_sol_model(repo_root)
         self._warned: set = set()
@@ -212,7 +216,7 @@ class RegimeBookShadow:
         leak). Best-effort: geo-blocks or outages leave the funding cells
         flat-with-reason, never a fabricated z."""
         today = datetime.now(timezone.utc).date().isoformat()
-        if self._last_funding_refresh_day == today:
+        if self._last_funding_refresh_day.get(asset) == today:
             return
         sym = BINANCE_SYMBOLS.get(asset)
         if not sym:
@@ -228,7 +232,7 @@ class RegimeBookShadow:
             for d in sorted(by_day):
                 if d < today:                          # completed days only
                     self.record_daily_funding(asset, d, by_day[d])
-            self._last_funding_refresh_day = today
+            self._last_funding_refresh_day[asset] = today
         except Exception as e:  # noqa: BLE001
             self._warn_once(f"funding:{asset}",
                             f"[REGIMEBOOK] {asset}: funding backfill failed "

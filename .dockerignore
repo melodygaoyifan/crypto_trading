@@ -16,13 +16,15 @@ tests/
 docs/
 reports/
 scripts/
-# [P192] Dockerfile.engine COPYs an ALLOWLIST of three stdlib-only diagnostic
-# scripts. `scripts/` above excludes the whole directory from the build
-# context, so those COPYs cannot resolve and the image fails to build. The
-# exclusion stays — scripts/ also holds launch_live.py and coinbase_*.py, and
-# baking order-placing code into the live container is what P141 exists to
-# prevent. Re-include exactly the allowlisted files, nothing else.
-# Keep this list in sync with the COPY at Dockerfile.engine:94.
+# [P192] Dockerfile.engine COPYs an ALLOWLIST of stdlib-only diagnostic
+# scripts (four since P213). `scripts/` above excludes the whole directory
+# from the build context, so those COPYs cannot resolve and the image fails
+# to build. The exclusion stays — scripts/ also holds launch_live.py and
+# coinbase_*.py, and baking order-placing code into the live container is
+# what P141 exists to prevent. Re-include exactly the allowlisted files,
+# nothing else. Keep this list in sync with the scripts COPY line in
+# Dockerfile.engine (search "COPY scripts/" — a hardcoded line number here
+# drifted once already, P253).
 !scripts/why_no_trade.py
 !scripts/kq_strategy_diagnostic.py
 !scripts/agent_audit_16.py

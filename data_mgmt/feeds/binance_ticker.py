@@ -32,7 +32,14 @@ async def fetch_binance_snapshot(asset: str, timeout: float = 3.0) -> Optional[D
     Returns dict with keys:
       binance_bid, binance_ask, binance_bid_size, binance_ask_size,
       binance_taker_buy_volume, binance_taker_sell_volume,
-      binance_last_price, binance_timestamp_ms
+      binance_last_price, binance_taker_flow_valid
+
+    [P253] binance_timestamp_ms was promised here and never returned — the
+    docstring lied for the feed's whole life. And taker_buy/sell were 0.0 on
+    a kline failure with nothing marking them, so a failed fetch was
+    byte-identical to genuinely zero flow (the P199/P216 conflation).
+    binance_taker_flow_valid distinguishes the two: False means the zeros
+    are an OUTAGE, not a reading.
 
     Returns None on failure.
     """
@@ -66,6 +73,7 @@ async def fetch_binance_snapshot(asset: str, timeout: float = 3.0) -> Optional[D
             # Use klines endpoint (1h) for taker-buy volume split — only pull latest 1h bar.
             taker_buy = 0.0
             taker_sell = 0.0
+            taker_flow_valid = False  # [P253] failure and zero must differ
             last_price = float(stats.get("lastPrice", 0) or 0) if stats else 0.0
             try:
                 kline_url = f"{_BASE}/api/v3/klines?symbol={sym}&interval=1h&limit=1"
@@ -77,6 +85,7 @@ async def fetch_binance_snapshot(asset: str, timeout: float = 3.0) -> Optional[D
                     total_vol = float(bar[5] or 0)
                     taker_buy = float(bar[9] or 0)
                     taker_sell = max(0.0, total_vol - taker_buy)
+                    taker_flow_valid = True
             except Exception as _kline_err:
                 # [P22 2026-04-24] was bare except: pass which silently returned
                 # taker_buy=taker_sell=0 as if it were valid data, feeding the
@@ -95,6 +104,7 @@ async def fetch_binance_snapshot(asset: str, timeout: float = 3.0) -> Optional[D
                 "binance_taker_buy_volume": taker_buy,
                 "binance_taker_sell_volume": taker_sell,
                 "binance_last_price": last_price,
+                "binance_taker_flow_valid": taker_flow_valid,
             }
     except asyncio.TimeoutError:
         logger.debug(f"[BINANCE_TICKER] {asset} timeout")

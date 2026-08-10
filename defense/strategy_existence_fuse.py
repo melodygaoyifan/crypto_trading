@@ -85,14 +85,17 @@ class ExistenceFuseConfig:
     evaluation_interval_seconds: float = 14400.0  # Every 4 hours (1 tick)
     
     # === RECOVERY ===
-    # [FIX-FUSE-AUTORECOVERY] Was False → system stayed suspended 3.5 days
-    # (Mar 23-26) after 10 consecutive losses with NO way to resume.
-    # During suspension, ALL strategies × ALL assets were blocked = zero trading.
-    # Now True: after 24h cooldown, auto-recover if market has moved enough
-    # for the window metrics to no longer be in suspension territory.
-    # The 28-day rolling window and consecutive_negative_periods checks
-    # still provide structural protection against sustained losses.
-    allow_auto_recovery: bool = False  # [FIX-DA2] Was True — violated documented contract ("NO automatic recovery, requires human confirmation"). Suspension now requires manual_unsuspend=True.
+    # [P253] History, in order, because the two prior comments contradicted
+    # each other: [FIX-FUSE-AUTORECOVERY] flipped this True after the Mar
+    # 23-26 incident (suspended 3.5 days with no way to resume); [FIX-DA2]
+    # then flipped it back to False because auto-recovery violated the
+    # documented contract ("NO automatic recovery, requires human
+    # confirmation" — Non-Negotiable Rule #3: manual recovery only).
+    # False IS the current, deliberate value: recovery is manual via
+    # request_unsuspend(). Consequence: _check_time_based_recovery returns
+    # early and _auto_recover is intentionally unreachable — the Mar-26
+    # Catch-22 is accepted as the price of the manual-recovery contract.
+    allow_auto_recovery: bool = False
 
     # If auto recovery allowed, require this many positive periods
     recovery_positive_periods: int = 2  # [FIX-FUSE-AUTORECOVERY] was 4 → 2 (require 2 positive 4H evaluations = 8h of positive PnL)
@@ -643,7 +646,13 @@ class StrategyExistenceFuse:
                     "equity": r.equity,
                     "trade_count": r.trade_count,
                 }
-                for r in list(self._pnl_history)[-50:]  # Keep last 50
+                # [P253] Was [-50:]. At the live cadence of 6 records/day
+                # (one per 4H tick, P209 feed), 50 records is ~8 days — so
+                # every restart silently TRUNCATED the "28-day" rolling
+                # window to a week and the monthly limit never had a full
+                # month to look at. 28d needs ~168; 30d monthly needs ~180;
+                # 400 covers both with margin at trivial file cost.
+                for r in list(self._pnl_history)[-400:]
             ]
         }
     

@@ -205,7 +205,19 @@ def _load_coinglass_daily(asset: str) -> pd.DataFrame:
         funding = pd.read_parquet(fpath)
         funding["timestamp"] = pd.to_datetime(funding["timestamp"], utc=True)
         funding = funding.sort_values("timestamp")
-        funding["funding_rate_zscore"] = _rolling_zscore(funding["funding_close"], 30)
+        # [P253] CAUSAL SHIFT — this was the P247-F1 leak's last unfixed
+        # carrier (flagged in P247 as "still carries the leak for the DRL
+        # feature set ... for the next parquet rebuild"). Daily rows are
+        # stamped at day-OPEN while funding_close is the day's LAST
+        # (16:00 UTC) event, so z-scoring the unshifted series and
+        # merge_asof(backward)-ing it below hands every 00:00-12:00 bar up to
+        # 16h of FUTURE funding. shift(1) makes bars on day D read day D-1's
+        # close, z-scored over a trailing window ending at D-1 — the same
+        # semantics as regime_model_lab._causal_funding_z, applied at the
+        # source so train_drl_full/train_supervised_full stop consuming the
+        # leaked column through the manifest.
+        funding["funding_rate_zscore"] = _rolling_zscore(
+            funding["funding_close"].shift(1), 30)
     else:
         funding = pd.DataFrame(columns=["timestamp", "funding_rate_zscore"])
 
@@ -923,10 +935,18 @@ def main():
         for src_col, dst_col in DENOISE_COLUMNS.items():
             if src_col in df.columns:
                 raw_vals = df[src_col].values.astype(float)
-                # Fill NaN before denoising (wavelet can't handle NaN)
+                # Fill NaN before denoising (wavelet can't handle NaN).
+                # [P253] CAUSALLY: the old np.nanmedian(raw_vals) injected a
+                # WHOLE-COLUMN statistic into rows the causal wavelet then
+                # treats as observed — a full-history value smuggled past the
+                # P164 fix. ffill (last observation) is strictly backward-
+                # looking; leading NaNs (no past exists) fall back to the
+                # first observed value, which only affects warmup rows the
+                # fold boundaries already discard.
                 nan_mask = np.isnan(raw_vals)
                 if nan_mask.any():
-                    raw_vals[nan_mask] = np.nanmedian(raw_vals)
+                    _filled = pd.Series(raw_vals).ffill().bfill().values
+                    raw_vals[nan_mask] = _filled[nan_mask]
                 # [P164] CAUSAL. The previous `wavelet_denoise(raw_vals)` applied
                 # the transform to the entire 8.5-year column at once, and its
                 # VisuShrink threshold is computed from the whole array — so every

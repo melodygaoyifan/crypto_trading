@@ -1,0 +1,502 @@
+"""[P253] Tests for the 2026-08-09 full-read-through fix batch.
+
+Each class pins one fix from the P253 read-through:
+  1. A tick crash / Kraken disconnect must HOLD the sleeve, never flatten it.
+  2. The protective-stop reconcile must not trust an intent the venue refused.
+  3. execute_target refuses stale snapshots and priceless orders.
+  4. reconcile_positions derives sign safely and refuses unknown sides.
+  5. pre_tick_update refreshes the stale-data guard only on fresh data,
+     and the daily-loss producer arithmetic exists.
+  6. SOTARiskController state survives a restart, one-directionally.
+  7. The existence fuse persists a full 28d window (not 8 days).
+  8. The tripwire never counts "not enough data" as GATE-CLOSED.
+  9. The shadow-IC gate's t-stat is overlap-corrected (P231 parity).
+ 10. Routing failure with the flag ON fails SAFE (routed), not open (Kraken).
+ 11. Source pins for the offline-tooling fixes (funding shift, export guard).
+"""
+
+import asyncio
+import inspect
+import json
+import sys
+from pathlib import Path
+
+import pytest
+
+REPO = Path(__file__).resolve().parent.parent
+
+
+# ---------------------------------------------------------------------------
+# helpers
+# ---------------------------------------------------------------------------
+
+class _Intent:
+    """Minimal stand-in carrying only the fields the translator reads."""
+
+    def __init__(self, direction=0.0, target_exposure=0.0, veto_active=False,
+                 veto_reason=""):
+        self.direction = direction
+        self.target_exposure = target_exposure
+        self.veto_active = veto_active
+        self.veto_reason = veto_reason
+
+
+def _run(coro):
+    return asyncio.get_event_loop().run_until_complete(coro) if False else asyncio.run(coro)
+
+
+# ===========================================================================
+# 1. crash / disconnect -> sleeve HOLD
+# ===========================================================================
+
+class TestCrashIntentHoldsTheSleeve:
+    def test_markers_are_in_the_hold_veto_set(self):
+        import main as hm
+        assert "TICK_CRASH_HOLD" in hm._SLEEVE_HOLD_VETOES
+        assert "EXCHANGE_DISCONNECTED_HOLD" in hm._SLEEVE_HOLD_VETOES
+
+    @pytest.mark.parametrize("reason", [
+        "[TICK_FATAL] TICK_CRASH_HOLD - tick crashed; sleeve holds",
+        "[TICK] EXCHANGE_DISCONNECTED_HOLD - kraken exec manager not ready; "
+        "sleeve holds",
+    ])
+    def test_crash_shaped_intent_translates_to_HOLD_not_flatten(self, reason):
+        import main as hm
+        intent = _Intent(veto_active=True, veto_reason=reason)
+        tgt, why = hm.sleeve_direction_from_intent(intent, fallback_dir=0.9)
+        assert tgt is hm.SLEEVE_HOLD, (
+            f"a crash/disconnect intent flattened the sleeve ({why}) — the "
+            f"exact P253 finding: state-unknown read as position-unwanted")
+
+    def test_a_BARE_empty_intent_still_reads_as_flatten(self):
+        """Pins WHY the return sites must never emit a bare TradeIntentV36():
+        the translator itself deliberately keeps zero_target_exposure ->
+        flatten (that branch is load-bearing for the fuse's close encoding,
+        P206 rule 4). The fix lives at the RETURN SITES."""
+        import main as hm
+        intent = _Intent()  # veto_active=False, target_exposure=0.0
+        tgt, why = hm.sleeve_direction_from_intent(intent, 0.9)
+        assert tgt == 0.0 and why == "zero_target_exposure"
+
+    def test_the_wrapper_has_no_bare_empty_intent_returns_left(self):
+        """process_4h_tick (the crash/disconnect wrapper) must return MARKED
+        intents only. A bare `return TradeIntentV36()` reappearing here is
+        the regression."""
+        import main as hm
+        src = inspect.getsource(hm.HMATSProductionRunner.process_4h_tick)
+        assert "return TradeIntentV36()" not in src, (
+            "a bare empty-intent return is back in process_4h_tick — it reads "
+            "to the sleeve as FLATTEN (P253 finding 1)")
+        assert "TICK_CRASH_HOLD" in src
+        assert "EXCHANGE_DISCONNECTED_HOLD" in src
+
+
+# ===========================================================================
+# 2. stop reconcile must not trust a refused intent
+# ===========================================================================
+
+class TestStopReconcileTrust:
+    @pytest.mark.parametrize("status", ["OK", "NOOP"])
+    def test_acted_statuses_pass_the_intent_through(self, status):
+        import main as hm
+        assert hm.stop_reconcile_intended_target(status, 0) == 0
+        assert hm.stop_reconcile_intended_target(status, 1) == 1
+
+    @pytest.mark.parametrize("status", [
+        "BLOCKED", "FAILED", "ERROR", "SKIPPED_STALE", "FLIP_DEFERRED",
+        "NOT_READY", None, "",
+    ])
+    def test_refused_statuses_fall_back_to_the_snapshot(self, status):
+        import main as hm
+        assert hm.stop_reconcile_intended_target(status, 0) is None, (
+            f"manage status {status!r} let intended_target=0 through — "
+            f"ensure_protective_stop would CANCEL the stop of a position the "
+            f"venue just refused to close (the inverse-P207 failure)")
+
+    def test_run_live_routes_through_the_helper(self):
+        import main as hm
+        src = inspect.getsource(hm.HMATSProductionRunner.run_live)
+        assert "stop_reconcile_intended_target(" in src, (
+            "run_live's ensure_protective_stop call no longer routes its "
+            "intended_target through stop_reconcile_intended_target")
+
+
+# ===========================================================================
+# 3. execute_target guards
+# ===========================================================================
+
+def _bare_sleeve():
+    from exchange.coinbase_sleeve import CoinbaseSleeve
+
+    class _Client:
+        def get_product(self, product_id):
+            return {}  # no price fields -> mid resolves 0.0
+
+    class _Adapter:
+        _client = _Client()
+
+        def is_connected(self):
+            return True
+
+        def to_venue_symbol(self, asset, kind):
+            return "BIP-20DEC30-CDE"
+
+        def _contract_size(self, pid):
+            return 0.01
+
+    s = object.__new__(CoinbaseSleeve)
+    s._adapter = _Adapter()
+    s._last_positions = {}
+    s._reconcile_ok = True
+    s.reconcile_positions = lambda: {}  # type: ignore[assignment]
+    s.can_trade = lambda asset, delta: (True, "ok")  # type: ignore[assignment]
+
+    async def _no_cancel(pid, asset):
+        return 0
+
+    s._cancel_resting_orders = _no_cancel  # type: ignore[assignment]
+    return s
+
+
+class TestExecuteTargetGuards:
+    def test_stale_snapshot_is_refused(self):
+        s = _bare_sleeve()
+        s._reconcile_ok = False
+        res = _run(s.execute_target("BTC", 0))
+        assert res["status"] == "SKIPPED_STALE", (
+            "execute_target acted on a failed reconcile's last-known "
+            "snapshot — sizing delta off stale state can overshoot into an "
+            "OPPOSITE position on a venue with no reduce_only")
+
+    def test_priceless_order_is_refused(self):
+        s = _bare_sleeve()
+        res = _run(s.execute_target("BTC", 1))
+        assert res["status"] == "ERROR"
+        assert res["reason"].startswith("no_price"), (
+            f"expected a no_price refusal, got {res!r} — a SELL limit priced "
+            f"off mid=0.0 is 'sell at any price'")
+
+
+# ===========================================================================
+# 4. reconcile sign safety
+# ===========================================================================
+
+def _sleeve_with_positions(positions):
+    from exchange.coinbase_sleeve import CoinbaseSleeve
+
+    class _Client:
+        def list_futures_positions(self):
+            return {"positions": positions}
+
+    class _Adapter:
+        _client = _Client()
+
+        def is_connected(self):
+            return True
+
+    s = object.__new__(CoinbaseSleeve)
+    s._adapter = _Adapter()
+    s._pid_to_asset = {"BIP-20DEC30-CDE": "BTC"}
+    s._last_positions = {}
+    s._reconcile_ok = False
+    return s
+
+
+class TestReconcileSignSafety:
+    def test_long_is_positive(self):
+        s = _sleeve_with_positions([
+            {"product_id": "BIP-20DEC30-CDE", "side": "LONG",
+             "number_of_contracts": 2}])
+        out = s.reconcile_positions()
+        assert out["BTC"]["signed_contracts"] == 2
+        assert s._reconcile_ok
+
+    def test_sdk_enum_long_is_positive_not_a_phantom_short(self):
+        s = _sleeve_with_positions([
+            {"product_id": "BIP-20DEC30-CDE",
+             "side": "FUTURES_POSITION_SIDE_LONG", "number_of_contracts": 1}])
+        out = s.reconcile_positions()
+        assert out["BTC"]["signed_contracts"] == 1, (
+            "an SDK enum rename manufactured a phantom SHORT — the exact "
+            "P253 finding")
+
+    def test_short_with_signed_net_size_does_not_double_negate(self):
+        s = _sleeve_with_positions([
+            {"product_id": "BIP-20DEC30-CDE", "side": "SHORT",
+             "net_size": -2}])
+        out = s.reconcile_positions()
+        assert out["BTC"]["signed_contracts"] == -2, (
+            "SHORT + signed net_size read as a LONG (sign applied twice)")
+
+    def test_unknown_side_refuses_instead_of_guessing(self):
+        s = _sleeve_with_positions([
+            {"product_id": "BIP-20DEC30-CDE", "side": "SIDEWAYS?",
+             "number_of_contracts": 1}])
+        s._last_positions = {"BTC": {"signed_contracts": 1.0}}
+        out = s.reconcile_positions()
+        assert not s._reconcile_ok, (
+            "an unrecognized side string was guessed into a sign instead of "
+            "failing the reconcile")
+        # last-known snapshot returned, not a fabricated position
+        assert out == {"BTC": {"signed_contracts": 1.0}}
+
+
+# ===========================================================================
+# 5. stale-data guard honesty + daily-loss producer
+# ===========================================================================
+
+class TestPreTickUpdateFreshness:
+    def _integrator(self, calls):
+        from defense.p0_safety_integrator import P0SafetyIntegrator
+
+        class _Guard:
+            def update_timestamp(self, source):
+                calls.append(source)
+
+        p = object.__new__(P0SafetyIntegrator)
+        p._tick_count = 0
+        p.risk_controller = None
+        p.human_override = None
+        p.stale_guard = _Guard()
+        return p
+
+    def test_fresh_data_stamps_the_guard(self):
+        calls = []
+        self._integrator(calls).pre_tick_update(
+            equity=1.0, prices={}, data_fresh=True)
+        assert calls == ["kraken_ws", "kraken_rest"]
+
+    def test_stale_data_lets_the_guard_age(self):
+        calls = []
+        self._integrator(calls).pre_tick_update(
+            equity=1.0, prices={}, data_fresh=False)
+        assert calls == [], (
+            "the stale-data guard was stamped on a tick with invalid data — "
+            "back to a check that can never fail (P253 finding)")
+
+    def test_default_preserves_legacy_callers(self):
+        calls = []
+        self._integrator(calls).pre_tick_update(equity=1.0, prices={})
+        assert calls == ["kraken_ws", "kraken_rest"]
+
+    def test_the_producer_site_exists_and_the_orphan_read_is_gone(self):
+        # comment-stripped scan (the P177 trap: the fix's own comment quotes
+        # the removed string, so a raw-source scan matches its explanation)
+        from tests._source_scan import code_only
+        src = code_only(REPO / "main.py")
+        assert 'market_data.get("realized_pnl_today"' not in src, (
+            "the orphan read is back — no code anywhere writes that key, so "
+            "the daily-loss kill switch reads a permanent 0.0")
+        assert "_daily_pnl_anchor" in src
+
+
+# ===========================================================================
+# 6. SOTA risk controller persistence
+# ===========================================================================
+
+class TestSotaRiskPersistence:
+    def test_peak_survives_a_restart(self):
+        from risk.sota_risk_controller import SOTARiskController
+        c1 = SOTARiskController()
+        c1.update_equity(100_000.0)
+        c1.update_equity(90_000.0)
+        assert c1.peak_equity == 100_000.0
+        c2 = SOTARiskController()
+        c2.update_equity(90_000.0)  # the restart re-anchor this fix removes
+        c2.from_dict(c1.to_dict())
+        assert c2.peak_equity == 100_000.0, (
+            "restart re-anchored the peak — accumulated drawdown erased")
+
+    def test_kill_switch_restores_as_active(self):
+        from risk.sota_risk_controller import SOTARiskController
+        c1 = SOTARiskController()
+        c1.kill_switch_active = True
+        c2 = SOTARiskController()
+        c2.from_dict(c1.to_dict())
+        assert c2.kill_switch_active, (
+            "a restart cleared the kill switch — the control disarmed itself")
+
+    def test_from_dict_is_one_directional(self):
+        from risk.sota_risk_controller import SOTARiskController
+        c = SOTARiskController()
+        c.kill_switch_active = True
+        c.peak_equity = 100_000.0
+        c.from_dict({"kill_switch_active": False, "peak_equity": 1.0})
+        assert c.kill_switch_active, "a payload CLEARED a live kill switch"
+        assert c.peak_equity == 100_000.0, "a payload LOWERED the peak"
+
+    def test_malformed_payload_is_harmless(self):
+        from risk.sota_risk_controller import SOTARiskController
+        c = SOTARiskController()
+        c.from_dict({"peak_equity": "banana", "risk_state": "NOT_A_STATE",
+                     "kill_switch_active": True,
+                     "kill_switch_reason": "NOT_A_REASON",
+                     "kill_switch_time": "not-a-time"})
+        assert c.kill_switch_active  # armed, with best-effort metadata
+        c2 = SOTARiskController()
+        c2.from_dict("not a dict")  # type: ignore[arg-type]
+        assert not c2.kill_switch_active
+
+
+# ===========================================================================
+# 7. fuse window persistence
+# ===========================================================================
+
+class TestFuseWindowPersistence:
+    def test_todict_keeps_a_full_28d_window(self):
+        # comment-stripped: the fix's own comment names the old [-50:] cap
+        from tests._source_scan import code_only
+        src = code_only(REPO / "defense" / "strategy_existence_fuse.py")
+        assert "[-400:]" in src, (
+            "to_dict's record cap shrank — at 6 records/day, anything under "
+            "~168 truncates the 28d window across restarts (P253 finding: "
+            "the old 50-record cap made '28 days' mean 8)")
+        assert "[-50:]" not in src
+
+
+# ===========================================================================
+# 8. tripwire: no-data is not GATE-CLOSED
+# ===========================================================================
+
+class TestTripwireNoData:
+    def _write_report(self, d, day, vs):
+        """vs=None -> all horizons INSUFFICIENT (no vs_threshold key)."""
+        rep = {"generated": f"{day}T06:20:00+00:00", "assets": {
+            a: {"4": ({"vs_threshold": vs} if vs is not None
+                      else {"status": "INSUFFICIENT"})}
+            for a in ("BTC", "ETH", "SOL")}}
+        (d / f"slope_{day}.json").write_text(json.dumps(rep), encoding="utf-8")
+
+    def _run_main(self, reports_dir, monkeypatch, capsys):
+        from analytics.calibration import tripwire_check as tw
+        monkeypatch.setattr(sys, "argv", [
+            "tripwire_check", "--reports-dir", str(reports_dir),
+            "--today", "2026-09-08"])
+        rc = tw.main()
+        return rc, capsys.readouterr().out
+
+    def test_insufficient_reports_do_not_fire_the_tripwire(
+            self, tmp_path, monkeypatch, capsys):
+        for i, day in enumerate(
+                ["2026-08-11", "2026-08-18", "2026-08-25", "2026-09-01"]):
+            self._write_report(tmp_path, day, vs=None)
+        rc, out = self._run_main(tmp_path, monkeypatch, capsys)
+        assert rc == 0, (
+            "four all-INSUFFICIENT reports FIRED the tripwire — 'not enough "
+            "data' was read as 'gate closed', which deactivates a live asset "
+            "on an outage (the P199 refusal principle, violated)")
+        assert "no-data" in out
+
+    def test_real_gate_closed_reports_still_fire(
+            self, tmp_path, monkeypatch, capsys):
+        for day in ["2026-08-11", "2026-08-18", "2026-08-25", "2026-09-01"]:
+            self._write_report(tmp_path, day, vs="BELOW-THRESHOLD")
+        rc, out = self._run_main(tmp_path, monkeypatch, capsys)
+        assert rc == 3, "genuine GATE-CLOSED x4 past the date must still fire"
+        assert "TRIPWIRE FIRED" in out
+
+
+# ===========================================================================
+# 9. shadow-IC overlap correction
+# ===========================================================================
+
+class TestShadowIcOverlapCorrection:
+    def _assess(self, n):
+        from analytics.shadow_ic.compute_shadow_ic import assess_promotion
+        return assess_promotion(
+            ic_per_h={4: 0.10}, n_per_h={4: n}, sharpe=1.0, window_days=30,
+            fwd_vol_bps_per_h={4: 500.0},  # big vol so the cost bar passes
+        )
+
+    def test_t_stat_uses_effective_samples(self):
+        # ic=0.10, n=500, h=4: naive t = 2.23 (passes 2.0), corrected
+        # t = 0.10*sqrt(124) = 1.11 (fails). The naive arithmetic let this
+        # promote-grade significance claim through on 4x-overlapped samples.
+        a = self._assess(500)
+        d = a.per_horizon[4]
+        assert d["n_eff"] == 125
+        assert d["t_stat"] == pytest.approx(0.10 * (124 ** 0.5), rel=1e-6)
+        assert any("n_eff" in b for b in a.blockers), (
+            "overlap-corrected significance did not block — the shadow gate "
+            "is still ~sqrt(h) looser than agent_ic_review on the same "
+            "doctrine (P253 finding)")
+
+    def test_enough_effective_samples_clears_the_significance_bar(self):
+        # n=1700, h=4 -> n_eff=425 -> t = 0.10*sqrt(424) = 2.06 >= 2.0
+        a = self._assess(1700)
+        assert not any("SE from zero" in b for b in a.blockers)
+
+
+# ===========================================================================
+# 10. routing fail-safe
+# ===========================================================================
+
+class TestRoutingFailSafe:
+    def _ctx(self, flag):
+        class _Cfg:
+            coinbase_routing_enabled = flag
+
+        class _Ctx:
+            config = _Cfg()
+
+        return _Ctx()
+
+    def test_unreadable_routing_with_flag_on_blocks_kraken(self, monkeypatch):
+        import core.execution_service as es
+        monkeypatch.setattr(es, "_coinbase_get_routing", lambda: None)
+        monkeypatch.setattr(es, "_CB_ROUTED_FAILSAFE_WARNED", False)
+        assert es._coinbase_routed(self._ctx(True), "BTC") is True, (
+            "flag ON + unreadable routing state resumed KRAKEN SPOT entries "
+            "— reopening the venue P152 closed, on a file-read error")
+
+    def test_flag_off_is_still_not_routed(self, monkeypatch):
+        import core.execution_service as es
+        monkeypatch.setattr(es, "_coinbase_get_routing", lambda: None)
+        monkeypatch.setattr(es, "_CB_ROUTED_FAILSAFE_WARNED", False)
+        assert es._coinbase_routed(self._ctx(False), "BTC") is False
+
+    def test_the_duplicate_sleeve_factory_stays_deleted(self):
+        import core.execution_service as es
+        assert not hasattr(es, "_coinbase_get_sleeve"), (
+            "_coinbase_get_sleeve is back — a second, unconfigured "
+            "CoinbaseSleeve (no stop, no caps) beside the real one is a "
+            "P139-shaped duplicate book")
+
+
+# ===========================================================================
+# 11. offline tooling source pins
+# ===========================================================================
+
+class TestOfflineToolingPins:
+    def test_rebuild_pipeline_funding_is_causally_shifted(self):
+        src = (REPO / "training" / "scripts" / "rebuild_pipeline.py").read_text(
+            encoding="utf-8")
+        assert 'funding["funding_close"].shift(1)' in src.replace("\n", "").replace(
+            "            ", " ") or 'funding["funding_close"].shift(1)' in src, (
+            "the P247-F1 funding look-ahead is back in rebuild_pipeline — "
+            "z-scoring the UNSHIFTED day-close on day-open-stamped rows hands "
+            "every 00:00-12:00 bar up to 16h of future funding")
+
+    def test_sol_export_refuses_without_force(self):
+        src = (REPO / "training" / "scripts" /
+               "export_regime_book_models.py").read_text(encoding="utf-8")
+        assert "--force-retired" in src and "REFUSING" in src, (
+            "the retired SOL bear export lost its refusal gate — re-running "
+            "it silently resurrects a leg retired on evidence (P250-F1b)")
+
+    def test_fastrisk_gate_is_sleeve_exists_not_cached_nonzero(self):
+        import main as hm
+        src = inspect.getsource(
+            hm.HMATSProductionRunner._handle_fast_risk_action)
+        assert "_frs_sleeve is not None:" in src
+        assert "_frs_sleeve is not None and int(" not in src, (
+            "the FastRiskTick sleeve branch is gated on the CACHED contract "
+            "count again — a stale-zero cache silently no-ops an EXIT_ONLY")
+
+    def test_run_live_saves_state_at_loop_level(self):
+        import main as hm
+        src = inspect.getsource(hm.HMATSProductionRunner.run_live)
+        assert src.count("_save_paper_positions(force=True)") >= 2, (
+            "run_live's loop-level state save is gone — with the Coinbase "
+            "adapter down, governor/fuse state stops being persisted (the "
+            "P209 failure re-armed)")

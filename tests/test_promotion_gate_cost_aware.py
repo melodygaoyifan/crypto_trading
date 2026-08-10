@@ -44,9 +44,13 @@ from analytics.shadow_ic.compute_shadow_ic import (
 
 # An IC that is large enough, measured on enough samples, on an asset volatile
 # enough to be worth trading. Everything below perturbs one axis of this.
+# [P253] n_per_h rescaled for the overlap correction (t now uses
+# n_eff = n / h, the P231 arithmetic): the old flat 400 gave n_eff of
+# 100/33/16 at h=4/12/24 — sample counts the corrected gate correctly calls
+# insignificant. Inputs rescaled, assertions untouched (the P167 rule).
 CLEAN = dict(
     ic_per_h={4: 0.12, 12: 0.13, 24: 0.14},
-    n_per_h={4: 400, 12: 400, 24: 400},
+    n_per_h={4: 2000, 12: 4000, 24: 6000},
     sharpe=0.8,
     window_days=30,
     fwd_vol_bps_per_h={4: 400.0, 12: 400.0, 24: 400.0},
@@ -191,7 +195,9 @@ def test_blocker_reports_the_sample_size_that_would_clear():
 
 def test_more_samples_alone_can_turn_a_hold_into_a_promote():
     assert _assess(n_per_h={4: 40, 12: 40, 24: 40}).verdict is not Verdict.PROMOTE
-    assert _assess(n_per_h={4: 400, 12: 400, 24: 400}).verdict is Verdict.PROMOTE
+    # [P253] the promote leg needs overlap-corrected significance:
+    # n_eff = n/h must clear (t_req/ic)^2 + 1 at every horizon
+    assert _assess(n_per_h={4: 2000, 12: 4000, 24: 6000}).verdict is Verdict.PROMOTE
 
 
 # ---------- defect 3: sign ---------------------------------------------------
