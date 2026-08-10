@@ -548,3 +548,90 @@ class TestDeployGateP253b:
         assert "SKIPPED BY FLAG" in r.stderr, (
             "the explicit mypy skip must announce itself — a silent skip is "
             "the exact P187 hole this flag exists to avoid recreating")
+
+
+# ===========================================================================
+# 13. [P253d] the armed / completed ledger items
+# ===========================================================================
+
+class TestP253dArmedItems:
+    def test_correlation_key_now_has_a_real_producer(self):
+        from tests._source_scan import code_only
+        src = code_only(REPO / "data_mgmt" / "market_data_pipeline.py")
+        assert 'raw["correlation_btc_eth_sol"] = _xcorr' in src, (
+            "correlation_btc_eth_sol lost its real producer — back to a "
+            "write-only 0.87 constant that no consumer can ever see move "
+            "(P253c ledger item 1)")
+
+    def test_hard_flatten_threshold_is_unreachable_by_measurement(self):
+        # The arming decision leaned on this: the 20-bar mean pairwise
+        # correlation never reached 0.98 in 8y of data (p95 = 0.93). If the
+        # crisis threshold is ever LOWERED toward the measured range, the
+        # arming must be re-evaluated — this pins the number the decision
+        # assumed.
+        import json
+        live = json.loads((REPO / "configs" / "live_high_risk.json"
+                           ).read_text(encoding="utf-8-sig"))
+        assert live.get("correlation_crisis", 0.98) >= 0.95, (
+            "correlation_crisis was lowered below 0.95 — the P253d arming "
+            "was justified by 0.98 being unreachable (0.000% of 13,013 "
+            "bars); re-measure before accepting this")
+
+    def test_dd_snapshot_reads_sleeve_equity_live(self):
+        import main as hm
+        src = inspect.getsource(hm.HMATSProductionRunner._update_drawdown_snapshot)
+        assert "sleeve_equity_usd()" in src, (
+            "the DD halt is back on the cached _last_equity_usd — one 4H "
+            "bar of sleeve drawdown invisible to the halt (P253c ledger)")
+
+    def test_kraken_spot_map_matches_the_canonical_symbol(self):
+        from exchange.symbol_mapping import to_venue_symbol
+        from core.execution_service import _CANONICAL_SPOT_SYMBOL
+        for asset in ("BTC", "ETH", "SOL"):
+            assert (to_venue_symbol(asset, "kraken", "spot")
+                    == _CANONICAL_SPOT_SYMBOL.get(asset, f"{asset}/USD")), (
+                f"the two sources of truth for the Kraken {asset} spot "
+                f"symbol disagree again — a Kraken revival would trade the "
+                f"wrong quote pair")
+
+    def test_derivatives_router_is_guarded_for_routed_assets(self):
+        from tests._source_scan import code_only
+        src = code_only(REPO / "main.py")
+        assert "_deriv_asset_routed" in src, (
+            "the derivatives router lost its P152-class guard — it runs "
+            "BEFORE execute_intent_v2, so re-enabling it would place Kraken "
+            "derivative orders beside the Coinbase sleeve")
+
+    def test_cc_onchain_backoff_persists_and_binds_without_cache(self, tmp_path, monkeypatch):
+        import time as _time
+        monkeypatch.setenv("HMATS_DATA_DIR", str(tmp_path))
+        from data_mgmt.feeds.cryptocompare_onchain import CryptoCompareOnChainFeed
+        f1 = CryptoCompareOnChainFeed(api_key="k")
+        f1._rate_limited_until = _time.time() + 900
+        f1._persist_backoff()
+        # a fresh instance (= a restart) must restore the ACTIVE backoff
+        f2 = CryptoCompareOnChainFeed(api_key="k")
+        assert f2._rate_limited_until > _time.time(), (
+            "restart cleared an active CryptoCompare backoff — the limiter "
+            "re-arms on restart (the P154 non-control)")
+
+    def test_gambler_regimes_are_real_vocabulary(self):
+        import json
+        live = json.loads((REPO / "configs" / "live_high_risk.json"
+                           ).read_text(encoding="utf-8-sig"))
+        regimes = set(live.get("gambler", {}).get("allowed_regimes", []))
+        live_vocab = {"QUIET_ACCUMULATION", "WEAK_CONSOLIDATION",
+                      "STEADY_UPTREND", "MOMENTUM_RALLY", "NEUTRAL_DRIFT",
+                      "VOLATILE_CHOP", "EXTREME_VOLATILITY", "PANIC_SELLOFF"}
+        assert regimes and regimes <= live_vocab, (
+            f"gambler.allowed_regimes {regimes} contains names outside the "
+            f"live GMM vocabulary — the feature is dormant by vocabulary "
+            f"drift again (P253c ledger item 9)")
+
+    def test_config_schema_is_wired_warn_only(self):
+        from tests._source_scan import code_only
+        src = code_only(REPO / "main.py")
+        assert "validate_config_consistency" in src, (
+            "configs/config_schema.py went back to zero production "
+            "consumers — the live config is never schema-validated")
+        assert "[CONFIG-SCHEMA]" in src

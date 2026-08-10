@@ -27,9 +27,19 @@ SYMBOL_MAP: Dict[str, Dict[str, Dict[str, str]]] = {
             "ETH": "PF_ETHUSD",
             "SOL": "PF_SOLUSD",
         },
+        # [P253d] Aligned to core/execution_service._CANONICAL_SPOT_SYMBOL,
+        # which is the evidence-backed truth: BTC/ETH trade USD pairs (the
+        # account is USD-denominated), while SOL is DELIBERATELY USDT —
+        # P133/P135/P137 moved it after Kraken's SOL/USD pair went dead
+        # (OnMaintenance). This map previously said USDT for all three, and
+        # the first P253d alignment wrongly said USD for all three — the
+        # per-asset test now compares THIS map against the canonical dict so
+        # the two cannot drift apart in either direction again. The only
+        # consumer of this spot map is exchange/kraken_adapter.py (a
+        # placeholder with no production caller), so no live order changes.
         "spot": {
-            "BTC": "BTC/USDT",
-            "ETH": "ETH/USDT",
+            "BTC": "BTC/USD",
+            "ETH": "ETH/USD",
             "SOL": "SOL/USDT",
         },
     },

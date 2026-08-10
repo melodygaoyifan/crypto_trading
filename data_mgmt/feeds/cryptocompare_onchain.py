@@ -102,11 +102,47 @@ class CryptoCompareOnChainFeed:
         self._fetch_count: int = 0
         self._error_count: int = 0
         self._rate_limited_until: float = 0.0  # backoff deadline
+        # [P253d] Persist the backoff across restarts (the P154/P216 rule,
+        # applied to the last CryptoCompare feed that kept it RAM-only). A
+        # restart used to disarm an active rate-limit backoff and resume
+        # hammering an API that just said "wait" — bounded in the worst case
+        # by the persisted P220 account quota, but a limiter that re-arms on
+        # restart is not a limiter (P154).
+        self._state_path = os.path.join(
+            os.environ.get("HMATS_DATA_DIR", "data"), "cc_onchain_state.json")
+        self._restore_backoff()
 
         if self._mock_mode:
             logger.info("[CC_ONCHAIN] MOCK mode (no API key)")
         else:
             logger.info(f"[CC_ONCHAIN] LIVE (key=...{self._api_key[-4:]})")
+
+    def _restore_backoff(self) -> None:
+        try:
+            import json as _json
+            if os.path.exists(self._state_path):
+                d = _json.load(open(self._state_path, encoding="utf-8"))
+                until = float(d.get("rate_limited_until", 0.0) or 0.0)
+                if until > time.time():
+                    self._rate_limited_until = until
+                    logger.warning(
+                        f"[CC_ONCHAIN] restored ACTIVE backoff from disk "
+                        f"({until - time.time():.0f}s remaining) — the "
+                        f"restart does not reset the limiter")
+        except Exception as e:  # noqa: silent-swallow — a corrupt state file must not break startup (P154 precedent); cold start is the stated consequence
+            logger.warning(f"[CC_ONCHAIN] backoff restore failed "
+                           f"({type(e).__name__}) — cold start")
+
+    def _persist_backoff(self) -> None:
+        try:
+            import json as _json
+            tmp = self._state_path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                _json.dump({"rate_limited_until": self._rate_limited_until}, fh)
+            os.replace(tmp, self._state_path)
+        except Exception as e:  # noqa: silent-swallow — telemetry persistence must not break the fetch; the RAM value still governs this process
+            logger.warning(f"[CC_ONCHAIN] backoff persist failed "
+                           f"({type(e).__name__})")
 
     @property
     def data(self) -> Dict[str, CryptoCompareOnChainData]:
@@ -120,7 +156,15 @@ class CryptoCompareOnChainFeed:
         now = time.time()
         if now - self._last_fetch_time < MIN_FETCH_INTERVAL and self._data:
             return self._data
-        if now < self._rate_limited_until and self._data:
+        # [P253d] Backoff is honored UNCONDITIONALLY. The old `and self._data`
+        # meant a restored backoff with an empty post-restart cache did not
+        # block anything — the persistence would have been decorative. During
+        # a backoff with no cache, serve explicit mocks (the same degradation
+        # the in-band rate-limit branch uses) rather than hammering.
+        if now < self._rate_limited_until:
+            if not self._data:
+                for _s in SUPPORTED_ASSETS:
+                    self._data[_s] = CryptoCompareOnChainData(symbol=_s, is_mock=True)
             return self._data
 
         if self._mock_mode:
@@ -157,9 +201,19 @@ class CryptoCompareOnChainFeed:
                                 if resp.status == 429:
                                     from data_mgmt.feeds._http import parse_retry_after
                                     _retry = parse_retry_after(resp.headers.get("Retry-After"))
+                                    # [P253d] The 429 branch used to LOG the
+                                    # Retry-After and DISCARD it (the P216
+                                    # computed-but-unenforced shape) — the
+                                    # retry budget the server granted must be
+                                    # spent and persisted.
+                                    self._rate_limited_until = now + float(
+                                        _retry or RATE_LIMIT_BACKOFF)
+                                    self._persist_backoff()
                                     logger.warning(
                                         f"[CC_ONCHAIN] {symbol} rate-limited (429), "
-                                        f"Retry-After={_retry}s"
+                                        f"backing off "
+                                        f"{self._rate_limited_until - now:.0f}s "
+                                        f"(Retry-After={_retry})"
                                     )
                                 else:
                                     logger.warning(f"[CC_ONCHAIN] {symbol}: HTTP {resp.status}")
@@ -172,6 +226,7 @@ class CryptoCompareOnChainFeed:
                             _resp_msg = str(raw.get("Message", "") or "")
                             if "rate limit" in _resp_msg.lower():
                                 self._rate_limited_until = now + RATE_LIMIT_BACKOFF
+                                self._persist_backoff()  # [P253d] survive restarts
                                 logger.warning(
                                     f"[CC_ONCHAIN] {symbol}: Rate limited — backing off for "
                                     f"{RATE_LIMIT_BACKOFF:.0f}s. Msg: {_resp_msg[:100]}"

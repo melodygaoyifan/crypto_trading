@@ -140,13 +140,25 @@ def test_gate_does_not_report_phantom_findings_on_this_machine():
     This is the regression that mattered — 10 phantom mypy 'NEW findings'
     blocked `scripts/hetzner_deploy.sh` at step 0/5 with no code change
     behind them.
+
+    [P253d re-scope] Runs the gate WITH --skip-mypy, because that is what
+    the deploy path actually runs since P253b: the mypy baseline is a
+    fingerprint of CI's environment (P227 — identical code measures 1076
+    findings in CI and 1083+ on the operator's Windows venv at the SAME
+    mypy release), so the FULL gate legitimately reports phantom findings
+    on non-CI machines and its cleanliness is CI's job (verified per-deploy
+    via the API check in hetzner_deploy.sh). What must hold on EVERY
+    machine is that the env-independent stdlib scanners are clean — that
+    is what this asserts. Before the re-scope this test failed on any
+    dev box with mypy installed, which taught people to ignore it (P196).
     """
     r = subprocess.run(
-        [sys.executable, "-X", "utf8", "tools/ci_check_invariants.py"],
+        [sys.executable, "-X", "utf8", "tools/ci_check_invariants.py",
+         "--skip-mypy"],
         capture_output=True, text=True, cwd=REPO,
     )
     assert r.returncode == 0, (
-        f"CI gate failed:\n{r.stdout}\n{r.stderr}"
+        f"deploy-path gate (--skip-mypy) failed:\n{r.stdout}\n{r.stderr}"
     )
 
 

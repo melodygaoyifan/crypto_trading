@@ -38,7 +38,12 @@ from exchange.symbol_mapping import (
     ("ETH", "coinbase", "perp", "ETP-20DEC30-CDE"),
     ("SOL", "coinbase", "perp", "SLP-20DEC30-CDE"),
     ("BTC", "coinbase", "spot", "BTC-USD"),
-    ("BTC", "kraken", "spot", "BTC/USDT"),
+    # [P253d] BTC/USDT -> BTC/USD: the map was aligned to
+    # core/execution_service._CANONICAL_SPOT_SYMBOL (BTC/ETH trade USD;
+    # SOL stays USDT per P133/P135/P137 — its USD pair died on Kraken).
+    # The full per-asset parity is pinned in test_p253_readthrough_fixes.
+    ("BTC", "kraken", "spot", "BTC/USD"),
+    ("SOL", "kraken", "spot", "SOL/USDT"),
     ("btc", "KRAKEN", "PERP", "PF_XBTUSD"),  # case-insensitive
 ])
 def test_to_venue_symbol_known(asset, venue, market, expected):

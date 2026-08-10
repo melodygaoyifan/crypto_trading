@@ -133,6 +133,17 @@ def main() -> int:
     rep_dir = (Path(args.report_dir) if args.report_dir
                else Path(__file__).resolve().parent / "reports")
     rep_dir.mkdir(parents=True, exist_ok=True)
+    # [P253d] The P237 tripwire reads /opt/hmats/data/evidence_reports and
+    # the two defaults never agreed — coupling rested entirely on the cron
+    # passing --report-dir. The tripwire REFUSES on an empty dir (safe),
+    # but a calibrator run that lands its report where the tripwire will
+    # never look should say so at write time, not be discovered at the
+    # tripwire's next refusal.
+    _tw_dir = Path("/opt/hmats/data/evidence_reports")
+    if not args.report_dir and rep_dir.resolve() != _tw_dir:
+        print(f"NOTE: writing to {rep_dir} — the P237 tripwire reads "
+              f"{_tw_dir}; pass --report-dir there (the cron does) if this "
+              f"report should count toward the tripwire window.")
     out = rep_dir / ("slope_" +
                      datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
                      + ".json")

@@ -1435,6 +1435,24 @@ class MarketDataPipeline:
                     _xcorr = float(np.clip((_c_be + _c_bs + _c_es) / 3.0, -1.0, 1.0))
                     if np.isfinite(_xcorr):
                         raw["cross_asset_correlation"] = _xcorr
+                        # [P253d] ARMED by operator instruction 2026-08-10.
+                        # correlation_btc_eth_sol was a WRITE-ONLY 0.87
+                        # constant for its whole life (P253c ledger), so its
+                        # consumers — the NO_TRADE correlation-collapse
+                        # trigger (>0.92 AND all-three-same-direction AND no
+                        # validated edge) and PATCH-4's corr clause (HARD at
+                        # >=0.98) — could never fire. Measured on 8y of 4H
+                        # parquets before arming: this 20-bar mean pairwise
+                        # measure NEVER reaches 0.98 (0.000% of 13,013 bars;
+                        # p95 = 0.93), so the HARD flatten stays unreachable;
+                        # >=0.92 is 7.8% of bars (17.2% last-year) but the
+                        # collapse trigger's two extra conjuncts make it
+                        # narrow — and it guards exactly the P144 loss mode
+                        # (correlated net exposure into a systemic move).
+                        # NOTE: the GMM's read of cross_asset_correlation
+                        # happens BEFORE this write and stays on its pinned
+                        # 0.87 training default (P221) — do not "fix" that.
+                        raw["correlation_btc_eth_sol"] = _xcorr
 
             # ─── HIGHER LOWS ────────────────────────────────────────────
             _lows = df["low"].values

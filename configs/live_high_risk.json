@@ -324,8 +324,8 @@
     "max_bet_pct_nav": 0.50,
     "confidence_threshold": 0.70,
     "allowed_modes": ["OPPORTUNITY"],
-    "_allowed_regimes_note": "P253 2026-08-09, RECORDED NOT FIXED: these three names exist in NO live GMM vocabulary (k=6/7/7 fits emit QUIET_ACCUMULATION / WEAK_CONSOLIDATION / STEADY_UPTREND / MOMENTUM_RALLY / EXTREME_VOLATILITY / etc.), so with enabled=true the gambler block can never fire — dormant by vocabulary drift, not by decision. Renaming these to real regimes would ARM a dormant sizing feature on a live account (P141: activation is deliberate) — that is an operator decision needing its own P-entry, not a hygiene fix.",
-    "allowed_regimes": ["STRONG_TREND", "IGNITION", "EXPANSION"],
+    "_allowed_regimes_note": "P253d 2026-08-10, ARMED by operator instruction ('tackle all items mentioned'). The previous names (STRONG_TREND/IGNITION/EXPANSION, v5-era phase vocabulary) exist in NO live GMM fit, so the gambler was dormant by vocabulary drift. Now mapped to the real trending regimes: MOMENTUM_RALLY (0 occurrences in 4 months of live diags, P217) and STEADY_UPTREND (3.7% of ticks). Bounded arming, twice over: gambler additionally requires OPPORTUNITY mode + confidence >= 0.70 + 4h between bets + 3/week — AND its sizing output expresses as target_exposure, which the +/-1-contract sleeve DISCARDS (P210/Bug#44), so on the current book this changes logging/attribution, not order size. It becomes a real sizing lever only if Kraken revives or the sleeve gains sizing — both are their own recorded decisions. REVERT: restore the old (never-matching) names or set enabled=false.",
+    "allowed_regimes": ["MOMENTUM_RALLY", "STEADY_UPTREND"],
     "min_seconds_between_bets": 14400,
     "max_bets_per_week": 3
   },

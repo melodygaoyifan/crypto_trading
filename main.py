@@ -14430,7 +14430,28 @@ class HMATSProductionRunner:
                 exec_result = None
                 _deriv_attempted = False
                 _deriv_strategy = str(getattr(intent, 'quant_strategy_id', '') or '').upper()
+                # [P253d] P152-class guard. This router runs BEFORE
+                # execute_intent_v2, so the P152 early return does NOT cover
+                # it — re-enabling the derivatives executor would have placed
+                # KRAKEN derivative orders in parallel with the Coinbase
+                # sleeve for a routed asset. Inert today (executor is None on
+                # the live config); this closes the latent hole. Fail-safe:
+                # if routing cannot be resolved, treat as routed (skip the
+                # Kraken derivatives path), same direction as P253's
+                # _coinbase_routed fail-safe.
+                _deriv_asset_routed = True
                 if self._derivatives_executor is not None:
+                    try:
+                        from core.execution_service import _coinbase_routed
+                        _deriv_asset_routed = _coinbase_routed(_exec_ctx, asset)
+                    except Exception:
+                        _deriv_asset_routed = True
+                    if _deriv_asset_routed:
+                        logger.info(
+                            f"[WIRE-DERIV] {asset}: Kraken derivatives router "
+                            f"SKIPPED — asset is Coinbase-routed (P253d "
+                            f"guard; the sleeve owns this asset's book)")
+                if self._derivatives_executor is not None and not _deriv_asset_routed:
                     try:
                         if self._execution_router is None:
                             from execution.execution_router import ExecutionRouter
@@ -18233,7 +18254,21 @@ class HMATSProductionRunner:
         # than no halt, because it looks like protection.
         _sleeve = getattr(self, "_coinbase_sleeve", None)
         if _sleeve is not None:
-            _sleeve_eq = float(getattr(_sleeve, "_last_equity_usd", 0.0) or 0.0)
+            # [P253d] Read the sleeve equity LIVE at snapshot time. The old
+            # cached `_last_equity_usd` read was refreshed only later in the
+            # same tick (heartbeat block), so the DD halt was always judged
+            # on the PREVIOUS tick's sleeve equity — one 4H bar of drawdown
+            # invisible to the halt. sleeve_equity_usd() already returns the
+            # last-known value on API error (its own fail-safe), and the
+            # getattr fallback below covers a sleeve object without the
+            # method. Tick-1 (sleeve not yet constructed) stays Kraken-only,
+            # which is harmless in the only direction that matters: the
+            # Kraken-only figure UNDERSTATES equity, so the peak it anchors
+            # only ever ratchets UP once the sleeve is included next tick.
+            try:
+                _sleeve_eq = float(_sleeve.sleeve_equity_usd() or 0.0)
+            except Exception:
+                _sleeve_eq = float(getattr(_sleeve, "_last_equity_usd", 0.0) or 0.0)
             if _sleeve_eq > 0:
                 current_equity += _sleeve_eq
             else:
@@ -21218,7 +21253,17 @@ class HMATSProductionRunner:
     _TRANCHE_STATE_FILE = DATA_DIR / "tranche_state.json"  # [FIX-37]
 
     def _sync_tranche_scheduler_with_paper_positions(self) -> None:
-        """Remove stale scheduler positions and align active ones to paper truth."""
+        """Remove stale scheduler positions and align active ones to paper truth.
+
+        [P253d] VERIFIED STRUCTURALLY INERT for Coinbase-routed assets, not
+        merely "Kraken-shaped": the loop below iterates active
+        `_paper_positions` entries, and that dict has been `{}` since the
+        2026-06-13 flatten (P152) — so for the sleeve's book this method
+        prunes stale scheduler entries and syncs NOTHING. Reconnecting the
+        tranche stack to the sleeve is the open P201 architectural decision
+        (its target_exposure output is discarded by the ±1-contract sleeve
+        anyway); until then this runs correctly on an empty set.
+        """
         try:
             scheduler = self.engine.guarantees.tranche_scheduler
         except Exception:
@@ -21942,6 +21987,33 @@ def main():
     
     # Load config (with optional risk profile overlay)
     config = ProductionConfig.from_file(args.config, risk_profile=args.risk_profile)
+
+    # [P253d] WARN-ONLY config-consistency validation at boot.
+    # configs/config_schema.py had ZERO production consumers since P113 —
+    # the live config was never schema-validated anywhere (P253c ledger).
+    # Wired warn-only by deliberate choice: a cross-source drift finding is
+    # worth a loud log line at startup, but converting it into a boot
+    # refusal is a NEW failure mode on the live startup sequence (a bad
+    # annotation would take trading down — the P85 restart-loop class), so
+    # nothing here exits. Fail-soft on every path.
+    try:
+        import json as _cs_json
+        from configs.config_schema import validate_config_consistency
+        with open(args.config, encoding="utf-8-sig") as _cs_fh:
+            _cs_raw = _cs_json.load(_cs_fh)
+        _cs_issues = validate_config_consistency(json_overrides=_cs_raw)
+        for _cs_sev, _cs_msg in _cs_issues:
+            (logger.error if _cs_sev == "ERROR" else logger.warning)(
+                f"[CONFIG-SCHEMA] {_cs_sev}: {_cs_msg} "
+                f"(warn-only — startup proceeds; P253d)")
+        if not _cs_issues:
+            logger.info("[CONFIG-SCHEMA] cross-source consistency: clean")
+    except Exception as _cs_err:
+        logger.warning(
+            f"[CONFIG-SCHEMA] validation unavailable "
+            f"({type(_cs_err).__name__}: {_cs_err}) — startup proceeds "
+            f"(warn-only by design)")
+
     config.mode = RunMode(args.mode)
     config.backtest_start = args.start
     config.backtest_end = args.end
