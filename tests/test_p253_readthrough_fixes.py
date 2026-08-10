@@ -500,3 +500,51 @@ class TestOfflineToolingPins:
             "run_live's loop-level state save is gone — with the Coinbase "
             "adapter down, governor/fuse state stops being persisted (the "
             "P209 failure re-armed)")
+
+
+# ===========================================================================
+# 12. [P253b] deploy gate: CI-green on the deployed sha + explicit mypy skip
+# ===========================================================================
+
+class TestDeployGateP253b:
+    def test_skip_mypy_and_require_all_gates_are_mutually_exclusive(self):
+        import subprocess
+        r = subprocess.run(
+            [sys.executable, "-X", "utf8", "tools/ci_check_invariants.py",
+             "--skip-mypy", "--require-all-gates"],
+            capture_output=True, text=True, cwd=REPO)
+        assert r.returncode == 2, (
+            "--skip-mypy + --require-all-gates must refuse: one demands the "
+            "gate runs, the other refuses to run it")
+
+    def test_deploy_script_verifies_ci_for_the_deployed_sha(self):
+        # comment-stripped (the P177 trap: the step-0 comment explains WHY
+        # --require-all-gates was removed, by naming it)
+        src = "\n".join(
+            line.split("#", 1)[0]
+            for line in (REPO / "scripts" / "hetzner_deploy.sh").read_text(
+                encoding="utf-8").splitlines())
+        # 0a: the deployed sha is origin/main and its CI conclusions are read
+        assert "git ls-remote origin refs/heads/main" in src
+        assert "actions/runs?head_sha=" in src
+        assert "HMATS_DEPLOY_SKIP_CI_CHECK" in src, (
+            "the emergency override is gone — an API outage would then "
+            "permanently block deploys")
+        # 0b: local scanners run WITHOUT local mypy enforcement — the mypy
+        # baseline is CI's environment fingerprint (P227), so a local
+        # --require-all-gates blocks every deploy from the operator machine
+        assert "--skip-mypy" in src
+        assert "--require-all-gates" not in src, (
+            "--require-all-gates is back in the deploy script — the P253b "
+            "finding: it blocked every deploy from the operator machine on "
+            "phantom environment-fingerprint findings")
+
+    def test_skipped_mypy_is_bannered_not_silent(self):
+        import subprocess
+        r = subprocess.run(
+            [sys.executable, "-X", "utf8", "tools/ci_check_invariants.py",
+             "--skip-mypy"],
+            capture_output=True, text=True, cwd=REPO)
+        assert "SKIPPED BY FLAG" in r.stderr, (
+            "the explicit mypy skip must announce itself — a silent skip is "
+            "the exact P187 hole this flag exists to avoid recreating")

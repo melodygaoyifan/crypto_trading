@@ -263,6 +263,17 @@ def main() -> int:
              "Locally the default warns instead, so a dev without mypy is not "
              "blocked.",
     )
+    ap.add_argument(
+        "--skip-mypy",
+        action="store_true",
+        help="[P253b] Skip the mypy gate EXPLICITLY and loudly. Only valid "
+             "when the caller adjudicates types elsewhere — the deploy "
+             "script pairs this with a CI-green check on the deployed sha, "
+             "because the mypy baseline is a fingerprint of CI's "
+             "environment (P227: identical code measures 1076 in CI and "
+             "1083+ on the operator's Windows venv at the SAME mypy "
+             "release). Mutually exclusive with --require-all-gates.",
+    )
     args = ap.parse_args()
 
     BASELINES_DIR.mkdir(parents=True, exist_ok=True)
@@ -309,11 +320,39 @@ def main() -> int:
 
     # [P113 (4/6) 2026-04-27] mypy baseline — locks current 982-error
     # state by error-code; new errors block CI, fixes lower the count.
-    print("[ci_check] running lint_mypy_baseline...", file=sys.stderr)
-    mypy_raw = _run_scanner([
-        "tools/lint_mypy_baseline.py",
-        "--baseline-format",
-    ])
+    # [P253b] --skip-mypy: don't run the analyzer at all, carry the baseline
+    # forward, and say so in a banner that cannot be mistaken for a pass.
+    # This exists for the DEPLOY gate, which verifies the deployed sha's CI
+    # conclusions instead — CI is the canonical mypy environment; a local
+    # run on a different OS/Python reports phantom findings at the same
+    # mypy release (P227's environment fingerprint).
+    if args.skip_mypy and args.require_all_gates:
+        print(
+            "[ci_check] FAIL — --skip-mypy and --require-all-gates are "
+            "mutually exclusive: one demands the gate runs, the other "
+            "refuses to run it.",
+            file=sys.stderr,
+        )
+        return 2
+    if args.skip_mypy:
+        print(
+            "=" * 70 + "\n"
+            "[ci_check] mypy gate SKIPPED BY FLAG (--skip-mypy). This run\n"
+            "  did NOT type-check anything. Only valid when the caller\n"
+            "  verifies CI (the canonical mypy environment) for the same\n"
+            "  tree — the deploy script does exactly that.\n" + "=" * 70,
+            file=sys.stderr,
+        )
+        mypy_raw = (
+            json.loads(MYPY_BASELINE.read_text(encoding="utf-8"))
+            if MYPY_BASELINE.exists() else {}
+        )
+    else:
+        print("[ci_check] running lint_mypy_baseline...", file=sys.stderr)
+        mypy_raw = _run_scanner([
+            "tools/lint_mypy_baseline.py",
+            "--baseline-format",
+        ])
     mypy_norm = mypy_raw
     # [P159] "mypy is not installed" must never read as "mypy found nothing".
     # `python -m mypy` with mypy absent exits 1 and prints to stderr; the old
