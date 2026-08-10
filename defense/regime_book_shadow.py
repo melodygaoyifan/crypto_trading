@@ -142,10 +142,10 @@ class RegimeBookShadow:
         self._dir.mkdir(parents=True, exist_ok=True)
         self._fund_hist_path = Path(data_dir) / "regimebook_funding_daily.json"
         self._fund_hist = self._load_funding_history()
-        self._last_funding_refresh_day = None
-        self._feature_stash = {}          # asset -> (ts, {name: value})
+        self._last_funding_refresh_day: Optional[str] = None
+        self._feature_stash: dict = {}    # asset -> (ts, {name: value})
         self._sol_model = self._load_sol_model(repo_root)
-        self._warned = set()
+        self._warned: set = set()
 
     # ---------------- funding history (persisted, P154 rule) ----------
     def _load_funding_history(self):
@@ -199,7 +199,7 @@ class RegimeBookShadow:
             rows = result.get(key, [])
             closes = [float(r[4]) for r in rows]
             return closes if len(closes) >= MIN_BARS else None
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:  # noqa: silent-swallow — logs via _warn_once (the linter cannot see method-call logging); tick skipped is the stated consequence
             self._warn_once(f"closes:{asset}",
                             f"[REGIMEBOOK] {asset}: OHLC fetch failed "
                             f"({type(e).__name__}) — tick skipped")
@@ -272,7 +272,7 @@ class RegimeBookShadow:
                 if v is not None:
                     try:
                         vals[name] = float(v)
-                    except (TypeError, ValueError):
+                    except (TypeError, ValueError):  # noqa: silent-swallow — value coercion; a non-numeric feature is simply absent from the stash (P223 precedent)
                         pass
             self._feature_stash[asset] = (time.time(), vals)
         except Exception as e:  # noqa: BLE001
