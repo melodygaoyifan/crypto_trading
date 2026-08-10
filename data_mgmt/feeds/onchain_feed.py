@@ -347,7 +347,13 @@ class OnChainFeed:
                 from data_mgmt.feeds.blockchair_onchain import (
                     get_blockchair_onchain_feed,
                 )
-                bc_data = get_blockchair_onchain_feed().fetch()
+                # [P253c] fetch() is synchronous urllib with a 15s timeout —
+                # calling it inline blocked the EVENT LOOP for up to 15s
+                # whenever the 1h cache expired. to_thread keeps the loop
+                # (and every other feed's timeout) honest.
+                import asyncio as _aio
+                bc_data = await _aio.to_thread(
+                    get_blockchair_onchain_feed().fetch)
                 for symbol in ("BTC", "ETH"):
                     bc = bc_data.get(symbol)
                     if bc and not bc.is_mock and bc.onchain_volume_24h_usd > 0:

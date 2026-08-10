@@ -49,10 +49,14 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # First gate: invariants must pass on this commit. Re-running here
-  # (instead of using needs:) so the deploy job is self-contained and
-  # cancelling the invariants workflow can't accidentally green-light
-  # a deploy.
+  # First gate: invariants must pass on this commit. The check is RE-RUN
+  # inside this workflow (via workflow_call + `needs: invariants` below)
+  # rather than trusting the separately-triggered push run's conclusion —
+  # so the deploy job is self-contained and cancelling the push-triggered
+  # invariants run can't accidentally green-light a deploy. [P253c: the
+  # old comment said "instead of using needs:" while the deploy job sits
+  # on `needs: invariants` — it meant "instead of depending on the
+  # push-triggered RUN", corrected.]
   invariants:
     uses: ./.github/workflows/codebase-invariants.yml
 

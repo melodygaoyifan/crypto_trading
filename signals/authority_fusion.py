@@ -1094,8 +1094,10 @@ class AuthorityFusionEngine:
         # LAYER 8: EXECUTION MODE (from Lead-Lag)
         # =====================================================================
         
-        lead_lag_signal = signals.get("lead_lag", AgentSignal())
-        
+        # [P253c] The old `lead_lag_signal = signals.get("lead_lag", ...)`
+        # assignment was DEAD — nothing below read it; EXECUTE-authority mode
+        # selection runs entirely off context.lead_lag_confident. Deleted so
+        # the next reader doesn't hunt for a consumer that never existed.
         if context.mode == SystemMode.OPPORTUNITY and context.lead_lag_confident:
             result.execution_mode = "AGGRESSIVE_TAKER"
             result.urgency = 0.8

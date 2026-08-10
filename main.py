@@ -20175,7 +20175,14 @@ class HMATSProductionRunner:
                                                    if _st_res.get("reason") else "")
                                             )
                                 self._coinbase_manage_last = _m_summary
-                                self._coinbase_stop_last = _cb_stop_summary  # [P197]
+                                # [P253c] `self._coinbase_stop_last` was
+                                # written HERE and read by NOTHING — a dead
+                                # write masquerading as state. The stop
+                                # summary already reaches the operator via
+                                # the [COINBASE-STOP] tick-summary log below;
+                                # a future heartbeat consumer should read
+                                # _cb_stop_summary at composition time, not
+                                # resurrect a write-only attribute.
                                 # [P197] Two explicit `if`s, deliberately NOT
                                 # if/else. The P197 stop-summary block below was
                                 # first written between this `if` and its `else`,
@@ -21263,8 +21270,15 @@ class HMATSProductionRunner:
             if TrancheLevel is not None:
                 try:
                     sched_pos.level = TrancheLevel(tranche_level)
-                except Exception:
-                    pass
+                except Exception as _tl_err:
+                    # [P253c] was a bare pass. tranche_level is clamped 1-4
+                    # above, so this can only fire if the TrancheLevel enum
+                    # itself changes — exactly the drift worth hearing about,
+                    # and the one case the silence guaranteed nobody would.
+                    logger.warning(
+                        f"[TRANCHE_SYNC] {asset}: TrancheLevel({tranche_level}) "
+                        f"rejected ({type(_tl_err).__name__}) — scheduler level "
+                        f"left at {existing_level}")
             sched_pos.direction = "long" if live_direction > 0 else "short"
             sched_pos.target_exposure = live_exposure
 

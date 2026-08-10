@@ -1224,7 +1224,20 @@ class AlphaThresholdCalculator:
         # trades in data/trade_attribution.jsonl: gross_alpha -$179.51 vs fees
         # $689.77. Escape hatch: HMATS_ROUND_TRIP_FRICTION=0 (+ restart).
         friction_legs = self.ROUND_TRIP_LEGS if self._round_trip_friction_enabled else 1.0
-        friction = friction_legs * (fee_bps + slippage_bps + latency_bps) + margin_bps
+        # [P253c] Route through FrictionComponents.per_leg_bps instead of
+        # re-inlining fee+slippage+latency: the helpers existed with no
+        # production caller while this line carried a hand-written copy of
+        # the same arithmetic — two copies of the number that gates every
+        # trade is one drift away from a silent P167 regression. NOT
+        # round_trip_bps: that helper already ADDS _margin_cost_bps, so
+        # calling it and adding margin_bps again double-charges margin —
+        # the exact trap its own docstring warns about, caught by
+        # test_margin_is_charged_once_not_twice on the first attempt.
+        # margin_bps keeps its `or 0.0` guard (the helper's raw field read
+        # would TypeError on None). The fee/slippage/latency locals above
+        # are kept for the reason strings below.
+        friction = (float(friction_legs) * self.FRICTION.per_leg_bps(is_maker)
+                    + margin_bps)
 
         # EV gate threshold = friction × multiplier
         ev_threshold_bps = friction * multiplier

@@ -256,6 +256,16 @@ class RegimeBookShadow:
                                 f"({len(m['features'])} features, "
                                 f"fitted {m.get('fitted_at', '?')})")
                     return m
+                # [P253c] The schema-mismatch case returned None with NO log
+                # — a present-but-malformed export was indistinguishable from
+                # the deliberate no-model degradation. Say which keys are
+                # missing; the degradation itself is still correct.
+                logger.warning(
+                    "[REGIMEBOOK] SOL model at %s FAILED the schema check "
+                    "(missing: %s) — degrading to v1_degraded_no_bear_leg",
+                    path,
+                    sorted({"features", "mean", "scale", "coef", "intercept",
+                            "train_sigma"} - set(m)))
         except Exception as e:  # noqa: BLE001
             logger.warning(f"[REGIMEBOOK] SOL model unreadable: {type(e).__name__}")
         return None
@@ -359,6 +369,13 @@ class RegimeBookShadow:
                 if closes is None:
                     summary.append(f"{asset}=SKIP(no_closes)")
                     continue
+                # [P253c] Kraken's OHLC endpoint returns the IN-PROGRESS 4H
+                # candle as its last row. The lab's books were designed and
+                # measured on COMPLETED bars, so labelling the live regime on
+                # a partial bar is a small train/serve skew in exactly the
+                # harness whose job is parity. Drop it: the label and price
+                # come from the last completed bar, matching the lab.
+                closes = closes[:-1]
                 rec = self.record_tick(asset, closes, price=closes[-1])
                 summary.append(
                     f"{asset}={rec['regime']}/{rec['leg']}/{rec['direction']:+.1f}"
