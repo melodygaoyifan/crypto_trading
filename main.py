@@ -1620,6 +1620,15 @@ class ProductionConfig:
     # getattr defaults so wiring them changes no current behaviour.
     trend_regime_gate: str = "shadow"
     coinbase_flip_persist_ticks: int = 2
+    # [P256] The regimebook SEAT: "off" (default — harness records, nothing
+    # consumed), or "enforce" — the P248/P250 book target OVERRIDES the
+    # direction seat (the same quant-slot injection the trend layer uses),
+    # flowing through the ENTIRE existing chain: alpha gate, veto chain,
+    # P206 translation, sleeve caps and stops. Built ahead of the ~2026-09-09
+    # P166 forward-gate read so a passing roster has an actuator (P230: build
+    # the instrument in the same breath as the rule). Flipping to "enforce"
+    # is an operator decision gated on that P166 read (P141).
+    regimebook_mode: str = "off"
     # [P206] Drive the Coinbase sleeve from the GATED intent instead of the
     # pre-gate `_last_quant_directions` snapshot. The sleeve is the only venue
     # that trades, and it currently reads a signal captured BEFORE the alpha
@@ -1938,6 +1947,9 @@ class ProductionConfig:
                 data.get("trend_regime_gate", "shadow") or "shadow"),
             coinbase_flip_persist_ticks=int(
                 data.get("coinbase_flip_persist_ticks", 2) or 0),
+            # [P256] declared + parsed together (the P201 rule)
+            regimebook_mode=str(
+                data.get("regimebook_mode", "off") or "off"),
             # [P206] see the dataclass comment — changes live order behaviour
             coinbase_use_gated_intent=bool(
                 data.get("coinbase_use_gated_intent", False)),
@@ -8509,6 +8521,65 @@ class HMATSProductionRunner:
                         self._last_quant_directions[asset] = float(_tqd)
             except Exception as _tl_e:
                 logger.warning(f"[TREND-LAYER] {asset} process skip: {type(_tl_e).__name__}: {_tl_e}")
+
+        # [P256] REGIMEBOOK SEAT (default "off" — this block is inert).
+        # In "enforce", the P248/P250 book target takes the direction seat by
+        # the SAME mechanism the trend layer uses: override the quant slot so
+        # the ENTIRE existing chain (alpha gate, veto chain, P206 sleeve
+        # translation, caps, stops) stays binding. Design notes:
+        #   * Runs AFTER the trend inject so enforce deterministically wins
+        #     the seat; "off" leaves trend/quant untouched byte-for-byte.
+        #   * A missing/stale book target takes NO seat (the incumbent signal
+        #     stands) — absence must never read as flat (P2): the book saying
+        #     "flat" is a position (dir=0.0 -> gate/hold-band -> flatten);
+        #     the book being absent is not.
+        #   * signal_edge_bps = 30.0 x |dir| — numerically the SAME effective
+        #     full-strength alpha the trend seat asserts (base 40 x 0.75
+        #     feedback, the recorded P231 constant). Deliberately NOT looser:
+        #     the seat swap changes the DIRECTION source, not the alpha bar,
+        #     and the P237 tripwire discipline governs that constant.
+        #   * Both dicts written (agent_signals copies the pipeline's edge
+        #     BEFORE this point — writing market_data alone would be shadowed,
+        #     the P170 two-dict trap), plus the P149 sleeve bridge.
+        #   * One-tick lag by construction (the harness ticks at loop level
+        #     after decide) — immaterial for a regime-horizon book, noted in
+        #     last_direction()'s docstring.
+        _rb_mode = str(getattr(self.config, "regimebook_mode", "off") or "off")
+        if _rb_mode == "enforce" and getattr(self, "_regime_book_shadow", None) is not None:
+            try:
+                _rb = self._regime_book_shadow.last_direction(asset)
+                if _rb is None:
+                    if not hasattr(self, "_rb_seat_stale_logged"):
+                        self._rb_seat_stale_logged = set()
+                    if asset not in self._rb_seat_stale_logged:
+                        self._rb_seat_stale_logged.add(asset)
+                        logger.warning(
+                            f"[REGIMEBOOK-SEAT] {asset}: enforce is ON but no "
+                            f"fresh book target exists — seat NOT taken, the "
+                            f"incumbent signal stands (logged once per asset)")
+                else:
+                    _rb_dir, _rb_leg, _rb_age = _rb
+                    self._rb_seat_stale_logged = getattr(
+                        self, "_rb_seat_stale_logged", set())
+                    self._rb_seat_stale_logged.discard(asset)
+                    _rb_edge = 30.0 * abs(_rb_dir)
+                    market_data["quant_direction"] = float(_rb_dir)
+                    market_data["quant_confidence"] = 0.9 if _rb_dir else 0.4
+                    market_data["signal_edge_bps"] = _rb_edge
+                    agent_signals["quant_direction"] = float(_rb_dir)
+                    agent_signals["quant_confidence"] = 0.9 if _rb_dir else 0.4
+                    agent_signals["signal_edge_bps"] = _rb_edge
+                    # [P149] sleeve bridge — same reason as the trend seat
+                    self._last_quant_directions[asset] = float(_rb_dir)
+                    logger.info(
+                        f"[REGIMEBOOK-SEAT] {asset}: dir={_rb_dir:+.1f} "
+                        f"leg={_rb_leg} age={_rb_age/3600:.1f}h "
+                        f"edge={_rb_edge:.0f}bps — book holds the seat")
+            except Exception as _rb_e:
+                logger.warning(
+                    f"[REGIMEBOOK-SEAT] {asset}: seat skip on "
+                    f"{type(_rb_e).__name__}: {_rb_e} — incumbent signal stands")
+
         _gmm_probs = market_data.get("_gmm_probs", [])
         _regime_name = market_data.get("regime_state", "UNKNOWN")
         _env_state = self._build_drl_env_state(asset)

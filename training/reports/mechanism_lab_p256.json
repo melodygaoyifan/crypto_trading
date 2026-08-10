@@ -1,0 +1,364 @@
+{
+ "generated": "2026-08-10T06:06:15.247485+00:00",
+ "design_era": [
+  3000,
+  9100
+ ],
+ "note": "DESIGN-ERA ONLY. No validation-era bar scored (hard-asserted in pnl_after_cost).",
+ "adjust": {
+  "BTC": {
+   "base_raw": {
+    "gross": 1.2002,
+    "cost": 0.1305,
+    "net": 1.0697,
+    "turnover_units": 435.0
+   },
+   "grid": [
+    {
+     "k_exit": 1,
+     "k_flip": 2,
+     "min_hold": 0,
+     "gross": 1.3352,
+     "cost": 0.1083,
+     "net": 1.2269,
+     "turnover_units": 361.0
+    },
+    {
+     "k_exit": 1,
+     "k_flip": 1,
+     "min_hold": 6,
+     "gross": 1.3277,
+     "cost": 0.1014,
+     "net": 1.2263,
+     "turnover_units": 338.0
+    },
+    {
+     "k_exit": 2,
+     "k_flip": 2,
+     "min_hold": 0,
+     "gross": 1.3168,
+     "cost": 0.0981,
+     "net": 1.2187,
+     "turnover_units": 327.0
+    },
+    {
+     "k_exit": 3,
+     "k_flip": 2,
+     "min_hold": 6,
+     "gross": 1.2777,
+     "cost": 0.0732,
+     "net": 1.2045,
+     "turnover_units": 244.0
+    },
+    {
+     "k_exit": 2,
+     "k_flip": 1,
+     "min_hold": 6,
+     "gross": 1.2967,
+     "cost": 0.1002,
+     "net": 1.1965,
+     "turnover_units": 334.0
+    },
+    {
+     "k_exit": 2,
+     "k_flip": 2,
+     "min_hold": 6,
+     "gross": 1.2646,
+     "cost": 0.0756,
+     "net": 1.189,
+     "turnover_units": 252.0
+    }
+   ],
+   "verdict": "MECHANISM EARNS"
+  },
+  "ETH": {
+   "base_raw": {
+    "gross": 0.144,
+    "cost": 0.056,
+    "net": 0.088,
+    "turnover_units": 140.0
+   },
+   "grid": [
+    {
+     "k_exit": 3,
+     "k_flip": 1,
+     "min_hold": 0,
+     "gross": 0.2282,
+     "cost": 0.0328,
+     "net": 0.1954,
+     "turnover_units": 82.0
+    },
+    {
+     "k_exit": 3,
+     "k_flip": 2,
+     "min_hold": 0,
+     "gross": 0.2282,
+     "cost": 0.0328,
+     "net": 0.1954,
+     "turnover_units": 82.0
+    },
+    {
+     "k_exit": 2,
+     "k_flip": 1,
+     "min_hold": 0,
+     "gross": 0.1764,
+     "cost": 0.04,
+     "net": 0.1364,
+     "turnover_units": 100.0
+    },
+    {
+     "k_exit": 2,
+     "k_flip": 2,
+     "min_hold": 0,
+     "gross": 0.1764,
+     "cost": 0.04,
+     "net": 0.1364,
+     "turnover_units": 100.0
+    },
+    {
+     "k_exit": 1,
+     "k_flip": 1,
+     "min_hold": 0,
+     "gross": 0.144,
+     "cost": 0.056,
+     "net": 0.088,
+     "turnover_units": 140.0
+    },
+    {
+     "k_exit": 1,
+     "k_flip": 2,
+     "min_hold": 0,
+     "gross": 0.144,
+     "cost": 0.056,
+     "net": 0.088,
+     "turnover_units": 140.0
+    }
+   ],
+   "verdict": "MECHANISM EARNS"
+  },
+  "SOL": {
+   "base_raw": {
+    "gross": 1.3027,
+    "cost": 0.0923,
+    "net": 1.2104,
+    "turnover_units": 142.0
+   },
+   "grid": [
+    {
+     "k_exit": 1,
+     "k_flip": 1,
+     "min_hold": 6,
+     "gross": 1.778,
+     "cost": 0.0559,
+     "net": 1.7221,
+     "turnover_units": 86.0
+    },
+    {
+     "k_exit": 1,
+     "k_flip": 2,
+     "min_hold": 6,
+     "gross": 1.778,
+     "cost": 0.0559,
+     "net": 1.7221,
+     "turnover_units": 86.0
+    },
+    {
+     "k_exit": 2,
+     "k_flip": 1,
+     "min_hold": 6,
+     "gross": 1.6468,
+     "cost": 0.0377,
+     "net": 1.6091,
+     "turnover_units": 58.0
+    },
+    {
+     "k_exit": 2,
+     "k_flip": 2,
+     "min_hold": 6,
+     "gross": 1.6468,
+     "cost": 0.0377,
+     "net": 1.6091,
+     "turnover_units": 58.0
+    },
+    {
+     "k_exit": 2,
+     "k_flip": 1,
+     "min_hold": 0,
+     "gross": 1.5089,
+     "cost": 0.0559,
+     "net": 1.453,
+     "turnover_units": 86.0
+    },
+    {
+     "k_exit": 2,
+     "k_flip": 2,
+     "min_hold": 0,
+     "gross": 1.5089,
+     "cost": 0.0559,
+     "net": 1.453,
+     "turnover_units": 86.0
+    }
+   ],
+   "verdict": "MECHANISM EARNS"
+  }
+ },
+ "jump": {
+  "BTC": {
+   "sma200_select_net": 0.5675,
+   "sma200_holdout_net": 0.5041,
+   "jump_lambda": 20.0,
+   "jump_select_net": 0.9158,
+   "jump_holdout_net": -0.3025,
+   "grid": [
+    {
+     "lam": 20.0,
+     "sel_net": 0.9158
+    },
+    {
+     "lam": 50.0,
+     "sel_net": 0.9158
+    },
+    {
+     "lam": 100.0,
+     "sel_net": 0.9158
+    },
+    {
+     "lam": 5.0,
+     "sel_net": 0.8901
+    },
+    {
+     "lam": 0.0,
+     "sel_net": 0.4634
+    }
+   ],
+   "verdict": "SMA200 stands"
+  },
+  "ETH": {
+   "sma200_select_net": -0.3216,
+   "sma200_holdout_net": 0.4096,
+   "jump_lambda": 0.0,
+   "jump_select_net": 0.0,
+   "jump_holdout_net": 0.1237,
+   "grid": [
+    {
+     "lam": 0.0,
+     "sel_net": 0.0
+    },
+    {
+     "lam": 5.0,
+     "sel_net": 0.0
+    },
+    {
+     "lam": 20.0,
+     "sel_net": 0.0
+    },
+    {
+     "lam": 50.0,
+     "sel_net": 0.0
+    },
+    {
+     "lam": 100.0,
+     "sel_net": 0.0
+    }
+   ],
+   "verdict": "SMA200 stands"
+  },
+  "SOL": {
+   "sma200_select_net": 0.0734,
+   "sma200_holdout_net": 1.0708,
+   "jump_lambda": 0.0,
+   "jump_select_net": 0.0,
+   "jump_holdout_net": 0.0148,
+   "grid": [
+    {
+     "lam": 0.0,
+     "sel_net": 0.0
+    },
+    {
+     "lam": 5.0,
+     "sel_net": 0.0
+    },
+    {
+     "lam": 20.0,
+     "sel_net": 0.0
+    },
+    {
+     "lam": 50.0,
+     "sel_net": 0.0
+    },
+    {
+     "lam": 100.0,
+     "sel_net": 0.0
+    }
+   ],
+   "verdict": "SMA200 stands"
+  }
+ },
+ "fv2tilt": {
+  "BTC": {
+   "base": {
+    "gross": 1.2002,
+    "cost": 0.1305,
+    "net": 1.0697,
+    "turnover_units": 435.0
+   },
+   "tilted": {
+    "gross": 1.1971,
+    "cost": 0.1263,
+    "net": 1.0708,
+    "turnover_units": 421.0
+   },
+   "entries_blocked": 56,
+   "verdict": "TILT EARNS"
+  },
+  "SOL": {
+   "base": {
+    "gross": 1.3027,
+    "cost": 0.0923,
+    "net": 1.2104,
+    "turnover_units": 142.0
+   },
+   "tilted": {
+    "gross": 1.2016,
+    "cost": 0.0884,
+    "net": 1.1132,
+    "turnover_units": 136.0
+   },
+   "entries_blocked": 14,
+   "verdict": "base book stands"
+  }
+ },
+ "volfilter": {
+  "SOL": {
+   "design": {
+    "base": {
+     "gross": 1.3027,
+     "cost": 0.0923,
+     "net": 1.2104,
+     "turnover_units": 142.0
+    },
+    "filtered": {
+     "gross": 0.7865,
+     "cost": 0.0728,
+     "net": 0.7137,
+     "turnover_units": 112.0
+    }
+   },
+   "pre_design": {
+    "base": {
+     "gross": 3.3571,
+     "cost": 0.0546,
+     "net": 3.3025,
+     "turnover_units": 84.0
+    },
+    "filtered": {
+     "gross": 3.0207,
+     "cost": 0.0793,
+     "net": 2.9414,
+     "turnover_units": 122.0
+    }
+   },
+   "verdict": "base stands"
+  }
+ }
+}

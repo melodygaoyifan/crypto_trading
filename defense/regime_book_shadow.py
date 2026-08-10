@@ -87,6 +87,45 @@ def causal_funding_z(daily_rates) -> Optional[float]:
     return (w[-1] - mu) / sd
 
 
+# [P256] Partial-adjustment parameters (k_exit, k_flip, min_hold) — the
+# mechanism-lab design-era winners (training/mechanism_lab.py --stage adjust,
+# report mechanism_lab_p256.json): the ONLY mechanism of four that earned on
+# all three books (BTC +1.07->+1.23, ETH +0.09->+0.20, SOL +1.21->+1.72
+# design-era net). In-design selection = a HYPOTHESIS (P244); the adjusted
+# ledger below is its forward exam alongside the raw book's.
+ADJ_PARAMS = {"BTC": (1, 2, 0), "ETH": (3, 1, 0), "SOL": (1, 1, 6)}
+
+
+def adjust_step(state: dict, want: float, k_exit: int, k_flip: int,
+                min_hold: int) -> float:
+    """One step of the asymmetric persistence mechanism — MUST stay in exact
+    parity with training/mechanism_lab.apply_adjust (a lab/runtime skew here
+    would make the forward ledger measure a different mechanism than the one
+    the lab selected; pinned by a parity test). Semantics: exits need k_exit
+    consecutive bars, flips k_flip, fresh entries hold >= min_hold bars
+    against plain exits (flips still honor k_flip); entries from flat are
+    instant. Restart resets the streak — a restart only DELAYS a change
+    (conservative, the P198 trade-off)."""
+    cur = state.setdefault("cur", 0.0)
+    if want == cur:
+        state["streak"] = 0
+        state["want_prev"] = want
+        state["held"] = state.get("held", 0) + 1
+        return cur
+    state["streak"] = (state.get("streak", 0) + 1
+                       if want == state.get("want_prev") else 1)
+    state["want_prev"] = want
+    need = k_flip if (want != 0 and cur != 0) else (
+        k_exit if want == 0 else 1)
+    if cur != 0 and state.get("held", 0) < min_hold and want == 0:
+        return cur
+    if state["streak"] >= need:
+        state["cur"] = want
+        state["streak"] = 0
+        state["held"] = 0
+    return state["cur"]
+
+
 def book_target(asset: str, regime: str, funding_z: Optional[float]) -> tuple:
     """(target_position, leg_name). The p247_leakfix winners, verbatim.
     A funding cell with NO causal funding history goes FLAT with a named
@@ -148,8 +187,35 @@ class RegimeBookShadow:
         # has funding legs; latent the moment another asset gains one.
         self._last_funding_refresh_day: Dict[str, str] = {}
         self._feature_stash: dict = {}    # asset -> (ts, {name: value})
+        self._last_records: Dict[str, dict] = {}   # [P256] asset -> last rec
+        self._adj_state: Dict[str, dict] = {}      # [P256] adjust mechanism
         self._sol_model = self._load_sol_model(repo_root)
         self._warned: set = set()
+
+    # ---------------- [P256] the SEAT accessor -------------------------
+    def last_direction(self, asset: str, max_age_s: float = 6 * 3600):
+        """The book's most recent recorded target for `asset`, or None.
+
+        Returns ``(direction, leg, age_s)`` when a record exists and is
+        younger than ``max_age_s`` (default 6h = one 4H tick + slack, the
+        P156 staleness-bound rule). None means "no fresh opinion" — the
+        caller must treat that as NO SEAT INPUT, never as flat (the P2
+        missing-vs-neutral rule): the book saying "flat" is a position;
+        the book being absent is not.
+
+        NOTE the one-tick lag by construction: tick() runs at LOOP level
+        AFTER decide (P248 wiring), so a seat consumer inside decide reads
+        the PREVIOUS loop's target. The book is a regime-level signal
+        (bull/bear/peace + daily funding z) — a 4h lag is immaterial next
+        to its decision horizon, but it is a fact, not an accident.
+        """
+        rec = self._last_records.get(asset)
+        if not rec:
+            return None
+        age = time.time() - float(rec.get("ts", 0.0) or 0.0)
+        if age > max_age_s:
+            return None
+        return float(rec.get("direction", 0.0) or 0.0), str(rec.get("leg", "")), age
 
     # ---------------- funding history (persisted, P154 rule) ----------
     def _load_funding_history(self):
@@ -349,6 +415,27 @@ class RegimeBookShadow:
             path = self._dir / f"regimebook_{asset}.jsonl"
             with open(path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(rec) + "\n")
+            # [P256] Stash for the SEAT (last_direction below). Written only
+            # on a successful record so a failed tick can never serve a
+            # half-computed target.
+            self._last_records[asset] = rec
+            # [P256] The ADJUSTED book's forward ledger — same glob prefix
+            # (regimebook_*), distinct strategy name, so the scorer groups it
+            # as its own candidate with zero scorer changes. Fail-soft: the
+            # raw record above is already written and returned.
+            try:
+                ke, kf, mh = ADJ_PARAMS.get(asset, (1, 1, 0))
+                adj = adjust_step(self._adj_state.setdefault(asset, {}),
+                                  float(target), ke, kf, mh)
+                arec = dict(rec, strategy="regimebook_adj",
+                            direction=float(adj), confidence=abs(float(adj)),
+                            adj_params=[ke, kf, mh])
+                apath = self._dir / f"regimebook_adj_{asset}.jsonl"
+                with open(apath, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(arec) + "\n")
+            except Exception as _adj_e:  # noqa: silent-swallow — the adjusted ledger is an overlay; its failure must not lose the raw record (logged)
+                logger.warning("[REGIMEBOOK] %s adjusted-ledger write failed: "
+                               "%s", asset, type(_adj_e).__name__)
             return rec
         except Exception as e:  # noqa: BLE001
             logger.warning("[REGIMEBOOK] %s tick record failed: %s — shadow "

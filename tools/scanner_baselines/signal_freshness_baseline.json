@@ -1,10 +1,11 @@
 {
-  "blind_only_keys_count": 150,
-  "by_category": {
-    "BLIND": 228,
-    "EXEMPT_TICK_LOCAL": 36,
-    "GUARDED": 7,
-    "TIMESTAMPED": 13
-  },
-  "total_writes": 284
+ "blind_only_keys_count": 150,
+ "by_category": {
+  "BLIND": 231,
+  "EXEMPT_TICK_LOCAL": 36,
+  "GUARDED": 7,
+  "TIMESTAMPED": 13
+ },
+ "total_writes": 287,
+ "_p256_note": "BLIND 228 -> 231, total 284 -> 287: the three P256 regimebook-seat writes (agent_signals quant_direction/quant_confidence/signal_edge_bps). They are NOT actually blind \u2014 every write sits behind RegimeBookShadow.last_direction(max_age_s=6h), a P156-style staleness bound the P120 scanner cannot see syntactically (it looks for per-write guard patterns). The block is also default-OFF (regimebook_mode). Counters by hand, never --update (P171)."
 }
