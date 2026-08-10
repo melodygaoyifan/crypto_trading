@@ -126,6 +126,73 @@ def adjust_step(state: dict, want: float, k_exit: int, k_flip: int,
     return state["cur"]
 
 
+# [P259] The banded-forecast overlay (operator spec: models designed around
+# the three measured failure mechanisms). banded_step is THE single source —
+# training/banded_forecast_lab.py imports it, so lab and live cannot drift
+# (the P172 one-resolver rule, preferred over parity tests).
+BANDED_MODEL_PATH = {a: Path("configs") / "regimebook" / f"{a}_banded.json"
+                     for a in ("BTC", "ETH", "SOL")}
+
+
+def banded_step(state: dict, s: float, t_enter: float, t_exit: float,
+                regime_gated: bool, lab_regime: int) -> float:
+    """One step of the asymmetric band on a normalized forecast s.
+    lab_regime: 0=peace 1=bull 2=bear (regime_model_lab.REGIME_ID)."""
+    cur = state.setdefault("cur", 0.0)
+    if s != s:  # NaN
+        return cur
+    if cur == 0.0:
+        if s > t_enter:
+            cur = 1.0
+        elif s < -t_enter:
+            cur = -1.0
+    else:
+        if cur > 0 and s < t_exit:
+            cur = 1.0 if s > t_enter else 0.0
+            if s < -t_enter:
+                cur = -1.0
+        elif cur < 0 and s > -t_exit:
+            cur = -1.0 if s < -t_enter else 0.0
+            if s > t_enter:
+                cur = 1.0
+    if regime_gated and cur != 0.0:
+        if cur > 0 and lab_regime == 2:
+            cur = 0.0
+        elif cur < 0 and lab_regime == 1:
+            cur = 0.0
+    state["cur"] = cur
+    return cur
+
+
+def banded_features_from_closes(closes, funding_z: Optional[float]):
+    """The P259 live feature vector, computed from the harness's OWN inputs
+    (self-fetched closes + persisted funding z) — the live-parity-by-
+    construction constraint. Order MUST match the export's feature list
+    (training/banded_forecast_lab.close_features names)."""
+    import math as _m
+    n = len(closes)
+    if n < 545:
+        return None
+    c = list(map(float, closes))
+
+    def pct(k):
+        return c[-1] / c[-1 - k] - 1.0
+
+    lr = [_m.log(c[i] / c[i - 1]) for i in range(1, n)]
+
+    def std(xs):
+        m = sum(xs) / len(xs)
+        return (sum((x - m) ** 2 for x in xs) / (len(xs) - 1)) ** 0.5
+
+    vol20 = std(lr[-20:])
+    vol120 = std(lr[-120:])
+    sma200 = sum(c[-200:]) / 200.0
+    return [pct(6), pct(24), pct(72), pct(168), pct(540),
+            c[-1] / sma200 - 1.0, vol20, vol120,
+            vol20 / (vol120 + 1e-12),
+            0.0 if funding_z is None else float(funding_z)]
+
+
 def book_target(asset: str, regime: str, funding_z: Optional[float]) -> tuple:
     """(target_position, leg_name). The p247_leakfix winners, verbatim.
     A funding cell with NO causal funding history goes FLAT with a named
@@ -189,6 +256,11 @@ class RegimeBookShadow:
         self._feature_stash: dict = {}    # asset -> (ts, {name: value})
         self._last_records: Dict[str, dict] = {}   # [P256] asset -> last rec
         self._adj_state: Dict[str, dict] = {}      # [P256] adjust mechanism
+        # [P259] banded-forecast overlay: model per asset (None = no export,
+        # leg silent) + band state machine per asset
+        self._banded_models: Dict[str, Optional[dict]] = {
+            a: self._load_banded(a, repo_root) for a in ("BTC", "ETH", "SOL")}
+        self._banded_state: Dict[str, dict] = {}
         self._sol_model = self._load_sol_model(repo_root)
         self._warned: set = set()
 
@@ -336,6 +408,56 @@ class RegimeBookShadow:
             logger.warning(f"[REGIMEBOOK] SOL model unreadable: {type(e).__name__}")
         return None
 
+    def _load_banded(self, asset: str, repo_root):
+        """[P259] Load the banded-overlay export. Absent = leg silent (BTC/
+        ETH earned it in the lab; SOL's book stood, so no SOL export exists
+        by decision). Malformed = logged, never guessed."""
+        path = ((Path(repo_root) / BANDED_MODEL_PATH[asset]) if repo_root
+                else BANDED_MODEL_PATH[asset])
+        try:
+            if path.exists():
+                m = json.loads(path.read_text(encoding="utf-8"))
+                need = {"features", "mean", "scale", "coef", "intercept",
+                        "forecast_sigma", "band"}
+                if need <= set(m):
+                    logger.info("[REGIMEBOOK] %s banded overlay loaded "
+                                "(%d features, fitted %s)", asset,
+                                len(m["features"]), m.get("fitted_at", "?"))
+                    return m
+                logger.warning(
+                    "[REGIMEBOOK] %s banded export FAILED schema (missing "
+                    "%s) — leg silent", asset, sorted(need - set(m)))
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[REGIMEBOOK] %s banded export unreadable: %s",
+                           asset, type(e).__name__)
+        return None
+
+    def _banded_overlay_target(self, asset: str, closes, book_target_val,
+                               regime: str, fz):
+        """[P259] The overlay: the BOOK's position wherever it has an
+        opinion; the banded forecaster only in the cells the book leaves
+        flat. Returns (overlay_target, banded_raw, forecast_s) or None when
+        the leg cannot run (no model / short history)."""
+        m = self._banded_models.get(asset)
+        if m is None:
+            return None
+        x = banded_features_from_closes(closes, fz)
+        if x is None:
+            return None
+        z = [(xi - mu) / sd for xi, mu, sd in
+             zip(x, m["mean"], m["scale"])]
+        f = sum(c * zi for c, zi in zip(m["coef"], z)) + m["intercept"]
+        s = f / (float(m["forecast_sigma"]) or 1e-9)
+        band = m["band"]
+        lab_regime = {"bull": 1, "bear": 2}.get(regime, 0)
+        banded = banded_step(self._banded_state.setdefault(asset, {}),
+                             float(s), float(band["t_enter"]),
+                             float(band["t_exit"]),
+                             bool(band.get("regime_gated")), lab_regime)
+        overlay = (float(book_target_val) if float(book_target_val) != 0.0
+                   else float(banded))
+        return overlay, float(banded), float(s)
+
     def observe_features(self, asset: str, market_data: dict,
                          agent_signals: Optional[dict] = None):
         """Stash the SOL model's named features from the tick's live dicts.
@@ -436,6 +558,23 @@ class RegimeBookShadow:
             except Exception as _adj_e:  # noqa: silent-swallow — the adjusted ledger is an overlay; its failure must not lose the raw record (logged)
                 logger.warning("[REGIMEBOOK] %s adjusted-ledger write failed: "
                                "%s", asset, type(_adj_e).__name__)
+            # [P259] The banded-forecast OVERLAY ledger (BTC/ETH exports only
+            # — the lab earners). Same glob prefix, distinct strategy name.
+            try:
+                bo = self._banded_overlay_target(asset, closes, target,
+                                                 regime, fz)
+                if bo is not None:
+                    _ov, _bd, _s = bo
+                    brec = dict(rec, strategy="regimebook_banded",
+                                direction=float(_ov),
+                                confidence=abs(float(_ov)),
+                                banded_raw=_bd, forecast_s=round(_s, 4))
+                    bpath = self._dir / f"regimebook_banded_{asset}.jsonl"
+                    with open(bpath, "a", encoding="utf-8") as f:
+                        f.write(json.dumps(brec) + "\n")
+            except Exception as _bd_e:  # noqa: silent-swallow — overlay leg; failure must not lose the raw record (logged)
+                logger.warning("[REGIMEBOOK] %s banded-ledger write failed: "
+                               "%s", asset, type(_bd_e).__name__)
             return rec
         except Exception as e:  # noqa: BLE001
             logger.warning("[REGIMEBOOK] %s tick record failed: %s — shadow "

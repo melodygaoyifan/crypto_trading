@@ -182,6 +182,55 @@ class TestAdjustedLedger:
             "scorer groups by that field, and sharing 'regimebook' would "
             "pollute the raw book's forward IC")
 
+    def test_banded_lab_uses_the_shared_step_single_source(self):
+        """[P259] The lab must run the band through defense/regime_book_shadow
+        .banded_step — one source of truth beats parity tests (P172). A
+        re-inlined copy in the lab is how lab/live drift starts."""
+        src = (REPO / "training" / "banded_forecast_lab.py").read_text(
+            encoding="utf-8")
+        assert "from defense.regime_book_shadow import banded_step" in src
+
+    def test_banded_features_lab_vs_live_parity(self):
+        """[P259] The harness's stdlib feature builder must reproduce the
+        lab's pandas builder on the same series — these are the model's
+        INPUTS; divergence here silently retargets the forward ledger."""
+        import numpy as np
+        from training.banded_forecast_lab import close_features
+        from defense.regime_book_shadow import banded_features_from_closes
+        rng = np.random.default_rng(11)
+        close = 100.0 * np.exp(np.cumsum(rng.normal(0, 0.01, 800)))
+        fz = np.full(800, 0.7)
+        X, names = close_features(close, fz)
+        live = banded_features_from_closes(list(close), 0.7)
+        assert live is not None and len(live) == len(names)
+        lab_last = X[-1]
+        for i, name in enumerate(names):
+            assert abs(live[i] - lab_last[i]) < 1e-6, (
+                f"feature {name}: live={live[i]} lab={lab_last[i]}")
+
+    def test_banded_overlay_semantics(self, tmp_path):
+        """Book non-flat wins the overlay; the banded model only fills the
+        cells the book leaves flat."""
+        h = _harness(tmp_path)
+        h._banded_models["BTC"] = {
+            "features": [], "mean": [], "scale": [], "coef": [],
+            "intercept": 0.5, "forecast_sigma": 0.1,
+            "band": {"t_enter": 1.0, "t_exit": 0.25, "regime_gated": False}}
+        # monkeypatch features to a valid empty vector path: use real closes
+        closes = [100.0] * 720
+        r = h._banded_overlay_target("BTC", closes, 1.0, "bull", None)
+        assert r is not None and r[0] == 1.0, "book target must win when non-flat"
+        r2 = h._banded_overlay_target("BTC", closes, 0.0, "peace", None)
+        assert r2 is not None and r2[0] == r2[1], (
+            "flat book cell must take the banded target")
+
+    def test_sol_export_absent_by_decision(self):
+        assert not (REPO / "configs" / "regimebook" / "SOL_banded.json"
+                    ).exists(), (
+            "a SOL banded export appeared — SOL's book STOOD in the lab "
+            "(banded/overlay did not beat it on the design era); exporting "
+            "SOL requires new lab evidence + its own P-entry")
+
     def test_adj_params_match_the_lab_report(self):
         """The deployed params must be the mechanism-lab winners — if the lab
         re-runs and selects differently, this fails until both move

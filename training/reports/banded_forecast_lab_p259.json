@@ -1,0 +1,264 @@
+{
+ "generated": "2026-08-10T23:47:20.405229+00:00",
+ "design_era": [
+  3000,
+  9100
+ ],
+ "pre_design": [
+  800,
+  3000
+ ],
+ "protocol": "select on design era only; top combo reported on pre-design for era stability; NO validation reads \u2014 survivors go to the forward ledger",
+ "BTC": {
+  "features": [
+   "ret_6",
+   "ret_24",
+   "ret_72",
+   "ret_168",
+   "mom_540",
+   "dist_sma200",
+   "vol_20",
+   "vol_120",
+   "vol_ratio",
+   "funding_z"
+  ],
+  "book": {
+   "design": {
+    "gross": 1.2002,
+    "cost": 0.1305,
+    "net": 1.0697,
+    "turnover_units": 435.0
+   },
+   "pre": {
+    "gross": 0.7119,
+    "cost": 0.0261,
+    "net": 0.6858,
+    "turnover_units": 87.0
+   }
+  },
+  "banded_best": {
+   "t_enter": 2.0,
+   "t_exit": 0.5,
+   "gated": false,
+   "net": 0.7124,
+   "turnover_units": 156.0,
+   "pre_design": {
+    "gross": -0.1009,
+    "cost": 0.003,
+    "net": -0.1039,
+    "turnover_units": 10.0
+   }
+  },
+  "grid_top3": [
+   {
+    "t_enter": 2.0,
+    "t_exit": 0.5,
+    "gated": false,
+    "net": 0.7124,
+    "turnover_units": 156.0
+   },
+   {
+    "t_enter": 2.0,
+    "t_exit": 0.25,
+    "gated": false,
+    "net": 0.7,
+    "turnover_units": 148.0
+   },
+   {
+    "t_enter": 1.0,
+    "t_exit": 0.5,
+    "gated": false,
+    "net": 0.6275,
+    "turnover_units": 552.0
+   }
+  ],
+  "overlay": {
+   "design": {
+    "gross": 1.3632,
+    "cost": 0.1461,
+    "net": 1.2171,
+    "turnover_units": 487.0
+   },
+   "pre": {
+    "gross": 0.7706,
+    "cost": 0.0261,
+    "net": 0.7445,
+    "turnover_units": 87.0
+   }
+  },
+  "verdicts": {
+   "banded_vs_book_design": false,
+   "banded_era_stable": false,
+   "overlay_vs_book_design": true,
+   "overlay_era_stable": true
+  }
+ },
+ "ETH": {
+  "features": [
+   "ret_6",
+   "ret_24",
+   "ret_72",
+   "ret_168",
+   "mom_540",
+   "dist_sma200",
+   "vol_20",
+   "vol_120",
+   "vol_ratio",
+   "funding_z"
+  ],
+  "book": {
+   "design": {
+    "gross": 0.144,
+    "cost": 0.056,
+    "net": 0.088,
+    "turnover_units": 140.0
+   },
+   "pre": {
+    "gross": 1.4956,
+    "cost": 0.0228,
+    "net": 1.4728,
+    "turnover_units": 57.0
+   }
+  },
+  "banded_best": {
+   "t_enter": 1.0,
+   "t_exit": 0.25,
+   "gated": false,
+   "net": 1.449,
+   "turnover_units": 477.0,
+   "pre_design": {
+    "gross": 0.5026,
+    "cost": 0.0156,
+    "net": 0.487,
+    "turnover_units": 39.0
+   }
+  },
+  "grid_top3": [
+   {
+    "t_enter": 1.0,
+    "t_exit": 0.25,
+    "gated": false,
+    "net": 1.449,
+    "turnover_units": 477.0
+   },
+   {
+    "t_enter": 1.0,
+    "t_exit": 0.5,
+    "gated": false,
+    "net": 1.1518,
+    "turnover_units": 541.0
+   },
+   {
+    "t_enter": 1.0,
+    "t_exit": 0.25,
+    "gated": true,
+    "net": 1.1167,
+    "turnover_units": 353.0
+   }
+  ],
+  "overlay": {
+   "design": {
+    "gross": 1.3417,
+    "cost": 0.1868,
+    "net": 1.1549,
+    "turnover_units": 467.0
+   },
+   "pre": {
+    "gross": 1.8681,
+    "cost": 0.02,
+    "net": 1.8481,
+    "turnover_units": 50.0
+   }
+  },
+  "verdicts": {
+   "banded_vs_book_design": true,
+   "banded_era_stable": true,
+   "overlay_vs_book_design": true,
+   "overlay_era_stable": true
+  }
+ },
+ "SOL": {
+  "features": [
+   "ret_6",
+   "ret_24",
+   "ret_72",
+   "ret_168",
+   "mom_540",
+   "dist_sma200",
+   "vol_20",
+   "vol_120",
+   "vol_ratio",
+   "funding_z"
+  ],
+  "book": {
+   "design": {
+    "gross": 1.3027,
+    "cost": 0.0923,
+    "net": 1.2104,
+    "turnover_units": 142.0
+   },
+   "pre": {
+    "gross": 3.3571,
+    "cost": 0.0546,
+    "net": 3.3025,
+    "turnover_units": 84.0
+   }
+  },
+  "banded_best": {
+   "t_enter": 1.0,
+   "t_exit": 0.5,
+   "gated": true,
+   "net": 1.0279,
+   "turnover_units": 378.0,
+   "pre_design": {
+    "gross": 0.8444,
+    "cost": 0.0423,
+    "net": 0.8022,
+    "turnover_units": 65.0
+   }
+  },
+  "grid_top3": [
+   {
+    "t_enter": 1.0,
+    "t_exit": 0.5,
+    "gated": true,
+    "net": 1.0279,
+    "turnover_units": 378.0
+   },
+   {
+    "t_enter": 1.0,
+    "t_exit": 0.25,
+    "gated": true,
+    "net": 1.0098,
+    "turnover_units": 308.0
+   },
+   {
+    "t_enter": 1.0,
+    "t_exit": 0.5,
+    "gated": false,
+    "net": 0.6667,
+    "turnover_units": 496.0
+   }
+  ],
+  "overlay": {
+   "design": {
+    "gross": 1.4359,
+    "cost": 0.2561,
+    "net": 1.1798,
+    "turnover_units": 394.0
+   },
+   "pre": {
+    "gross": 4.0081,
+    "cost": 0.0539,
+    "net": 3.9542,
+    "turnover_units": 83.0
+   }
+  },
+  "verdicts": {
+   "banded_vs_book_design": false,
+   "banded_era_stable": true,
+   "overlay_vs_book_design": false,
+   "overlay_era_stable": true
+  }
+ }
+}
