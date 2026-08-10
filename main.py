@@ -2100,6 +2100,38 @@ def sleeve_direction_from_intent(intent, fallback_dir: float):
     return _dir, "gated_direction"
 
 
+def sleeve_snapshot_is_post_flatten_stale(pos_contracts, flatten_tick,
+                                          round_count):
+    """[P251] True when a nonzero sleeve snapshot should be DISTRUSTED
+    because a flatten was sent within the last round and the venue has not
+    been re-reconciled since (the P207 order-lifetime window; reconcile runs
+    in the heartbeat AFTER decide, so the tick following a flatten reads the
+    pre-flatten snapshot).
+
+    Consumers must resolve staleness toward NOT loosening: the hold band
+    reads a 0 instead of the phantom position, so it cannot clear a veto —
+    and thereby admit an ENTRY FROM FLAT at below-enter alpha — on a book
+    that is actually flat. If the flatten genuinely failed, the next
+    reconcile shows the real position and the band re-arms honestly one
+    tick later.
+    """
+    if not pos_contracts or flatten_tick is None or round_count is None:
+        return False
+    return (int(round_count) - int(flatten_tick)) <= 1
+
+
+def sleeve_position_feed(pos_contracts, flatten_tick, round_count):
+    """[P251] The value the hold band is allowed to see: the snapshot, or 0
+    inside the post-flatten staleness window. The market_data assignment
+    goes through THIS function so the guard is load-bearing by construction
+    — a pin on the surrounding if-statement proved spoofable (a `False and`
+    probe passed it), which is the P234 lesson applied to its own fix."""
+    if sleeve_snapshot_is_post_flatten_stale(pos_contracts, flatten_tick,
+                                             round_count):
+        return 0
+    return int(pos_contracts or 0)
+
+
 def sleeve_ma_filter_decision(current_contracts, raw_target, ma_dir):
     """[P236] model_alpha disagreement filter for the sleeve driver — pure,
     unit-testable (the P206 pattern).
@@ -10404,9 +10436,28 @@ class HMATSProductionRunner:
         # Observation-only unless alpha_gate_hold_ratio > 0 (default 0 = off).
         try:
             _p232_sl = getattr(self, "_coinbase_sleeve", None)
-            market_data["sleeve_position_contracts"] = (
-                int(_p232_sl.signed_contracts(asset) or 0)
-                if _p232_sl is not None else 0)
+            _p232_pos = (int(_p232_sl.signed_contracts(asset) or 0)
+                         if _p232_sl is not None else 0)
+            # [P251] Intent beats snapshot in the post-flatten window (the
+            # P207 rule, applied to this feed). The sleeve reconciles in the
+            # heartbeat AFTER decide, so on the tick following a flatten this
+            # snapshot still shows the position the flatten closed — observed
+            # live 2026-08-10 00:02 ([GATE-HYST] pos=+1 on a venue-flat
+            # book). A phantom +1 with alpha inside the hold band would clear
+            # the veto and let the driver ENTER FROM FLAT at below-enter
+            # alpha — "no re-entry credit" defeated by staleness. Staleness
+            # resolves toward NOT loosening: feed 0. If the flatten
+            # genuinely failed, the next reconcile re-arms the band honestly.
+            _p242_ft = getattr(self, "_sleeve_flatten_tick", {}).get(asset)
+            _p242_rnd = getattr(self, "_live_round_count", None)
+            if sleeve_snapshot_is_post_flatten_stale(
+                    _p232_pos, _p242_ft, _p242_rnd):
+                logger.info(
+                    f"[P251] {asset}: sleeve snapshot ({_p232_pos:+d}ct) is "
+                    f"inside the post-flatten window — hold-band feed forced "
+                    f"to 0 (intent beats snapshot, P207)")
+            market_data["sleeve_position_contracts"] = sleeve_position_feed(
+                _p232_pos, _p242_ft, _p242_rnd)
         except Exception as _p232_err:  # noqa: silent-swallow — deliberate:
             # a diagnostics feed must never break the tick; 0 = "no sleeve
             # position visible", the conservative reading (hold band simply
@@ -19829,10 +19880,30 @@ class HMATSProductionRunner:
                                                 continue
                                         _m_res = await _sl.manage_to_signal(_m_a, _m_dir)
                                         _m_st = _m_res.get("status")
-                                        # [P232] record flattens for the cooldown
+                                        # [P232] record flattens for the cooldown.
+                                        # [P251] Record on flatten-SENT, not only
+                                        # on observed fill: the flatten is a
+                                        # marketable LIMIT that may not have
+                                        # filled by this check (the P207
+                                        # window), so the observed-fill test
+                                        # alone silently skipped the record —
+                                        # and the cooldown never armed — on any
+                                        # slow-fill flatten (seen live
+                                        # 2026-08-09 20:02). Recording at send
+                                        # is conservative: it only ever starts
+                                        # the cooldown EARLIER, and while the
+                                        # position persists the cooldown is
+                                        # moot anyway (it gates entries FROM
+                                        # FLAT only).
                                         try:
-                                            if (_cd_pre != 0 and
-                                                    int(_sl.signed_contracts(_m_a) or 0) == 0):
+                                            _cd_sent_flat = (
+                                                _cd_pre != 0
+                                                and _sl.target_for_signal(_m_dir) == 0
+                                                and _m_st == "OK")
+                                            _cd_now_flat = (
+                                                _cd_pre != 0 and
+                                                int(_sl.signed_contracts(_m_a) or 0) == 0)
+                                            if _cd_sent_flat or _cd_now_flat:
                                                 self._sleeve_flatten_tick[_m_a] = (
                                                     self._live_round_count)
                                         except Exception as _cd_err:  # noqa: silent-swallow

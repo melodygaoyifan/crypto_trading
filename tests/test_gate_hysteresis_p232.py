@@ -327,3 +327,61 @@ class TestTripwireActuatorAndChecker:
             "configs/live_high_risk.json", "")  # named only in the MESSAGE
         assert "write_text" not in src.split('def main')[1].replace(
             'read_text', '')  # no writes in main
+
+
+class TestP251StaleSnapshotGuard:
+    """[P251] The hold band's position feed is one reconcile stale on the
+    tick after a flatten (reconcile runs in the heartbeat AFTER decide).
+    Observed live 2026-08-10 00:02: [GATE-HYST] pos=+1 on a venue-flat
+    book. A phantom position + alpha inside the band would clear the veto
+    and admit an ENTRY FROM FLAT at below-enter alpha. Intent beats
+    snapshot (P207): the feed reads 0 inside the post-flatten window."""
+
+    def test_truth_table(self):
+        from main import sleeve_snapshot_is_post_flatten_stale as stale
+        # the live incident: flatten at round R, decide at R+1, snapshot +1
+        assert stale(1, flatten_tick=10, round_count=11)
+        # same-round (flatten later this round hasn't happened yet at decide,
+        # but a record from a restart-replay same round is still the window)
+        assert stale(-1, flatten_tick=10, round_count=10)
+        # two rounds later the reconcile has run — trust the venue again,
+        # even if it still shows a position (the flatten genuinely failed)
+        assert not stale(1, flatten_tick=10, round_count=12)
+        # a flat snapshot needs no guard
+        assert not stale(0, flatten_tick=10, round_count=11)
+        # no flatten recorded / not in the live loop -> inert
+        assert not stale(1, flatten_tick=None, round_count=11)
+        assert not stale(1, flatten_tick=10, round_count=None)
+
+    def test_feed_function_is_the_load_bearing_path(self):
+        """Behavioral: the value the band sees comes from
+        sleeve_position_feed, which zeroes inside the window. (A pin on the
+        surrounding if-statement was falsified by a `False and` probe — the
+        P234 lesson applied to its own fix — so the ASSIGNMENT goes through
+        the pure function instead.)"""
+        from main import sleeve_position_feed as feed
+        assert feed(1, flatten_tick=10, round_count=11) == 0   # the incident
+        assert feed(-1, flatten_tick=10, round_count=10) == 0
+        assert feed(1, flatten_tick=10, round_count=12) == 1   # trust again
+        assert feed(-2, flatten_tick=None, round_count=11) == -2
+        assert feed(0, flatten_tick=10, round_count=11) == 0
+
+    def test_market_data_assignment_goes_through_the_feed_function(self):
+        assert ('market_data["sleeve_position_contracts"] = '
+                'sleeve_position_feed(') in MAIN, (
+            "the assignment bypasses sleeve_position_feed — the P251 guard "
+            "is decorative again"
+        )
+
+    def test_cooldown_records_on_flatten_sent_not_only_on_fill(self):
+        """The P207 window also skipped the cooldown's flatten record on any
+        slow-fill flatten — the cooldown then silently never armed. Record
+        at SEND (conservative: only ever starts the cooldown earlier)."""
+        i = MAIN.find("_cd_sent_flat = (")
+        assert i > 0, "sent-based flatten record is gone"
+        blk = MAIN[i:i + 400]
+        assert "target_for_signal(_m_dir) == 0" in blk
+        assert '== "OK"' in blk
+        assert "_cd_now_flat" in MAIN[i:i + 600], (
+            "keep the observed-fill record as the belt to the sent strap"
+        )
