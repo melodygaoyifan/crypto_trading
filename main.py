@@ -2137,6 +2137,21 @@ def restore_p0_combined_equity(data, current):
             return float(v)
     except (TypeError, ValueError):  # noqa: silent-swallow — value coercion; contract stated in the docstring
         pass
+    # [P261b] MIGRATION SEED. "No held value = first-ever boot = no anchors
+    # exist" is false exactly once: the first boot after this code deploys
+    # onto a state file that already carries combined-denominated anchors
+    # but predates the p0_last_combined_equity key. That boot re-fired the
+    # phantom kill switch 21 seconds after the manual reset (observed
+    # 2026-08-11 00:29:20 — same -$3,776.44). Seed the held value from the
+    # persisted daily anchor: it is combined-denominated by construction
+    # and it is the exact number the daily-loss comparison uses, so feeding
+    # it makes the first tick's daily P&L read 0 instead of -sleeve.
+    try:
+        a = ((data or {}).get("daily_pnl_anchor") or {}).get("equity")
+        if a is not None and float(a) > 0:
+            return float(a)
+    except (TypeError, ValueError):  # noqa: silent-swallow — same coercion contract as above
+        pass
     return current
 
 

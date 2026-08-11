@@ -90,6 +90,23 @@ class TestWiringAndPersistence:
         assert rest({"p0_last_combined_equity": 10865.13}, None) == \
             pytest.approx(10865.13)
         assert rest({}, None) is None                       # first boot
+
+    def test_migration_seed_from_the_daily_anchor(self):
+        """[P261b] The premise 'no held value = no anchors exist' is false
+        exactly once: the first boot after deploy onto a state file that
+        predates the p0_last_combined_equity key but carries the combined
+        daily anchor. That boot RE-FIRED the phantom kill 21 seconds after
+        the manual reset. Seed from the anchor: the first tick's daily P&L
+        then reads 0, not -sleeve."""
+        from main import restore_p0_combined_equity as rest
+        migration_file = {"daily_pnl_anchor": {"day": "2026-08-11",
+                                               "equity": 10865.13}}
+        assert rest(migration_file, None) == pytest.approx(10865.13)
+        # explicit key still wins over the seed
+        both = dict(migration_file, p0_last_combined_equity=10900.0)
+        assert rest(both, None) == pytest.approx(10900.0)
+        # malformed anchor degrades to current, not a crash
+        assert rest({"daily_pnl_anchor": {"equity": "bad"}}, 9000.0) == 9000.0
         assert rest({}, 9000.0) == 9000.0                   # keeps current
         assert rest({"p0_last_combined_equity": "bad"}, 9000.0) == 9000.0
         assert rest({"p0_last_combined_equity": -5}, 9000.0) == 9000.0
