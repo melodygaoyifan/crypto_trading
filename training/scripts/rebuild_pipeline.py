@@ -936,13 +936,15 @@ def main():
             if src_col in df.columns:
                 raw_vals = df[src_col].values.astype(float)
                 # Fill NaN before denoising (wavelet can't handle NaN).
-                # [P253] CAUSALLY: the old np.nanmedian(raw_vals) injected a
+                # [P253] The old np.nanmedian(raw_vals) injected a
                 # WHOLE-COLUMN statistic into rows the causal wavelet then
                 # treats as observed — a full-history value smuggled past the
-                # P164 fix. ffill (last observation) is strictly backward-
-                # looking; leading NaNs (no past exists) fall back to the
-                # first observed value, which only affects warmup rows the
-                # fold boundaries already discard.
+                # P164 fix. ffill (last observation) is backward-looking.
+                # [P260, precision per the fresh-mind review] The .bfill()
+                # leg IS a look-ahead — but ONLY for LEADING NaNs (rows
+                # before the feature's first observation, deep inside the
+                # warmup the fold boundaries discard). Stated exactly so the
+                # word "causal" is never doing more work than the code.
                 nan_mask = np.isnan(raw_vals)
                 if nan_mask.any():
                     _filled = pd.Series(raw_vals).ffill().bfill().values

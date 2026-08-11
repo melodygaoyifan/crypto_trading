@@ -102,10 +102,22 @@ def adjust_step(state: dict, want: float, k_exit: int, k_flip: int,
     parity with training/mechanism_lab.apply_adjust (a lab/runtime skew here
     would make the forward ledger measure a different mechanism than the one
     the lab selected; pinned by a parity test). Semantics: exits need k_exit
-    consecutive bars, flips k_flip, fresh entries hold >= min_hold bars
-    against plain exits (flips still honor k_flip); entries from flat are
-    instant. Restart resets the streak — a restart only DELAYS a change
-    (conservative, the P198 trade-off)."""
+    consecutive bars, flips k_flip; entries from flat are instant. Restart
+    resets the streak — a restart only DELAYS a change (conservative, the
+    P198 trade-off).
+
+    [P260] min_hold's TRUE semantics, per the fresh-mind review: `held`
+    accrues only on bars where the demand AGREES with the current position,
+    so under CONTINUOUS exit demand a position never reaches min_hold and a
+    plain exit-to-flat is blocked INDEFINITELY (escape only via a flip
+    request or renewed agreement). This is NOT "hold at least N bars then
+    exit freely" — it is closer to "plain exits require the demand to have
+    relented at least once". The lab MEASURED and selected exactly this
+    behavior (SOL's winner is min_hold=6), and the forward ledger honestly
+    tests it — so the mechanism is deliberately NOT changed here; the
+    docstring is corrected instead, and any ENFORCE decision on a min_hold
+    config must first re-lab whether the intended semantics ("N bars then
+    free") would have won too (pinned: TestAdjustSemantics)."""
     cur = state.setdefault("cur", 0.0)
     if want == cur:
         state["streak"] = 0
@@ -148,6 +160,11 @@ def banded_step(state: dict, s: float, t_enter: float, t_exit: float,
             cur = -1.0
     else:
         if cur > 0 and s < t_exit:
+            # [P260] `1.0 if s > t_enter` is vestigial (unreachable: s <
+            # t_exit <= t_enter here) — left as-is rather than restructured,
+            # because this function's byte-behavior is what the recorded lab
+            # reports measured (single-source rule); noted per the
+            # fresh-mind review.
             cur = 1.0 if s > t_enter else 0.0
             if s < -t_enter:
                 cur = -1.0

@@ -8538,6 +8538,10 @@ class HMATSProductionRunner:
         #     feedback, the recorded P231 constant). Deliberately NOT looser:
         #     the seat swap changes the DIRECTION source, not the alpha bar,
         #     and the P237 tripwire discipline governs that constant.
+        #     [P260] The 0.9 confidence below is the SAME class of asserted
+        #     constant (P231: a number wearing a measurement's name) —
+        #     acceptable only while the seat is default-off and any enforce
+        #     flip is gated on the P166 forward read.
         #   * Both dicts written (agent_signals copies the pipeline's edge
         #     BEFORE this point — writing market_data alone would be shadowed,
         #     the P170 two-dict trap), plus the P149 sleeve bridge.

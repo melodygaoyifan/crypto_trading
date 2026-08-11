@@ -1,0 +1,36 @@
+{
+ "generated": "2026-08-11T00:13:16.804649+00:00",
+ "reproduces": "the P259b withdrawal read (ledgered banded_overlay_p259, 2026-08-10; this script does NOT re-ledger the spend)",
+ "BTC": {
+  "window": [
+   9100,
+   13095
+  ],
+  "band": {
+   "t_enter": 2.0,
+   "t_exit": 0.5
+  },
+  "overlay_net": 0.4762,
+  "overlay_turnover": 342.0,
+  "book_net": 0.6881,
+  "book_turnover": 308.0,
+  "increment": -0.2119,
+  "buy_and_hold": 0.0235
+ },
+ "ETH": {
+  "window": [
+   9100,
+   13095
+  ],
+  "band": {
+   "t_enter": 1.0,
+   "t_exit": 0.25
+  },
+  "overlay_net": -0.1177,
+  "overlay_turnover": 317.0,
+  "book_net": 0.5002,
+  "book_turnover": 60.0,
+  "increment": -0.6179,
+  "buy_and_hold": -0.2179
+ }
+}

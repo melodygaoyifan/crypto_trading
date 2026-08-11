@@ -74,7 +74,19 @@ def pnl_after_cost(close: np.ndarray, pos: np.ndarray, cost_rt_bps: float,
     """Total after-cost return of holding pos[t] over t->t+1, bars [lo, hi).
     1-bar delay is built in: pos[t] is decided from info at t and earns the
     t->t+1 return. Hard guard: never scores a bar at/after the validation
-    era start."""
+    era start.
+
+    [P260] Window-edge conventions, DOCUMENTED per the fresh-mind review
+    (deliberate, not accidental — changing them would shift every recorded
+    lab number by <= one round-trip of cost per window):
+      * the window's INITIAL position is established cost-free
+        (prepend=pos[lo]) — a position inherited from before the window
+        belongs to the prior window's ledger;
+      * a position change on the window's LAST bar is charged (the trade
+        happens) even though its forward return falls outside the window.
+    Net effect ~1 trade of cost per multi-thousand-bar window, direction
+    mildly pro-candidate; identical for every candidate and baseline, so
+    comparisons are unaffected."""
     assert hi <= DE, "validation-era read attempted — refused"
     r1 = np.zeros_like(close)
     r1[:-1] = close[1:] / close[:-1] - 1.0

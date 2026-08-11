@@ -245,6 +245,46 @@ class TestAdjustedLedger:
                "export_banded_models.py").read_text(encoding="utf-8")
         assert "--force-withdrawn" in src and "REFUSING" in src
 
+
+class TestAdjustSemantics:
+    """[P260] Pins min_hold's TRUE behavior (fresh-mind review finding #1):
+    under CONTINUOUS exit demand, `held` never accrues and a plain exit is
+    blocked indefinitely — NOT "hold N bars then exit freely". The lab
+    measured and selected exactly this, so the mechanism stays; the pin
+    exists so nobody flips an enforce decision believing the docstring's
+    old, wrong description."""
+
+    def test_continuous_exit_demand_never_releases_under_min_hold(self):
+        from defense.regime_book_shadow import adjust_step
+        st: dict = {}
+        assert adjust_step(st, 1.0, 1, 1, 6) == 1.0     # instant entry
+        for _ in range(50):                              # 50 bars of exit demand
+            out = adjust_step(st, 0.0, 1, 1, 6)
+        assert out == 1.0, (
+            "expected: continuous exit demand is blocked indefinitely by "
+            "min_hold (the MEASURED semantics) — if this now exits, the "
+            "mechanism changed and the forward ledger no longer tests what "
+            "the lab selected")
+
+    def test_flip_demand_escapes_min_hold(self):
+        from defense.regime_book_shadow import adjust_step
+        st: dict = {}
+        adjust_step(st, 1.0, 1, 1, 6)
+        assert adjust_step(st, -1.0, 1, 1, 6) == -1.0, (
+            "a flip (k_flip=1) must escape min_hold — flips honor k_flip, "
+            "not the hold")
+
+    def test_relented_then_renewed_exit_can_release(self):
+        from defense.regime_book_shadow import adjust_step
+        st: dict = {}
+        adjust_step(st, 1.0, 1, 1, 3)
+        adjust_step(st, 0.0, 1, 1, 3)        # exit demand (blocked, held=0)
+        for _ in range(4):                   # demand relents -> held accrues
+            adjust_step(st, 1.0, 1, 1, 3)
+        assert adjust_step(st, 0.0, 1, 1, 3) == 0.0, (
+            "after the demand relents long enough for held >= min_hold, a "
+            "plain exit must succeed")
+
     def test_adj_params_match_the_lab_report(self):
         """The deployed params must be the mechanism-lab winners — if the lab
         re-runs and selects differently, this fails until both move
