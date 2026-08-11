@@ -1,0 +1,153 @@
+{
+ "generated": "2026-08-11T02:25:26.829333+00:00",
+ "1_vol_tercile_occupancy": {
+  "BTC": {
+   "raw": {
+    "lo": 0.319,
+    "mid": 0.312,
+    "hi": 0.368,
+    "n_active_bars": 3242
+   },
+   "vol_scaled": {
+    "lo": 0.354,
+    "mid": 0.308,
+    "hi": 0.338,
+    "n_active_bars": 2499
+   }
+  },
+  "ETH": {
+   "raw": {
+    "lo": 0.323,
+    "mid": 0.318,
+    "hi": 0.359,
+    "n_active_bars": 3140
+   },
+   "vol_scaled": {
+    "lo": 0.307,
+    "mid": 0.356,
+    "hi": 0.337,
+    "n_active_bars": 1960
+   }
+  },
+  "SOL": {
+   "raw": {
+    "lo": 0.276,
+    "mid": 0.271,
+    "hi": 0.453,
+    "n_active_bars": 3162
+   },
+   "vol_scaled": {
+    "lo": 0.326,
+    "mid": 0.29,
+    "hi": 0.384,
+    "n_active_bars": 2668
+   }
+  }
+ },
+ "2_coef_sign_disagreements": [
+  {
+   "feature": "ret_72",
+   "BTC": 0.00257,
+   "ETH": 0.00209,
+   "SOL": -0.0007
+  },
+  {
+   "feature": "mom_540",
+   "BTC": 0.00085,
+   "ETH": -0.00014,
+   "SOL": 0.00046
+  },
+  {
+   "feature": "dist_sma200",
+   "BTC": -0.00306,
+   "ETH": -0.00171,
+   "SOL": 0.00329
+  },
+  {
+   "feature": "vol_20",
+   "BTC": -0.00108,
+   "ETH": -0.00083,
+   "SOL": 7e-05
+  },
+  {
+   "feature": "funding_z",
+   "BTC": -0.00164,
+   "ETH": -0.00358,
+   "SOL": 0.00091
+  }
+ ],
+ "3_4_era_decomposition": {
+  "BTC": {
+   "forecast_ic_by_era": {
+    "design": 0.0174,
+    "pre_design": 0.0034,
+    "validation": 0.0318
+   },
+   "flat_cell_entries": {
+    "design": {
+     "long_gross": 0.2289,
+     "short_gross": 0.2141,
+     "active_bars": 1286
+    },
+    "pre_design": {
+     "long_gross": -0.0751,
+     "short_gross": 0.0,
+     "active_bars": 54
+    },
+    "validation": {
+     "long_gross": -0.0883,
+     "short_gross": 0.0363,
+     "active_bars": 738
+    }
+   }
+  },
+  "ETH": {
+   "forecast_ic_by_era": {
+    "design": 0.0421,
+    "pre_design": 0.0105,
+    "validation": -0.0161
+   },
+   "flat_cell_entries": {
+    "design": {
+     "long_gross": 0.254,
+     "short_gross": 0.9126,
+     "active_bars": 2320
+    },
+    "pre_design": {
+     "long_gross": 0.1565,
+     "short_gross": 0.0,
+     "active_bars": 160
+    },
+    "validation": {
+     "long_gross": -0.4794,
+     "short_gross": -0.0357,
+     "active_bars": 1578
+    }
+   }
+  },
+  "SOL": {
+   "forecast_ic_by_era": {
+    "design": 0.0136,
+    "pre_design": -0.0117,
+    "validation": 0.0082
+   },
+   "flat_cell_entries": {
+    "design": {
+     "long_gross": -0.0737,
+     "short_gross": -0.0208,
+     "active_bars": 2032
+    },
+    "pre_design": {
+     "long_gross": 0.2629,
+     "short_gross": 0.0,
+     "active_bars": 207
+    },
+    "validation": {
+     "long_gross": 0.4137,
+     "short_gross": 0.4162,
+     "active_bars": 1351
+    }
+   }
+  }
+ }
+}
