@@ -237,14 +237,29 @@ def load_shadow_ledgers(
                             # Counted in `skipped`; batch WARN at end emits total
                             skipped += 1
                             continue
-                        # Parse timestamp
-                        ts_str = rec.get("ts")
-                        if not ts_str:
+                        # Parse timestamp. [P264] Accept BOTH shapes: the
+                        # P248 regimebook family writes `ts` as an EPOCH
+                        # FLOAT (time.time(), with a separate `iso` field),
+                        # while the older families write ISO strings. The
+                        # old string-only parser raised AttributeError on
+                        # floats, which the per-file handler swallowed as
+                        # "failed to read <file>" — so the raw AND adjusted
+                        # book ledgers were entirely invisible to the gate
+                        # that decides their promotion (the P199 class:
+                        # registered but unreadable). Found by the
+                        # end-to-end scorer proof 28 days before the read.
+                        ts_raw = rec.get("ts")
+                        if ts_raw is None or ts_raw == "":
                             skipped += 1
                             continue
                         try:
-                            ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
-                        except ValueError:  # noqa: silent-swallow
+                            if isinstance(ts_raw, (int, float)):
+                                ts = datetime.fromtimestamp(
+                                    float(ts_raw), tz=timezone.utc)
+                            else:
+                                ts = datetime.fromisoformat(
+                                    str(ts_raw).replace("Z", "+00:00"))
+                        except (ValueError, OSError, OverflowError):  # noqa: silent-swallow
                             # Counted in `skipped`; batch WARN at end emits the total
                             skipped += 1
                             continue

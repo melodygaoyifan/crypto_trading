@@ -253,6 +253,31 @@ def test_load_shadow_ledgers_filters_by_since(tmp_path: Path):
     assert out[0]["reason"] == "new"
 
 
+def test_load_shadow_ledgers_accepts_epoch_float_ts(tmp_path: Path):
+    """[P264] The P248 regimebook family writes `ts` as an EPOCH FLOAT
+    (time.time()); the old ISO-string-only parser raised AttributeError,
+    the per-file handler swallowed it as 'failed to read <file>', and the
+    raw AND adjusted book ledgers were entirely invisible to the gate that
+    decides their September promotion — registered (P248 pinned that) but
+    UNREADABLE (nothing pinned that). Found by the end-to-end scorer proof
+    during the operator's ledger inspection, 28 days before the read."""
+    import time as _time
+    p = tmp_path / "regimebook_BTC.jsonl"
+    p.write_text(
+        json.dumps({"ts": _time.time(), "asset": "BTC",
+                    "strategy": "regimebook", "direction": 1.0,
+                    "confidence": 1.0}) + "\n" +
+        json.dumps({"ts": datetime.now(timezone.utc).isoformat(),
+                    "asset": "BTC", "strategy": "regimebook",
+                    "direction": -1.0, "confidence": 1.0}) + "\n",
+        encoding="utf-8",
+    )
+    out = load_shadow_ledgers(tmp_path, prefixes=("regimebook",))
+    assert len(out) == 2, (
+        "a float-ts record was dropped — the September roster's ledgers "
+        "are invisible to the promotion gate again")
+
+
 def test_load_shadow_ledgers_skips_malformed(tmp_path: Path):
     p = tmp_path / "microstructure_20260429.jsonl"
     p.write_text(
