@@ -19355,6 +19355,69 @@ class HMATSProductionRunner:
         logger.info(f"[BACKTEST] Completed: {results}")
         return results
     
+    def _ensure_coinbase_sleeve(self):
+        """[P263] Build (once) and return the Coinbase sleeve, or None.
+
+        Historically the sleeve was constructed lazily INSIDE the per-tick
+        driver block, which runs AFTER the heartbeat — so on the first tick
+        of every process (a) the P0 equity feed had no sleeve equity (the
+        P261 cold-boot window this closes at the SOURCE — the held-combined
+        fallback becomes a backstop instead of the primary path) and (b) the
+        heartbeat's sleeve field had nothing to show ("no result yet", which
+        misread as a fault twice in one day, P229/operator-reported). Now
+        run_live calls this at STARTUP (with one snapshot() to reconcile and
+        price the book before the first tick) and the driver calls it as a
+        no-op fallback — one construction site, so the P239 config wiring
+        cannot fork (P172).
+
+        Fail-soft everywhere: any failure returns None and every caller
+        degrades to exactly the pre-P263 behavior.
+        """
+        _sl = getattr(self, "_coinbase_sleeve", None)
+        if _sl is not None:
+            return _sl
+        if not getattr(self.config, "coinbase_routing_enabled", False):
+            return None
+        try:
+            if getattr(self, "_coinbase_adapter", None) is None:
+                from exchange.coinbase_adapter import CoinbaseAdapter
+                self._coinbase_adapter = CoinbaseAdapter()
+            _cb = self._coinbase_adapter
+            if not _cb.is_connected():
+                return None
+            from exchange.coinbase_sleeve import CoinbaseSleeve
+            self._coinbase_sleeve = CoinbaseSleeve(
+                _cb, assets=self.config.assets,
+                # [P197] pct<=0 => stops disabled
+                protective_stop_pct=float(getattr(
+                    self.config, "coinbase_protective_stop_pct", 0.0) or 0.0),
+                protective_stop_assets=(getattr(
+                    self.config, "coinbase_protective_stop_assets", None)
+                    or None),
+                # [P198] sleeve-side flip persistence
+                flip_persist_ticks=int(getattr(
+                    self.config, "coinbase_flip_persist_ticks", 2) or 0),
+                # [P208] net-exposure budget on the venue-read book
+                max_net_exposure=getattr(
+                    self.config, "max_net_exposure", None),
+                # [P210] per-asset gross cap in sleeve equity
+                max_asset_exposure=getattr(
+                    self.config, "post_leverage_caps", None),
+                # [P239] config-wired; defaults match the old ctor defaults
+                max_sleeve_drawdown_pct=float(getattr(
+                    self.config, "coinbase_max_sleeve_drawdown_pct",
+                    0.15) or 0.15),
+                max_contracts_per_asset=int(getattr(
+                    self.config, "coinbase_max_contracts_per_asset",
+                    1) or 1),
+            )
+            return self._coinbase_sleeve
+        except Exception as _e:
+            logger.warning(
+                f"[COINBASE-SLEEVE] construction failed (fail-soft, will "
+                f"retry next tick): {type(_e).__name__}: {_e}")
+            return None
+
     async def run_live(self):
         """Run live trading mode."""
         logger.warning("=" * 80)
@@ -19402,6 +19465,30 @@ class HMATSProductionRunner:
                 f"{_gr_err}) — LIVE starting with FRESH governors; the "
                 f"existence fuse's 28d window restarts from now."
             )
+
+        # =====================================================================
+        # [P263] Build + reconcile the Coinbase sleeve BEFORE the first tick.
+        # Historically it was built lazily inside the per-tick driver (which
+        # runs AFTER the heartbeat), so the first tick of every process ran
+        # with no sleeve equity (the P261 cold-boot window) and the heartbeat
+        # had nothing to show ("no result yet"). One snapshot() here
+        # reconciles positions and prices equity so the first tick's P0 feed
+        # folds REAL combined equity and the heartbeat reports the actual
+        # book. Fail-soft: on any failure the driver retries per tick and
+        # everything degrades to the pre-P263 behavior (P261's held-combined
+        # fallback then covers the window, as before).
+        # =====================================================================
+        try:
+            _sl0 = self._ensure_coinbase_sleeve()
+            if _sl0 is not None:
+                _sl0.snapshot()
+                logger.info(
+                    f"[P263] sleeve built + reconciled before first tick: "
+                    f"equity=${float(getattr(_sl0, '_last_equity_usd', 0.0) or 0.0):,.2f}")
+        except Exception as _p263_err:
+            logger.warning(
+                f"[P263] startup sleeve reconcile failed (fail-soft, driver "
+                f"retries per tick): {type(_p263_err).__name__}: {_p263_err}")
 
         # =====================================================================
         # V6.2.3e TASK 1: STARTUP RECONCILER - MANDATORY FOR LIVE
@@ -19810,24 +19897,35 @@ class HMATSProductionRunner:
                         # "prev tick" rather than passed off as current.
                         _hb_cb_txt = "not routed"
                         if getattr(self.config, "coinbase_routing_enabled", False):
+                            # [P263] Lead with the RECONCILED book, which now
+                            # exists from tick 1 (startup construction) —
+                            # positions are facts from the venue, not driver
+                            # output, so they need no "prev tick" hedge. The
+                            # manage result stays prev-tick-labelled (the
+                            # driver still deliberately runs after this
+                            # message, P227). This replaces the "no result
+                            # yet" first-tick text that read as a fault to
+                            # two different readers (P229 + 2026-08-10).
+                            _hb_sl = getattr(self, "_coinbase_sleeve", None)
+                            _hb_pos_txt = "sleeve not built (venue down?)"
+                            if _hb_sl is not None:
+                                try:
+                                    _hb_pos_txt = "pos " + (", ".join(
+                                        f"{_a}={_hb_sl.signed_contracts(_a):+.0f}ct"
+                                        for _a in self.config.assets
+                                        if abs(_hb_sl.signed_contracts(_a) or 0)
+                                        > 1e-9) or "FLAT")
+                                except Exception:  # noqa: silent-swallow — heartbeat text only; the driver's own logs carry the truth
+                                    _hb_pos_txt = "pos unreadable"
                             if _hb_cb_last:
-                                _hb_cb_txt = ", ".join(
+                                _hb_cb_txt = _hb_pos_txt + "; last manage: " + ", ".join(
                                     f"{_a}={_v}" for _a, _v in sorted(_hb_cb_last.items())
                                 ) + " (prev tick)"
                             else:
-                                # [P229] Accurate first-tick wording. The old
-                                # all-caps NO-RESULT/never-ran text read as a
-                                # fault, but `_coinbase_manage_last` is
-                                # in-memory and the driver deliberately runs
-                                # AFTER this message (prev-tick reporting) —
-                                # so on the first tick after ANY restart this
-                                # branch fires while the driver is seconds
-                                # from running. P155's own lesson: a message
-                                # must not send the reader to a wrong cause.
                                 _hb_cb_txt = (
-                                    "no result yet this process (first tick "
-                                    "after restart — driver runs after this "
-                                    "message; see [COINBASE-MANAGE])"
+                                    _hb_pos_txt + "; manage pending (driver "
+                                    "runs after this message — see "
+                                    "[COINBASE-MANAGE])"
                                 )
                         self.audit_manager.log_event(
                             AlertSeverity.INFO, AlertCategory.TRADING,
@@ -19894,65 +19992,20 @@ class HMATSProductionRunner:
                             # + ensure_protective_stop run on it further down
                             # this heartbeat block. Fail-soft.
                             try:
-                                if getattr(self, "_coinbase_sleeve", None) is None:
-                                    from exchange.coinbase_sleeve import CoinbaseSleeve
-                                    self._coinbase_sleeve = CoinbaseSleeve(
-                                        _cb, assets=self.config.assets,
-                                        # [P197] pct<=0 => stops disabled
-                                        protective_stop_pct=float(getattr(
-                                            self.config,
-                                            "coinbase_protective_stop_pct", 0.0) or 0.0),
-                                        protective_stop_assets=(getattr(
-                                            self.config,
-                                            "coinbase_protective_stop_assets", None) or None),
-                                        # [P198] sleeve-side flip persistence
-                                        # (the P142 churn control never reached
-                                        # this path). Default 2 = same as the
-                                        # Kraken-side flip_persist_ticks; 0/1
-                                        # disables. Tightening-only.
-                                        flip_persist_ticks=int(getattr(
-                                            self.config,
-                                            "coinbase_flip_persist_ticks", 2) or 0),
-                                        # [P208] The SAME policy number as P144
-                                        # (risk.max_net_exposure, live 0.50),
-                                        # enforced on the sleeve's own
-                                        # venue-read book. P144's only
-                                        # enforcement site sits past the P152
-                                        # early return and reads Kraken-shaped
-                                        # _paper_positions, `{}` since June — so
-                                        # on the one venue that holds risk it has
-                                        # never been evaluated. None disables.
-                                        max_net_exposure=getattr(
-                                            self.config, "max_net_exposure", None),
-                                        # [P210] Per-asset gross cap, the
-                                        # SAME policy numbers the Kraken
-                                        # path uses (post_leverage_caps),
-                                        # but denominated in sleeve equity.
-                                        # intent.target_exposure is NOT
-                                        # reconnected on purpose: it is
-                                        # multiplied by KRAKEN NAV
-                                        # (unit_system.py:232), so at 0.25
-                                        # it sizes ~$2,457 against the
-                                        # ~$643 this sleeve holds — a ~4x
-                                        # increase, sized out of another
-                                        # venue's capital.
-                                        max_asset_exposure=getattr(
-                                            self.config,
-                                            "post_leverage_caps", None),
-                                        # [P239] Previously ctor-defaults-only
-                                        # (0.15 / 1) — the two sleeve knobs no
-                                        # config could reach. Defaults match,
-                                        # so this wiring changes nothing until
-                                        # an operator sets the keys.
-                                        max_sleeve_drawdown_pct=float(getattr(
-                                            self.config,
-                                            "coinbase_max_sleeve_drawdown_pct",
-                                            0.15) or 0.15),
-                                        max_contracts_per_asset=int(getattr(
-                                            self.config,
-                                            "coinbase_max_contracts_per_asset",
-                                            1) or 1),
-                                    )
+                                # [P263] Single construction site — see
+                                # _ensure_coinbase_sleeve. Normally a no-op
+                                # here (startup built it); this call is the
+                                # retry path when startup construction
+                                # failed (venue down at boot).
+                                if self._ensure_coinbase_sleeve() is None:
+                                    raise RuntimeError(
+                                        "sleeve unavailable this tick")
+                                # (P208/P210/P239 rationale lives at the ctor
+                                # in _ensure_coinbase_sleeve — one site, so
+                                # the config wiring cannot fork. Note
+                                # intent.target_exposure is NOT reconnected
+                                # on purpose: it is multiplied by KRAKEN NAV,
+                                # unit_system.py:232 — P210.)
                                 _cb_snap = self._coinbase_sleeve.snapshot()
                                 _cb_pos = _cb_snap.get("positions") or {}
                                 _cb_pos_str = ", ".join(
