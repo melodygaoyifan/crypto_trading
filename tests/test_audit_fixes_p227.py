@@ -455,8 +455,18 @@ class TestHeartbeatDiagnosticsP229:
         assert "KR-entry-skip" in MAIN
 
     def test_first_tick_sleeve_text_no_longer_claims_never_ran(self):
+        """[P229, updated P263] The durable contract: the first-tick sleeve
+        text must never claim a fault (the old all-caps never-ran text), and
+        must state that the driver runs after the message. P263 replaced the
+        P229 wording with a reconciled-book lead + 'manage pending'; the old
+        assertion pinned the exact P229 phrase and broke on a line-wrap in
+        the new string literal — pin the contract, not the phrasing (P171)."""
         assert "NO RESULT YET — driver has never run" not in MAIN
-        assert "driver runs after this" in MAIN
+        assert "no result yet this process" not in MAIN  # P263: retired too
+        assert "manage pending (driver" in MAIN, (
+            "the first-tick sleeve text no longer says the driver runs "
+            "after the message — the next reader will misread idle as fault"
+        )
 
 
 class TestGrowOnlyRosterLog:
