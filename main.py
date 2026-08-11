@@ -2120,6 +2120,58 @@ def sleeve_direction_from_intent(intent, fallback_dir: float):
     return _dir, "gated_direction"
 
 
+def restore_p0_combined_equity(data, current):
+    """[P261] Value for ``_p0_last_combined_equity`` after a governor
+    restore: the persisted positive float if the payload carries one, else
+    ``current`` unchanged. The assignment in the governor section flows
+    THROUGH this function (the P251 rule — a textual pin on an inline
+    restore was defeated by a `False and` probe, the third such catch in
+    two days), so disabling the restore requires changing the assignment
+    itself, which the wiring pin sees. Malformed values keep ``current``:
+    first-boot semantics are only unsafe when combined anchors exist, and
+    those restore from the same intact file.
+    """
+    try:
+        v = (data or {}).get("p0_last_combined_equity")
+        if v is not None and float(v) > 0:
+            return float(v)
+    except (TypeError, ValueError):  # noqa: silent-swallow — value coercion; contract stated in the docstring
+        pass
+    return current
+
+
+def combined_p0_equity(kraken_equity, sleeve_equity, held_combined):
+    """[P261] The equity SOTARiskController may be fed, as ``(equity,
+    new_held, source)``.
+
+    The P227 fold-in had a cold-boot hole its own comment mis-certified as
+    safe: on a fresh process the sleeve object does not exist until
+    run_live's heartbeat builds it (AFTER the first tick), while the
+    controller's peak and the P253 daily anchor are PERSISTED at combined
+    denomination. First tick after the 2026-08-11 00:08 restart: Kraken-only
+    $7,088.69 against the combined anchor $10,865.13 -> phantom daily loss
+    of exactly -$3,776.44 (the sleeve's entire equity) -> the sticky
+    kill switch fired on a flat, healthy book.
+
+    Rules, each the conservative direction:
+      - sleeve equity known (> 0): fold it in; the sum becomes the new held
+        combined value.
+      - unknown (unreadable OR object not built yet) with a held combined
+        available (in-memory or restored from disk): feed the HELD value —
+        never a partial book against combined-denominated anchors.
+      - unknown with NO held value (genuinely first-ever boot): Kraken-only
+        is honest — no persisted anchor has ever seen sleeve equity, so no
+        phantom drawdown is arithmetically possible.
+    """
+    k = float(kraken_equity or 0.0)
+    s = float(sleeve_equity or 0.0)
+    if s > 0:
+        return k + s, k + s, "folded"
+    if held_combined is not None:
+        return float(held_combined), float(held_combined), "held"
+    return k, None, "kraken_only_first_boot"
+
+
 def sleeve_snapshot_is_post_flatten_stale(pos_contracts, flatten_tick,
                                           round_count):
     """[P251] True when a nonzero sleeve snapshot should be DISTRUSTED
@@ -6199,31 +6251,37 @@ class HMATSProductionRunner:
                 # rather than a partial book — omitting the sleeve understates
                 # equity against a peak that included it and would fire a
                 # spurious HALT exactly when the venue API is unhealthy.
+                # [P261] The old branch here only applied the held-combined
+                # fallback when the sleeve OBJECT existed, and its closing
+                # comment certified the no-object case as safe ("the peak has
+                # not seen sleeve equity") — false since P253 PERSISTED the
+                # peak and the daily anchor: a fresh process's first tick has
+                # no sleeve object yet but combined-denominated anchors, and
+                # fed Kraken-only equity -> phantom -$3,776.44 daily loss ->
+                # the sticky kill switch fired on a flat book (2026-08-11
+                # 00:09). The decision is now the pure combined_p0_equity();
+                # _p0_last_combined_equity is persisted/restored so the held
+                # value survives the restart that creates the hole.
                 _p0_sleeve = getattr(self, "_coinbase_sleeve", None)
-                if _p0_sleeve is not None:
-                    _p0_sleeve_eq = float(
-                        getattr(_p0_sleeve, "_last_equity_usd", 0.0) or 0.0
+                _p0_sleeve_eq = (
+                    float(getattr(_p0_sleeve, "_last_equity_usd", 0.0) or 0.0)
+                    if _p0_sleeve is not None else 0.0)
+                _p0_kraken_eq = equity
+                equity, _p0_new_held, _p0_src = combined_p0_equity(
+                    _p0_kraken_eq, _p0_sleeve_eq,
+                    getattr(self, "_p0_last_combined_equity", None))
+                if _p0_new_held is not None:
+                    self._p0_last_combined_equity = _p0_new_held
+                if _p0_src == "held":
+                    logger.warning(
+                        f"[P227][P261] sleeve equity unknown this tick "
+                        f"(unreadable, or the sleeve is not built yet after "
+                        f"a restart); feeding P0 the last known COMBINED "
+                        f"equity ${equity:,.2f} rather than the Kraken-only "
+                        f"${_p0_kraken_eq:,.2f} (a partial book against the "
+                        f"persisted combined anchors reads as a spurious "
+                        f"drawdown/daily loss)"
                     )
-                    if _p0_sleeve_eq > 0:
-                        equity += _p0_sleeve_eq
-                        self._p0_last_combined_equity = equity
-                    else:
-                        _p0_held = getattr(
-                            self, "_p0_last_combined_equity", None
-                        )
-                        if _p0_held is not None:
-                            logger.warning(
-                                f"[P227] sleeve equity unreadable this tick; "
-                                f"feeding P0 the last known COMBINED equity "
-                                f"${_p0_held:,.2f} rather than the Kraken-only "
-                                f"${equity:,.2f} (partial book would read as a "
-                                f"spurious drawdown)"
-                            )
-                            equity = _p0_held
-                # No sleeve object yet (paper mode, or the first live tick
-                # before run_live builds it): Kraken-only, the historical
-                # behavior — the peak has not seen sleeve equity, so no
-                # spurious drawdown is possible.
 
                 prices_dict = {
                     asset: market_data.get("current_price", 0.0)
@@ -8538,7 +8596,7 @@ class HMATSProductionRunner:
         #     feedback, the recorded P231 constant). Deliberately NOT looser:
         #     the seat swap changes the DIRECTION source, not the alpha bar,
         #     and the P237 tripwire discipline governs that constant.
-        #     [P260] The 0.9 confidence below is the SAME class of asserted
+        #     [P261] The 0.9 confidence below is the SAME class of asserted
         #     constant (P231: a number wearing a measurement's name) —
         #     acceptable only while the seat is default-off and any enforce
         #     flip is gated on the P166 forward read.
@@ -16332,6 +16390,14 @@ class HMATSProductionRunner:
                     "day": getattr(self, "_daily_pnl_day", None),
                     "equity": getattr(self, "_daily_pnl_anchor", None),
                 },
+                # [P261] Last known COMBINED (Kraken + sleeve) equity. The
+                # P253 anchors above are combined-denominated and persisted;
+                # this must survive the restart too, or the first tick of a
+                # fresh process (no sleeve object yet) feeds the controller a
+                # partial book against those anchors — the 2026-08-11 phantom
+                # -$3,776 kill switch.
+                "p0_last_combined_equity": getattr(
+                    self, "_p0_last_combined_equity", None),
                 # [P253] SOTARiskController peak/halt/kill-switch state. Was
                 # RAM-only: every restart re-anchored the peak and CLEARED an
                 # active kill switch (the only 35% one in the system).
@@ -18106,6 +18172,17 @@ class HMATSProductionRunner:
                         f"${self._daily_pnl_anchor:,.2f} for {self._daily_pnl_day}")
             except Exception as e:
                 logger.warning(f"[P253] daily-PnL anchor restore failed: {e}")
+
+            # [P261] Restore the last known combined equity BEFORE the first
+            # tick, so the P0 feed's held-combined fallback covers the
+            # window between process start and the first sleeve reconcile.
+            self._p0_last_combined_equity = restore_p0_combined_equity(
+                data, getattr(self, "_p0_last_combined_equity", None))
+            if self._p0_last_combined_equity is not None:
+                logger.info(
+                    f"[P261] Restored last combined equity "
+                    f"${self._p0_last_combined_equity:,.2f} for the P0 "
+                    f"feed's cold-boot window")
 
             # [P253] Restore SOTARiskController peak/halt/kill state.
             # from_dict is one-directional (can raise the peak / re-arm a
