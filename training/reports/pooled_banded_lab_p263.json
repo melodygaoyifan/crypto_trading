@@ -1,0 +1,82 @@
+{
+ "generated": "2026-08-11T02:13:48.216973+00:00",
+ "design": [
+  3000,
+  9100
+ ],
+ "refit": 250,
+ "ladder": [
+  "design-select",
+  "pre-design",
+  "virgin-era",
+  "cross-asset",
+  "validation-read",
+  "forward"
+ ],
+ "stage1_design": {
+  "grid_top3": [
+   {
+    "te": 1.5,
+    "tx": 0.25,
+    "sum_increment": -1.1848,
+    "per": {
+     "BTC": {
+      "overlay": 0.5375,
+      "book": 1.0697
+     },
+     "ETH": {
+      "overlay": -0.1222,
+      "book": 0.088
+     },
+     "SOL": {
+      "overlay": 0.768,
+      "book": 1.2104
+     }
+    }
+   },
+   {
+    "te": 1.5,
+    "tx": 0.5,
+    "sum_increment": -1.4303,
+    "per": {
+     "BTC": {
+      "overlay": 0.6617,
+      "book": 1.0697
+     },
+     "ETH": {
+      "overlay": -0.2324,
+      "book": 0.088
+     },
+     "SOL": {
+      "overlay": 0.5085,
+      "book": 1.2104
+     }
+    }
+   },
+   {
+    "te": 2.0,
+    "tx": 0.25,
+    "sum_increment": -2.123,
+    "per": {
+     "BTC": {
+      "overlay": 0.8333,
+      "book": 1.0697
+     },
+     "ETH": {
+      "overlay": -0.241,
+      "book": 0.088
+     },
+     "SOL": {
+      "overlay": -0.3472,
+      "book": 1.2104
+     }
+    }
+   }
+  ],
+  "selected": [
+   1.5,
+   0.25
+  ]
+ },
+ "verdict": "DEAD AT STAGE 1 \u2014 overlay adds nothing in-design"
+}
