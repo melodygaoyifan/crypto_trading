@@ -79,14 +79,6 @@
     "top_features": {
       "peace": [
         [
-          "d6_vol_336h",
-          0.097
-        ],
-        [
-          "funding_rate_zscore",
-          -0.091
-        ],
-        [
           "bb_width_20_denoised",
           0.081
         ],
@@ -95,15 +87,19 @@
           0.078
         ],
         [
-          "z42_vol_ret_int",
-          0.068
+          "ret_120h",
+          -0.067
+        ],
+        [
+          "mom_120h",
+          -0.067
+        ],
+        [
+          "vol_regime_f",
+          0.06
         ]
       ],
       "bull": [
-        [
-          "x_ret_6h_bull",
-          -0.108
-        ],
         [
           "ret_6h",
           -0.108
@@ -113,23 +109,19 @@
           -0.094
         ],
         [
-          "p_vol_regime_f__vol_6h",
-          0.093
+          "vol_expansion",
+          0.09
         ],
         [
-          "d6_ret_6h",
-          -0.093
+          "vol_ret_int",
+          0.083
+        ],
+        [
+          "rsi_7",
+          -0.082
         ]
       ],
       "bear": [
-        [
-          "d6_vol_6h",
-          0.117
-        ],
-        [
-          "z42_vol_6h",
-          0.109
-        ],
         [
           "vol_6h",
           0.072
@@ -139,8 +131,16 @@
           -0.065
         ],
         [
-          "x_trend_str_bear",
+          "trend_str",
           -0.063
+        ],
+        [
+          "bb_width_20",
+          -0.063
+        ],
+        [
+          "fv2_dow_cos",
+          0.053
         ]
       ]
     },
@@ -259,24 +259,24 @@
     "top_features": {
       "peace": [
         [
-          "z42_funding_rate_zscore",
+          "funding_rate_zscore",
           -0.1
-        ],
-        [
-          "p_funding_rate_zscore__regime_proba_2",
-          -0.091
         ],
         [
           "regime_proba_5",
           0.089
         ],
         [
-          "p_regime_proba_4__regime_proba_5",
-          0.089
+          "vol_regime_f",
+          0.085
         ],
         [
-          "funding_z_mom5d",
-          -0.085
+          "regime_proba_6",
+          -0.076
+        ],
+        [
+          "regime_proba_2",
+          -0.074
         ]
       ],
       "bull": [
@@ -303,14 +303,6 @@
       ],
       "bear": [
         [
-          "p_funding_rate_zscore__regime_proba_5",
-          -0.094
-        ],
-        [
-          "p_regime_proba_4__funding_rate_zscore",
-          -0.089
-        ],
-        [
           "trend_down",
           0.087
         ],
@@ -321,6 +313,14 @@
         [
           "trend_accel",
           -0.079
+        ],
+        [
+          "funding_rate_zscore",
+          -0.075
+        ],
+        [
+          "long_score",
+          -0.071
         ]
       ]
     },
@@ -443,10 +443,6 @@
           -0.104
         ],
         [
-          "z42_vol_720h",
-          0.081
-        ],
-        [
           "atr_14",
           0.068
         ],
@@ -457,21 +453,13 @@
         [
           "atr_14_denoised",
           0.066
+        ],
+        [
+          "above_ma50",
+          0.058
         ]
       ],
       "bull": [
-        [
-          "d6_vol_336h",
-          0.114
-        ],
-        [
-          "d6_vol_regime_f",
-          0.093
-        ],
-        [
-          "z42_vol_6h",
-          0.087
-        ],
         [
           "vol_720h",
           -0.08
@@ -479,16 +467,24 @@
         [
           "ret_1000h",
           0.077
+        ],
+        [
+          "greed_4h",
+          0.076
+        ],
+        [
+          "vol_skew",
+          -0.075
+        ],
+        [
+          "fv2_hour_cos",
+          -0.075
         ]
       ],
       "bear": [
         [
           "fv2_dow_cos",
           0.088
-        ],
-        [
-          "d6_vol_336h",
-          0.074
         ],
         [
           "vol_regime",
@@ -499,8 +495,12 @@
           0.064
         ],
         [
-          "d6_vol_6h",
-          0.064
+          "ret_6h",
+          -0.052
+        ],
+        [
+          "regime_proba_3",
+          -0.045
         ]
       ]
     },

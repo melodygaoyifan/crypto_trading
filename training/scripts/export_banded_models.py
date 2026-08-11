@@ -45,6 +45,24 @@ BAND_PARAMS = {
 
 
 def main() -> int:
+    # [P259b] REFUSAL GATE — the candidate was WITHDRAWN the same day it was
+    # built. The operator-authorized single validation-era read (the one
+    # window the selection never touched, ~1.8y recent) shows the banded
+    # increment NEGATIVE on both assets: BTC -0.212, ETH -0.618 vs the raw
+    # book. The overlay won BOTH older eras and survived the full same-day
+    # kill battery (9/9 perturbations, cost x2, all sub-periods) — and still
+    # failed the unread window. Era-fragility, the P243/P244 class. Re-run
+    # only with new evidence + its own P-entry.
+    if "--force-withdrawn" not in sys.argv:
+        print(
+            "REFUSING: the banded overlay was WITHDRAWN on its validation "
+            "read (2026-08-10, ledgered: banded_overlay_p259) — increment "
+            "-0.212 BTC / -0.618 ETH on the era the selection never "
+            "touched. Re-exporting would resurrect a candidate that lost "
+            "the only honest exam available same-day. If new lab evidence "
+            "exists (with era-stability INCLUDING the recent era), re-run "
+            "with --force-withdrawn and record a P-entry.")
+        return 3
     for asset, band in BAND_PARAMS.items():
         c = _ctx(asset)
         close, fz = c["close"], c["fz"]

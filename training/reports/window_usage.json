@@ -319,6 +319,78 @@
    "start": 9100,
    "end": 13034,
    "purpose": "validation"
+  },
+  {
+   "ts": "2026-08-10T06:37:11.678977+00:00",
+   "experiment": "regime_lab:p257_full",
+   "asset": "BTC",
+   "start": 3000,
+   "end": 9100,
+   "purpose": "design"
+  },
+  {
+   "ts": "2026-08-10T06:37:31.473507+00:00",
+   "experiment": "regime_lab:p257_full",
+   "asset": "BTC",
+   "start": 3000,
+   "end": 9100,
+   "purpose": "design"
+  },
+  {
+   "ts": "2026-08-10T06:48:27.074368+00:00",
+   "experiment": "regime_lab:p257_full",
+   "asset": "ETH",
+   "start": 3000,
+   "end": 9100,
+   "purpose": "design"
+  },
+  {
+   "ts": "2026-08-10T06:59:18.853589+00:00",
+   "experiment": "regime_lab:p257_full",
+   "asset": "SOL",
+   "start": 3000,
+   "end": 9100,
+   "purpose": "design"
+  },
+  {
+   "ts": "2026-08-10T07:10:10.044896+00:00",
+   "experiment": "regime_lab:p257_full",
+   "asset": "BTC",
+   "start": 9100,
+   "end": 13095,
+   "purpose": "validation"
+  },
+  {
+   "ts": "2026-08-10T07:10:11.054175+00:00",
+   "experiment": "regime_lab:p257_full",
+   "asset": "ETH",
+   "start": 9100,
+   "end": 13095,
+   "purpose": "validation"
+  },
+  {
+   "ts": "2026-08-10T07:11:00.440891+00:00",
+   "experiment": "regime_lab:p257_full",
+   "asset": "SOL",
+   "start": 9100,
+   "end": 13034,
+   "purpose": "validation"
+  },
+  {
+   "ts": "2026-08-10T23:58:37.736130+00:00",
+   "experiment": "banded_overlay_p259",
+   "asset": "BTC",
+   "start": 9100,
+   "end": 13095,
+   "purpose": "validation read #1 for this candidate (window read 6x for other candidates) \u2014 operator-authorized 2026-08-10"
+  },
+  {
+   "ts": "2026-08-10T23:58:37.832525+00:00",
+   "experiment": "banded_overlay_p259",
+   "asset": "ETH",
+   "start": 9100,
+   "end": 13095,
+   "purpose": "validation read #1 for this candidate (window read 6x for other candidates) \u2014 operator-authorized 2026-08-10"
   }
  ]
 }

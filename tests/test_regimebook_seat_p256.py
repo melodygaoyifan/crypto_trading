@@ -224,12 +224,26 @@ class TestAdjustedLedger:
         assert r2 is not None and r2[0] == r2[1], (
             "flat book cell must take the banded target")
 
-    def test_sol_export_absent_by_decision(self):
-        assert not (REPO / "configs" / "regimebook" / "SOL_banded.json"
-                    ).exists(), (
-            "a SOL banded export appeared — SOL's book STOOD in the lab "
-            "(banded/overlay did not beat it on the design era); exporting "
-            "SOL requires new lab evidence + its own P-entry")
+    def test_all_banded_exports_absent_by_decision(self):
+        """[P259b] The banded overlay was WITHDRAWN the same day it was
+        built: its single ledgered validation-era read (the one window the
+        selection never touched) showed the increment NEGATIVE on both
+        earners (BTC -0.212, ETH -0.618) — era-fragility that survived the
+        entire same-day kill battery and died only on unread data. SOL never
+        earned an export in the first place. An export reappearing without a
+        new P-entry is a withdrawn candidate resurrecting silently (the
+        exact failure the SOL-bear-ridge refusal gate exists for)."""
+        for a in ("BTC", "ETH", "SOL"):
+            assert not (REPO / "configs" / "regimebook" / f"{a}_banded.json"
+                        ).exists(), (
+                f"{a}_banded.json exists — the banded overlay was withdrawn "
+                f"on its validation read (P259b); re-export requires "
+                f"--force-withdrawn + new era-stable evidence + a P-entry")
+
+    def test_export_script_refuses_without_force(self):
+        src = (REPO / "training" / "scripts" /
+               "export_banded_models.py").read_text(encoding="utf-8")
+        assert "--force-withdrawn" in src and "REFUSING" in src
 
     def test_adj_params_match_the_lab_report(self):
         """The deployed params must be the mechanism-lab winners — if the lab

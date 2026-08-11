@@ -222,11 +222,11 @@
   }
  },
  "provenance": {
-  "git_commit": "372d08c",
+  "git_commit": "3b33c0b",
   "git_dirty": true,
   "data_hashes": {},
   "config": {},
-  "stamped_at": "2026-08-09T23:01:23.671952+00:00"
+  "stamped_at": "2026-08-10T06:37:23.013306+00:00"
  },
  "config": {
   "ic_floor": 0.03,
