@@ -858,9 +858,14 @@ class SOLDominanceForcedExit:
         """
         
         now = datetime.now(timezone.utc)
-        
+
         # No position -> no exit needed
-        if current_exposure <= 0.01:
+        # [P265] abs(): the caller passes SIGNED exposure, so a SHORT
+        # position (-0.3) read as "no position" and none of the four
+        # IMMEDIATE exits (VPIN >= 0.90, correlation >= 0.92, flash move,
+        # danger-phase transition) could ever fire for shorts — a forced-exit
+        # protection that was long-only by sign convention.
+        if abs(current_exposure) <= 0.01:
             return ForcedExitSignal(should_exit=False)
         
         # Track dominance state

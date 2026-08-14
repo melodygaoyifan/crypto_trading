@@ -605,13 +605,25 @@ class TradeGate:
                     logger.warning(f"Trade rejected: DATA_HEALTH_CRITICAL - {snapshot.degradation_reason}")
                     return self._reject(RejectReason.DATA_HEALTH_CRITICAL, details)
                 
-                # EXIT_ONLY -> 只允许平仓（需要检查 proposal 是否是平仓）
+                # EXIT_ONLY -> 只允许平仓
                 if snapshot.degradation_level == DegradationLevel.EXIT_ONLY:
-                    # 假设新开仓 = entry，简化判断
-                    is_entry = not getattr(proposal, 'is_exit', False)
-                    if is_entry:
-                        logger.warning(f"Trade rejected: DATA_HEALTH_EXIT_ONLY - only exits allowed")
-                        return self._reject(RejectReason.DATA_HEALTH_EXIT_ONLY, details)
+                    # [P265] Return the EXIT_ONLY decision, not REJECT. The
+                    # old code keyed on `proposal.is_exit` — a field
+                    # TradeProposal does not have and check() never set, so
+                    # EVERY proposal read as an entry and got REJECT, which
+                    # the p0 consumer maps to allow_exit=False: when data
+                    # health degraded to exit-only, position CLOSES were
+                    # rejected too — the P195 shape (the control blocks the
+                    # exit it exists to force). GateDecision.EXIT_ONLY lets
+                    # each consumer apply its own entry/exit split (p0 sets
+                    # allow_exit=True and blocks entries).
+                    logger.warning("Trade gate EXIT_ONLY: DATA_HEALTH_EXIT_ONLY"
+                                   " - entries blocked, exits allowed")
+                    return GateResult(
+                        decision=GateDecision.EXIT_ONLY,
+                        reason=RejectReason.DATA_HEALTH_EXIT_ONLY,
+                        details=details,
+                    )
                 
                 # REDUCED -> 减少仓位（在后面处理）
                 if snapshot.degradation_level == DegradationLevel.REDUCED:

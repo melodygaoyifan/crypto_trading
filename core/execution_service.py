@@ -32,6 +32,17 @@ from typing import Any, Dict, List, Optional, Tuple
 from core.canonical_enums import RunMode
 from core.constants import get_rule
 
+# [P265] The W7 RL-execution-agent block below constructs AgentOBSnapshot,
+# but the symbol was only ever imported in main.py — inside THIS module every
+# W7 evaluation raised NameError, swallowed by its handler as a debug
+# "[EXEC_AGENT] Failed" line: the WIRE-5 MARKET<->LIMIT overrides never
+# executed once since the extraction (the P72 class — P72 fixed three sibling
+# symbols in this file and missed this one).
+try:
+    from execution.rl_execution_agent import OrderbookSnapshot as AgentOBSnapshot
+except ImportError:  # noqa: silent-swallow — optional module; the W7 block guards on ctx.rl_exec_agent
+    AgentOBSnapshot = None  # type: ignore[assignment,misc]
+
 logger = logging.getLogger(__name__)
 
 
@@ -922,9 +933,17 @@ async def execute_intent_v2(
                 )
                 _sizer_exp = _sizing.final_exposure_pct
             if _sizer_exp < exposure_fraction:
+                # [P265] `_sizing` exists only in the else-branch (first
+                # entries). On a tranche ADD the old f-string read
+                # _sizing.cap_applied -> NameError BEFORE the assignment
+                # below executed -> swallowed as a debug "[SIZER] Failed" —
+                # i.e. the sizer's tranche/drawdown/risk cap was silently
+                # never applied precisely on the adds it was written for.
+                _cap_label = (_sizing.cap_applied
+                              if _existing_tranche <= 0 else "risk_max")
                 logger.info(
                     f"[SIZER] {asset}: capped {exposure_fraction:.4f} ->"
-                    f"{_sizer_exp:.4f} ({_sizing.cap_applied})"
+                    f"{_sizer_exp:.4f} ({_cap_label})"
                 )
                 exposure_fraction = _sizer_exp
         except Exception as e:
@@ -1022,14 +1041,35 @@ async def execute_intent_v2(
         intent.veto_active = True
         intent.veto_reason = "EXPOSURE_BELOW_MINIMUM_VIABLE"
         ctx.exit_trigger_tag.pop(asset, None)
+        # [P265] The reject must actually RETURN. The old block logged
+        # "rejecting", stamped the veto — and fell through: the sub-minimum
+        # exposure converted to base_quantity, cleared the M3 floor, and the
+        # order was PLACED, leaving a FILLED order carrying veto_active=True
+        # (a vetoed-and-filled contradiction downstream). The fee-economics
+        # floor was decorative for the function's whole life.
+        return {"status": "REJECTED",
+                "reason": "EXPOSURE_BELOW_MINIMUM_VIABLE",
+                "asset": asset}
 
     if _is_full_exit_request and _has_active_position:
         _close_notional = abs(float(_existing_position.get("notional", 0.0) or 0.0))
         _close_exposure = abs(float(_existing_position.get("exposure", 0.0) or 0.0))
+        _close_entry_px = abs(float(_existing_position.get("entry_price", 0.0) or 0.0))
         if _close_exposure > 0:
             exposure_fraction = _close_exposure
-        if _close_notional > 0 and current_price > 0:
-            base_quantity = _close_notional / current_price
+        if _close_notional > 0 and (_close_entry_px > 0 or current_price > 0):
+            # [P265] UNITS HELD = entry_notional / ENTRY price. The position's
+            # "notional" field is written at fill time and never marked to
+            # market, so dividing by the CURRENT price closed the wrong
+            # number of units: after a +10% move on a long only ~91% was
+            # sold (residual base left untracked at the venue while BRANCH A
+            # pops the whole position); after an adverse move it OVER-sized —
+            # masked by the balance clamp on spot SELLs, but a margin SHORT
+            # close (BUY, leverage>1) bypasses both clamps and buys >100% of
+            # the short, flipping it into a residual margin LONG. Falls back
+            # to the current price only when no entry price was recorded.
+            base_quantity = _close_notional / (
+                _close_entry_px if _close_entry_px > 0 else current_price)
         elif P0_MODULES_AVAILABLE and _close_exposure > 0:
             try:
                 base_quantity = float(exposure_to_quantity(
@@ -1878,7 +1918,7 @@ async def execute_intent_v2(
                 logger.debug(f"[L2] Analysis failed: {e}")
 
     # W7: RL Execution Agent advisory (rule-based action from orderbook)
-    if ctx.rl_exec_agent and ctx.integrity_shield:
+    if ctx.rl_exec_agent and ctx.integrity_shield and AgentOBSnapshot is not None:
         try:
             _canonical_pair = ctx.fn_normalize_kraken_pair(asset)
             _ob = ctx.integrity_shield.get_orderbook(_canonical_pair) if _canonical_pair else None
@@ -2110,6 +2150,35 @@ async def execute_intent_v2(
         logger.debug(
             f"[DYN_SLICER_MINSIZE] {asset}: post-guard re-cap skipped: {_sl_err2}"
         )
+
+    # [L3-03][P265] FLIP GATE — moved PRE-ORDER. The original sat in BRANCH C
+    # of the post-execution bookkeeping tree, i.e. AFTER the venue fill: on
+    # block it mutated the intent and returned FLIP_BLOCKED with ZERO
+    # position/fee/cooldown/attribution bookkeeping for a REAL venue fill —
+    # the book had flipped at the venue while paper_positions kept the old
+    # position (the P139/P140 desync class), reachable whenever a flip's
+    # alpha sat between the upstream 1.5x secondary veto and this gate's 2x.
+    # Now the flip is refused BEFORE any order exists; the position stands
+    # and the intent is NOT mutated (no state changes on a check path —
+    # the P168 lesson).
+    _fg_old_dir = float((_existing_position or {}).get("direction", 0) or 0)
+    if (not _is_full_exit_request and _fg_old_dir != 0
+            and _fg_old_dir * _execution_direction < 0):
+        _fg_alpha = getattr(intent, 'alpha_estimated_bps', 0.0)
+        _fg_threshold = getattr(intent, 'alpha_threshold_bps', 0.0)
+        # Flip requires 2x cost: the threshold already encodes 1x cost
+        _fg_flip_threshold = _fg_threshold * 2.0
+        if _fg_alpha < _fg_flip_threshold and _fg_flip_threshold > 0:
+            logger.info(
+                f"[FLIP_GATE] {asset}: alpha={_fg_alpha:.1f}bps < "
+                f"flip_cost={_fg_flip_threshold:.1f}bps (2x{_fg_threshold:.1f}) "
+                f"— flip refused PRE-ORDER; position stands"
+            )
+            return {
+                "status": "FLIP_BLOCKED",
+                "reason": f"[FLIP_GATE] alpha={_fg_alpha:.1f} < 2xcost={_fg_flip_threshold:.1f}",
+                "asset": asset,
+            }
 
     # 2026-05-05: pre-execution free-quote check for BUYs. The position
     # sizer uses total equity (which includes capital sitting in BTC/ETH/SOL
@@ -2399,7 +2468,18 @@ async def execute_intent_v2(
     if notional_usd > 0:
         # [P169] The venue tells us what it charged. Hand it over instead of
         # letting the fee model guess from a hardcoded Kraken table.
-        _venue = "coinbase" if _coinbase_routed(ctx, asset) else "kraken"
+        # [P265] The venue that FILLED this order is KRAKEN, always: every
+        # order this function places is a Kraken order (the Coinbase fork is
+        # a NO-OP per P141; the sleeve is a separate driver that never
+        # reaches this code). `_coinbase_routed` answers "where is the asset
+        # ROUTED", not "which venue did this fill hit" — with all three
+        # assets routed, an exit/unwind of legacy Kraken spot (the one path
+        # P152 leaves open) got modelled at Coinbase's 0/3bps instead of
+        # Kraken's 16/26, skipped the Kraken+ blender's volume accrual, and
+        # stamped venue="coinbase" into attribution for a Kraken execution —
+        # inverting P169's intent on the one Kraken path still designed to
+        # fire.
+        _venue = "kraken"
         _fee_result = ctx.fn_build_execution_fee_result(
             asset=asset,
             executed_notional_usd=notional_usd,
@@ -2998,6 +3078,13 @@ async def execute_intent_v2(
                         logger.debug(f"[META_DECISION] record_outcome failed: {_md_err}")
 
                 # [v3.3-C11] PnL Attribution: record trade for DRL promotion
+                # [P265] Hoisted defaults: _c11_drl_rec/_c11_drl_conf were
+                # defined only inside the try below — with pnl_attribution
+                # None (or its try failing early) the DRL-COUNT block
+                # NameError'd inside its own try -> debug swallow ->
+                # promotion_gate.record_trade never ran.
+                _c11_drl_rec = None
+                _c11_drl_conf = 0.0
                 if ctx.pnl_attribution is not None:
                     try:
                         _c11_total_bps = _net_pnl_bps
@@ -3463,32 +3550,12 @@ async def execute_intent_v2(
             )
             _entry_incremental_fee_usd = _entry_trade_fee_usd + _entry_margin_opening_fee_usd
 
-            # [L3-03] FLIP GATE: direction flip costs 2x (close + open)
-            # Check alpha covers double transaction cost before allowing flip
-            _is_flip = (old_pos is not None
-                        and old_pos.get("direction", 0) != 0
-                        and old_pos.get("direction", 0) * direction_sign < 0)
-            if _is_flip:
-                _fg_alpha = getattr(intent, 'alpha_estimated_bps', 0.0)
-                _fg_threshold = getattr(intent, 'alpha_threshold_bps', 0.0)
-                # Flip requires 2x cost: the threshold already encodes 1x cost
-                _fg_flip_threshold = _fg_threshold * 2.0
-                if _fg_alpha < _fg_flip_threshold and _fg_flip_threshold > 0:
-                    logger.info(
-                        f"[FLIP_GATE] {asset}: alpha={_fg_alpha:.1f}bps < "
-                        f"flip_cost={_fg_flip_threshold:.1f}bps (2x{_fg_threshold:.1f}) "
-                        f"-flip BLOCKED, closing only"
-                    )
-                    # Convert flip to flat-only: set direction=0, target_exposure=0
-                    intent.target_exposure = 0
-                    intent.direction = 0
-                    # Re-route to BRANCH A (full exit) by returning and re-entering
-                    # Simpler: just don't flip -close position via existing exit logic
-                    return {
-                        "status": "FLIP_BLOCKED",
-                        "reason": f"[FLIP_GATE] alpha={_fg_alpha:.1f} < 2xcost={_fg_flip_threshold:.1f}",
-                        "asset": asset,
-                    }
+            # [L3-03][P265] The FLIP GATE that used to sit HERE — after the
+            # venue fill — is retired: on block it discarded an EXECUTED
+            # order from the books (mutated the intent, returned
+            # FLIP_BLOCKED, recorded nothing). The check now runs PRE-ORDER
+            # (search "[L3-03][P265] FLIP GATE" above), so an order that
+            # reaches this point is always booked.
 
             # Direction flip: close old position first (compute full PnL)
             if old_pos and old_pos.get("direction", 0) * direction_sign < 0:
@@ -3544,9 +3611,15 @@ async def execute_intent_v2(
                     _edrl_flip_reason = str(ctx.exit_trigger_tag.get(asset, "FLIP"))
                     if _edrl_ledger_flip is not None:
                         try:
+                            # [P265] `fill_price`, not `exit_price` — the
+                            # latter is assigned only in BRANCH A (full exit),
+                            # so every flip close NameError'd inside this try
+                            # (swallowed at debug): the exit-DRL outcome
+                            # ledger never closed a flip record. The sibling
+                            # calls below already use fill_price.
                             _edrl_ledger_flip.record_close(
                                 asset=asset,
-                                exit_price=float(exit_price),
+                                exit_price=float(fill_price),
                                 exit_reason=_edrl_flip_reason,
                                 realized_pnl_bps=float(_flip_net_pnl_bps),
                             )

@@ -266,6 +266,10 @@ class TestVetoStringCouplingDriftGuard:
         src = code_only(repo / "main.py", strip_docstrings=True)
         src += code_only(repo / "integration" / "integration_v36.py",
                          strip_docstrings=True)
+        # [P265] DATA_HEALTH_* reasons surface via "[TRADE_GATE] {reason.name}"
+        # — the enum members live in trade_gate.py.
+        src += code_only(repo / "defense" / "trade_gate.py",
+                         strip_docstrings=True)
         # Excise the definition statements themselves.
         src = re.sub(r"_SLEEVE_HOLD_VETOES\s*=\s*\([^)]*\)", "", src)
         src = re.sub(r"_SLEEVE_VENUE_NA_VETOES\s*=\s*\([^)]*\)", "", src)

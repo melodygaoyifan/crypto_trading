@@ -1559,14 +1559,29 @@ class ExecutionManager:
                 except Exception as _mkt_err:
                     self.logger.error(f"[LIMIT→MARKET] Market fallback error: {_mkt_err}")
 
+            # [P265] The CANCELLED result must CARRY the partial fill. The old
+            # object omitted filled_size (default 0.0) even with up to 49.9%
+            # filled at the venue — upstream, the C2 gate treats
+            # success=False as "skip position update and fee recording", so
+            # the filled portion existed on the exchange and in no internal
+            # book (the reprice path handled this correctly; this plain-limit
+            # path did not), and the slice loop's H1 aggregate under-counted.
+            _to_fill_px = float(order_status.get('average', price) or price)
             return OrderResult(
                 success=False,
                 order_id=order_id,
                 symbol=symbol,
                 side=side.value,
                 order_type=OrderType.LIMIT.value,
+                requested_price=price,
+                filled_price=_to_fill_px if filled_qty > 0 else 0.0,
+                requested_size=size,
+                filled_size=filled_qty,
+                fee=float((order_status.get('fee') or {}).get('cost', 0) or 0),
+                fee_currency=(order_status.get('fee') or {}).get('currency', ''),
                 status=OrderStatus.CANCELLED,
-                error_message=f"Limit order timeout (partial={filled_qty:.6f})"
+                error_message=f"Limit order timeout (partial={filled_qty:.6f})",
+                raw_response=order_status,
             )
             
         except Exception as e:
@@ -1907,12 +1922,23 @@ class ExecutionManager:
             if not self.exchange or self.dry_run:
                 return size
 
-            # Try cached balance from account_sync first (no API call)
+            # [P265] The pair's REAL quote currency. Both BUY branches used
+            # to read USD unconditionally — for SOL/USDT (the canonical SOL
+            # pair since P133) a BUY was clamped against the USD book: small
+            # USD + funded USDT wrongly clamped/zeroed the order; large USD +
+            # empty USDT passed unclamped straight into a venue reject.
+            _quote = (symbol.split('/')[1].split(':')[0]
+                      if '/' in symbol else 'USD')
+
+            # Try cached balance from account_sync first (no API call).
+            # The cache is USD-denominated, so it can only answer for
+            # USD-quoted pairs; other quotes fall through to fetch_balance.
             balance = None
             try:
                 from core.account_sync import get_account_sync
                 _sync = get_account_sync()
-                if _sync and _sync._state.status.name == "VALID":
+                if (_sync and _sync._state.status.name == "VALID"
+                        and _quote == "USD"):
                     # Use available_balance from last refresh
                     if side == OrderSide.BUY:
                         usd_free = _sync._state.available_balance
@@ -1961,9 +1987,11 @@ class ExecutionManager:
             if balance is None:
                 return size
             if side == OrderSide.BUY:
-                usd_free = float(balance.get('USD', {}).get('free', 0) or 0)
-                if usd_free <= 0:
-                    self.logger.warning(f"[SIZE_CLAMP] No USD available for {symbol} BUY")
+                # [P265] the pair's own quote book, not hardcoded USD
+                quote_free = float(balance.get(_quote, {}).get('free', 0) or 0)
+                if quote_free <= 0:
+                    self.logger.warning(
+                        f"[SIZE_CLAMP] No {_quote} available for {symbol} BUY")
                     return 0.0
                 if price <= 0:
                     try:
@@ -1971,11 +1999,11 @@ class ExecutionManager:
                         price = float(ticker.get('last', 0) or 0)
                     except Exception:
                         return size
-                max_size = (usd_free * 0.90) / price
+                max_size = (quote_free * 0.90) / price
                 if size > max_size:
                     self.logger.info(
                         f"[SIZE_CLAMP] {symbol} BUY clamped: {size:.6f} -> {max_size:.6f} "
-                        f"(USD free=${usd_free:.2f}, price=${price:.2f})"
+                        f"({_quote} free={quote_free:.2f}, price=${price:.2f})"
                     )
                     return max_size
             else:

@@ -361,7 +361,7 @@ class RegimeBookShadow:
             return None
         try:
             last = datetime.strptime(max(h), "%Y-%m-%d").date()
-        except (ValueError, TypeError):
+        except (ValueError, TypeError):  # noqa: silent-swallow — malformed day key = unknown age; callers treat None as no-bound
             return None
         return (datetime.now(timezone.utc).date() - last).days
 

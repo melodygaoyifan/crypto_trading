@@ -181,6 +181,16 @@ class CoinbaseSleeve:
                 # is recoverable, a fabricated position is not.
                 contracts = abs(_f(_g(pos, "number_of_contracts")
                                    or _g(pos, "net_size")))
+                if contracts == 0:
+                    # [P265] A ZERO-magnitude row (settled/residual entries
+                    # arrive with side "" or FUTURES_POSITION_SIDE_UNKNOWN)
+                    # has no sign to guess — the P253 raise on it poisoned
+                    # the ENTIRE snapshot: _reconcile_ok=False made every
+                    # asset's manage/execute/stop-reconcile (flattens
+                    # included) return SKIPPED_STALE for as long as the row
+                    # persisted. Skipping a zero row preserves the invariant
+                    # exactly (never guess a NONZERO position's sign).
+                    continue
                 if "SHORT" in side:
                     signed = -contracts
                 elif "LONG" in side:
@@ -973,7 +983,14 @@ class CoinbaseSleeve:
                 return {"status": "FLAT_CANCELLED" if n else "FLAT_NONE",
                         "asset": asset, "cancelled": n}
 
-            cs = self._adapter._contract_size(pid) or 1.0
+            # [P265] Same refusal as execute_target: an `or 1.0` fallback
+            # here sized the protective stop 10x for ETH.
+            cs = self._adapter._contract_size(pid)
+            if not cs or cs <= 0:
+                logger.error(f"[COINBASE_STOP] {asset}: contract size UNKNOWN "
+                             f"for {pid} — refusing to size a stop with a "
+                             f"fabricated unit")
+                return {"status": "NO_CONTRACT_SIZE", "asset": asset}
             want_side = "SELL" if cur > 0 else "BUY"
             want_base = abs(cur) * cs
             _want_px = self.desired_stop_price(asset)
@@ -1106,7 +1123,22 @@ class CoinbaseSleeve:
         try:
             pid = self._adapter.to_venue_symbol(asset, "perp")
             await self._cancel_resting_orders(pid, asset)
-            cs = self._adapter._contract_size(pid) or 1.0
+            # [P265] REFUSE on an unknown contract size — never `or 1.0`.
+            # The fallback fabricated a UNIT: base_size became a contract
+            # count wearing base-unit clothes, and if the adapter's own
+            # lookup then succeeded (the two calls are ms apart), it computed
+            # int(round(1/0.1)) = 10 contracts for ETH — a 10x order that
+            # fills inside buying power, with can_trade having gated only the
+            # intended 1-contract delta. (Latent while all three pids sit in
+            # the fallback table; armed the day the 20DEC30 contract rolls.)
+            cs = self._adapter._contract_size(pid)
+            if not cs or cs <= 0:
+                logger.error(f"[COINBASE_SLEEVE] execute_target {asset}: "
+                             f"contract size UNKNOWN for {pid} — refusing to "
+                             f"fabricate a unit (a wrong unit is a 10-100x "
+                             f"order)")
+                return {"status": "ERROR", "asset": asset,
+                        "reason": f"no_contract_size:{pid}"}
             base_size = n_contracts * cs  # adapter converts base->contracts
             # marketable limit: cross slightly so it fills; adapter rounds to tick
             prod = self._adapter._client.get_product(product_id=pid)

@@ -77,7 +77,7 @@ def main() -> int:
             try:
                 gap = (_date.fromisoformat(window[-1])
                        - _date.fromisoformat(d)).days
-            except ValueError:
+            except ValueError:  # noqa: silent-swallow — malformed day key in a report filename; the spacing filter just skips it
                 continue
             if gap >= _MIN_SPACING_DAYS:
                 window.append(d)

@@ -413,7 +413,11 @@ class TestConfigOverlayWiring:
         assert cfg.thesis_budget_loss_pct_nav == THESIS_BUDGET_LOSS_PCT_NAV
         assert cfg.thesis_budget_loss_streak_limit == THESIS_BUDGET_LOSS_STREAK_LIMIT
         assert cfg.thesis_budget_cooldown_bars == THESIS_BUDGET_COOLDOWN_BARS
-        assert cfg.thesis_budget_max_reentry == 0
+        # [P265] parse default aligned to the DECLARED FIX-M1 default (1).
+        # The old pin (0) was pinning the bug: every config-file boot
+        # silently reverted FIX-M1 because the live profile has no
+        # thesis_budget section.
+        assert cfg.thesis_budget_max_reentry == 1
 
 
 # ─────────────────────────────────────────────────────────────────────────

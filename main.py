@@ -1972,8 +1972,13 @@ class ProductionConfig:
             # P1-02: Thesis budget parameters (overlay-aware)
             thesis_budget_loss_pct_nav=data.get("thesis_budget", {}).get(
                 "loss_budget_pct_nav", THESIS_BUDGET_LOSS_PCT_NAV),  # [CFG-3]
+            # [P265] Parse default aligned to the DECLARED default (1, FIX-M1).
+            # The old fallback 0 meant every config-file boot silently
+            # reverted FIX-M1 to "permanent ban after a budget hit" — the
+            # live profile has no thesis_budget section, so the dataclass
+            # default was never reachable from production (P239 class).
             thesis_budget_max_reentry=data.get("thesis_budget", {}).get(
-                "max_reentry_after_budget_hit", 0),
+                "max_reentry_after_budget_hit", 1),
             thesis_budget_cooldown_bars=data.get("thesis_budget", {}).get(
                 "cooldown_bars", THESIS_BUDGET_COOLDOWN_BARS),  # [CFG-3]
             thesis_budget_loss_streak_limit=data.get("thesis_budget", {}).get(
@@ -2077,6 +2082,9 @@ _SLEEVE_HOLD_VETOES = ("EXPOSURE_DELTA_BELOW_THRESHOLD", "FLIP_PERSIST_HOLD",
                        # subtype or the trade gate's own freshness veto) is
                        # the data-unknown class: hold, stop keeps guarding.
                        "STALE_DATA",
+                       # [P265] Data-health degradation (DATA_HEALTH_CRITICAL
+                       # / DATA_HEALTH_EXIT_ONLY) — same data-unknown class.
+                       "DATA_HEALTH",
                        # [P265] A trade-gate CRASH is no information at all —
                        # C1's fail-closed veto is right, but flattening on it
                        # converts a code fault into a liquidation.
@@ -19463,7 +19471,34 @@ class HMATSProductionRunner:
                                 if _frt_p > 0:
                                     _frt_corr_prices[frt_asset] = _frt_p
                             except Exception as e:
-                                logger.debug(f"[FastRiskTick] {frt_asset} eval skipped: {e}")
+                                # [P265] A persistently failing evaluation
+                                # silently removed the 30s inter-tick safety
+                                # net (the whole eval incl. its market-data
+                                # fetch was swallowed at DEBUG — dropped at
+                                # production log level; a dead watchdog was
+                                # indistinguishable from a quiet one, P160
+                                # shape). Rate-limited: 1st/10th/every 100th
+                                # consecutive failure per asset.
+                                _frt_f = getattr(self, "_frt_eval_fails", None)
+                                if _frt_f is None:
+                                    _frt_f = self._frt_eval_fails = {}
+                                _frt_n = _frt_f.get(frt_asset, 0) + 1
+                                _frt_f[frt_asset] = _frt_n
+                                if _frt_n in (1, 10) or _frt_n % 100 == 0:
+                                    logger.warning(
+                                        f"[FastRiskTick] {frt_asset} evaluation "
+                                        f"FAILED ({_frt_n} consecutive): "
+                                        f"{type(e).__name__}: {e} — the 30s "
+                                        f"inter-tick watchdog is NOT running "
+                                        f"for this asset")
+                            else:
+                                _frt_f = getattr(self, "_frt_eval_fails", {})
+                                if _frt_f.get(frt_asset):
+                                    logger.info(
+                                        f"[FastRiskTick] {frt_asset} evaluation "
+                                        f"recovered after "
+                                        f"{_frt_f[frt_asset]} failure(s)")
+                                    _frt_f[frt_asset] = 0
 
                         # [CORR-2] Quick correlation update at 30s frequency
                         _frt_corr_ctrl = (
@@ -20886,7 +20921,34 @@ class HMATSProductionRunner:
                                 if not self.fast_risk_tick.shadow_mode:
                                     await self._handle_fast_risk_action(frt_asset, frt_result, frt_md)
                             except Exception as e:
-                                logger.debug(f"[FastRiskTick] {frt_asset} eval skipped: {e}")
+                                # [P265] A persistently failing evaluation
+                                # silently removed the 30s inter-tick safety
+                                # net (the whole eval incl. its market-data
+                                # fetch was swallowed at DEBUG — dropped at
+                                # production log level; a dead watchdog was
+                                # indistinguishable from a quiet one, P160
+                                # shape). Rate-limited: 1st/10th/every 100th
+                                # consecutive failure per asset.
+                                _frt_f = getattr(self, "_frt_eval_fails", None)
+                                if _frt_f is None:
+                                    _frt_f = self._frt_eval_fails = {}
+                                _frt_n = _frt_f.get(frt_asset, 0) + 1
+                                _frt_f[frt_asset] = _frt_n
+                                if _frt_n in (1, 10) or _frt_n % 100 == 0:
+                                    logger.warning(
+                                        f"[FastRiskTick] {frt_asset} evaluation "
+                                        f"FAILED ({_frt_n} consecutive): "
+                                        f"{type(e).__name__}: {e} — the 30s "
+                                        f"inter-tick watchdog is NOT running "
+                                        f"for this asset")
+                            else:
+                                _frt_f = getattr(self, "_frt_eval_fails", {})
+                                if _frt_f.get(frt_asset):
+                                    logger.info(
+                                        f"[FastRiskTick] {frt_asset} evaluation "
+                                        f"recovered after "
+                                        f"{_frt_f[frt_asset]} failure(s)")
+                                    _frt_f[frt_asset] = 0
 
         except asyncio.CancelledError:
             logger.info("[LIVE] Cancelled")
