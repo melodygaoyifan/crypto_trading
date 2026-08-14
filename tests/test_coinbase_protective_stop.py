@@ -197,10 +197,14 @@ def _sleeve(adapter, signed, pct=0.10, assets=None, entry=72.0, reconcile_ok=Tru
     return s
 
 
-def _stop_order(side="SELL", contracts=1.0, oid="O1"):
+def _stop_order(side="SELL", contracts=1.0, oid="O1", stop_price="64.8"):
+    # [P265] Real venue stops carry stop_price; the match now checks it
+    # (side+size alone certified ANY same-shaped stop as "the protection").
+    # 64.8 = entry 72.0 * (1 - 0.10), the fixture sleeve's desired long stop.
     return {"order_id": oid, "side": side,
             "order_configuration": {"stop_limit_stop_limit_gtc":
-                                    {"base_size": str(contracts)}}}
+                                    {"base_size": str(contracts),
+                                     "stop_price": str(stop_price)}}}
 
 
 def _limit_order(oid="L9"):
@@ -387,7 +391,10 @@ class TestVenueObjectsAreNotDicts:
 
     def test_an_object_shaped_stop_is_left_alone_not_duplicated(self):
         a = _FakeAdapter(open_orders=[self._order()])
-        res = _run(_sleeve(a, signed=-1))
+        # entry 73.47 = the real venue case this class documents: the resting
+        # stop at 80.82 is 73.47 * 1.10 (short, pct 0.10) — so the [P265]
+        # price match sees it as correct and leaves it alone.
+        res = _run(_sleeve(a, signed=-1, entry=73.47))
         assert res["status"] == "OK_EXISTS", res
         assert a.placed == [], "placed a duplicate stop on top of the live one"
 

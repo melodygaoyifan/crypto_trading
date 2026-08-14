@@ -642,8 +642,17 @@ class CoinbaseSleeve:
                     "saved_ts": time.time(),
                 }, fh)
             os.replace(tmp, p)
-        except Exception as e:  # noqa: silent-swallow — persistence is best-effort, never break the tick
-            logger.debug(f"[COINBASE_SLEEVE] state persist failed: {type(e).__name__}: {e}")
+        except Exception as e:  # noqa: silent-swallow — persistence must never break the tick, but it must be LOUD
+            # [P265] This file carries the STICKY HALT and the drawdown
+            # baseline. A persist failure at DEBUG (dropped at production log
+            # level) meant a tripped halt that silently failed to write would
+            # CLEAR on the next restart and the sleeve would resume opening —
+            # the P160 shape ("except: logger.debug in a writer is a silent
+            # failure") on load-bearing safety state.
+            logger.error(
+                f"[COINBASE_SLEEVE] state persist FAILED "
+                f"({type(e).__name__}: {e}) — halted={self._halted}: if the "
+                f"halt is tripped it will NOT survive a restart")
 
     def log_pnl_point(self) -> Dict[str, Any]:
         """[P150] Append one forward-PnL record to a JSONL so the sleeve's live
@@ -771,6 +780,51 @@ class CoinbaseSleeve:
                         f"resting order(s) before new target")
         return cancelled
 
+    async def _cancel_stale_entry_orders(self, pid: str, asset: str) -> int:
+        """[P265] Cancel resting NON-STOP orders on ticks that place nothing.
+
+        `_cancel_resting_orders` runs only on the order-placing path, AFTER the
+        NOOP/BLOCKED early returns. So an unfilled marketable entry limit (the
+        P207-observed non-fill window) survived every subsequent hold tick —
+        target 0 -> delta 0 -> NOOP before any cancel — and could fill hours or
+        days later against a dead signal, with no protective stop resting at
+        fill time. Worse: a limit placed just before the drawdown halt tripped
+        survived the halt (BLOCKED also preceded the cancel), so the halt's
+        "no new risk" guarantee was durably bypassed by an order it never saw.
+
+        Stops are deliberately NOT touched here: the protective stop is the
+        one resting order that SHOULD survive a hold tick, and cancelling it
+        every NOOP would churn the venue and reset the anchor (the exact churn
+        `ensure_protective_stop`'s match-and-leave logic exists to avoid).
+        Fail-soft; a cancel is always de-risking. Returns the number cancelled.
+        """
+        cancelled = 0
+        try:
+            open_orders = await self._adapter.fetch_open_orders(pid)
+        except Exception as e:
+            logger.warning(f"[COINBASE_SLEEVE] {asset}: could not list resting "
+                           f"orders on hold tick ({type(e).__name__}: {e})")
+            return 0
+        for o in open_orders or []:
+            if self._is_stop_order(o):
+                continue
+            oid = _g(o, "order_id") or _g(o, "id")
+            if not oid:
+                continue
+            try:
+                if await self._adapter.cancel_order(str(oid), pid):
+                    cancelled += 1
+            except Exception as e:
+                logger.warning(f"[COINBASE_SLEEVE] {asset}: stale-entry cancel "
+                               f"{oid} failed ({type(e).__name__}: {e})")
+        if cancelled:
+            logger.warning(
+                f"[COINBASE_SLEEVE] {asset}: cancelled {cancelled} stale ENTRY "
+                f"order(s) on a no-order tick — an unfilled limit from a "
+                f"previous tick would otherwise rest until it filled against "
+                f"a dead signal (P265)")
+        return cancelled
+
     # ----- [P197] server-side protective stop -----------------------------
     #
     # The sleeve had NO server-side protection: every exit was a client-side API
@@ -879,6 +933,28 @@ class CoinbaseSleeve:
             # still show the position we just closed.
             if intended_target is not None and abs(float(intended_target)) < 1e-9:
                 cur = 0.0
+            # [P265] FLIP IN FLIGHT: a nonzero intent whose SIGN disagrees with
+            # a nonzero snapshot means the flip order was accepted but has not
+            # filled at reconcile time (the same P207 non-fill window, on the
+            # flip leg the ==0 carve-out cannot see). A stop for EITHER side is
+            # dangerous here: anchored to the snapshot, it is wrong-side the
+            # moment the flip fills — triggering it DOUBLES the new position
+            # (no reduce_only on CDE, no can_trade gate on venue-triggered
+            # fills); anchored to the intent, it is wrong-side if the flip
+            # strands. Place NOTHING this tick — execute_target already swept
+            # all resting orders before the flip, so nothing is left guarding
+            # the old side either — and let the next tick's reconcile place
+            # the stop for whichever position is actually real.
+            elif (intended_target is not None
+                    and abs(cur) > 1e-9
+                    and (float(intended_target) > 0) != (cur > 0)):
+                logger.warning(
+                    f"[COINBASE_STOP] {asset}: flip in flight (snapshot "
+                    f"{cur:+.0f}ct vs intended {float(intended_target):+.0f}ct)"
+                    f" — placing NO stop this tick; either side could double "
+                    f"the final position (P265)")
+                return {"status": "FLIP_IN_TRANSITION", "asset": asset,
+                        "snapshot": cur, "intended": float(intended_target)}
             resting = [o for o in (await self._adapter.fetch_open_orders(pid) or [])
                        if self._is_stop_order(o)]
 
@@ -900,6 +976,7 @@ class CoinbaseSleeve:
             cs = self._adapter._contract_size(pid) or 1.0
             want_side = "SELL" if cur > 0 else "BUY"
             want_base = abs(cur) * cs
+            _want_px = self.desired_stop_price(asset)
 
             # Correct stop already resting? Leave it — re-placing every tick would
             # churn the venue and reset the anchor.
@@ -910,7 +987,21 @@ class CoinbaseSleeve:
                 inner: Any = next(iter(cfg.values()), {}) if cfg else {}
                 bs = _f(_g(inner, "base_size"), 0.0)
                 # base_size is in CONTRACTS at the venue (base_increment=1)
-                return abs(bs - abs(cur)) < 1e-9
+                if abs(bs - abs(cur)) >= 1e-9:
+                    return False
+                # [P265] The match must include the PRICE. Side+size alone
+                # certified ANY same-shaped stop as "the protection" forever:
+                # a config pct change never re-priced resting stops, a
+                # mark-anchored fallback stop was never re-anchored to entry,
+                # and a manually placed stop at an absurd trigger was silently
+                # adopted. 0.5% relative tolerance: generous vs tick rounding
+                # (BTC's tick of 5 on ~$64k is 0.008%), tight vs a config
+                # change (10% -> 15% moves the trigger ~5%).
+                if _want_px:
+                    sp = _f(_g(inner, "stop_price"), 0.0)
+                    if not sp or abs(sp - _want_px) / _want_px > 0.005:
+                        return False
+                return True
 
             good = [o for o in resting if _matches(o)]
             if len(good) == 1 and len(resting) == 1:
@@ -918,10 +1009,25 @@ class CoinbaseSleeve:
                         "contracts": cur, "side": want_side}
 
             # Otherwise: clear whatever is there and place one correct stop.
+            # [P265] Count FAILED cancels — the old loop discarded the result
+            # (the FLAT path five branches up counts it) and placed a new stop
+            # unconditionally, so a failed cancel yielded TWO plain stops: the
+            # first close the position, the second OPENS the opposite side
+            # when it fires. Refuse to place while anything we tried to cancel
+            # may still be live; next tick retries.
+            _cancel_failed = 0
             for o in resting:
                 oid = _g(o, "order_id") or _g(o, "id")
-                if oid:
-                    await self._adapter.cancel_order(str(oid), pid)
+                if oid and not await self._adapter.cancel_order(str(oid), pid):
+                    _cancel_failed += 1
+            if _cancel_failed:
+                logger.warning(
+                    f"[COINBASE_STOP] {asset}: {_cancel_failed} stop cancel(s) "
+                    f"FAILED — refusing to place a replacement (two live plain "
+                    f"stops = the second one OPENS an opposite position when "
+                    f"it fires, P265). Retrying next tick.")
+                return {"status": "CANCEL_FAILED", "asset": asset,
+                        "failed_cancels": _cancel_failed}
 
             stop_px = self.desired_stop_price(asset)
             if not stop_px:
@@ -973,11 +1079,27 @@ class CoinbaseSleeve:
                     "reason": "reconcile_failed"}
         cur = self.signed_contracts(asset)
         delta = int(round(target_signed_contracts - cur))
+        # [P265] The no-order paths must still sweep stale ENTRY limits. An
+        # unfilled marketable limit from a previous tick otherwise rests
+        # through every NOOP/BLOCKED tick and can fill against a dead signal
+        # — including UNDER HALT, opening a position the halt never saw.
         if delta == 0:
+            try:
+                _pid_noop = self._adapter.to_venue_symbol(asset, "perp")
+                await self._cancel_stale_entry_orders(_pid_noop, asset)
+            except Exception as e:  # noqa: silent-swallow — the sweep must never break the NOOP path; failures are logged inside the helper
+                logger.warning(f"[COINBASE_SLEEVE] {asset}: NOOP-tick stale "
+                               f"order sweep failed: {type(e).__name__}: {e}")
             return {"status": "NOOP", "asset": asset, "contracts": cur}
         ok, reason = self.can_trade(asset, delta)
         if not ok:
             logger.warning(f"[COINBASE_SLEEVE] execute_target {asset} blocked: {reason}")
+            try:
+                _pid_blk = self._adapter.to_venue_symbol(asset, "perp")
+                await self._cancel_stale_entry_orders(_pid_blk, asset)
+            except Exception as e:  # noqa: silent-swallow — same rule as the NOOP sweep above
+                logger.warning(f"[COINBASE_SLEEVE] {asset}: BLOCKED-tick stale "
+                               f"order sweep failed: {type(e).__name__}: {e}")
             return {"status": "BLOCKED", "asset": asset, "reason": reason}
         side = "BUY" if delta > 0 else "SELL"
         n_contracts = abs(delta)
