@@ -76,12 +76,17 @@ async def fetch_binance_snapshot(asset: str, timeout: float = 3.0) -> Optional[D
             taker_flow_valid = False  # [P253] failure and zero must differ
             last_price = float(stats.get("lastPrice", 0) or 0) if stats else 0.0
             try:
-                kline_url = f"{_BASE}/api/v3/klines?symbol={sym}&interval=1h&limit=1"
+                # [P265] limit=2 and take the COMPLETED bar. limit=1 returns
+                # the IN-PROGRESS 1h kline: at the 4H-boundary+90s tick, the
+                # "1h taker flow" was ~90 seconds of flow (magnitudes ~1/40
+                # of a full hour) marked taker_flow_valid=True — the ratio
+                # stayed meaningful, every magnitude consumer was mis-scaled.
+                kline_url = f"{_BASE}/api/v3/klines?symbol={sym}&interval=1h&limit=2"
                 k = await _get(kline_url)
                 if k and len(k) > 0:
                     # Binance kline: [openTime, open, high, low, close, volume, closeTime,
                     #                 quoteVolume, numTrades, takerBuyBase, takerBuyQuote, ignore]
-                    bar = k[0]
+                    bar = k[-2] if len(k) >= 2 else k[0]
                     total_vol = float(bar[5] or 0)
                     taker_buy = float(bar[9] or 0)
                     taker_sell = max(0.0, total_vol - taker_buy)

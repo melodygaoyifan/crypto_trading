@@ -1711,8 +1711,17 @@ class TrancheScheduler:
         # Real volume collapse means vol dropped 70% from 20-bar average - vol_ratio ~0.1-0.3.
         # Partial bars on Kraken show vol_ratio ~0.00-0.02 which is data artifact, not market signal.
         volume_ratio = self._effective_volume_ratio(market_data, is_4h_bar_close=False)
-        if volume_ratio < self.VOLUME_COLLAPSE_THRESHOLD and volume_ratio >= 0.05:
-            abort.volume_collapse = True
+        # [P265] DELIBERATELY DISABLED, made explicit. The old condition was
+        # `< VOLUME_COLLAPSE_THRESHOLD and >= 0.05` — with the threshold AT
+        # 0.05 that is an EMPTY INTERVAL, i.e. this trigger has never fired,
+        # silently. Making it fire is not a bugfix: the comment above records
+        # that sub-0.05 readings are partial-bar DATA ARTIFACTS (exactly what
+        # `0 < ratio < 0.05` would fire on) while a real collapse reads
+        # ~0.1-0.3 — ABOVE the threshold — so the trigger's calibration is
+        # incoherent as designed. Re-arming needs a re-derived threshold from
+        # measured volume-ratio distributions (an activation decision, P141),
+        # not a predicate flip. (abort.volume_collapse simply keeps its
+        # False default — no code fires it.)
         
         # Signal conflict
         if signal_data.get('signal_conflict', False):

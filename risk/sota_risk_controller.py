@@ -667,7 +667,9 @@ class SOTARiskController:
             "daily_pnl": self.daily_pnl,
             "peak_equity": self.peak_equity,
             "current_equity": self.current_equity,
-            "recent_alerts": self.risk_events[-5:] if self.risk_events else []
+            # [P265] list() first — slicing a deque raises TypeError, so the
+            # first caller of get_status() with any event recorded crashed
+            "recent_alerts": list(self.risk_events)[-5:] if self.risk_events else []
         }
     
     def get_dashboard_flags(self) -> List[Dict[str, str]]:

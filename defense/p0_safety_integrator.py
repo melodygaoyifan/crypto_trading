@@ -829,8 +829,11 @@ class P0SafetyIntegrator:
                 "active": True,
                 "kill_switch": self.risk_controller.kill_switch_active,
                 "risk_state": self.risk_controller.risk_state.value,
-                "daily_pnl_pct": getattr(self.risk_controller, '_daily_pnl_pct', 0.0),
-                "max_drawdown_pct": getattr(self.risk_controller, '_max_drawdown_pct', 0.0),
+                # [P265] real attribute names (daily_pnl/current_drawdown) —
+                # the old underscore names never existed, so the status
+                # export was always 0.0 (P170 shape)
+                "daily_pnl_pct": getattr(self.risk_controller, 'daily_pnl', 0.0),
+                "max_drawdown_pct": getattr(self.risk_controller, 'current_drawdown', 0.0),
             }
         
         # Trade gate status

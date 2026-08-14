@@ -8783,6 +8783,14 @@ class HMATSProductionRunner:
 
         _gmm_probs = market_data.get("_gmm_probs", [])
         _regime_name = market_data.get("regime_state", "UNKNOWN")
+        # [P265] `_last_regime` finally gets a WRITER. The live dashboard
+        # export (P155c) reads getattr(self,'_last_regime',{}) — the only
+        # occurrence of the name in the repo was that read, so the dashboard
+        # built for incident response reported regime "UNKNOWN" on every
+        # live round for its whole life (P170 orphan-read).
+        if not hasattr(self, "_last_regime"):
+            self._last_regime = {}
+        self._last_regime[asset] = _regime_name
         _env_state = self._build_drl_env_state(asset)
 
         # [SOTA-G10] ModelAlpha advisory signal -profitability-first wiring
@@ -9177,18 +9185,11 @@ class HMATSProductionRunner:
         # Active%=93% Conf=0 in agent diagnostic)
         agent_signals['sentiment_confidence'] = round(_sent_conf, 4)
         agent_signals['sentiment_data_quality'] = 1.0 if abs(_sent_z) > 0.0 else 0.0
-        agent_signals['_sentiment_l1_agent_signal'] = {
-            'direction': float(agent_signals.get('sentiment_direction', 0.0)),
-            'confidence': _sent_conf,
-            'veto_active': False,  # Iron Law #34: sentiment NEVER vetoes
-        }
-        _llm_dir = float(agent_signals.get('llm_sentiment_direction', 0.0))
-        _llm_conf = float(agent_signals.get('llm_sentiment_confidence', 0.0))
-        agent_signals['_sentiment_l3_agent_signal'] = {
-            'direction': _llm_dir,
-            'confidence': _llm_conf,
-            'veto_active': False,  # Iron Law #34: sentiment NEVER vetoes
-        }
+        # [P265] The `_sentiment_l1_agent_signal` / `_sentiment_l3_agent_signal`
+        # dict writes that used to sit here are DELETED: zero consumers
+        # repo-wide, and the L3 one read llm_sentiment_direction BEFORE the
+        # LLM block writes it (~line 9330), so it would always have been
+        # {0.0, 0.0} if ever consumed — a pre-armed P234 for whoever wired it.
 
         # [v3.2-B6] Lead-Lag Runtime Glue
         # Cross-asset beta catch-up: BTC leads, SOL/ETH follow with 1-4 bar lag
@@ -9501,6 +9502,18 @@ class HMATSProductionRunner:
             _l2_zscore = float(_l2_dir) * 3.0
             market_data["sentiment_zscore"] = (1 - _l2_weight) * _l1_zscore + _l2_weight * _l2_zscore
             agent_signals["sentiment_zscore"] = market_data["sentiment_zscore"]
+            # [P265][FIX-SENT-SYNC applied to L2] Re-sync sentiment_direction
+            # with the blended zscore — the L3 path carries this exact fix
+            # (a bearish F&G dir=-1 left beside a moved zscore falsely
+            # triggers ALL_CONFLICT_FLAT); the L2 blend had the same
+            # mismatch loaded.
+            _l2_blended_z = market_data["sentiment_zscore"]
+            if _l2_blended_z > 1.0:
+                agent_signals['sentiment_direction'] = 1.0
+            elif _l2_blended_z < -1.0:
+                agent_signals['sentiment_direction'] = -1.0
+            else:
+                agent_signals['sentiment_direction'] = 0.0
             logger.info(
                 f"[SENTIMENT_L2_FALLBACK] {asset}: L3 weak (conf={_l3_conf:.2f}), "
                 f"blending L2 DeBERTa (dir={_l2_dir:+.3f}, conf={_l2_conf:.2f}) "
