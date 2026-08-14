@@ -1086,6 +1086,27 @@ def main():
         df[keep_cols].to_parquet(out_path, index=False)
         logger.info(f"    Saved: {out_path} ({len(df)} rows, {len(keep_cols)} cols)")
 
+    # ── Step 5b: fv2 flow features (P266 — folded in) ────────────────
+    # [P266] A parquet rebuild used to be TWO steps: this script, then
+    # scripts/build_flow_features.py — a footgun the P253c standing rule
+    # documented after the P253b rebuild itself silently DROPPED the 13
+    # fv2_* columns (this script regenerates its own column set and knew
+    # nothing about the sibling's extras; caught by the P252b parity test).
+    # The fv2 build now runs INSIDE the rebuild, after every asset's parquet
+    # is written (cross-asset features need all three). It remains runnable
+    # standalone. A failure here is a FAILURE of the rebuild — the P253c
+    # rule exists precisely because a parquet without fv2 looks complete.
+    logger.info("\n" + "=" * 60)
+    logger.info("STEP 5b: FV2 FLOW FEATURES (build_flow_features, P266)")
+    logger.info("=" * 60)
+    from build_flow_features import main as _fv2_main
+    _fv2_rc = _fv2_main()
+    if _fv2_rc != 0:
+        logger.error("  fv2 build FAILED (rc=%s) — the parquets are "
+                     "INCOMPLETE (no fv2_* columns). Fix and re-run; do not "
+                     "train on this output.", _fv2_rc)
+        sys.exit(2)
+
     # ── Step 6: Feature Manifest ─────────────────────────────────────
     logger.info("\n" + "=" * 60)
     logger.info("STEP 6: FEATURE MANIFEST")

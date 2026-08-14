@@ -119,9 +119,34 @@ check:
 	@test -f $(DATA_DIR)/raw/SOL_60m.parquet && echo "✅ SOL" || echo "❌ SOL 缺失"
 	@test -f $(DATA_DIR)/raw/BTC_60m.parquet && echo "✅ BTC" || echo "❌ BTC 缺失"
 	@test -f $(DATA_DIR)/raw/ETH_60m.parquet && echo "✅ ETH" || echo "❌ ETH 缺失"
+	@$(PYTHON) -X utf8 scripts/check_data_freshness.py || true
 
+# [P266] `collect` RETIRED. It invoked the legacy multi-source
+# scripts/collect_data.py, which wrote {ASSET}_60m.parquet into the SAME
+# directory as the canonical Binance raw parquets — its Kraken source caps
+# at ~720 bars, so one run would have truncated SIX YEARS of canonical
+# training data to ~a month (the P186 phantom/landmine target class). The
+# canonical fetch chain is `make refresh-data` below.
 collect:
-	$(PYTHON) scripts/collect_data.py --source kraken --pairs BTC ETH SOL --output $(DATA_DIR)/raw
+	@echo "❌ RETIRED (P266): this target overwrote the canonical 6-year raw"
+	@echo "   parquets with a ~720-bar Kraken fetch. Use: make refresh-data"
+	@exit 1
+
+# [P266] The canonical data-refresh sequence, in dependency order. Safe to
+# re-run any time (every step merges or regenerates deterministically).
+# Raw OHLCV comes from Binance MONTHLY archives (up to ~31d lag; the current
+# month lands ~day 1-2 of the next). The GMM is deliberately NOT refit here:
+# {GMM, parquets, checkpoints} move as ONE versioned set (P215/P253b) — refit
+# only as a deliberate, recorded decision. fv2 flow features are built inside
+# rebuild_pipeline since P266 (the P253c two-step rule is closed).
+refresh-data:
+	$(PYTHON) -X utf8 fetch_binance_full.py
+	$(PYTHON) -X utf8 scripts/fetch_binance_funding.py
+	$(PYTHON) -X utf8 scripts/fetch_coinglass_history.py
+	$(PYTHON) -X utf8 scripts/rebuild_pipeline.py --smooth 2 --skip-gmm
+	$(PYTHON) -X utf8 scripts/generate_split_manifest.py
+	$(PYTHON) -X utf8 scripts/refresh_ohlcv_4h.py
+	@echo "✅ refresh-data complete — run 'make check' for freshness status"
 
 clean:
 	find . -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true

@@ -12,6 +12,17 @@ Outputs:
 
 API: Coinglass v3 (https://open-api-v3.coinglass.com)
 Auth: CG-API-KEY header
+
+[P266] CADENCE RULE — re-run this AT LEAST every ~5 months (150 days).
+The API serves only ~180 days of depth for the liquidation/OI endpoints
+(measured 2026-08: 1080 4h rows regardless of the lookback requested), and
+this archive is the ONLY store of that history — `liq_imbalance`, the
+strict-window carrier of the external feature group (P256), is trainable
+only as far back as this file reaches. Since P266 the script MERGES into the
+existing archive (never overwrites), so each re-run within the 180-day
+window grows the history losslessly; a gap longer than the API window
+permanently loses the middle. `make check` (training/Makefile) reports the
+archive's age.
 """
 
 import os
@@ -253,6 +264,35 @@ def parse_liquidation_data(raw_data: list, symbol: str) -> pd.DataFrame:
     return df
 
 
+def merge_history(existing: "pd.DataFrame | None", new: "pd.DataFrame") -> "pd.DataFrame":
+    """[P266] Union-by-timestamp merge — the archive must GROW.
+
+    The CoinGlass API serves only ~180 days of depth for the liquidation/OI
+    endpoints (measured 2026-08: 1080 4h rows whatever lookback is requested),
+    and this script used to bare-overwrite the output parquet. Two
+    consequences: the trainable history of `liq_imbalance` — the strict-window
+    carrier of the external feature group (P256) and the basis derivflow is
+    forward-testing — was capped at 180 rolling days FOREVER; and a re-fetch
+    after a >180-day gap would have permanently lost the un-overlapping
+    middle. Merging keeps every previously-captured row and lets the archive
+    grow past the API's window with each re-fetch.
+
+    New rows win on timestamp collision (the API may restate the most recent
+    bars). Sorted, deduplicated, timestamp-typed.
+    """
+    if existing is None or existing.empty:
+        merged = new.copy()
+    else:
+        existing = existing.copy()
+        existing["timestamp"] = pd.to_datetime(existing["timestamp"], utc=True)
+        new = new.copy()
+        new["timestamp"] = pd.to_datetime(new["timestamp"], utc=True)
+        merged = pd.concat([existing, new], ignore_index=True)
+    merged = (merged.drop_duplicates("timestamp", keep="last")
+                    .sort_values("timestamp").reset_index(drop=True))
+    return merged
+
+
 def _to_float(val) -> float:
     try:
         return float(val)
@@ -329,12 +369,26 @@ def main():
                 print(f"    [PARSE FAILED] Could not parse {label}")
                 continue
 
-            # Save
+            # Save — [P266] MERGE with the existing archive (never overwrite;
+            # see merge_history), atomic write so a crash cannot truncate it.
             out_path = OUTPUT_DIR / f"{asset}_{name}_{INTERVAL}.parquet"
-            df.to_parquet(out_path, index=False)
+            existing = None
+            if out_path.exists():
+                try:
+                    existing = pd.read_parquet(out_path)
+                except Exception as e:
+                    print(f"    [WARN] existing archive unreadable "
+                          f"({type(e).__name__}: {e}) — keeping a .bak copy")
+                    out_path.rename(out_path.with_suffix(".parquet.bak"))
+            n_old = 0 if existing is None else len(existing)
+            df = merge_history(existing, df)
+            tmp_path = out_path.with_suffix(".parquet.tmp")
+            df.to_parquet(tmp_path, index=False)
+            os.replace(tmp_path, out_path)
 
             date_range = f"{df['timestamp'].min()} -> {df['timestamp'].max()}"
-            print(f"    Saved: {out_path} ({len(df)} rows, {date_range})")
+            print(f"    Saved: {out_path} ({n_old} existing + fetch -> "
+                  f"{len(df)} rows, {date_range})")
 
             summary[label] = {
                 "rows": len(df),
