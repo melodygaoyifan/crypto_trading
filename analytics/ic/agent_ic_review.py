@@ -109,6 +109,13 @@ def fetch_closes(asset: str) -> tuple[list[float], list[float]]:
         _refuse(f"Kraken OHLC error for {asset}: {payload['error']}")
     key = next(k for k in payload["result"] if k != "last")
     rows = payload["result"][key]
+    # [P265] Kraken returns the IN-PROGRESS 4H candle as the last row
+    # (established at regime_book_shadow's P253c fix; this reviewer family
+    # never got it). The join guard below claims "forward bar not closed yet"
+    # but admitted the pair whose exit bar is the partial candle — the newest
+    # forward returns per (asset, horizon) were priced on a provisional
+    # close. Drop it at the source, like the harness does.
+    rows = rows[:-1]
     return [float(r[0]) for r in rows], [float(r[4]) for r in rows]
 
 

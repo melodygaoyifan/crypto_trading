@@ -280,6 +280,7 @@ class RegimeBookShadow:
         self._banded_state: Dict[str, dict] = {}
         self._sol_model = self._load_sol_model(repo_root)
         self._warned: set = set()
+        self._funding_stale: Dict[str, bool] = {}  # [P265] per-asset stale-z latch (re-armable)
 
     # ---------------- [P256] the SEAT accessor -------------------------
     def last_direction(self, asset: str, max_age_s: float = 6 * 3600):
@@ -340,6 +341,29 @@ class RegimeBookShadow:
         if not h:
             return None
         return [h[k] for k in sorted(h)]
+
+    # [P265] Staleness bound on the funding input. Once >=30 days of history
+    # are persisted, a sustained fapi outage used to leave `_fund_hist`
+    # frozen: causal_funding_z still returned a NUMBER (the z of the last
+    # successfully fetched day, arbitrarily old) and the BTC funding legs
+    # kept asserting +/-1 directions from it into the forward ledger,
+    # unmarked — the September P166 read would have judged a frozen input,
+    # not the strategy (and per P262, the funding legs are the roster's ONLY
+    # uncertified component). Normal cadence: the last completed day is
+    # yesterday (age 1); 3 days covers the pre-refresh midnight window and
+    # one missed day.
+    FUND_MAX_AGE_DAYS = 3
+
+    def funding_age_days(self, asset: str) -> Optional[int]:
+        """Days since the newest COMPLETED day in the funding history."""
+        h = self._fund_hist.get(asset)
+        if not h:
+            return None
+        try:
+            last = datetime.strptime(max(h), "%Y-%m-%d").date()
+        except (ValueError, TypeError):
+            return None
+        return (datetime.now(timezone.utc).date() - last).days
 
     # ---------------- self-contained data fetches ----------------------
     def fetch_closes_4h(self, asset: str):
@@ -529,6 +553,26 @@ class RegimeBookShadow:
         try:
             regime = regime_label(closes)
             fz = causal_funding_z(self._funding_series(asset))
+            _fage = self.funding_age_days(asset)
+            if (fz is not None and _fage is not None
+                    and _fage > self.FUND_MAX_AGE_DAYS):
+                # [P265] Frozen funding input -> flat-with-reason, exactly
+                # what the refresh docstring always claimed. Warned on every
+                # TRANSITION to stale (not once per process — week 2 of an
+                # outage must not be silent) and recovery is announced.
+                if not self._funding_stale.get(asset):
+                    self._funding_stale[asset] = True
+                    logger.warning(
+                        "[REGIMEBOOK] %s: funding history is %dd old (> %dd)"
+                        " — funding cells go FLAT (a frozen z must not keep"
+                        " trading into the forward ledger, P265)",
+                        asset, _fage, self.FUND_MAX_AGE_DAYS)
+                fz = None
+            elif self._funding_stale.get(asset):
+                self._funding_stale[asset] = False
+                logger.info("[REGIMEBOOK] %s: funding history fresh again "
+                            "(age=%sd) — funding cells re-enabled",
+                            asset, _fage)
             target, leg = book_target(asset, regime, fz)
             version = BOOKS_VERSION.get(asset, "unknown")
             coverage_note = None
@@ -544,6 +588,8 @@ class RegimeBookShadow:
                 "leg": leg,
                 "coverage_note": coverage_note,
                 "funding_z": None if fz is None else round(fz, 4),
+                # [P265] stale-z rows are now filterable post-hoc
+                "funding_age_days": _fage,
                 "direction": float(target),
                 # scorer multiplies direction x confidence (P236): |target|,
                 # so flat rows contribute zero, never a saturated claim (P224)

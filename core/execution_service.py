@@ -2888,9 +2888,16 @@ async def execute_intent_v2(
                         logger.debug(f"[EXPERIENCE] record_outcome (full exit) failed: {e}")
 
                 # [EA-4a] Exit Alpha Tracker -record full exit with trigger classification
+                # [P265] READ here, do not pop: the C11 pnl_attribution
+                # record ~130 lines below reads the same tag as
+                # actual_exit_type — the old pop meant that whenever
+                # ea_tracker existed (production), the attribution's exit
+                # type was always the default "FULL_EXIT": a constant
+                # wearing a measurement's name (P171 shape). The tag is
+                # cleared once, after the LAST reader, below.
                 if ctx.ea_tracker:
                     try:
-                        _ea_trigger = ctx.exit_trigger_tag.pop(asset, "UNKNOWN")
+                        _ea_trigger = ctx.exit_trigger_tag.get(asset, "UNKNOWN")
                         ctx.ea_tracker.record_exit(
                             asset=asset, exit_price=exit_price,
                             trigger=_ea_trigger, pnl_usd=pnl_usd,
@@ -3053,6 +3060,11 @@ async def execute_intent_v2(
                             )
                     except Exception as _c11_err:
                         logger.debug(f"[PNL_ATTRIB] record_trade failed: {_c11_err}")
+
+                # [P265] Clear the exit trigger tag AFTER its last reader
+                # (the C11 actual_exit_type above). EA-4a used to pop it,
+                # so C11 always read the default.
+                ctx.exit_trigger_tag.pop(asset, None)
 
                 # [DRL-COUNT] Record trade in promotion gate for shadow trade counting
                 if ctx.promotion_gate:

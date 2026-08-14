@@ -10459,14 +10459,6 @@ class HMATSProductionRunner:
             except Exception as _trace_err:
                 logger.debug(f"[AGENT-TRACE] skipped: {_trace_err}")
 
-            # [P248] Feed the regime-book shadow's SOL parity leg the tick's
-            # live feature dicts. Coverage is COUNTED inside the harness (P2
-            # class: a missing key must be observable, never a silent zero);
-            # the method is internally fail-soft and touches nothing else.
-            if self._regime_book_shadow is not None:
-                self._regime_book_shadow.observe_features(
-                    _attr_asset, market_data, agent_signals)
-
             # Store for next tick's outcome resolution
             self._attribution_prev_tick_id[_attr_asset] = _attr_tick_id
             self._attribution_prev_price[_attr_asset] = _attr_now_price
@@ -10479,6 +10471,26 @@ class HMATSProductionRunner:
         except Exception as _attr_err:
             logger.debug(f"[ATTRIBUTION] Skipped: {_attr_err}")
         # === END ATTRIBUTION ===
+
+        # [P248] Feed the regime-book shadow's SOL parity leg the tick's
+        # live feature dicts. Coverage is COUNTED inside the harness (P2
+        # class: a missing key must be observable, never a silent zero);
+        # the method is internally fail-soft and touches nothing else.
+        # [P265] Moved OUT of the attribution try (its handler logs at
+        # DEBUG): a persistent exception in wrap_agent_signal/record_signals
+        # upstream silently starved the SOL parity feature stash — the book
+        # degrades to v1_degraded for its September read with the cause
+        # invisible at production log level (P227 §2: paths of different
+        # criticality must not share one handler).
+        if getattr(self, "_regime_book_shadow", None) is not None:
+            try:
+                self._regime_book_shadow.observe_features(
+                    asset, market_data, agent_signals)
+            except Exception as _rbs_err:
+                logger.warning(
+                    f"[REGIMEBOOK] {asset}: observe_features failed "
+                    f"({type(_rbs_err).__name__}: {_rbs_err}) — the SOL "
+                    f"parity stash is starving")
 
         # [S11] Inject HTF trend direction for authority fusion
         if "htf_trend_direction" not in agent_signals:
@@ -20029,22 +20041,35 @@ class HMATSProductionRunner:
                 # logged the PREVIOUS iteration's equity under the current
                 # tick number.
                 _hb_equity = 0.0
+                _hb_kraken_eq = 0.0
+                _hb_sleeve_eq = 0.0
                 _hb_eq_valid = False
                 _hb_positions = {}
+                # [P265] The equity read lives OUTSIDE the audit_manager gate
+                # — a logging object must never be load-bearing for a data
+                # feed (P227 §2): with audit_manager=None, _hb_equity stayed
+                # 0.0 and the equity history silently stopped. And the
+                # number is now the COMBINED book: the old Kraken-only
+                # figure (~static since 2026-06-13) excluded the sleeve
+                # where 100% of the PnL happens — a Sharpe from that file
+                # was the Sharpe of a constant, and the unlabeled heartbeat
+                # figure is exactly what fed the P261 operator confusion.
+                if self.account_sync:
+                    try:
+                        _hb_eq, _hb_valid = self.account_sync.get_equity_safe()
+                        # [P253] validity CARRIES into the history record; a
+                        # stale reading beats a fabricated 0.0.
+                        _hb_kraken_eq = float(_hb_eq or 0.0)
+                        _hb_eq_valid = bool(_hb_valid)
+                    except Exception:
+                        pass
+                _hb_slv = getattr(self, "_coinbase_sleeve", None)
+                if _hb_slv is not None:
+                    _hb_sleeve_eq = float(
+                        getattr(_hb_slv, "_last_equity_usd", 0.0) or 0.0)
+                _hb_equity = _hb_kraken_eq + _hb_sleeve_eq
                 try:
                     if self.audit_manager:
-                        if self.account_sync:
-                            try:
-                                _hb_eq, _hb_valid = self.account_sync.get_equity_safe()
-                                # [P253] Was `_hb_eq if _hb_valid else _hb_eq`
-                                # — both branches identical, validity
-                                # discarded. Keep the value either way (a
-                                # stale reading beats a fabricated 0.0) but
-                                # CARRY the flag into the history record.
-                                _hb_equity = _hb_eq
-                                _hb_eq_valid = bool(_hb_valid)
-                            except Exception:
-                                pass
                         _hb_positions = {
                             a: f"{'L' if p.get('direction',0)>0 else 'S'} ${abs(p.get('notional',0)):,.0f}"
                             for a, p in self._paper_positions.items() if p and p.get('direction', 0) != 0
@@ -20155,7 +20180,13 @@ class HMATSProductionRunner:
                             AlertSeverity.INFO, AlertCategory.TRADING,
                             _hb_msg,
                             details={
-                                "Equity": f"${_hb_equity:,.2f}",
+                                # [P265] labeled + combined: the old bare
+                                # Kraken-only "Equity" is the figure that fed
+                                # the P261 operator confusion
+                                "Equity (KR+CB)": (
+                                    f"${_hb_equity:,.2f} "
+                                    f"(KR ${_hb_kraken_eq:,.0f} + "
+                                    f"CB ${_hb_sleeve_eq:,.0f})"),
                                 "Positions (Kraken)": ", ".join(f"{a}={v}" for a, v in _hb_positions.items()) if _hb_positions else "FLAT",
                                 "Coinbase sleeve": _hb_cb_txt,
                                 "Analysis": "\n".join(_hb_lines),
@@ -20749,7 +20780,13 @@ class HMATSProductionRunner:
                         _eq_path.parent.mkdir(parents=True, exist_ok=True)
                         _eq_rec = {
                             "ts": datetime.now(timezone.utc).isoformat(),
+                            # [P265] COMBINED book (Kraken + sleeve), with the
+                            # parts recorded — the old Kraken-only figure was
+                            # ~static since 2026-06-13, so a Sharpe from this
+                            # file measured a constant.
                             "equity": round(_hb_equity, 4),
+                            "kraken_equity": round(_hb_kraken_eq, 4),
+                            "sleeve_equity": round(_hb_sleeve_eq, 4),
                             # [P253] validity travels with the number — a
                             # stale equity must be distinguishable downstream
                             "equity_valid": _hb_eq_valid,

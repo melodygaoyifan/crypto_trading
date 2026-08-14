@@ -39,6 +39,8 @@ def fetch_ohlc(pair: str):
         d = json.load(r)
     key = [k for k in d["result"] if k != "last"][0]
     rows = d["result"][key]
+    # [P265] Drop the in-progress last candle (see agent_ic_review.fetch_closes).
+    rows = rows[:-1]
     return [int(x[0]) for x in rows], [float(x[4]) for x in rows]
 
 

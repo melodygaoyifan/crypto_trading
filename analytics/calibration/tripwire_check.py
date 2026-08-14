@@ -61,10 +61,32 @@ def main() -> int:
         except Exception:
             print(f"  note: unreadable report skipped: {f}", file=sys.stderr)
     days = sorted(by_day)
-    window = days[-REPORTS_REQUIRED:]
-    print(f"P237 tripwire status — {len(days)} report day(s), judging the "
-          f"last {len(window)}: {window} (need {REPORTS_REQUIRED}; "
-          f"date gate {TRIPWIRE_DATE})")
+    # [P265] The P237 criterion is four consecutive WEEKLY (Monday-cron)
+    # reports. The old window took the last four report DAYS, so four ad-hoc
+    # calibrator runs during one debugging week satisfied it — the instrument
+    # could demand the trend-injection removal on a compressed evidence
+    # window. Judge only reports spaced >= 5 days apart (weekly cadence with
+    # rerun slack), newest backwards; same-week reruns collapse into one slot.
+    _MIN_SPACING_DAYS = 5
+    from datetime import date as _date
+    window: list = []
+    for d in reversed(days):
+        if not window:
+            window.append(d)
+        else:
+            try:
+                gap = (_date.fromisoformat(window[-1])
+                       - _date.fromisoformat(d)).days
+            except ValueError:
+                continue
+            if gap >= _MIN_SPACING_DAYS:
+                window.append(d)
+        if len(window) == REPORTS_REQUIRED:
+            break
+    window = sorted(window)
+    print(f"P237 tripwire status — {len(days)} report day(s), judging "
+          f"{len(window)} weekly-spaced (>= {_MIN_SPACING_DAYS}d apart): "
+          f"{window} (need {REPORTS_REQUIRED}; date gate {TRIPWIRE_DATE})")
 
     fired_any = False
     for a in ASSETS:
