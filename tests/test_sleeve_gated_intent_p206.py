@@ -341,7 +341,9 @@ class TestP265DataIntegrityVetoesHold:
                     veto_reason=f"[v3.6.1] NO_TRADE: {trigger}"),
             fallback_dir=0.9)
         assert d is SLEEVE_HOLD
-        assert "data_integrity" in r
+        # STALE_DATA matches the direct hold set (it also covers the trade
+        # gate's freshness veto); the others via the NO_TRADE trigger tuple.
+        assert "hold_veto" in r
 
     @pytest.mark.parametrize("trigger", [
         "FLASH_CRASH", "EXTREME_DVOL", "LIQUIDITY_CRITICAL",

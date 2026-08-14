@@ -88,6 +88,7 @@ try:
         StaleDataKillSwitch,
         DVOLOverrideController,
         DataFreshness,
+        ExecutionMode,
     )
     EXECUTION_GUARDS_AVAILABLE = True
 except ImportError as e:
@@ -576,10 +577,57 @@ class P0SafetyIntegrator:
                         logger.warning(f"[P0] TRADE GATE EXIT_ONLY: blocking entry")
                         return result
 
+                elif gate_result.decision == GateDecision.EMERGENCY_FLAT:
+                    # [P265] EMERGENCY_FLAT (the gate's DVOL z>=5 response)
+                    # used to fall through the elif chain as a full-size
+                    # ALLOW — an emergency-flatten decision read as a pass.
+                    # Fail toward exit-only: block entries, keep exits open
+                    # (the whole point of the decision is exiting).
+                    result.result = P0CheckResult.BLOCK_EXIT_ONLY
+                    result.allow_trade = False
+                    result.allow_exit = True
+                    result.reason = (
+                        f"Trade gate EMERGENCY_FLAT: {gate_result.reason.value}")
+                    result.details.update(_gate_details)
+                    logger.warning(f"[P0] TRADE GATE EMERGENCY_FLAT: {result.reason}")
+                    if is_entry:
+                        return result
+
+                elif gate_result.decision in (GateDecision.REDUCE,
+                                              GateDecision.DELAY):
+                    # [P265] REDUCE ("trade at 50-75% size") and DELAY also
+                    # fell through as full-size ALLOW. REDUCE becomes a clip
+                    # to the gate's own adjusted_size; DELAY blocks the entry
+                    # this pass (exits unaffected).
+                    if gate_result.decision == GateDecision.REDUCE:
+                        try:
+                            _adj = float(getattr(gate_result, "adjusted_size",
+                                                 0.0) or 0.0)
+                        except (TypeError, ValueError):
+                            _adj = 0.0
+                        if _adj > 0:
+                            result.clipped_size = min(result.clipped_size, _adj)
+                            result.result = P0CheckResult.CLIPPED
+                            result.details.update(_gate_details)
+                            logger.info(f"[P0] TRADE GATE REDUCE: size "
+                                        f"{size:.4f} -> {result.clipped_size:.4f}")
+                    else:
+                        result.result = P0CheckResult.BLOCK_NO_TRADE
+                        result.allow_trade = False
+                        result.allow_exit = True
+                        result.reason = (
+                            f"Trade gate DELAY: {gate_result.reason.value}")
+                        result.details.update(_gate_details)
+                        if is_entry:
+                            return result
+
                 elif gate_result.decision == GateDecision.CLIP:
-                    # Clip size
-                    if hasattr(gate_result, 'clipped_size'):
-                        result.clipped_size = gate_result.clipped_size
+                    # Clip size. [P265] The field is `adjusted_size` —
+                    # `clipped_size` never existed on the gate result, so this
+                    # branch was doubly dead (CLIP is also never produced).
+                    _adj = getattr(gate_result, 'adjusted_size', None)
+                    if _adj is not None:
+                        result.clipped_size = float(_adj)
                         result.result = P0CheckResult.CLIPPED
                         result.details.update(_gate_details)
                         logger.info(f"[P0] Size clipped: {size:.4f} -> {result.clipped_size:.4f}")
@@ -618,23 +666,36 @@ class P0SafetyIntegrator:
         # CHECK 5: DVOL Override (can modify size)
         # =====================================================================
         
+        # [P265] This check was TRIPLE-dead and its first activation would have
+        # vetoed every trade: (a) market_data["dvol"] has no producer, so the
+        # block has never run (P170 orphan-read — deliberately NOT changed
+        # here; feeding it is an activation decision, P141); (b) it called
+        # `get_execution_mode()`, a method that does not exist on
+        # DVOLOverrideController — so the day a producer appeared, the
+        # AttributeError would hit FIX-29's fail-closed handler and stamp
+        # `[P0_SAFETY_EXCEPTION]` on EVERY tick, flattening the sleeve and
+        # stopping the system entirely; (c) even with the method, it compared
+        # `mode.value` (an auto() int) against "HALT"/"REDUCED" — strings
+        # matching neither the enum's names nor its values (real members:
+        # AGGRESSIVE/NORMAL/PASSIVE/DEFENSIVE/FLAT_ONLY, P48 BUG-6's exact
+        # shape one function below its fix). The real API is
+        # `update(dvol) -> (override_active, ExecutionMode, reason)`.
         if self.dvol_controller and dvol > 0:
-            self.dvol_controller.update(dvol)
-            mode = self.dvol_controller.get_execution_mode()
-            
-            if mode.value == "HALT":
+            _dv_override, _dv_mode, _dv_reason = self.dvol_controller.update(dvol)
+
+            if _dv_mode == ExecutionMode.FLAT_ONLY:
                 result.result = P0CheckResult.BLOCK_NO_TRADE
                 result.allow_trade = False
                 result.allow_exit = True
-                result.reason = f"DVOL halt: dvol={dvol:.1f}"
-                logger.warning(f"[P0] DVOL HALT: {result.reason}")
+                result.reason = f"DVOL FLAT_ONLY: dvol={dvol:.1f} ({_dv_reason})"
+                logger.warning(f"[P0] DVOL FLAT_ONLY: {result.reason}")
                 return result
-            
-            elif mode.value == "REDUCED":
+
+            elif _dv_mode == ExecutionMode.DEFENSIVE:
                 # Clip to 50%
                 result.clipped_size = min(result.clipped_size, size * 0.5)
                 result.result = P0CheckResult.CLIPPED
-                logger.info(f"[P0] DVOL REDUCED: size clipped to {result.clipped_size:.4f}")
+                logger.info(f"[P0] DVOL DEFENSIVE: size clipped to {result.clipped_size:.4f}")
         
         # =====================================================================
         # CHECK 6: Rate Limit

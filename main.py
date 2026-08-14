@@ -2069,7 +2069,18 @@ _SLEEVE_HOLD_VETOES = ("EXPOSURE_DELTA_BELOW_THRESHOLD", "FLIP_PERSIST_HOLD",
                        # in-decide writers were never added. The venue-resting
                        # protective stop (P197) keeps guarding the held
                        # position throughout — HOLD is not "unprotected".
-                       "Data validation failed", "[DATA_INVALID]")
+                       "Data validation failed", "[DATA_INVALID]",
+                       # [P265] Trade-gate REDUCE/DELAY: "trade smaller" /
+                       # "wait" are unambiguously not "liquidate".
+                       "GATE_SIZE_OR_DELAY_HOLD",
+                       # [P265] Any stale-data veto (constitution NO_TRADE
+                       # subtype or the trade gate's own freshness veto) is
+                       # the data-unknown class: hold, stop keeps guarding.
+                       "STALE_DATA",
+                       # [P265] A trade-gate CRASH is no information at all —
+                       # C1's fail-closed veto is right, but flattening on it
+                       # converts a code fault into a liquidation.
+                       "[TRADE_GATE_ERROR]")
 
 # [P265] NO_TRADE subtypes that are DATA-integrity conditions (state unknown ->
 # HOLD), as opposed to market-risk conditions (flash crash, extreme DVOL,
@@ -12320,6 +12331,22 @@ class HMATSProductionRunner:
                         )
                         # Stash for shadow-ledger gate_details enrichment downstream.
                         intent._stale_freshness_details = _freshness
+                    elif gate_result.decision.name in ("REDUCE", "DELAY"):
+                        # [P265] REDUCE ("trade at 50-75% size") and DELAY
+                        # ("wait and retry") used to stamp a bare
+                        # "[TRADE_GATE] NONE" (REDUCE carries reason=NONE) —
+                        # an empty-reason full veto that the sleeve translator
+                        # classified as veto_flat, i.e. a size-reduction
+                        # advisory LIQUIDATED the routed book. The veto stands
+                        # (this pass does not loosen the gate) but the reason
+                        # now names the decision and carries the
+                        # GATE_SIZE_OR_DELAY_HOLD marker so the sleeve HOLDS
+                        # instead of flattening.
+                        intent.veto_reason = (
+                            f"[TRADE_GATE] GATE_SIZE_OR_DELAY_HOLD "
+                            f"({gate_result.decision.name}: "
+                            f"{gate_result.reason.name} "
+                            f"adjusted_size={getattr(gate_result, 'adjusted_size', '')})")
                     else:
                         intent.veto_reason = f"[TRADE_GATE] {gate_result.reason.name}"
                     logger.warning(f"[TRADE_GATE] {gate_result.decision.name}: {gate_result.reason.name}")
