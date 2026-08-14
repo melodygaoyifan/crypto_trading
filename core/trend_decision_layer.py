@@ -176,6 +176,16 @@ class TrendDecisionLayer:
             agent_signals["quant_direction"] = sig
             agent_signals["quant_confidence"] = abs(sig)
             agent_signals["signal_edge_bps"] = market_data["signal_edge_bps"]
+            # [P265] The dq stamp must reach the dict FUSION reads. Fusion's
+            # P170 guard reads agent_signals["quant_data_quality"] (copied
+            # from market_data BEFORE this inject runs), and the pipeline
+            # leaves it 0.0 on every early-return path — so on any
+            # pipeline-degraded tick under enforce, the freshly computed,
+            # independently valid trend signal was silently EXCLUDED from
+            # fusion and the [P126] warning misattributed it as "strategy
+            # selector failed". The market_data write above was a dead write
+            # whose entire purpose was to prevent exactly this.
+            agent_signals["quant_data_quality"] = 1.0
             agent_signals["primary_strategy"] = "trend_following"
         except Exception as e:
             logger.warning(f"[TREND-LAYER] {asset} enforce inject failed, engine signal "

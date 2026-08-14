@@ -8099,10 +8099,23 @@ class HMATSProductionRunner:
             "open_interest": market_data.get("open_interest", 0),
             "funding_rate": market_data.get("funding_rate", 0),
             "liquidation_volume": market_data.get("total_liquidations_24h", 0),
-            "taker_ratio": market_data.get("taker_ratio", 1.0),
             "bid_depth": market_data.get("orderbook_depth_1pct_usd", 0) / 2,
             "ask_depth": market_data.get("orderbook_depth_1pct_usd", 0) / 2,
         }
+        # [P265] taker_ratio: NO producer of a market_data["taker_ratio"] key
+        # has ever existed — the old default-1.0 read fabricated a
+        # constant that filled kraken_quant's absorption buffer with 1.0s
+        # (its `> 1.0` exit was unreachable) and satisfied `_has_field`,
+        # overstating BEAR-bucket data quality with a field carrying no
+        # information. The REAL Binance buy/sell ratio is derived in the
+        # [WIRE-BINANCE] block later in each asset's tick and written into
+        # this cache entry — so here we carry the PREVIOUS tick's real ratio
+        # forward (one 4H bar stale, honest measurement) and OMIT the key
+        # entirely when none exists (absence: `_per_asset` skips falsy,
+        # `_has_field` reports missing).
+        _kq_prev_tr = (self._kq_xasset_cache.get(asset) or {}).get("taker_ratio")
+        if _kq_prev_tr:
+            _kq_snapshot["taker_ratio"] = _kq_prev_tr
         self._kq_xasset_cache[asset] = _kq_snapshot
 
         if self._kraken_quant_agent is not None and not p0_abort_tick:
@@ -8117,7 +8130,10 @@ class HMATSProductionRunner:
                         _kq_mkt[f"open_interest_{_kq_al}"] = _cache.get("open_interest", 0)
                         _kq_mkt[f"funding_rate_{_kq_al}"] = _cache.get("funding_rate", 0)
                         _kq_mkt[f"liquidation_volume_{_kq_al}"] = _cache.get("liquidation_volume", 0)
-                        _kq_mkt[f"taker_ratio_{_kq_al}"] = _cache.get("taker_ratio", 1.0)
+                        # [P265] real ratio or nothing — never a fabricated 1.0
+                        _kq_tr = _cache.get("taker_ratio")
+                        if _kq_tr:
+                            _kq_mkt[f"taker_ratio_{_kq_al}"] = _kq_tr
                         _kq_mkt[f"bid_depth_{_kq_al}"] = _cache.get("bid_depth", 0)
                         _kq_mkt[f"ask_depth_{_kq_al}"] = _cache.get("ask_depth", 0)
                 _kq_payload = self._kraken_quant_agent.generate_signal(
@@ -8185,6 +8201,18 @@ class HMATSProductionRunner:
                         market_data["taker_buy_volume"] = _bin_snap["binance_taker_buy_volume"]
                     if "taker_sell_volume" not in market_data:
                         market_data["taker_sell_volume"] = _bin_snap["binance_taker_sell_volume"]
+                    # [P265] Derive the REAL taker buy/sell ratio for
+                    # kraken_quant's absorption dimension (see the
+                    # _kq_snapshot comment). Written into market_data and the
+                    # cross-asset cache: later assets read it this tick, this
+                    # asset next tick. Zero-volume reads produce NO ratio.
+                    _bin_tb = float(_bin_snap.get("binance_taker_buy_volume", 0.0) or 0.0)
+                    _bin_ts = float(_bin_snap.get("binance_taker_sell_volume", 0.0) or 0.0)
+                    if _bin_tb > 0 and _bin_ts > 0:
+                        market_data["taker_ratio"] = _bin_tb / _bin_ts
+                        _kq_c = self._kq_xasset_cache.get(asset)
+                        if isinstance(_kq_c, dict):
+                            _kq_c["taker_ratio"] = _bin_tb / _bin_ts
                     logger.info(
                         f"[BINANCE_LOB] {asset} bid=${_bin_snap['binance_bid']:.2f} "
                         f"ask=${_bin_snap['binance_ask']:.2f} "
@@ -8210,8 +8238,16 @@ class HMATSProductionRunner:
                     for _mpk, _mpv in _micro_patch.items():
                         if _mpv is not None:
                             market_data[_mpk] = _mpv
-                    # Legacy compat: ofi_zscore + direct market_data keys (was W-5)
-                    market_data['ofi_zscore'] = _micro_sig.get('order_book_imbalance', 0.0)
+                    # [P265] The old "legacy compat" line here overwrote
+                    # market_data['ofi_zscore'] (the pipeline's rolling
+                    # z-score, clipped ±5) with the agent's RAW [-1,1]
+                    # order_book_imbalance — every z-calibrated consumer
+                    # (sol_execution's |z|>3 toxicity veto on the live SOL
+                    # intent path, microstructure_v5_1's |z|>1 entries) would
+                    # have received a variable that can essentially never
+                    # exceed 1.0 the day micro's warm-up completed. The raw
+                    # imbalance stays available as micro_imbalance /
+                    # order_book_imbalance; the pipeline's real z stands.
                     market_data['micro_direction'] = _micro_sig.get('micro_direction', 0.0)
                     market_data['micro_confidence'] = _micro_sig.get('micro_confidence', 0.0)
                     market_data['micro_urgency'] = _micro_sig.get('micro_urgency', 0.0)
@@ -8223,7 +8259,15 @@ class HMATSProductionRunner:
                     # [ATTR-FIX] micro_direction was only in market_data; mirror to agent_signals
                     # so attribution tracker + downstream readers (main.py:11874) see it.
                     agent_signals['micro_direction'] = _micro_sig.get('micro_direction', 0.0)
-                    agent_signals['micro_data_quality'] = _micro_sig.get('data_quality', 1.0)
+                    # [P265] The old line here read _micro_sig.get(
+                    # 'data_quality', 1.0) — a key the payload does NOT carry
+                    # (its key is 'micro_data_quality', already copied by the
+                    # wholesale loop above) — so it always resolved the
+                    # default 1.0 and CLOBBERED the real value that loop had
+                    # just written, including on the _neutral_v6_payload
+                    # no-data path where the honest dq is 0.0: the freshness
+                    # marker read healthy precisely on the degraded ticks it
+                    # exists to flag. The wholesale copy carries the truth.
                     # [P230] Bridge the primary-signal label so attribution's
                     # reasoning field stops being permanently empty — the
                     # extractor reads `micro_primary_signal`, which previously
@@ -8687,6 +8731,11 @@ class HMATSProductionRunner:
                     agent_signals["quant_direction"] = float(_rb_dir)
                     agent_signals["quant_confidence"] = 0.9 if _rb_dir else 0.4
                     agent_signals["signal_edge_bps"] = _rb_edge
+                    # [P265] Same gap as the trend seat: fusion's P170 dq
+                    # guard reads agent_signals, and on a pipeline-degraded
+                    # tick the seated signal would be silently excluded.
+                    market_data["quant_data_quality"] = 1.0
+                    agent_signals["quant_data_quality"] = 1.0
                     # [P149] sleeve bridge — same reason as the trend seat
                     self._last_quant_directions[asset] = float(_rb_dir)
                     logger.info(
@@ -9989,7 +10038,19 @@ class HMATSProductionRunner:
         # =================================================================
         if self._alpha_boost:
             try:
-                _phase_r = getattr(self.engine, '_last_phase_result', None) if hasattr(self, 'engine') else None
+                # [P265] Per-asset phase, NOT the engine-global slot. Both
+                # writers of `_last_phase_result` run LATER in this tick (T22
+                # at ~10918; integration_v36.decide), so at this point the
+                # global slot holds the PREVIOUS asset's phase (or the prior
+                # tick's last asset) — ETH's transition-aggression boost was
+                # gated on BTC's phase_confidence every tick. The exact P225
+                # cross-asset leak, in the consumer P225's per-asset store
+                # missed. Same-asset one-tick-stale beats cross-asset fresh
+                # (the P206 rule). NO global fallback: on the first tick the
+                # global slot would still be ANOTHER asset's phase, and
+                # compute() already treats phase_result=None as "no boost" —
+                # the honest cold start.
+                _phase_r = getattr(self, '_last_phase_by_asset', {}).get(asset)
                 _ab_result = self._alpha_boost.compute(
                     asset=asset,
                     agent_signals=agent_signals,
@@ -10151,41 +10212,13 @@ class HMATSProductionRunner:
             except Exception as _sg_err:
                 logger.debug(f"[SENT_GATE] {asset} skipped: {_sg_err}")
 
-        # [P1.2] DRL Shadow Diagnostics — record price change for previous tick's DRL prediction
-        if self._drl_shadow_diag and self._drl_shadow_diag.config.enabled:
-            try:
-                _dsd_prev_price = self._g6_prev_prices.get(asset, 0.0)
-                _dsd_cur_price = market_data.get("current_price", 0.0)
-                if _dsd_prev_price > 0 and _dsd_cur_price > 0:
-                    _dsd_change = (_dsd_cur_price - _dsd_prev_price) / _dsd_prev_price * 100
-                    self._drl_shadow_diag.record_price_change(asset, _dsd_change)
-                # Record current tick's DRL shadow inference
-                _dsd_drl_dir = agent_signals.get("drl_direction", 0.0)
-                _dsd_drl_conf = agent_signals.get("drl_confidence", 0.0)
-                _dsd_quant_dir = agent_signals.get("quant_direction", 0.0)
-                _dsd_ood = agent_signals.get("_ood_score", 0.0)
-                _dsd_drift = agent_signals.get("_drl_drift_weight", 1.0)
-                if abs(_dsd_drl_dir) > 0.01:
-                    self._drl_shadow_diag.record_shadow_inference(
-                        asset=asset,
-                        drl_direction=_dsd_drl_dir,
-                        drl_confidence=_dsd_drl_conf,
-                        quant_direction=_dsd_quant_dir,
-                        ood_score=_dsd_ood,
-                        drift_weight=_dsd_drift,
-                    )
-                # Log readiness report periodically (every 6 ticks = 24h)
-                if self._tick_count % 6 == 0:
-                    _dsd_report = self._drl_shadow_diag.get_readiness_report(asset)
-                    if _dsd_report.get("readiness") != "INSUFFICIENT_DATA":
-                        logger.info(
-                            f"[DRL_SHADOW_DIAG] {asset}: n={_dsd_report['n_observations']} "
-                            f"dir_acc={_dsd_report.get('direction_accuracy', 0):.1%} "
-                            f"quant_agree={_dsd_report.get('quant_agreement', 0):.1%} "
-                            f"readiness={_dsd_report['readiness']}({_dsd_report.get('readiness_score', 0):.2f})"
-                        )
-            except Exception as _dsd_err:
-                logger.debug(f"[DRL_SHADOW_DIAG] {asset} skipped: {_dsd_err}")
+        # [P1.2] DRL Shadow Diagnostics — MOVED below the OOD/drift writers
+        # ([P265]: this block used to sit here and read
+        # agent_signals["_ood_score"]/"_drl_drift_weight" whose ONLY writers
+        # run ~900 lines later in the same tick, in a dict rebuilt fresh each
+        # tick — so every [DRL_SHADOW_DIAG] record ever written carried the
+        # constants ood_score=0.0, drift_weight=1.0: measurement names on
+        # fabricated values, in the Rung-3 readiness ledger. P234 shape.)
 
         # =================================================================
         # [v6.7-P0] ATTRIBUTION: wrap signals + resolve previous tick
@@ -10247,7 +10280,14 @@ class HMATSProductionRunner:
                 "quant": {**{k: agent_signals.get(k, 0.0) for k in
                     # [FIX 2026-04-24] 'primary_strategy' is the actual
                     # Best-of-N key. Kept for back-compat.
-                    ["quant_direction", "quant_confidence", "primary_strategy", "data_quality"]},
+                    ["quant_direction", "quant_confidence", "primary_strategy"]},
+                    # [P265] The envelope's dq extractor reads "data_quality"
+                    # first, and the old collection passed a bare
+                    # "data_quality" key with NO producer anywhere — always
+                    # 0.0 — while the real quant_data_quality (present since
+                    # P170) sat unread: the DECIDE agent's envelope dq was
+                    # pinned at 0.0 for the tracker's whole life.
+                    "data_quality": agent_signals.get("quant_data_quality", 0.0),
                     "quant_strategy": str(agent_signals.get("quant_strategy_id",
                         agent_signals.get("primary_strategy", "")) or "")},
                 "short_bias": {
@@ -11166,6 +11206,46 @@ class HMATSProductionRunner:
         )
         _diag_record('phase_detector', called=bool(self.phase_detector), output={'phase': self.engine._last_phase_result.phase.value if hasattr(self, 'engine') and hasattr(self.engine, '_last_phase_result') and self.engine._last_phase_result and hasattr(self.engine._last_phase_result, 'phase') else 'N/A', 'density': self.engine._last_phase_result.opportunity_density if hasattr(self, 'engine') and hasattr(self.engine, '_last_phase_result') and self.engine._last_phase_result and hasattr(self.engine._last_phase_result, 'opportunity_density') else 'N/A'}, consumed=bool(self.phase_detector))
         _diag_record('drift_detector', called=bool(self.drift_detector and self._drl_authority_level not in ("DISABLED",)), output={'drl_drift_weight': agent_signals.get('_drl_drift_weight', 1.0)}, consumed=bool(agent_signals.get('_drl_drift_weight', 1.0) < 1.0), note='idle when DRL drift remains nominal', expect_consumption=False)
+
+        # [P1.2] DRL Shadow Diagnostics — record price change for previous
+        # tick's DRL prediction + this tick's inference. [P265] Relocated
+        # AFTER the _ood_score/_drl_drift_weight writers (was ~900 lines
+        # earlier, where both reads resolved their defaults on every tick —
+        # the readiness ledger recorded constants wearing measurement names).
+        if self._drl_shadow_diag and self._drl_shadow_diag.config.enabled:
+            try:
+                _dsd_prev_price = self._g6_prev_prices.get(asset, 0.0)
+                _dsd_cur_price = market_data.get("current_price", 0.0)
+                if _dsd_prev_price > 0 and _dsd_cur_price > 0:
+                    _dsd_change = (_dsd_cur_price - _dsd_prev_price) / _dsd_prev_price * 100
+                    self._drl_shadow_diag.record_price_change(asset, _dsd_change)
+                # Record current tick's DRL shadow inference
+                _dsd_drl_dir = agent_signals.get("drl_direction", 0.0)
+                _dsd_drl_conf = agent_signals.get("drl_confidence", 0.0)
+                _dsd_quant_dir = agent_signals.get("quant_direction", 0.0)
+                _dsd_ood = agent_signals.get("_ood_score", 0.0)
+                _dsd_drift = agent_signals.get("_drl_drift_weight", 1.0)
+                if abs(_dsd_drl_dir) > 0.01:
+                    self._drl_shadow_diag.record_shadow_inference(
+                        asset=asset,
+                        drl_direction=_dsd_drl_dir,
+                        drl_confidence=_dsd_drl_conf,
+                        quant_direction=_dsd_quant_dir,
+                        ood_score=_dsd_ood,
+                        drift_weight=_dsd_drift,
+                    )
+                # Log readiness report periodically (every 6 ticks = 24h)
+                if self._tick_count % 6 == 0:
+                    _dsd_report = self._drl_shadow_diag.get_readiness_report(asset)
+                    if _dsd_report.get("readiness") != "INSUFFICIENT_DATA":
+                        logger.info(
+                            f"[DRL_SHADOW_DIAG] {asset}: n={_dsd_report['n_observations']} "
+                            f"dir_acc={_dsd_report.get('direction_accuracy', 0):.1%} "
+                            f"quant_agree={_dsd_report.get('quant_agreement', 0):.1%} "
+                            f"readiness={_dsd_report['readiness']}({_dsd_report.get('readiness_score', 0):.2f})"
+                        )
+            except Exception as _dsd_err:
+                logger.debug(f"[DRL_SHADOW_DIAG] {asset} skipped: {_dsd_err}")
         _diag_record('soft_stop', called=bool(self.stop_authority), output={'triggered': getattr(intent, 'force_execution', False) and intent.target_exposure == 0}, consumed=bool(self.stop_authority))
         _diag_record('gambler_exit', called=bool(self.gambler_exit), output={'check_ran': bool(self.gambler_exit and position_state.get('has_position'))}, consumed=bool(self.gambler_exit))
         _ea_runner_active = bool(self.exit_alpha and self.exit_alpha.get_runner(asset) and self.exit_alpha.get_runner(asset).active) if self.exit_alpha else False

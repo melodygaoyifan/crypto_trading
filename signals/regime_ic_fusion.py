@@ -46,7 +46,13 @@ class RegimeICFusion:
     """
 
     # Agents whose sign is stable across regimes (OOS): use blind, do NOT regime-flip.
-    DEFAULT_STABLE_SIGN = frozenset({"whale", "drl", "funding"})
+    # [P265] "funding_rate", not "funding": the only caller (main.py's P232
+    # wiring) names the agent "funding_rate", so the old member matched
+    # NOTHING and funding was regime-sign-flipped in shadow_fuse — the
+    # [RIC-SHADOW] promotion-evidence stream was measuring a different fusion
+    # than the one the OOS evidence designed (P214 class). Pinned by test
+    # against the caller's roster.
+    DEFAULT_STABLE_SIGN = frozenset({"whale", "drl", "funding_rate"})
 
     def __init__(
         self,

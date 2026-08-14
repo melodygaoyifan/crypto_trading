@@ -295,8 +295,21 @@ def wrap_agent_signal(
 # Helpers
 # ---------------------------------------------------------------------------
 
+DQ_NOT_REPORTED = -1.0  # [P265] sentinel: this agent carries no dq key at all
+
+
 def _extract_data_quality(raw: Dict) -> float:
-    """Try multiple key patterns for data_quality, fallback to 1.0."""
+    """Try multiple key patterns for data_quality.
+
+    [P265] The fallback used to be 1.0 — for the ~11 agents whose collected
+    dicts carry no dq key, the envelope FABRICATED "perfectly healthy" into
+    every attribution record and [AGENT-TRACE] line, while quant (whose
+    collector passed a producer-less key) was pinned at 0.0: the dq column
+    was fiction in both directions. Absence is now the DQ_NOT_REPORTED
+    sentinel (-1.0), which no real dq value can collide with — anyone
+    filtering on dq can distinguish "measured" from "never reported"
+    instead of reading inverted health.
+    """
     for key in (
         "data_quality",
         "onchain_data_quality",
@@ -312,7 +325,7 @@ def _extract_data_quality(raw: Dict) -> float:
                 return float(val)
             except (TypeError, ValueError):
                 continue
-    return 1.0
+    return DQ_NOT_REPORTED
 
 
 def _safe_serialize(obj: Any) -> Any:
