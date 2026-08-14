@@ -16232,6 +16232,27 @@ class HMATSProductionRunner:
         # "flat" in the alert and in the operator's head.
         # Fail-soft per asset: one venue error must not stop us trying the rest.
         _cb_sleeve = getattr(self, "_coinbase_sleeve", None)
+        if _cb_sleeve is None:
+            # [P265] Venue down at boot leaves the sleeve unconstructed; the
+            # old code skipped this whole section IN SILENCE — FORCE_FLAT then
+            # cancelled Kraken orders, iterated the empty _paper_positions and
+            # printed "System halted", reading like a completed flatten while
+            # the only risk-bearing book was never touched or even mentioned.
+            # Try to build it now (the venue may have recovered since boot);
+            # if we cannot, SAY SO at the same severity as the rest.
+            try:
+                self._ensure_coinbase_sleeve()
+            except Exception as _cb_mk_err:
+                logger.critical(
+                    f"[EMERGENCY_FLAT] Coinbase sleeve construction failed: "
+                    f"{type(_cb_mk_err).__name__}: {_cb_mk_err}")
+            _cb_sleeve = getattr(self, "_coinbase_sleeve", None)
+            if _cb_sleeve is None:
+                logger.critical(
+                    "[EMERGENCY_FLAT] Coinbase sleeve NOT CONSTRUCTED (venue "
+                    "unreachable) — the sleeve book was NOT flattened and its "
+                    "state is UNKNOWN. Verify/close manually via "
+                    "scripts/coinbase_flatten.py")
         if _cb_sleeve is not None:
             try:
                 _cb_pos = _cb_sleeve.reconcile_positions() or {}
@@ -16257,8 +16278,17 @@ class HMATSProductionRunner:
                                 f"FAILED: {type(_cb_e).__name__}: {_cb_e} — "
                                 f"POSITION MAY STILL BE OPEN, close manually via "
                                 f"scripts/coinbase_flatten.py")
-                else:
+                elif getattr(_cb_sleeve, "_reconcile_ok", False):
                     logger.critical("[EMERGENCY_FLAT] Coinbase sleeve already flat")
+                else:
+                    # [P265] Reconcile FAILED and the cache is empty — "could
+                    # not read the venue" must never report as "flat" on the
+                    # emergency kill-switch path (the P199/P139 conflation).
+                    logger.critical(
+                        "[EMERGENCY_FLAT] Coinbase venue UNREADABLE (reconcile "
+                        "failed, no cached positions) — CANNOT CONFIRM the "
+                        "sleeve is flat; verify manually via "
+                        "scripts/coinbase_flatten.py")
             except Exception as _cb_err:
                 logger.critical(
                     f"[EMERGENCY_FLAT] Coinbase sleeve flatten FAILED: "
@@ -18420,40 +18450,62 @@ class HMATSProductionRunner:
         # that moves. A halt on that equity could never fire — which is worse
         # than no halt, because it looks like protection.
         _sleeve = getattr(self, "_coinbase_sleeve", None)
+        # [P253d] Read the sleeve equity LIVE at snapshot time. The old
+        # cached `_last_equity_usd` read was refreshed only later in the
+        # same tick (heartbeat block), so the DD halt was always judged
+        # on the PREVIOUS tick's sleeve equity — one 4H bar of drawdown
+        # invisible to the halt. sleeve_equity_usd() already returns the
+        # last-known value on API error (its own fail-safe), and the
+        # getattr fallback below covers a sleeve object without the method.
+        _sleeve_eq = 0.0
         if _sleeve is not None:
-            # [P253d] Read the sleeve equity LIVE at snapshot time. The old
-            # cached `_last_equity_usd` read was refreshed only later in the
-            # same tick (heartbeat block), so the DD halt was always judged
-            # on the PREVIOUS tick's sleeve equity — one 4H bar of drawdown
-            # invisible to the halt. sleeve_equity_usd() already returns the
-            # last-known value on API error (its own fail-safe), and the
-            # getattr fallback below covers a sleeve object without the
-            # method. Tick-1 (sleeve not yet constructed) stays Kraken-only,
-            # which is harmless in the only direction that matters: the
-            # Kraken-only figure UNDERSTATES equity, so the peak it anchors
-            # only ever ratchets UP once the sleeve is included next tick.
             try:
                 _sleeve_eq = float(_sleeve.sleeve_equity_usd() or 0.0)
             except Exception:
                 _sleeve_eq = float(getattr(_sleeve, "_last_equity_usd", 0.0) or 0.0)
-            if _sleeve_eq > 0:
-                current_equity += _sleeve_eq
-            else:
-                # Sleeve exists but its equity has not been read yet this
-                # process. Do NOT compute a drawdown that silently omits ~35% of
-                # the book: against a peak that INCLUDED it, that understates
-                # equity and would fire a spurious halt. Hold the last known
-                # value instead — the same fail-safe the equity-fetch path above
-                # uses, and for the same reason.
-                _held_sleeve = getattr(self, "_current_drawdown_pct", None)
-                if _held_sleeve is not None:
-                    logger.warning(
-                        "[NAV] Coinbase sleeve equity unavailable; holding last "
-                        f"known drawdown={_held_sleeve:.2%} rather than measuring "
-                        "a partial book"
-                    )
-                    return (float(getattr(self, "_peak_equity", current_equity)),
-                            float(_held_sleeve))
+        # [P265] "Sleeve expected": either the object exists, or this is a
+        # LIVE process with Coinbase routing enabled (the sleeve SHOULD exist
+        # and its absence means the venue was down at boot). A sleeve-less
+        # paper/test/single-venue run must NEVER enter the unavailable branch
+        # below — holding the last drawdown there would freeze dd forever on
+        # a book that genuinely has no second venue (caught by the P163
+        # suite when this fix first routed no-sleeve into the hold path).
+        _sleeve_expected = _sleeve is not None or (
+            bool(getattr(self.config, "coinbase_routing_enabled", False))
+            and str(getattr(getattr(self.config, "mode", None), "value", "")
+                    ).lower() == "live")
+        if _sleeve_eq > 0:
+            current_equity += _sleeve_eq
+        elif _sleeve_expected:
+            # [P265] Sleeve UNBUILT (venue down at boot) or never priced this
+            # process. The old code guarded only the built-but-unpriced case,
+            # and only when a PRIOR drawdown existed — on a fresh process with
+            # the venue down it measured the Kraken-only book against the
+            # restored COMBINED peak: dd≈35%, the P261 arithmetic on the third
+            # equity feed (observed live 2026-08-13: SOTA REDUCED->HALTED at
+            # dd=34.76% during a Coinbase 502 window). Order of preference:
+            # hold the last known drawdown; else measure the P261 held-combined
+            # equity against the peak; Kraken-only proceeds ONLY when no
+            # combined anchor exists (a genuinely single-venue history).
+            _held_sleeve = getattr(self, "_current_drawdown_pct", None)
+            if _held_sleeve is not None:
+                logger.warning(
+                    "[NAV] Coinbase sleeve equity unavailable; holding last "
+                    f"known drawdown={_held_sleeve:.2%} rather than measuring "
+                    "a partial book"
+                )
+                return (float(getattr(self, "_peak_equity", current_equity)),
+                        float(_held_sleeve))
+            _held_combined = float(
+                getattr(self, "_p0_last_combined_equity", 0.0) or 0.0)
+            if _held_combined > 0:
+                logger.warning(
+                    "[NAV] Coinbase sleeve equity unavailable on a fresh "
+                    "process; measuring the HELD combined equity "
+                    f"${_held_combined:,.2f} (P261 anchor) instead of the "
+                    "partial Kraken-only book"
+                )
+                current_equity = _held_combined
 
         # [P201] Never let a fabricated equity establish or move the peak, and
         # never report a drawdown derived from one. Returning the last known
@@ -19659,6 +19711,15 @@ class HMATSProductionRunner:
                         # stop still rests at the venue; BTC/ETH remain
                         # operator-managed (scripts/coinbase_flatten.py).
                         self._running = False
+                        # [P265] Stop NOW, not after one more tick. Without
+                        # this, execution fell through to the prefetch, the
+                        # full decide loop AND the sleeve driver — at >=25%
+                        # drawdown the engine could still open or flip a
+                        # position in the same iteration as the CRITICAL
+                        # message (top-of-round placement with end-of-round
+                        # semantics). `continue` re-checks `while
+                        # self._running:` and exits immediately.
+                        continue
                 except Exception as _nav_err:
                     # Never let a NAV read kill the trading loop, but do not let
                     # it pass silently either — a stale drawdown disarms the

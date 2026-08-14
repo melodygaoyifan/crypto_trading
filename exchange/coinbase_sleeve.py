@@ -130,6 +130,7 @@ class CoinbaseSleeve:
         # --- isolated sleeve risk guard (the Kraken existence-fuse equivalent,
         # scoped to Coinbase ONLY; never touches the global fuse) ---
         self._max_sleeve_drawdown_pct = float(max_sleeve_drawdown_pct)
+        self._last_dd_pct: float = 0.0  # [P265] last real dd; served when equity is unknown
         self._max_contracts_per_asset = int(max_contracts_per_asset)
         self._sleeve_start_equity: Optional[float] = None
         self._halted: bool = False
@@ -241,18 +242,34 @@ class CoinbaseSleeve:
             return self._last_buying_power_usd
 
     def _portfolio_uuid(self) -> Optional[str]:
-        """Default portfolio uuid (cached) — needed to read TRUE account equity."""
-        if self._cb_portfolio_uuid is not None:
+        """Default portfolio uuid (cached) — needed to read TRUE account equity.
+
+        [P265] Only a NON-EMPTY uuid is ever cached. The old code cached
+        `str(_g(p, "uuid") or "")`, so one malformed get_portfolios response
+        (row without a uuid key) stored "" permanently — `if uuid:` in
+        sleeve_equity_usd is falsy, so the PRIMARY equity path was disabled
+        for the process lifetime with no retry and no warning, pinning every
+        tick on the degraded fallback."""
+        if self._cb_portfolio_uuid:
             return self._cb_portfolio_uuid
         try:
             ports = self._adapter._client.get_portfolios()
             pl = _g(ports, "portfolios") or []
             for p in pl:
                 if str(_g(p, "type") or "").upper() == "DEFAULT":
-                    self._cb_portfolio_uuid = str(_g(p, "uuid") or "")
-                    return self._cb_portfolio_uuid
+                    _uid = str(_g(p, "uuid") or "")
+                    if _uid:
+                        self._cb_portfolio_uuid = _uid
+                        return _uid
+                    break  # DEFAULT row without uuid: fall to first-row probe
+            for p in pl:
+                _uid = str(_g(p, "uuid") or "")
+                if _uid:
+                    self._cb_portfolio_uuid = _uid
+                    return _uid
             if pl:
-                self._cb_portfolio_uuid = str(_g(pl[0], "uuid") or "")
+                logger.warning("[COINBASE_SLEEVE] get_portfolios returned rows "
+                               "but none carried a uuid — will retry next call")
         except Exception as e:
             logger.warning(f"[COINBASE_SLEEVE] portfolio uuid fetch failed: {type(e).__name__}: {e}")
         return self._cb_portfolio_uuid
@@ -294,9 +311,25 @@ class CoinbaseSleeve:
                 if tb > 0:
                     self._last_equity_usd = tb
                     return tb
+                else:
+                    logger.warning(
+                        "[COINBASE_SLEEVE] portfolio breakdown returned "
+                        f"total_balance={tb!r} (not > 0) — treating equity as "
+                        "unknown this pass")
         except Exception as e:
             logger.warning(f"[COINBASE_SLEEVE] portfolio equity fetch failed: {type(e).__name__}: {e}")
-        # fallback (degraded): futures-summary collateral + uPnL
+        # [P265] The futures-summary figure is an FCM-ONLY SUBSET of the real
+        # cross-collateralized equity (~$439 vs ~$4,000 — the exact P153
+        # confusion). It is a WRONG-DENOMINATION number, not a degraded copy of
+        # the right one, and it used to be RETURNED here unmarked: one partial
+        # outage tick (portfolio endpoint down, futures endpoint up) fed the
+        # 15% halt dd≈88% (sticky, persisted), fed the existence fuse a phantom
+        # ~-$3.4k realized loss (suspension = force-flatten, manual recovery
+        # only), and re-created P261's phantom daily-loss arithmetic through a
+        # door its known/unknown guard cannot see. The subset is now DIAGNOSTIC
+        # ONLY: log it for the operator, serve the last-known TRUE equity
+        # (0.0 on a never-priced process — every consumer already treats <=0
+        # as "unknown" and holds/skips).
         try:
             fb = self._adapter._client.get_futures_balance_summary()
             bs = _g(fb, "balance_summary") or fb
@@ -307,9 +340,13 @@ class CoinbaseSleeve:
             total = _field("total_usd_balance") or (_field("available_margin") + _field("initial_margin"))
             upnl = _field("unrealized_pnl") or sum(
                 _f(p.get("unrealized_pnl")) for p in self._last_positions.values())
-            eq = (total + upnl) if total > 0 else self._last_equity_usd
-            self._last_equity_usd = eq
-            return eq
+            if total > 0:
+                logger.warning(
+                    "[COINBASE_SLEEVE] portfolio equity UNAVAILABLE; futures "
+                    f"summary shows FCM-subset ${total + upnl:,.2f} (WRONG "
+                    "denomination, P153/P265 — NOT substituted). Serving "
+                    f"last-known true equity ${self._last_equity_usd:,.2f}")
+            return self._last_equity_usd
         except Exception as e:
             logger.warning(f"[COINBASE_SLEEVE] equity fallback failed: {type(e).__name__}: {e}")
             return self._last_equity_usd
@@ -321,13 +358,29 @@ class CoinbaseSleeve:
         baseline on first call. HALT is sticky until manually reset (mirrors the
         existence-fuse 'manual recovery only' rule), scoped to Coinbase only."""
         eq = self.sleeve_equity_usd()
-        if self._sleeve_start_equity is None and eq > 0:
+        # [P265] Unknown is not zero dollars. On a cold boot with the venue
+        # down, eq is 0.0 while the RESTORED baseline is real — the old code
+        # computed dd = (start - 0)/start = 100% and tripped the sticky,
+        # PERSISTED halt on an API artifact. P263 made the first update_risk
+        # run at startup construction, i.e. exactly when a boot-time outage
+        # yields 0. Skip the evaluation until a real equity read exists; the
+        # halt state itself is untouched (a tripped halt stays tripped).
+        if eq <= 0:
+            logger.warning(
+                "[COINBASE_SLEEVE] update_risk: equity unknown (<=0) — "
+                "skipping drawdown evaluation this pass (unknown != $0)")
+            return {"equity_usd": eq,
+                    "drawdown_pct": self._last_dd_pct,
+                    "halted": self._halted, "halt_reason": self._halt_reason,
+                    "degraded": True}
+        if self._sleeve_start_equity is None:
             self._sleeve_start_equity = eq
             logger.info(f"[COINBASE_SLEEVE] risk baseline set: ${eq:,.2f}")
             self._persist_state()  # [P150] anchor survives restart
         dd = 0.0
         if self._sleeve_start_equity and self._sleeve_start_equity > 0:
             dd = (self._sleeve_start_equity - eq) / self._sleeve_start_equity
+        self._last_dd_pct = dd
         if dd >= self._max_sleeve_drawdown_pct and not self._halted:
             self._halted = True
             self._halt_reason = (f"sleeve drawdown {dd:.1%} >= "
