@@ -365,12 +365,13 @@ class CoinglassFeed:
         # market" must never be byte-identical.
         _got_anything = bool(data.open_interest or data.funding
                              or data.liquidations)
-        if not _got_anything and self._last_data is not None:
+        _prev = self._last_data
+        if not _got_anything and _prev is not None:
             logger.warning(
                 "[COINGLASS] fetch produced NO content (all endpoints "
                 "failed) — keeping the previous cache with honest staleness "
                 "rather than fabricating fresh zeros")
-            return self._refreshed_staleness(self._last_data)
+            return self._refreshed_staleness(_prev) or _prev
 
         # [P265] Re-arm the failure telemetry on recovery. The one-shot
         # latch used to stay set for the process lifetime, so after one bad

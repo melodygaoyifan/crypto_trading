@@ -1923,7 +1923,14 @@ async def execute_intent_v2(
             _canonical_pair = ctx.fn_normalize_kraken_pair(asset)
             _ob = ctx.integrity_shield.get_orderbook(_canonical_pair) if _canonical_pair else None
             if _ob and _ob.bids and _ob.asks:
+                # [P265] timestamp/symbol are REQUIRED dataclass fields —
+                # the old call omitted them, so even after the import fix
+                # this construction would have TypeError'd (caught by mypy
+                # the moment the symbol became resolvable; the NameError had
+                # been masking a TypeError underneath).
                 _agent_ob = AgentOBSnapshot(
+                    timestamp=datetime.now(timezone.utc),
+                    symbol=str(_canonical_pair or asset),
                     bid_prices=[float(b.price) for b in _ob.bids[:5]],
                     bid_quantities=[float(b.quantity) for b in _ob.bids[:5]],
                     ask_prices=[float(a.price) for a in _ob.asks[:5]],
@@ -2352,7 +2359,9 @@ async def execute_intent_v2(
             f"reason={pa_decision.reason}"
         )
 
-    exec_result = result.to_dict() if hasattr(result, 'to_dict') else {"status": "EXECUTED"}
+    exec_result: Dict[str, Any] = (
+        result.to_dict() if hasattr(result, 'to_dict')
+        else {"status": "EXECUTED"})
     exec_result["p0_details"] = {
         "account_equity": account_equity,
         "exposure_fraction": exposure_fraction,

@@ -625,9 +625,9 @@ class P0SafetyIntegrator:
                     # Clip size. [P265] The field is `adjusted_size` —
                     # `clipped_size` never existed on the gate result, so this
                     # branch was doubly dead (CLIP is also never produced).
-                    _adj = getattr(gate_result, 'adjusted_size', None)
-                    if _adj is not None:
-                        result.clipped_size = float(_adj)
+                    _clip_adj = getattr(gate_result, 'adjusted_size', None)
+                    if _clip_adj is not None:
+                        result.clipped_size = float(_clip_adj)
                         result.result = P0CheckResult.CLIPPED
                         result.details.update(_gate_details)
                         logger.info(f"[P0] Size clipped: {size:.4f} -> {result.clipped_size:.4f}")
