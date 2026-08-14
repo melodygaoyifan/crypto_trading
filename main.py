@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 ================================================================================
 HMATS -CANONICAL PRODUCTION ENTRYPOINT
@@ -2054,7 +2054,32 @@ class ProductionConfig:
 # returns now carry these markers so the sleeve holds instead. "State unknown"
 # must never be read as "no position wanted".
 _SLEEVE_HOLD_VETOES = ("EXPOSURE_DELTA_BELOW_THRESHOLD", "FLIP_PERSIST_HOLD",
-                       "TICK_CRASH_HOLD", "EXCHANGE_DISCONNECTED_HOLD")
+                       "TICK_CRASH_HOLD", "EXCHANGE_DISCONNECTED_HOLD",
+                       # [P265] Data-integrity vetoes: the STATE OF THE WORLD
+                       # is unknown, not "no position wanted". Before this, a
+                       # single degraded-data tick — stale/missing/NaN inputs
+                       # ("Data validation failed", constitution's 60s age
+                       # gate among them) or a pipeline synthetic-fallback
+                       # tick ("[DATA_INVALID]", whose own text says "new
+                       # entries blocked") — classified as veto_flat and
+                       # LIQUIDATED every routed asset at market, then
+                       # re-entered on recovery: a forced round trip exactly
+                       # during an outage window. P253 fixed this class only
+                       # for the crash/disconnect early returns; these
+                       # in-decide writers were never added. The venue-resting
+                       # protective stop (P197) keeps guarding the held
+                       # position throughout — HOLD is not "unprotected".
+                       "Data validation failed", "[DATA_INVALID]")
+
+# [P265] NO_TRADE subtypes that are DATA-integrity conditions (state unknown ->
+# HOLD), as opposed to market-risk conditions (flash crash, extreme DVOL,
+# liquidity, correlation — where flattening is the intended response and the
+# veto_flat classification stands). The composed reason is
+# f"[v3.6.1] NO_TRADE: {NoTradeTriggerType.<name>.name}", so these are matched
+# as "NO_TRADE: <name>" and the drift guard pins them against the ENUM (a
+# source-text pin cannot see an f-string-composed write site).
+_SLEEVE_HOLD_NO_TRADE_TRIGGERS = ("DATA_INTEGRITY_FAIL", "STALE_DATA",
+                                  "FEED_DISAGREEMENT")
 
 # Vetoes that exist only because KRAKEN SPOT cannot express the position. They
 # do not apply to a perp venue, which can. B1 blocks short entries when
@@ -2106,6 +2131,11 @@ def sleeve_direction_from_intent(intent, fallback_dir: float):
     if bool(getattr(intent, "veto_active", False)):
         if any(v in _reason for v in _SLEEVE_HOLD_VETOES):
             return SLEEVE_HOLD, f"hold_veto:{_reason[:60]}"
+        # [P265] Data-integrity NO_TRADE subtypes hold; market-risk subtypes
+        # (FLASH_CRASH, EXTREME_DVOL, ...) fall through to veto_flat below.
+        if any(f"NO_TRADE: {t}" in _reason
+               for t in _SLEEVE_HOLD_NO_TRADE_TRIGGERS):
+            return SLEEVE_HOLD, f"hold_veto_data_integrity:{_reason[:60]}"
         # Venue-inapplicable only when it is the SOLE veto — if a real risk veto
         # also fired, that one governs and we flatten.
         if any(v in _reason for v in _SLEEVE_VENUE_NA_VETOES) and "|" not in _reason:

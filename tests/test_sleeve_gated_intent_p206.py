@@ -260,7 +260,12 @@ class TestVetoStringCouplingDriftGuard:
         from pathlib import Path
         from tests._source_scan import code_only
         repo = Path(__file__).resolve().parents[1]
+        # [P265] The corpus spans every file with sleeve-classified veto write
+        # sites: main.py AND integration_v36.py (the data-integrity vetoes —
+        # "Data validation failed", "[DATA_INVALID]" — are written in decide()).
         src = code_only(repo / "main.py", strip_docstrings=True)
+        src += code_only(repo / "integration" / "integration_v36.py",
+                         strip_docstrings=True)
         # Excise the definition statements themselves.
         src = re.sub(r"_SLEEVE_HOLD_VETOES\s*=\s*\([^)]*\)", "", src)
         src = re.sub(r"_SLEEVE_VENUE_NA_VETOES\s*=\s*\([^)]*\)", "", src)
@@ -292,3 +297,87 @@ class TestVetoStringCouplingDriftGuard:
         import main as m
         assert len(m._SLEEVE_HOLD_VETOES) >= 2
         assert len(m._SLEEVE_VENUE_NA_VETOES) >= 1
+
+
+# ---------------------------------------------------------------------------
+# [P265] Data-integrity vetoes mean HOLD, not flatten
+# ---------------------------------------------------------------------------
+
+class TestP265DataIntegrityVetoesHold:
+    """A degraded-data tick used to LIQUIDATE the routed book: the three
+    in-decide data-integrity veto writers ("[v3.6.1] Data validation failed",
+    "[v3.6.1] NO_TRADE: STALE_DATA/FEED_DISAGREEMENT", DP-24's
+    "[DATA_INVALID] synthetic fallback") produced reasons outside
+    _SLEEVE_HOLD_VETOES, so sleeve_direction_from_intent classified them as
+    veto_flat -> manage_to_signal(asset, 0.0) closed every Coinbase perp at
+    market and re-entered on recovery — a forced round trip exactly during an
+    outage window. "State unknown must never be read as no position wanted"
+    (P253's own rule), through the three doors P253 did not cover."""
+
+    def test_data_validation_failure_holds(self):
+        d, r = translate(
+            _intent(direction=-0.33, target_exposure=0.25, veto_active=True,
+                    veto_reason="[v3.6.1] Data validation failed: data_age_seconds 74.2 > 60.0"),
+            fallback_dir=0.9)
+        assert d is SLEEVE_HOLD, (
+            f"got {d!r} — a stale-data tick flattens the sleeve (the P265 "
+            "liquidation-on-outage class)")
+        assert "hold_veto" in r
+
+    def test_synthetic_fallback_dp24_holds(self):
+        d, _r = translate(
+            _intent(veto_active=True,
+                    veto_reason="[DATA_INVALID] synthetic fallback data, new entries blocked"),
+            fallback_dir=0.9)
+        assert d is SLEEVE_HOLD, (
+            "DP-24's own text says 'new entries blocked' — the semantic is "
+            "HOLD, the classification was flatten")
+
+    @pytest.mark.parametrize("trigger", [
+        "DATA_INTEGRITY_FAIL", "STALE_DATA", "FEED_DISAGREEMENT"])
+    def test_data_integrity_no_trade_subtypes_hold(self, trigger):
+        d, r = translate(
+            _intent(veto_active=True,
+                    veto_reason=f"[v3.6.1] NO_TRADE: {trigger}"),
+            fallback_dir=0.9)
+        assert d is SLEEVE_HOLD
+        assert "data_integrity" in r
+
+    @pytest.mark.parametrize("trigger", [
+        "FLASH_CRASH", "EXTREME_DVOL", "LIQUIDITY_CRITICAL",
+        "CORRELATION_COLLAPSE", "ALL_CONFLICT_FLAT"])
+    def test_market_risk_no_trade_subtypes_still_flatten(self, trigger):
+        # The carve-out must not swallow the risk responses — those NO_TRADE
+        # subtypes mean "get out", and flattening is the intended action.
+        d, r = translate(
+            _intent(veto_active=True,
+                    veto_reason=f"[v3.6.1] NO_TRADE: {trigger}"),
+            fallback_dir=0.9)
+        assert d == 0.0, (
+            f"NO_TRADE: {trigger} no longer flattens — the data-integrity "
+            "carve-out over-reached into the market-risk responses")
+        assert r.startswith("veto_flat")
+
+    def test_alpha_gate_veto_still_flattens(self):
+        # Rule #1 binding on the venue that trades (P206's activation
+        # behavior) must survive this change.
+        d, r = translate(
+            _intent(direction=0.9, target_exposure=0.3, veto_active=True,
+                    veto_reason="[v3.6.1] Alpha gate: Alpha 10bps < threshold 53bps"),
+            fallback_dir=0.9)
+        assert d == 0.0
+        assert r.startswith("veto_flat")
+
+    def test_hold_triggers_are_pinned_against_the_enum(self):
+        # The composed reason is f"NO_TRADE: {NoTradeTriggerType.<name>.name}"
+        # — a source-text drift guard cannot see an f-string write site, so
+        # the pin is against the ENUM itself: rename a member and this test
+        # names the break before the classifier silently stops matching.
+        import main as m
+        from defense.constitution import NoTradeTriggerType
+        names = {t.name for t in NoTradeTriggerType}
+        for t in m._SLEEVE_HOLD_NO_TRADE_TRIGGERS:
+            assert t in names, (
+                f"{t!r} is in _SLEEVE_HOLD_NO_TRADE_TRIGGERS but is not a "
+                f"NoTradeTriggerType member — the hold classification is dead "
+                f"and that trigger now FLATTENS the sleeve")
