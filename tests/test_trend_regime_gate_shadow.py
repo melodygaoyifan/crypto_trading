@@ -30,9 +30,11 @@ def _isolate(tmp_path, monkeypatch):
 
 
 def _layer(mode="enforce", gate="shadow", sig=0.8):
+    import time as _time
     layer = TrendDecisionLayer(mode=mode, regime_gate_mode=gate)
     layer._strat.compute = lambda closes: {"signal": sig, "target_position": sig}
     layer._closes["BTC"] = [1.0] * 300
+    layer._closes_cached_at["BTC"] = _time.time()  # [P265] fresh-closes stamp
     return layer
 
 

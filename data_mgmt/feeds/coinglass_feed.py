@@ -354,6 +354,32 @@ class CoinglassFeed:
             logger.info(f"[COINGLASS] All {_errors_this_fetch} requests failed - suppressing repeat warnings")
             self._dns_warning_shown = True
 
+        # [P265] A fetch that produced NO raw content at all must not
+        # overwrite the cache. Every per-endpoint failure is caught INSIDE
+        # this method, so on a full API outage no exception escaped to the
+        # P100 stale-fallback in fetch(): a fresh-stamped CoinglassCrowdData
+        # full of computed ZEROS (funding_bias/oi_trend/liquidation_imbalance
+        # = 0.0, staleness 0.0) replaced the cached good data — the timestamp
+        # LIED and even a staleness-aware consumer could not recover. Serve
+        # the cache with honest staleness instead; "no data" and "calm
+        # market" must never be byte-identical.
+        _got_anything = bool(data.open_interest or data.funding
+                             or data.liquidations)
+        if not _got_anything and self._last_data is not None:
+            logger.warning(
+                "[COINGLASS] fetch produced NO content (all endpoints "
+                "failed) — keeping the previous cache with honest staleness "
+                "rather than fabricating fresh zeros")
+            return self._refreshed_staleness(self._last_data)
+
+        # [P265] Re-arm the failure telemetry on recovery. The one-shot
+        # latch used to stay set for the process lifetime, so after one bad
+        # 5-minute cycle every subsequent OI/funding/liquidation failure
+        # warning was suppressed forever.
+        if _got_anything and getattr(self, '_dns_warning_shown', False):
+            self._dns_warning_shown = False
+            logger.info("[COINGLASS] feed recovered — failure warnings re-armed")
+
         # Compute derived metrics
         self._compute_metrics(data)
 
@@ -403,8 +429,20 @@ class CoinglassFeed:
             if not isinstance(items, list) or not items:
                 return None, None
 
-            # Sum OI across all exchanges
-            total_oi = sum(float(item.get("openInterest", 0) or 0) for item in items)
+            # [P265] The response's FIRST row is the exchange aggregate
+            # (exchangeName="All", probe-verified 2026-08-14) — summing every
+            # row therefore DOUBLE-counted total OI (~2x, small enough to
+            # pass the $1T sanity bound, so it never surfaced). Prefer the
+            # aggregate row; sum only the real exchange rows otherwise.
+            _all_row = next(
+                (i for i in items
+                 if str(i.get("exchangeName", "")).strip().lower() == "all"),
+                None)
+            if _all_row is not None:
+                total_oi = float(_all_row.get("openInterest", 0) or 0)
+            else:
+                total_oi = sum(float(item.get("openInterest", 0) or 0)
+                               for item in items)
 
             # [FIX-38] Bounds check: OI must be non-negative and sane
             if not np.isfinite(total_oi) or total_oi < 0:
@@ -414,21 +452,32 @@ class CoinglassFeed:
                 logger.warning(f"[COINGLASS] {symbol} OI suspiciously large: {total_oi}")
                 total_oi = 0.0
 
-            # h4OIChangePercent and avgFundingRateBySymbol are the same across
-            # all exchange rows for the same symbol - take from first item
+            # Change fields are the same across all exchange rows for the
+            # same symbol - take from first item.
+            # [P265] FIELD MISLABELS, probe-verified against live values
+            # (2026-08-14: h24Change == oichangePercent == -1.14 with the
+            # 12h/4h/1h OI trajectory +0.5/-0.24/-0.04, while
+            # h1VolChangePercent/h24VolChangePercent are VOLUME at
+            # -0.49/+8.82): change_24h_pct used to carry h4OIChangePercent
+            # (the 4-HOUR change — every consumer is calibrated to a 24h
+            # scale: sentiment's /10.0 crowding clip, the |x|>8 trigger,
+            # squeeze detector, smart beta, the short_bias whale proxy), and
+            # change_1h_pct carried h1VolChangePercent — a VOLUME change,
+            # not OI. Now: the real 24h and 1h OI changes.
             first = items[0]
-            h4_change = float(first.get("h4OIChangePercent", 0) or 0)
-            h1_change = float(first.get("h1VolChangePercent", 0) or 0)
+            h24_change = float(first.get("h24Change",
+                                         first.get("oichangePercent", 0)) or 0)
+            h1_change = float(first.get("h1OIChangePercent", 0) or 0)
 
             # [FIX-38] Bounds check: percentage changes
-            h4_change = np.clip(h4_change, -100.0, 100.0) if np.isfinite(h4_change) else 0.0
+            h24_change = np.clip(h24_change, -100.0, 100.0) if np.isfinite(h24_change) else 0.0
             h1_change = np.clip(h1_change, -100.0, 100.0) if np.isfinite(h1_change) else 0.0
 
             oi_data = OpenInterestData(
                 symbol=symbol,
                 open_interest_usd=total_oi,
                 open_interest_btc=total_oi / 100000,
-                change_24h_pct=h4_change,
+                change_24h_pct=h24_change,
                 change_1h_pct=h1_change,
                 timestamp=now,
             )

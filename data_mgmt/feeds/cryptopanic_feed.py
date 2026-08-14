@@ -462,6 +462,8 @@ class CryptoPanicFeed:
             staleness_sec=0.0,
         )
         
+        _cp_rate_limited = False
+        _cp_errors = 0
         async with create_session() as session:
             # Fetch posts for each currency
             for currency in SUPPORTED_CURRENCIES:
@@ -469,13 +471,34 @@ class CryptoPanicFeed:
                     news = await self._fetch_posts(session, currency)
                     data.recent_news.extend(news)
                     if self._last_status_code == 429:
+                        _cp_rate_limited = True
                         break
                 except Exception as e:
+                    _cp_errors += 1
                     logger.warning(f"[CRYPTOPANIC] {currency}: {e}")
-        
+
+        # [P265] The tick that ARMS the backoff must not destroy the cache the
+        # backoff exists to serve. The old code ran _compute_metrics on the
+        # empty/partial corpus (panic 0.0, velocity 0.0, fresh timestamp),
+        # assigned it over the restored good cache AND persisted it — so every
+        # fetch() during the backoff served the empty dataset, a restart
+        # restored it, llm_sentiment went dark until the next fully-successful
+        # fetch, and a partial outage re-stamped the failed assets' panic as
+        # 0.0/fresh. On a rate-limited or fruitless fetch, serve the existing
+        # cache (P154's design, actually honored) and persist NOTHING.
+        if (_cp_rate_limited or not data.recent_news) and self._last_data is not None:
+            logger.warning(
+                f"[CRYPTOPANIC] fetch yielded no news "
+                f"(rate_limited={_cp_rate_limited}, errors={_cp_errors}) — "
+                f"serving the cached corpus instead of overwriting it with "
+                f"an empty dataset")
+            # Backoff state (set inside _fetch_posts) still persists.
+            self._persist_state()
+            return self._last_data
+
         # Compute metrics
         self._compute_metrics(data)
-        
+
         self._last_data = data
         self._last_fetch_time = now
 

@@ -86,10 +86,40 @@ class WhaleDetector:
     WHALE_HISTORY_SIZE = 500
     PRESSURE_WINDOW_S = 3600              # 1h window for pressure calc
 
+    DEDUP_HISTORY_SIZE = 5_000
+
     def __init__(self):
-        self._trade_sizes: deque = deque(maxlen=self.TRADE_HISTORY_SIZE)
+        # [P265] PER-ASSET baselines. A single global deque blended BTC/ETH/
+        # SOL notionals, so SOL's "10x average trade" was 10x an average
+        # dominated by BTC/ETH tickets — detection systematically suppressed
+        # on the small-ticket asset and inflated on the large one, flipping
+        # real detections at MIN_DIMENSIONS=2.
+        self._trade_sizes: Dict[str, deque] = {}
         self._whale_signals: Dict[str, deque] = {}  # per-asset
-        self._avg_trade_size: float = 0.0
+        self._avg_trade_size: Dict[str, float] = {}
+        # [P265] Bounded per-asset dedup. The pipeline feeds the most recent
+        # 1000 trades every 4H tick with NO overlap filter: when fewer than
+        # 1000 trades occurred in 4h (routine on SOL), the same whale was
+        # re-detected every tick with a fresh detection-time stamp — a trade
+        # from DAYS ago registered as "pressure in the last hour" until it
+        # rolled out of the top-1000, and the duplicates skewed the size
+        # baseline too.
+        self._seen_ids: Dict[str, set] = {}
+        self._seen_order: Dict[str, deque] = {}
+
+    def _is_duplicate(self, asset: str, trade_id: Optional[str]) -> bool:
+        if not trade_id:
+            return False
+        seen = self._seen_ids.setdefault(asset, set())
+        if trade_id in seen:
+            return True
+        order = self._seen_order.setdefault(
+            asset, deque(maxlen=self.DEDUP_HISTORY_SIZE))
+        if len(order) == order.maxlen:
+            seen.discard(order[0])
+        order.append(trade_id)
+        seen.add(trade_id)
+        return False
 
     def detect(
         self,
@@ -97,6 +127,8 @@ class WhaleDetector:
         trade_notional_usd: float,
         side: str,
         orderbook_depth_usd: float = 0.0,
+        trade_ts: Optional[float] = None,
+        trade_id: Optional[str] = None,
     ) -> WhaleSignal:
         """Check if a trade qualifies as a whale order.
 
@@ -105,22 +137,37 @@ class WhaleDetector:
             trade_notional_usd: Trade value in USD.
             side: "BUY" or "SELL".
             orderbook_depth_usd: Total 1% depth on both sides in USD.
+            trade_ts: The TRADE's own epoch timestamp. [P265] Signals used to
+                be stamped at detection time, so re-fed old trades read as
+                fresh flow; pass the venue's trade time whenever known.
+            trade_id: Venue trade id for dedup across overlapping fetches.
 
         Returns:
             WhaleSignal with detection result.
         """
+        if self._is_duplicate(asset, trade_id):
+            return WhaleSignal(
+                is_whale=False,
+                timestamp=float(trade_ts) if trade_ts else time.time(),
+                notional_usd=trade_notional_usd,
+                side=side,
+                dimensions_triggered=0,
+                details=[],
+            )
+
         signals: List[Tuple[str, float]] = []
 
         # Dimension 1: Absolute size
         if trade_notional_usd > self.ABSOLUTE_NOTIONAL_USD:
             signals.append(("ABSOLUTE", trade_notional_usd))
 
-        # Dimension 2: Relative to average trade size
+        # Dimension 2: Relative to THIS asset's average trade size
+        _avg = self._avg_trade_size.get(asset, 0.0)
         if (
-            self._avg_trade_size > 0
-            and trade_notional_usd > self.RELATIVE_TRADE_SIZE * self._avg_trade_size
+            _avg > 0
+            and trade_notional_usd > self.RELATIVE_TRADE_SIZE * _avg
         ):
-            ratio = trade_notional_usd / self._avg_trade_size
+            ratio = trade_notional_usd / _avg
             signals.append(("RELATIVE_SIZE", ratio))
 
         # Dimension 3: Relative to orderbook depth
@@ -131,17 +178,19 @@ class WhaleDetector:
             depth_pct = trade_notional_usd / orderbook_depth_usd
             signals.append(("DEPTH_IMPACT", depth_pct))
 
-        # Update rolling average
-        self._trade_sizes.append(trade_notional_usd)
-        if self._trade_sizes:
-            self._avg_trade_size = float(np.mean(self._trade_sizes))
+        # Update this asset's rolling average
+        sizes = self._trade_sizes.setdefault(
+            asset, deque(maxlen=self.TRADE_HISTORY_SIZE))
+        sizes.append(trade_notional_usd)
+        if sizes:
+            self._avg_trade_size[asset] = float(np.mean(sizes))
 
         is_whale = len(signals) >= self.MIN_DIMENSIONS
-        now = time.time()
 
         result = WhaleSignal(
             is_whale=is_whale,
-            timestamp=now,
+            # [P265] The trade's own time when known — never detection time.
+            timestamp=float(trade_ts) if trade_ts else time.time(),
             notional_usd=trade_notional_usd,
             side=side,
             dimensions_triggered=len(signals),

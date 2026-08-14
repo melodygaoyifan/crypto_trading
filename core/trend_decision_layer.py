@@ -27,6 +27,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, List
 
@@ -65,6 +66,7 @@ class TrendDecisionLayer:
         # |signal| below this -> treat as no trend (flat); avoids trading weak chop.
         self.min_abs_signal = float(min_abs_signal)
         self._closes: Dict[str, List[float]] = {}
+        self._closes_cached_at: Dict[str, float] = {}  # [P265] staleness bound
         # [P198] regime gate: off | shadow (log only, DEFAULT) | enforce (zero
         # the trend signal in gated regimes -> the sleeve flattens there).
         self.regime_gate_mode = (regime_gate_mode
@@ -113,12 +115,21 @@ class TrendDecisionLayer:
                     f"decision is being lost")
                 self._shadow_log_fail_logged = True
 
+    # [P265] Staleness bound on the cached closes. The sole live decision
+    # signal used to be computed from whatever series was cached on SOME
+    # earlier tick — no age bound, no log — so under `enforce` a TA-cache
+    # outage kept asserting a frozen trend whose 40bps constant cleared the
+    # gate indefinitely (P156's rule, unapplied to the book's only driver).
+    # 8h = two 4H ticks: one missed refresh is tolerated, two are not.
+    CLOSES_MAX_AGE_S = 8 * 3600.0
+
     def cache(self, asset: str, ohlcv_df: Any) -> None:
         if self.mode == "off" or ohlcv_df is None:
             return
         try:
             if len(ohlcv_df) >= self._strat.min_history():
                 self._closes[asset] = [float(x) for x in ohlcv_df["close"].tolist()]
+                self._closes_cached_at[asset] = time.time()
         except Exception as e:  # noqa: silent-swallow — bad df shape, skip (engine signal stands)
             logger.debug(f"[TREND-LAYER] {asset} cache skip: {type(e).__name__}: {e}")
 
@@ -131,6 +142,14 @@ class TrendDecisionLayer:
         self.cache(asset, ohlcv_df)
         closes = self._closes.get(asset)
         if not closes:
+            return None
+        _cage = time.time() - self._closes_cached_at.get(asset, 0.0)
+        if _cage > self.CLOSES_MAX_AGE_S:
+            logger.warning(
+                f"[TREND-LAYER] {asset}: cached closes are {_cage/3600:.1f}h "
+                f"old (> {self.CLOSES_MAX_AGE_S/3600:.0f}h) — refusing to "
+                f"assert a trend from a frozen series; engine signal stands "
+                f"(P265)")
             return None
         try:
             res = self._strat.compute(closes)

@@ -82,6 +82,8 @@ class TestTrendInjectFreshnessStamp:
             compute=lambda closes: {"signal": 0.9},
             min_history=lambda: 10)
         layer._closes["BTC"] = [100.0 + i * 0.5 for i in range(300)]
+        import time as _t
+        layer._closes_cached_at["BTC"] = _t.time()  # fresh (P265 bound)
         agent_signals: dict = {"quant_data_quality": 0.0}  # degraded pipeline
         market_data: dict = {"quant_direction": 0.0}
         layer.process("BTC", None, agent_signals, market_data)

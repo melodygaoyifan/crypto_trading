@@ -6573,8 +6573,34 @@ class HMATSProductionRunner:
         # downstream consumers get real data (short_bias, cash_and_carry,
         # sentiment engine, profit_max_adapter).
         # =================================================================
-        if self.coinglass_feed and hasattr(self.coinglass_feed, '_last_data') and self.coinglass_feed._last_data:
-            cg_data = self.coinglass_feed._last_data
+        # [P265] Read through get_latest() — the staleness-aware accessor the
+        # P100 fix built — instead of the private _last_data, and GATE the
+        # injection on age. The direct read meant that on sustained fetch
+        # failure, funding/OI/liquidation values kept entering every tick at
+        # last-success values consumed as current by sentiment L1, the
+        # short_bias whale proxy, the dvol z and the P219 derivflow ledger.
+        # 2h = the feed's 5-min cadence with generous slack; older data is
+        # dropped from market_data entirely (absent, never a stale-as-fresh
+        # value — consumers already handle the missing keys).
+        _cg_latest = (self.coinglass_feed.get_latest()
+                      if self.coinglass_feed
+                      and hasattr(self.coinglass_feed, 'get_latest') else None)
+        _cg_fresh = (_cg_latest is not None
+                     and float(getattr(_cg_latest, 'staleness_sec', 0.0) or 0.0)
+                     <= 7200.0)
+        if _cg_latest is not None and not _cg_fresh:
+            _cg_stale_h = float(getattr(_cg_latest, 'staleness_sec', 0.0)) / 3600
+            if not getattr(self, '_cg_stale_warned', False):
+                self._cg_stale_warned = True
+                logger.warning(
+                    f"[COINGLASS] cached data is {_cg_stale_h:.1f}h old — NOT "
+                    f"injecting into market_data (stale values would be "
+                    f"consumed as current); logged once per outage")
+        elif _cg_fresh and getattr(self, '_cg_stale_warned', False):
+            self._cg_stale_warned = False
+            logger.info("[COINGLASS] fresh data resumed — injection re-enabled")
+        if _cg_fresh:
+            cg_data = _cg_latest
             cg_symbol = asset.replace("/USD", "").upper()
             if cg_symbol in cg_data.funding:
                 market_data["funding_rate"] = cg_data.funding[cg_symbol].rate

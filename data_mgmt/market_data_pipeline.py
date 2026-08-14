@@ -261,6 +261,11 @@ class MarketDataPipeline:
 
         self._regime_smoother_state: Dict[str, Dict] = {}
 
+        # [P265] (last, vol24h) fingerprint per asset -> frozen-content
+        # detection (success-with-stale-content is otherwise invisible:
+        # Kraken's ticker has no timestamp).
+        self._ticker_fingerprint: Dict[str, tuple] = {}
+
         # VPIN calculator (batch from Kraken REST trades)
         self._vpin_calc = None
         if _VPIN_AVAILABLE:
@@ -1793,8 +1798,44 @@ class MarketDataPipeline:
 
             if exchange_ts is not None:
                 data_age = max(0.0, _time.time() - exchange_ts / 1000.0)
+                data_age_measured = True
             else:
-                data_age = 0.5
+                # [P265] Kraken's ticker carries NO timestamp, so this branch
+                # is the ONLY path ever taken (35,974 log lines of exactly
+                # age=0.50s, zero other values): "data age" was a constant
+                # wearing a measurement's name, and the constitution's 60s
+                # gate + model_alpha's 30s gate were enforced against a
+                # fabricated 0.5. A fetch that succeeded is honestly about
+                # fetch_latency old; what the constant could NEVER see is
+                # success-with-stale-CONTENT (the CDN/session-cache blackout
+                # class) — detected below via the content fingerprint.
+                data_age = max(0.5, fetch_latency)
+                data_age_measured = False
+
+            # [P265] FROZEN-CONTENT detection: a ticker whose (last, vol24h)
+            # pair is byte-identical to the previous 4H tick's has not
+            # updated in >= one full bar — natural markets never repeat both
+            # to the float. Report the time since the content last CHANGED
+            # as the real age; the constitution's stale gate then fires
+            # honestly (and the sleeve HOLDs on it, P265b).
+            try:
+                _fp = (float(ticker.get("last") or 0.0),
+                       float(ticker.get("quoteVolume")
+                             or ticker.get("baseVolume") or 0.0))
+                _prev_fp = self._ticker_fingerprint.get(asset)
+                if _prev_fp is not None and _prev_fp[0] == _fp:
+                    _frozen_s = _time.time() - _prev_fp[1]
+                    if _frozen_s > 3600.0:
+                        data_age = max(data_age, _frozen_s)
+                        data_age_measured = True
+                        logger.warning(
+                            f"[LIVE_DATA] {asset}: ticker content UNCHANGED "
+                            f"for {_frozen_s/3600:.1f}h — reporting the real "
+                            f"age instead of the fetch latency (P265)")
+                else:
+                    self._ticker_fingerprint[asset] = (_fp, _time.time())
+            except Exception:  # noqa: silent-swallow — the fingerprint must never break the fetch; age falls back to latency
+                pass
 
             _ob_depth_str = f"${orderbook_depth_1pct:,.0f}" if orderbook_depth_1pct < float('inf') else "UNAVAIL"
             logger.info(
@@ -1839,7 +1880,20 @@ class MarketDataPipeline:
                         _wt_notional = _wt_price * _wt_amount
                         _wt_side = str(_wt.get("side", "")).upper()
                         if _wt_side in ("BUY", "SELL") and _wt_notional > 0:
-                            _wd.detect(asset, _wt_notional, _wt_side, orderbook_depth_1pct)
+                            # [P265] Pass the trade's own time + id: fetch_trades
+                            # returns the most-recent 1000 with overlap across
+                            # ticks, so without these every re-fed old whale was
+                            # re-stamped fresh ("pressure in the last hour" from
+                            # days-old flow) and duplicates skewed the baseline.
+                            _wt_ts_ms = _wt.get("timestamp")
+                            _wd.detect(
+                                asset, _wt_notional, _wt_side,
+                                orderbook_depth_1pct,
+                                trade_ts=(float(_wt_ts_ms) / 1000.0
+                                          if _wt_ts_ms else None),
+                                trade_id=(str(_wt.get("id"))
+                                          if _wt.get("id") else None),
+                            )
                     _wp = _wd.get_pressure(asset)
                     _whale_buy_vol = _wp.buy_volume_usd
                     _whale_sell_vol = _wp.sell_volume_usd
@@ -1916,6 +1970,10 @@ class MarketDataPipeline:
                 "returns_4h": returns_4h, "volatility_4h": volatility_4h,
                 "data_age_seconds": data_age,
                 "data_age_sec": data_age,
+                # [P265] False = the age is the fetch-latency approximation
+                # (Kraken gives no exchange timestamp), True = a real
+                # measurement (exchange ts, or frozen-content detection).
+                "data_age_measured": data_age_measured,
                 "fetch_latency_seconds": fetch_latency,
                 "market_data_fetched_at_ts": _fetch_completed_ts,
                 "latest_bar_open_ts_ms": _latest_bar_open_ts_ms,

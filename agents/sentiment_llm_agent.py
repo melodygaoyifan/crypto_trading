@@ -1395,17 +1395,33 @@ async def fetch_headlines_with_meta(
             cc_feed = get_cc_news_feed()
             cc_items = await cc_feed.fetch_headlines(asset=asset, limit=25)
             cc_added = 0
+            cc_aged_out = 0
             for ci in cc_items:
                 tl = ci.title.strip().lower()
                 if not tl or tl in seen_titles:
                     continue
+                # [P265] The CC News blend must respect the SAME time window
+                # the CryptoPanic items are filtered to. The old loop appended
+                # regardless of age (the cutoff check guarded only the
+                # newest_age STATISTIC) — with the 12h cache serving the API's
+                # unbounded "latest" list, day-old corpus was fed to Haiku as
+                # "Recent headlines" for ~3 consecutive ticks, and
+                # headline_count > 0 kept the _c3_live starvation gate
+                # satisfied on stale news — masking exactly the dried-up-
+                # coverage condition the count exists to reveal. An item with
+                # NO published_at is kept (unknown beats discarding the whole
+                # secondary source) but counted separately.
+                if ci.published_at and ci.published_at < cutoff:
+                    cc_aged_out += 1
+                    continue
                 seen_titles.add(tl)
                 headlines.append(ci.title)
                 cc_added += 1
-                if ci.published_at and ci.published_at >= cutoff:
+                if ci.published_at:
                     age_s = (now - ci.published_at).total_seconds()
                     if newest_age is None or age_s < newest_age:
                         newest_age = age_s
+            meta["cc_news_aged_out"] = cc_aged_out
             meta["cc_news_added"] = cc_added
             meta["headlines"] = headlines[:50]
             if newest_age is not None:
