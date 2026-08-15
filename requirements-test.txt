@@ -41,6 +41,11 @@ PyWavelets>=1.4.0              # [P203] `import pywt` reached transitively:
                                # P175/P187/P188 failure this file was created to end.
                                # Verified: +14 tests now execute (3315 -> 3329).
 
+# [P203→P268] The divergence below FIRED on 2026-08-15 exactly as predicted
+# (a new mypy release made test-suite red while codebase-invariants stayed
+# green) and was closed: test-suite.yml now re-pins mypy to the
+# baseline-stamped version after installing this file, same P187 pattern.
+# Original note kept for the record:
 # [P203] NOTE on the `mypy>=1.5.0` line above — a latent divergence, not a bug today.
 # codebase-invariants installs `mypy==` the version READ FROM the baseline (P187, one
 # source of truth). This file installs whatever is newest. They agree right now (both

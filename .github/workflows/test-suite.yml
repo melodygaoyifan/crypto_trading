@@ -51,6 +51,22 @@ jobs:
           # test in this repo had ever run in CI. The workflow had been red on
           # every push, including on main.
           pip install -r requirements.txt -r requirements-test.txt
+          # [P268] Pin mypy to the BASELINE-STAMPED release, exactly like
+          # codebase-invariants (P187: one source of truth, never a YAML
+          # pin). requirements-test.txt's mypy>=1.5.0 float meant the day a
+          # new mypy shipped upstream, this job installed it while the
+          # baseline still named the old one, and
+          # tests/test_mypy_gate_is_live.py correctly reported the mismatch
+          # — turning every upstream mypy release into a red test-suite run
+          # (predicted verbatim by the [P203] note in requirements-test.txt;
+          # it fired 2026-08-15).
+          V=$(python -c "import json;print(json.load(open('tools/scanner_baselines/mypy_baseline.json')).get('mypy_version',''))")
+          if [ -z "$V" ]; then
+            echo "::error::mypy_baseline.json carries no mypy_version — re-baseline before pinning"
+            exit 1
+          fi
+          echo "pinning mypy==$V (from tools/scanner_baselines/mypy_baseline.json)"
+          pip install "mypy==$V"
 
       # [P188] The whole suite, not a hand-maintained list.
       #
