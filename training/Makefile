@@ -80,17 +80,27 @@ DRL_FEE_SIDE ?= taker
 DRL_TIMESTEPS ?= 2500000
 DRL_FAST_TIMESTEPS ?= 100000
 
+# [P269] This target used to diverge from TRAINING_GUIDE_V2 on four
+# load-bearing flags: no --decision-interval (trained the retired every-bar
+# churn formulation, di=1); --lr 3e-5 (the pre-Optuna value; the ULTIMATE
+# preset default is 1.5255e-05); --buffer-size 2000000 (the pre-Stage-9.7
+# value, and the 500K memory cap only applied under --config, so the 2M
+# buffer flowed uncapped); and the FIXED tag makefile_default (a second run
+# silently restored cached results and reported stale numbers as if it
+# trained — the exact P200 cache trap). lr/buffer are now left to the
+# ULTIMATE preset; the tag is fresh per invocation.
 drl:
 	@for a in $(DRL_ASSETS); do \
-		echo "=== DRL v7 $$a ($(DRL_TIMESTEPS) steps, $(DRL_VENUE)/$(DRL_FEE_SIDE)) ==="; \
+		echo "=== DRL v7 $$a ($(DRL_TIMESTEPS) steps, $(DRL_VENUE)/$(DRL_FEE_SIDE), di=4) ==="; \
 		$(PYTHON) -X utf8 -u train_drl_full.py --asset $$a --folds 3 \
 			--timesteps $(DRL_TIMESTEPS) --extractor lstm_film_a \
 			--reward-mode classic --no-progress-bar \
-			--lr 3e-5 --buffer-size 2000000 --learning-starts 30000 \
+			--decision-interval 4 \
+			--learning-starts 30000 \
 			--n-quantiles 32 --dd-threshold 0.10 --dd-penalty-mult 2.0 \
 			--reward-clip 50 --regime-weight-min 0.50 --regime-weight-max 2.0 \
 			--venue $(DRL_VENUE) --fee-side $(DRL_FEE_SIDE) \
-			--output $(OUTPUT_DIR)/drl_v55 --tag makefile_default || exit 1; \
+			--output $(OUTPUT_DIR)/drl_v55 --tag makefile_$$(date +%Y%m%d_%H%M%S) || exit 1; \
 	done
 
 drl-fast:

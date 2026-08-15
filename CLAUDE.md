@@ -339,6 +339,17 @@ driver. Neither needs a code change.
 
 ### Recent pitfalls (last ~30 days)
 
+### P269. [FIXED 2026-08-15] The docs-vs-implementation cross-check ("fix all") — the canonical training commands trained the WRONG formulation, a second undocumented live GMM was overwriting the calibrated posterior, and a latent fallback classified assets with another asset's model
+Operator ordered a cross-check of the GMM + DRL-retraining docs against code, then "fix all". Two audit passes found drift in BOTH directions — docs prescribing retired procedure, and code silently diverging from documented design. All fixed, pinned by `tests/test_p269_crosscheck_fixes.py` (19; six load-bearing pins falsification-probed red — after first catching my probe harness itself running under an interpreter with no pytest, rc=1 reading as "red": the P159 shape INSIDE the falsification tooling; probes re-run under `sys.executable` with green-before-probe asserted):
+- **1. Every scripted DRL entry point trained the retired formulation.** `make drl` and `run_training.run_drl` both lacked `--decision-interval 4` (training the every-bar churn design three campaigns measured dead, P242/P258), and the Makefile additionally forced `--lr 3e-5` + `--buffer-size 2000000` (pre-Optuna lr; the buffer the Stage-9.7 fix capped) with a FIXED tag `makefile_default` — whose second run would restore cached folds and report stale numbers as if it trained (P200 gotcha). CLAUDE.md's own Training Commands section carried the bare no-flag command. All now carry the full honest-flag set with per-run fresh tags.
+- **2. The 500K buffer cap only existed under `--config`.** The cap sat inside `if args.config:`, so any plain CLI `--buffer-size` (exactly what the Makefile passed) flowed uncapped into the model. Moved out; unconditional.
+- **3. A SECOND live GMM nobody documented was overwriting `regime_confidence`.** `market/regime_navigator.py` carries an ONLINE-FIT 6-component GMM (legacy STRONG_* vocabulary), and main.py:~7750 let its confidence max-overwrite the per-asset GMM's calibrated posterior in both signal dicts — two classifiers' confidences silently fused under one key, partially defeating the P267 deploy's calibrated ~0.90-0.92 posteriors (any tick the online GMM was more confident, a saturated old-style number won). The overwrite's own comment claimed it "wires into the alpha gate" — regime confidence is not on the gate path at all. RETIRED; the navigator keeps its namespaced `p0_regime`/`p0_regime_confidence` keys.
+- **4. Latent cross-asset model application.** main.py's loader sets the "legacy fallback" GMM fields from the FIRST loaded per-asset model (BTC), and `_predict_gmm_regime`'s else-branch reads them — so an asset whose artifact pair went missing would be silently classified with BTC's GMM and BTC's regime names. Now: per-asset era + missing artifact → loud warn-once + `return None` (the documented ADX-proxy fallback), never another asset's model. The P4 mixed-artifact shape one level up.
+- **5. Reward tables were blind to the clean vocabulary.** `STEADY_UPTREND` (in ETH/SOL's k=7 P221 vocabulary) was in neither `BULL_REGIMES` nor `POSITION_BIAS` — the P184 unmapped-regime no-op path, arriving via a vocabulary change instead of a dtype. Added (+0.08 bias, matching its 3.7%-of-ticks mild-bull census); `NEUTRAL_DRIFT` kept at 0.0 for old-parquet runs.
+- **6. Docs corrected at the claim level:** TRAINING_GUIDE_V2 §2's phantom "convert 4h → _1d (see P200 session notes)" step replaced with the real fetchers (`fetch_binance_funding.py` + the P266 merge note) — no converter ever existed and the referenced notes are not in the repo; §5 "runtime hardcodes 1008" corrected (accepts 126/139 stacked, P241-P1b); §7 Rung-3 now states the two glossed-over mechanics (BEST_FOLDS hardcoded fold_3 in THREE files with no tag-aware loader, and the P215 atomic GMM+checkpoint deploy); Part4 v10 + training/README.md + README_V4.md got historical banners (Part4's header still claimed "DRL now DECIDE"); UNIFIED's Best-of-N regime-multiplier table corrected (code INVERTED it 2026-04-22: momentum in MOMENTUM_RALLY is ×0.7 not ×1.3) and its k=8 rows annotated to the clean k=6/7/7; METHODOLOGY_BRIEF gained the funding-rule reconciliation note (the regimebook funding legs are the rule's own "until forward data" test, not a violation).
+- **Also:** `run_training`'s gmm step repointed train_per_asset_gmm.py → `scripts/rebuild_pipeline.py` (a standalone GMM refit against existing parquets breaks P215's one-versioned-set rule; the rebuild fits GMMs + regenerates parquets in one run) — the P189 orchestrator test updated to pin the new contract.
+- **Mitigation pattern:** the canonical command block in the project's own instructions file is a deploy surface — it was three flags behind the guide it sat next to, and anyone (including a future session) following it would have burned a GPU-day re-measuring a settled verdict with the wrong economics. When a doc names a procedure, pin the COMMAND'S load-bearing flags with a test, not just the prose.
+
 ### P267. [DEPLOYED 2026-08-15, operator-instructed] The clean split-aware GMMs finally reached the RUNTIME — closing the P215 three-vocabulary divergence — with a vocabulary-parity guard so the next refit cannot drift silently
 Operator asked whether the clean GMM was ever deployed (it was not) and whether that voids the retrains (it does not), then instructed the deploy. The artifact trail, verified at all three locations: training-side fits clean (P221, k=6/7/7 split-aware); **operator-local `models/regime_classifier/` clean since 2026-08-08 00:20** (P221's deploy-copy step ran LOCALLY and its "GMM deployed" log read like a live deploy — it never was); **server host + container still served the pre-P200 full-sample k=8/7/7 fits** (Apr-6 mtime, no fit_policy, no names) because the operator→server scp never happened — the P215 atomic {GMM+checkpoints} rule gated it on a Rung-3 deploy that never came (0/9 promotable).
 - **The retrains were NOT invalidated by this**: they consumed the TRAINING-side clean fits via the parquets' regime features (P257's launch verification read the k=6/7/7 vocabulary at startup) — features, GMM, training and validation were one coherent artifact set. The runtime GMM matters only when a checkpoint DEPLOYS to live inference; none did. What the stale runtime fit did contaminate (recorded): live regime labels (the 93%-two-clusters census, constant regime_confidence ~0.99997) and the DRL shadow stream's regime features (P214 caveat).
@@ -2317,8 +2328,13 @@ Authority matrix (`signals/authority_fusion.py`) + writer (`main.py` somewhere i
 ### Training Commands
 
 ```bash
-# DRL (TQC) — v5090 rig
-python -X utf8 -u training/train_drl_full.py --asset BTC --no-progress-bar
+# DRL (TQC) — v5090 rig. Every flag is load-bearing (P269 corrected this
+# section: the old bare command trained at Kraken 26bps with the wrong
+# extractor and no fresh tag — see docs/HMATS_TRAINING_GUIDE_V2.md §5):
+python -X utf8 -u training/train_drl_full.py \
+    --asset BTC --extractor lstm_film_a \
+    --venue coinbase --fee-side taker \
+    --decision-interval 4 --tag <FRESH_TAG> --no-progress-bar
 
 # DT (with TQC teacher, Tier 2 pretrain + finetune)
 python -X utf8 -u training/drl/train_decision_transformer_v32.py \
@@ -2329,9 +2345,18 @@ python -X utf8 -u training/drl/train_decision_transformer_v32.py \
     --init-from models/decision_transformer/BTC/dt_v32_best_pretrain.pt \
     --save-suffix _ft800
 
-# Data prep
-python -X utf8 training/fetch_binance_full.py               # 3y 1H OHLCV
-python -X utf8 training/scripts/rebuild_pipeline.py --smooth 2  # → 122-feat parquets
+# Data prep — full chain in dependency order (P266):
+cd training && make refresh-data
+# or by hand (6y default since P200 — 3y produced parquets whose folds 2/3
+# silently skip):
+python -X utf8 training/fetch_binance_full.py
+python -X utf8 training/scripts/fetch_binance_funding.py
+python -X utf8 training/scripts/rebuild_pipeline.py --smooth 2
+# rebuild_pipeline runs build_flow_features as STEP 5b since P266 — the
+# P253c "a rebuild is TWO steps" rule is closed at source. NOTE: a plain
+# rebuild REFITS the GMMs; pass --skip-gmm when the artifact set
+# {GMM, parquets, checkpoints} must stay paired (P215/P253b).
+python -X utf8 training/scripts/generate_split_manifest.py
 ```
 
 ### Deployment

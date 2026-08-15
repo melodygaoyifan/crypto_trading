@@ -1,5 +1,9 @@
 # 🚀 HMATS Training v4.0 - End-to-End Diagnostics
 
+> ⚠️ **HISTORICAL (banner added 2026-08-14, P269).** 描述的 zip 分发/
+> auto_fix 工作流早已不存在。训练的权威文档：
+> `docs/HMATS_TRAINING_GUIDE_V2.md` + `training/Makefile`。
+
 完整的诊断 + 训练系统，自动检测问题并提供修复。
 
 ## 📦 快速开始

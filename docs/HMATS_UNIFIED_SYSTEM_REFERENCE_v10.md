@@ -58,6 +58,13 @@
 | **volume_breakout** | MACD + 放量确认 | MOMENTUM_RALLY ×1.2, PANIC_SELLOFF ×1.2 |
 | **vrp** | RSI 过热/投降 + BB 极端 | EXTREME_VOL ×1.3, VOLATILE_CHOP ×1.2 |
 
+> ⚠️ **[P269 更正] 上表的 regime 乘数与代码相反/过时**：2026-04-22 的修复把
+> momentum 在 MOMENTUM_RALLY 的 fit **1.3 → 0.7**（GMM 只在 ADX>30 且趋势
+> 成熟/见顶时才标 MOMENTUM_RALLY，追涨恰恰危险），并把 mean_revert 在
+> MOMENTUM_RALLY **0.5 → 0.9**。另外 `MEAN_REVERT` 不在任何 per-asset GMM
+> 词汇表里（它只是 pipeline 的合成回退名）。以
+> `data_mgmt/market_data_pipeline.py:94-125` 为准。
+
 Alpha formula: `|sig| × 200 × conf × perf`
 
 ---
@@ -75,7 +82,7 @@ Alpha formula: `|sig| × 200 × conf × perf`
 | Reward | classic PnL-based (锁定) |
 | 当前角色 | SHADOW → 30天后 EXIT_ONLY |
 | 入场权限 | **永久禁止** |
-| Per-Asset GMM 🔧 | BTC k=8, ETH k=7, SOL k=7 |
+| Per-Asset GMM 🔧 | ~~BTC k=8, ETH k=7, SOL k=7~~ [P269] 干净 split-aware 重拟合后为 **k=6/7/7** (P221) |
 | Cross-Validation 🔧 | **4-fold** (不是 3-fold) |
 | 训练 | SubprocVecEnv(4), RTX 5090, 7-25h/run |
 | Pipeline | **20 stages + 35 iron laws** |
@@ -141,7 +148,7 @@ Solana RPC + Jito API 数据源已接入, 分析模块待接线。
 
 | 资产 | k (组件数) |
 |------|-----------|
-| BTC | 8 |
+| BTC | ~~8~~ → 6 [P269: P221 干净 split-aware 拟合; vol_percentile 修复改变了 BIC 的 k 选择] |
 | ETH | 7 |
 | SOL | 7 |
 

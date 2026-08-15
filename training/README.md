@@ -1,5 +1,11 @@
 # 🚀 HMATS Training Pipeline
 
+> ⚠️ **HISTORICAL (banner added 2026-08-14, P269).** 下表的版本/性能/文件
+> 全部过时：`drl/train_drl_v55.py` 从未存在于本仓库 (P186/P189)；性能数字
+> 是 P164 泄漏时代的产物；GMM 权威训练器是
+> `scripts/train_per_asset_gmm.py`（split-aware, per-asset）。
+> 训练的权威文档：`docs/HMATS_TRAINING_GUIDE_V2.md` + 本目录 `Makefile`。
+
 完整的 HMATS 模型训练系统。
 
 | 组件 | 版本 | 性能 | 文件 |

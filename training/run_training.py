@@ -5,9 +5,15 @@ HMATS 完整训练流程编排
 ================================================================================
 
 训练组件:
-  [GMM]       6-Regime GMM 预训练 -> Regime 检测器 (scripts/retrain_gmm.py)
+  [GMM]       Per-asset split-aware GMM via scripts/rebuild_pipeline.py
+              ([P269] was scripts/train_per_asset_gmm.py at --fold 1, whose
+              boundary still leaks folds 2/3's val windows per P200; the
+              rebuild fits at the STRICTEST fold boundary and keeps
+              {GMM, parquets} as one artifact set per P215. The old
+              docstring cited scripts/retrain_gmm.py — the phantom path
+              P189 removed.)
   [DT v3.2]   Decision Transformer -> 方向预测 (MoE, EMA, FGM, OHEM, GradClip)
-  [DRL v7]    TQC RL -> 交易决策 (train_drl_full.py, ULTIMATE preset, GradClip)
+  [DRL v7]    TQC RL -> 交易决策 (train_drl_full.py, ULTIMATE preset, di=4)
   [Sentiment] Agent v2.2 -> 情感分析 (EMA, FGM, OHEM)
 
 用法:
@@ -67,12 +73,13 @@ class TrainingOrchestrator:
     # after however many hours the preceding steps took. Same shape as [P186],
     # which found `make drl` pointing at a script that never existed.
     #
-    # run_gmm now points at training/scripts/train_per_asset_gmm.py, which is
-    # what main.py:3520-3541 loads FIRST ("Try per-asset models first (v7)") and
-    # what [P164] established as the correct, leak-free trainer — it fits on
-    # train folds only, per configs/split_manifest.json.
+    # [P269] run_gmm now points at training/scripts/rebuild_pipeline.py — the
+    # canonical GMM path: strictest-fold-boundary fit + fresh parquets as one
+    # artifact set (P215). Its previous target, train_per_asset_gmm.py at the
+    # --fold 1 default, fits at a boundary P200 records as still leaking
+    # folds 2/3's validation windows.
     SCRIPTS = {
-        "gmm":       ("script_dir", "scripts/train_per_asset_gmm.py"),
+        "gmm":       ("script_dir", "scripts/rebuild_pipeline.py"),  # [P269] strictest-boundary fit + parquets as one set (P215)
         "dt":        ("script_dir", "drl/train_decision_transformer_v32.py"),
         "drl":       ("script_dir", "train_drl_full.py"),
         "sentiment": ("script_dir", "sentiment/train_sentiment_agent_v22.py"),
@@ -105,8 +112,20 @@ class TrainingOrchestrator:
         return True
 
     def check_data(self) -> bool:
-        """检查数据是否存在 (4H full parquets for DRL v7)"""
-        drl_data_dir = self.root_dir / 'data' / 'drl_training'
+        """检查数据是否存在 (4H full parquets for DRL v7)
+
+        [P269] The path was `<root>/data/drl_training` — a directory that
+        does not exist (the canonical location, and train_drl_full's own
+        default, is training/training_data/drl_training). So `make all` /
+        `make quick` / `--all` REFUSED at this check even with perfect data,
+        for as long as the check has existed (P189 fixed the script paths
+        but not this data path). Also honors --data-dir now.
+        """
+        drl_data_dir = Path(self.data_dir) / 'drl_training'
+        if not drl_data_dir.exists():
+            # relative default ('./training_data') resolves only from the
+            # training/ cwd; fall back to the canonical absolute location
+            drl_data_dir = self.script_dir / 'training_data' / 'drl_training'
         required = [drl_data_dir / f'{asset}_4H_full.parquet' for asset in self.ASSETS]
 
         missing = [f for f in required if not f.exists()]
@@ -128,18 +147,24 @@ class TrainingOrchestrator:
         return len(missing) == 0
     
     def run_gmm(self):
-        """Per-asset GMM (training/scripts/train_per_asset_gmm.py).
+        """Per-asset GMM via the FULL rebuild (scripts/rebuild_pipeline.py).
 
-        [P189] Was scripts/retrain_gmm.py, which is not in the tree. See
-        TrainingOrchestrator.SCRIPTS for why this is the per-asset trainer and not the
-        archived global one.
+        [P189] Was scripts/retrain_gmm.py, a phantom path not in the tree.
+        [P269] Then scripts/train_per_asset_gmm.py at its --fold 1 default —
+        which P200 itself records as still leaking folds 2/3's validation
+        windows into the fit. The canonical GMM path is the rebuild: it fits
+        at the STRICTEST fold boundary and regenerates the parquets in the
+        same run, so {GMM, parquets} stay one artifact set (P215) instead of
+        a fresh GMM sitting beside stale features.
         """
         logger.info("="*60)
-        logger.info("[Step 1] Per-asset GMM (BIC k=3-8, train folds only)")
+        logger.info("[Step 1] Per-asset GMM via rebuild_pipeline "
+                    "(strictest-boundary fit + fresh parquets, P215/P269)")
         logger.info("="*60)
 
-        cmd = [sys.executable, '-X', 'utf8', str(self._script("gmm"))]
-        return self._run(cmd, "Per-asset GMM")
+        cmd = [sys.executable, '-X', 'utf8', str(self._script("gmm")),
+               '--smooth', '2']
+        return self._run(cmd, "Per-asset GMM (rebuild)")
     
     def run_dt(self, epochs: int = 200, batch_size: int = 256, assets: list = None):
         """Decision Transformer v3.2 (per-asset, aligned with TQC 126-dim obs)"""
@@ -189,12 +214,20 @@ class TrainingOrchestrator:
                 '--venue', self.venue,
                 '--fee-side', self.fee_side,
                 # [P200] Without this, train_drl_full defaults to the ULTIMATE
-                # flat-MLP path: no VecFrameStack, obs 126 not 1008, run_label
-                # "ULTIMATE" — a model the runtime cannot consume (drl/ensemble
-                # hardcodes SINGLE_OBS_DIM*N_STACK=1008 and the loader probes
-                # LSTM_FILM_A first). The Makefile's drl target already passed
-                # it; the two documented retrain paths disagreed silently.
+                # flat-MLP path (no VecFrameStack) — a model shape the runtime
+                # refuses (drl/ensemble accepts stacked 126- or 139-dim obs,
+                # i.e. 1008/1112 flattened, and probes LSTM_FILM_A first).
+                # The Makefile's drl target already passed it; the two
+                # documented retrain paths disagreed silently.
                 '--extractor', 'lstm_film_a',
+                # [P269] The P242 reformulation: act every 4 bars (16h).
+                # Omitting this trained the retired every-bar churn
+                # formulation (di=1) that three campaigns measured dead.
+                '--decision-interval', '4',
+                # [P269] Fresh tag per invocation — a reused tag silently
+                # restores cached fold results and reports stale numbers as
+                # if it trained (the P200 cache trap).
+                '--tag', f"orchestrated_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
             ]
             if quick:
                 cmd.extend(['--timesteps', '200000'])

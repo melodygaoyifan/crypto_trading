@@ -44,12 +44,23 @@ python -X utf8 training/fetch_binance_full.py --years 6
 6 years is the default and the minimum that matters: the 3-fold walk-forward
 needs `n - 3*int(0.15n) - 42 >= 5000` → **~9,200 4H bars (~4.2y)**. The old
 3-year default is exactly what produced parquets on which folds 2/3 silently
-skip. Coinglass external history (funding/OI/liq, ~180 days of API depth):
+skip. External history — two separate fetchers ([P269] the old "convert 4h →
+_1d, see P200 session notes" instruction here was unexecutable: no converter
+exists anywhere in the tree and those notes are not in the repo; a verbatim
+follower built parquets with stale/absent external features and no error):
 
 ```bash
+# funding_1d — the file rebuild_pipeline actually reads for
+# funding_rate_zscore (full 6y from Binance vision archives, causal):
+python -X utf8 training/scripts/fetch_binance_funding.py
+
+# Coinglass 4h OI/liquidation history (~180d API depth; MERGES into the
+# archive since P266 — re-run at least every ~150 days or history is lost):
 python -X utf8 training/scripts/fetch_coinglass_history.py
-# then convert 4h -> the _1d files rebuild expects (see P200 session notes)
 ```
+
+Or run the whole data chain in dependency order: `cd training && make
+refresh-data` (P266).
 
 ## 3. Rebuild the feature parquets
 
@@ -67,9 +78,11 @@ python -X utf8 -c "import json; print(json.load(open('training/training_data/gmm
 # MUST print: split_aware
 ```
 
-Expected scale (2026-08): BTC/ETH 13,095 bars, SOL 13,034, 122 features.
-`has_external_data` coverage ~8% is a known limitation (Coinglass depth), not
-an error.
+Expected scale (2026-08): BTC/ETH 13,095 bars, SOL 13,034, ~135 columns —
+122 manifest features plus the 13 `fv2_*` flow columns, which the rebuild
+builds automatically as STEP 5b since P266 (extra columns, NOT manifest
+members; obs_dim stays 126). `has_external_data` coverage ~8% is a known
+limitation (Coinglass depth), not an error.
 
 ## 4. Split manifest
 
@@ -95,7 +108,7 @@ Every flag is load-bearing:
 
 | flag | why it cannot be omitted |
 |---|---|
-| `--extractor lstm_film_a` | the runtime hardcodes a 1008-dim (126×8) input; the default ULTIMATE path produces a 126-dim model the runtime cannot consume (P200 blocker 3) |
+| `--extractor lstm_film_a` | the runtime accepts stacked 126- or 139-dim obs (1008/1112 flattened, P241-P1b); the default ULTIMATE path produces a FLAT 126-dim model the runtime refuses (P200 blocker 3) |
 | `--venue coinbase --fee-side taker` | the default is kraken/26bps — a venue that has been structurally flat since 2026-06-13. The sleeve that actually trades pays Coinbase 3bps |
 | `--decision-interval 4` | acts every 4 bars (16h), holds between — the only horizon where the edge probe found after-cost signal, and it structurally caps the churn that killed every prior run (~1,900 trades/fold, friction ≥ the loss) |
 | `--tag <FRESH_TAG>` | **without a fresh tag the trainer restores old folds from cache and reports the stale numbers as if it trained** (P200 launch gotcha — the first "run" completed in 9 seconds) |
@@ -133,6 +146,18 @@ A passing fold does not deploy anything. The ladder from there:
 1. **30-day live shadow**: deploy checkpoints at SHADOW authority (unchanged
    behavior — inference + signal logging only), measure live IC via the
    attribution logs against the cost-aware P166 gate on FORWARD data only.
+   **[P269] Two mechanics this step glossed over, both mandatory:**
+   (a) the runtime loader has NO tag awareness — it reads
+   `models/retrained/{ASSET}/{BEST_FOLDS[asset]}/` with `BEST_FOLDS`
+   hardcoded fold_3 in THREE files (`drl/ensemble.py`,
+   `drl/runtime_obs_builder.py`, `training/drl/oracle_tqc_teacher.py`), so
+   deploying a tagged or non-fold_3 winner means updating all three AND
+   copying the tagged fold dir into the untagged layout — there is currently
+   no scripted vehicle for this;
+   (b) the deploy is ATOMIC with the GMMs (P215): ship the split-aware
+   per-asset GMMs the parquets were built with alongside the checkpoints, or
+   the model's regime features mean different things live than in training
+   (P214 skew). The P267 parity test guards the deploy-side artifacts.
 2. **Three deliberate flips, in order**: gate promote via
    `data/drl_promotion_state.json` (`drl.force_active` stays **false** — the
    persisted level being authoritative is the point of P200); fusion re-admits

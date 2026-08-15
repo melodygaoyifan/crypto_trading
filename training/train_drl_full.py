@@ -107,8 +107,8 @@ ASSET_OVERRIDES = {
 }
 
 BEAR_REGIMES = frozenset(["PANIC_SELLOFF", "VOLATILE_CHOP", "EXTREME_VOLATILITY"])
-BULL_REGIMES = frozenset(["MOMENTUM_RALLY", "QUIET_ACCUMULATION"])
-NEUTRAL_REGIMES = frozenset(["WEAK_CONSOLIDATION"])
+BULL_REGIMES = frozenset(["MOMENTUM_RALLY", "QUIET_ACCUMULATION", "STEADY_UPTREND"])  # [P269] STEADY_UPTREND added
+NEUTRAL_REGIMES = frozenset(["WEAK_CONSOLIDATION", "NEUTRAL_DRIFT"])  # [P269] NEUTRAL_DRIFT for old-parquet runs
 
 # =============================================================================
 # Stage 3: EnhancedRewardCalculator (Sortino-based)
@@ -339,6 +339,16 @@ REGIME_NAMES = _load_regime_names()
 
 POSITION_BIAS = {
     "MOMENTUM_RALLY":       +0.08,
+    # [P269] STEADY_UPTREND was MISSING from this table and from
+    # BULL_REGIMES: ETH/SOL's k=7 vocabulary (P221 naming pass) includes it,
+    # so their steady-uptrend bars fell into NO regime set — the bull pnl
+    # multiplier never applied and the bias defaulted to 0.0, silently
+    # (the P184 resolve-guard cannot catch a name that RESOLVES but is
+    # unmapped — the post-naming residue of the P215 REGIME_1/7 gap).
+    "STEADY_UPTREND":       +0.08,
+    # [P269] NEUTRAL_DRIFT: only in the retired pre-P221 vocabularies; kept
+    # at 0.0 so measurement runs on OLD parquets stay well-defined.
+    "NEUTRAL_DRIFT":         0.00,
     "WEAK_CONSOLIDATION":    0.00,
     "EXTREME_VOLATILITY":   -0.05,
     "VOLATILE_CHOP":        -0.05,
@@ -2286,7 +2296,7 @@ class FullDRLTrainer:
             logger.info(f"  PROMOTABLE folds: {summary.get('promotable_folds')}")
         else:
             logger.warning(
-                "  NOT PROMOTABLE: no fold beat buy-and-hold and SMA after "
+                "  NOT PROMOTABLE: no fold beat EVERY baseline (buy-and-hold, SMA200, ridge_16h) after "
                 "fees with a Sharpe CI excluding zero. Deploying this model "
                 "would be worse than holding.")
         logger.info(f"  Results: {path}")
@@ -3019,7 +3029,7 @@ def main():
 
     # Stage 8: reward / TQC hyperparams (Optuna-derived or manual)
     parser.add_argument("--buffer-size", type=int, default=None,
-                        help="Replay buffer size (default: ULTIMATE 2M)")
+                        help="Replay buffer size (default: ULTIMATE preset 500K; values >500K are capped, P269)")
     parser.add_argument("--learning-starts", type=int, default=None,
                         help="Steps before learning starts (default: 30K)")
     parser.add_argument("--n-quantiles", type=int, default=None,
@@ -3161,11 +3171,16 @@ def main():
                 setattr(args, arg_key, cfg[cfg_key])
                 logger.info(f"    config: {arg_key} = {cfg[cfg_key]}")
 
-        # Force buffer_size=500K max for memory safety (n_stack=8 amplification)
-        if args.buffer_size and args.buffer_size > 500_000:
-            logger.warning(f"  [MEM] buffer_size {args.buffer_size:,} > 500K, capping to 500K "
-                          f"(n_stack=8 memory: {args.buffer_size * 8 * 126 * 4 * 2 / 1e9:.1f} GB)")
-            args.buffer_size = 500_000
+    # Force buffer_size=500K max for memory safety (n_stack=8 amplification).
+    # [P269] Moved OUT of the `if args.config:` block above — the cap only
+    # applied when a config file was passed, so any plain CLI invocation with
+    # a large --buffer-size (the Makefile's old `--buffer-size 2000000` was
+    # exactly that) flowed uncapped into the model, recreating the memory
+    # condition the ULTIMATE preset's Stage-9.7 fix (500K) exists to prevent.
+    if args.buffer_size and args.buffer_size > 500_000:
+        logger.warning(f"  [MEM] buffer_size {args.buffer_size:,} > 500K, capping to 500K "
+                      f"(n_stack=8 memory: {args.buffer_size * 8 * 126 * 4 * 2 / 1e9:.1f} GB)")
+        args.buffer_size = 500_000
 
     # Resolve data path
     data_path = args.data or str(_TRAINING_DIR / "training_data" / "drl_training" / f"{args.asset}_4H_full.parquet")

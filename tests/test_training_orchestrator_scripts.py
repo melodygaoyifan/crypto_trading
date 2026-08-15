@@ -117,20 +117,29 @@ def test_main_exits_zero_when_the_stage_succeeds(monkeypatch, tmp_path):
 
 
 def test_the_gmm_step_trains_the_per_asset_models_the_runtime_loads(orch):
-    """main.py:3520 tries per-asset first and calls the global one legacy.
+    """The GMM step must refit the per-asset models the runtime loads first.
 
-    The orchestrator pointed at the archived global trainer. Even had that path
-    existed, a `make all` would have refreshed the fallback and left the models
-    the runtime actually reads untouched.
+    History: the orchestrator originally pointed at the archived GLOBAL
+    trainer (P189 — the runtime treats that model as legacy fallback only).
+    P189 repointed it at train_per_asset_gmm.py. [P269] repointed it again
+    at scripts/rebuild_pipeline.py: a standalone GMM refit against existing
+    parquets breaks the P215 rule that {GMM, parquets} move as ONE versioned
+    set — the rebuild fits the per-asset split-aware GMMs AND regenerates the
+    parquets from them in the same run (a bare train_per_asset_gmm call also
+    misses the strictest-boundary arithmetic parity the rebuild carries).
     """
     gmm = orch._script("gmm")
-    assert gmm.name == "train_per_asset_gmm.py", (
-        f"the GMM step trains {gmm.name}. The runtime loads "
-        f"models/gmm/<ASSET>/gmm_model.pkl first (main.py 'Try per-asset "
-        f"models first (v7)') and only falls back to the global model."
+    assert gmm.name == "rebuild_pipeline.py", (
+        f"the GMM step runs {gmm.name}. It must run the FULL rebuild so the "
+        f"per-asset split-aware GMMs and the parquets are refit as one "
+        f"artifact set (P215/P269); the runtime loads per-asset models "
+        f"first (main.py 'Try per-asset models first (v7)')."
     )
     assert "archive" not in gmm.parts, (
         f"the GMM step points into archive/: {gmm}"
+    )
+    assert gmm.name != "retrain_gmm.py", (
+        "the GMM step regressed to the archived GLOBAL trainer (P189)"
     )
 
 

@@ -2586,7 +2586,7 @@ _SIGNAL_DIRECTION = {
 _UNMAPPED_REGIMES_WARNED: set = set()
 
 # HMATS regime name -> local Regime enum
-# Covers all 6 canonical GMM regimes + common synonyms + REGIME_N fallthrough
+# Covers all 7 canonical GMM regimes (pool pinned by tests/test_p267_gmm_vocabulary_parity.py) + common synonyms + REGIME_N fallthrough
 _REGIME_MAP = {
     # BULL family
     "MOMENTUM_RALLY": Regime.BULL,

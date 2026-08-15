@@ -2126,6 +2126,24 @@ class MarketDataPipeline:
             _scaler_scale = _cfg["scaler_scale"]
             _regime_names = _cfg["regime_names"]
             feature_names = _cfg["feature_cols"]
+        elif self._gmm_configs:
+            # [P269] Per-asset artifacts loaded, but NOT for this asset. The
+            # "legacy" fields below are set from the FIRST loaded per-asset
+            # model (BTC), so falling through would silently classify this
+            # asset with ANOTHER ASSET'S GMM and regime names — cross-asset
+            # model application, the P4 mixed-artifact shape one level up
+            # (latent until an artifact pair goes missing, which is exactly
+            # when it would fire). Refuse toward the ADX proxy instead.
+            if not hasattr(self, "_gmm_missing_warned"):
+                self._gmm_missing_warned: set = set()
+            if asset not in self._gmm_missing_warned:
+                self._gmm_missing_warned.add(asset)
+                logger.warning(
+                    f"[GMM] {asset}: no per-asset artifacts while other "
+                    f"assets have them — refusing to classify with another "
+                    f"asset's model; using the ADX proxy (P269)")
+            raw["_gmm_fallback"] = "missing_per_asset_artifacts"
+            return None
         else:
             _model = self._gmm_model
             _scaler_mean = self._gmm_scaler_mean

@@ -1,10 +1,17 @@
 # HMATS 系统架构文档 - Part 4
 # 执行层与DRL训练
 # ═══════════════════════════════════════════════════════════════
+# ⚠️ HISTORICAL DOCUMENT (banner added 2026-08-14, P269). 本文档描述的是
+# 2026年3月的系统状态，多处已被后续事实推翻，只作考古参考：
+#   - "DRL now DECIDE in fusion" 已失效 — DRL 于 2026-08-07 降级为 SHADOW
+#     (P198)，且 P200/P241/P258 三轮干净重训均 0/9 fold 通过；
+#   - 本文的 DRL 训练流程/性能数字系 P164 泄漏时代的产物 (P179–P184)；
+#   - 训练的权威文档是 docs/HMATS_TRAINING_GUIDE_V2.md，运行时状态的
+#     权威文档是 CLAUDE.md。
 # 版本: v10.1-POSTAUDIT (v6.8.0 sync)
 # 日期: 2026年3月27日 (updated from Feb 28)
 # 审计状态: TimingEngine→PA Executor 接线验证 INTACT (DF-07)
-# v6.8.0 变更: FIX-DRL-AUTHORITY (DRL now DECIDE in fusion), FIX-MARKET-FALLBACK,
+# v6.8.0 变更 (当时): FIX-DRL-AUTHORITY, FIX-MARKET-FALLBACK,
 #              FIX-RECONNECT-ORDER, FIX-DRL-VALIDATE (smoke test), FIX-FEE-TIER
 # ═══════════════════════════════════════════════════════════════
 

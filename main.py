@@ -7747,11 +7747,24 @@ class HMATSProductionRunner:
                 if regime_tensor:
                     agent_signals['p0_regime'] = regime_tensor.market_regime.name
                     agent_signals['p0_regime_confidence'] = regime_tensor.regime_confidence
-                    # Wire into alpha gate (fix naming mismatch: p0_regime_confidence vs regime_confidence)
-                    if regime_tensor.regime_confidence > agent_signals.get('regime_confidence', 0):
-                        agent_signals['regime_confidence'] = regime_tensor.regime_confidence
-                        # Sync to market_data so _execute_intent's authority_chain sees same value
-                        market_data['regime_confidence'] = regime_tensor.regime_confidence
+                    # [P269] The max-overwrite that used to sit here is
+                    # RETIRED. It let the regime NAVIGATOR — a second,
+                    # ONLINE-FIT 6-component GMM speaking the legacy
+                    # STRONG_BULL..STRONG_BEAR vocabulary — overwrite
+                    # `regime_confidence` in both dicts whenever its
+                    # confidence exceeded the per-asset GMM's posterior. So
+                    # every downstream consumer saw max(calibrated per-asset
+                    # posterior, online-navigator confidence): two different
+                    # classifiers' confidences silently fused under one key,
+                    # documented nowhere, and it partially defeated the P267
+                    # deploy's calibrated ~0.90-0.92 posteriors (on any tick
+                    # the online GMM was more confident, an old-style
+                    # saturated number won). The overwrite's own comment
+                    # claimed it "wires into the alpha gate" — regime
+                    # confidence is not on the gate path at all (the gate
+                    # inputs are |quant_dir|x65 and the trend layer's 40x
+                    # constant). The navigator's reading stays available
+                    # under its OWN keys (p0_regime / p0_regime_confidence).
                     agent_signals['p0_squeeze_risk'] = getattr(regime_tensor, 'squeeze_risk', 0.0) if hasattr(regime_tensor, 'squeeze_risk') else 0.0
                     
                     # VETO CONDITIONS

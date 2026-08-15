@@ -108,6 +108,17 @@ periodic; compute any funding signal from the venue whose positioning it
 claims to measure. Basis on this book size = monitoring input, not a
 sleeve.
 
+**[P269 reconciliation note]** This brief's binding rule "funding = income
+always / signal never" and the live regimebook's BTC funding legs (P247/P248
+— `funding_short` bear, `funding_contrarian` peace, on CAUSAL previous-day
+z) are NOT in contradiction: the rule's own text above says
+funding-conditioned direction is *era-conditional until forward data says
+otherwise*, and the regimebook forward ledger (P166 read ~2026-09-09) IS
+that forward test. P262 already marks the funding legs as the UNCERTIFIED
+part of the BTC book (virgin-era evidence thin-and-negative, DSR ≈ coin
+flip). If the September read fails them, the rule stands as written; if it
+passes, the rule gains its first measured exception.
+
 ## 5. Overfitting/underfitting diagnosis as a pipeline stage
 
 - **Deflated Sharpe Ratio + PBO via CPCV** (Bailey & López de Prado):
