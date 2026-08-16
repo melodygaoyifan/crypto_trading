@@ -408,10 +408,14 @@ class CoinglassFeed:
         # the rolling stats — the same corruption one buffer over).
         _carried: set = set()
         if _prev is not None:
-            for _fam_name, _cur_map, _prev_map in (
-                    ("funding", data.funding, _prev.funding),
-                    ("open_interest", data.open_interest, _prev.open_interest),
-                    ("liquidations", data.liquidations, _prev.liquidations)):
+            # Typed as generic dicts: each tuple row pairs SAME-family maps,
+            # but mypy sees the union across rows and rejects the carry
+            # assignment; the family pairing is positional and test-pinned.
+            _fam_rows: List[Any] = [
+                ("funding", data.funding, _prev.funding),
+                ("open_interest", data.open_interest, _prev.open_interest),
+                ("liquidations", data.liquidations, _prev.liquidations)]
+            for _fam_name, _cur_map, _prev_map in _fam_rows:
                 for _sym in SUPPORTED_SYMBOLS:
                     if _sym not in _cur_map and _sym in _prev_map:
                         _cur_map[_sym] = _prev_map[_sym]

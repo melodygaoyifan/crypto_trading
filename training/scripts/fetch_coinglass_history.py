@@ -423,7 +423,7 @@ def main(interval: str = INTERVAL):
         print(f"  {label:25s}  {info['rows']:>6} rows  {info['start']} -> {info['end']}")
 
     # Total data points
-    total_rows = sum(info["rows"] for info in summary.values())
+    total_rows = sum(int(info["rows"]) for info in summary.values())
     print(f"\n  Total: {total_rows} data points across {len(summary)} files")
 
     # Save summary (interval-suffixed so a 1d run cannot clobber the 4h

@@ -152,4 +152,6 @@ def sentiment_can_trigger_opportunity() -> bool:
 
 
 def is_sentiment_mock() -> bool:
-    return get_sentiment_config().IS_MOCK
+    # IS_MOCK is Optional on the dataclass (P287: bare construction must not
+    # claim REAL) but __post_init__ always resolves it; coerce for the type.
+    return bool(get_sentiment_config().IS_MOCK)

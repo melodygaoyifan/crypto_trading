@@ -1021,7 +1021,7 @@ class CoinbaseSleeve:
             self._flip_pending.pop(asset, None)
         return await self.execute_target(asset, target)
 
-    async def _cancel_resting_orders(self, pid: str, asset: str) -> int:
+    async def _cancel_resting_orders(self, pid: str, asset: str) -> Optional[int]:
         """[P195] Cancel our own resting orders for `pid` before placing a new one.
 
         execute_target places a marketable GTC LIMIT, and nothing ever cancelled
@@ -1076,7 +1076,7 @@ class CoinbaseSleeve:
                         f"resting order(s) before new target")
         return cancelled
 
-    async def _cancel_stale_entry_orders(self, pid: str, asset: str) -> int:
+    async def _cancel_stale_entry_orders(self, pid: str, asset: str) -> Optional[int]:
         """[P265] Cancel resting NON-STOP orders on ticks that place nothing.
 
         `_cancel_resting_orders` runs only on the order-placing path, AFTER the
