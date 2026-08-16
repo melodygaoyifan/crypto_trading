@@ -1,87 +1,91 @@
 {
-  "authority": {
-    "by_agent_issues": {
-      "kraken_quant": [
-        "no direct writer for 'kq_direction' (may be set via dict-update)"
-      ],
-      "model_alpha": [
-        "no direct writer for 'model_alpha_direction' (may be set via dict-update)"
-      ],
-      "onchain_graph": [
-        "no direct writer for 'onchain_graph_direction' (may be set via dict-update)"
-      ],
-      "regime": [
-        "no direct writer for 'regime_direction' (may be set via dict-update)"
-      ],
-      "vol_alpha": [
-        "DECIDE/ADVISE/CONFIRM agent \u2014 fusion does NOT consume 'vol_alpha_direction'",
-        "no direct writer for 'vol_alpha_direction' (may be set via dict-update)"
-      ]
-    },
-    "matrix_size": 25
+ "_p287_note": "lead_lag entry added 2026-08-16 (P287): the direct writer WAS the bug \u2014 the B6 beta-catch-up block overwrote micro's lead_lag_edge/confidence with a different estimator's numbers (mixed provenance); B6 now writes namespaced b6_lead_lag_* keys, leaving micro's dict-update + the setdefault as the only writers, which this scanner cannot see as direct. Intentional.",
+ "authority": {
+  "by_agent_issues": {
+   "kraken_quant": [
+    "no direct writer for 'kq_direction' (may be set via dict-update)"
+   ],
+   "lead_lag": [
+    "no direct writer for 'lead_lag_edge' (may be set via dict-update)"
+   ],
+   "model_alpha": [
+    "no direct writer for 'model_alpha_direction' (may be set via dict-update)"
+   ],
+   "onchain_graph": [
+    "no direct writer for 'onchain_graph_direction' (may be set via dict-update)"
+   ],
+   "regime": [
+    "no direct writer for 'regime_direction' (may be set via dict-update)"
+   ],
+   "vol_alpha": [
+    "DECIDE/ADVISE/CONFIRM agent \u2014 fusion does NOT consume 'vol_alpha_direction'",
+    "no direct writer for 'vol_alpha_direction' (may be set via dict-update)"
+   ]
   },
-  "constants": {
-    "DRL_PUNCH_THROUGH_CONF": {
-      "drift_values": [
-        "0.35",
-        "0.4",
-        "0.55",
-        "0.6"
-      ],
-      "expected": "0.3"
-    },
-    "MAX_LEVERAGE": {
-      "drift_values": [
-        "2",
-        "3"
-      ],
-      "expected": "3.0"
-    },
-    "WEEKEND_MIN_ALPHA_MULTIPLIER": {
-      "drift_values": [
-        "0.9"
-      ],
-      "expected": "1.0"
-    },
-    "WEEKEND_MIN_CONFIDENCE": {
-      "drift_values": [
-        "0.45",
-        "0.50"
-      ],
-      "expected": "0.30"
-    },
-    "hard_drawdown_halt": {
-      "drift_values": [
-        "0.20"
-      ],
-      "expected": "0.25"
-    },
-    "initial_capital": {
-      "drift_values": [
-        "100000"
-      ],
-      "expected": "10000"
-    }
+  "matrix_size": 25
+ },
+ "constants": {
+  "DRL_PUNCH_THROUGH_CONF": {
+   "drift_values": [
+    "0.35",
+    "0.4",
+    "0.55",
+    "0.6"
+   ],
+   "expected": "0.3"
   },
-  "drl": {
-    "expected_count": 122,
-    "expected_obs_dim": 126,
-    "issues": [],
-    "total_feature_count": 122
+  "MAX_LEVERAGE": {
+   "drift_values": [
+    "2",
+    "3"
+   ],
+   "expected": "3.0"
   },
-  "flags": {
-    "dead_count": 0,
-    "dead_flags": []
+  "WEEKEND_MIN_ALPHA_MULTIPLIER": {
+   "drift_values": [
+    "0.9"
+   ],
+   "expected": "1.0"
   },
-  "gates": {
-    "without_real_gates": [],
-    "without_real_gates_count": 0
+  "WEEKEND_MIN_CONFIDENCE": {
+   "drift_values": [
+    "0.45",
+    "0.50"
+   ],
+   "expected": "0.30"
   },
-  "multisite": {},
-  "vetos": {
-    "both_count": 0,
-    "both_locations": [],
-    "unclassified_count": 0,
-    "unclassified_locations": []
+  "hard_drawdown_halt": {
+   "drift_values": [
+    "0.20"
+   ],
+   "expected": "0.25"
+  },
+  "initial_capital": {
+   "drift_values": [
+    "100000"
+   ],
+   "expected": "10000"
   }
+ },
+ "drl": {
+  "expected_count": 122,
+  "expected_obs_dim": 126,
+  "issues": [],
+  "total_feature_count": 122
+ },
+ "flags": {
+  "dead_count": 0,
+  "dead_flags": []
+ },
+ "gates": {
+  "without_real_gates": [],
+  "without_real_gates_count": 0
+ },
+ "multisite": {},
+ "vetos": {
+  "both_count": 0,
+  "both_locations": [],
+  "unclassified_count": 0,
+  "unclassified_locations": []
+ }
 }

@@ -206,7 +206,11 @@ class TestExitTriggerTagOrdering:
 class TestHeartbeatEquity:
     def test_equity_read_is_outside_the_audit_manager_gate(self):
         anchor = MAIN_SRC.index("[P265] The equity read lives OUTSIDE the audit_manager gate")
-        seg = MAIN_SRC[anchor:anchor + 2500]
+        # [P287] window widened 2500 -> 6000: the per-half equity_valid
+        # comment block sits between the read and the gate now. The
+        # invariant being pinned (read BEFORE the audit_manager gate) is
+        # unchanged and still asserted below.
+        seg = MAIN_SRC[anchor:anchor + 6000]
         read_idx = seg.index("get_equity_safe")
         gate_idx = seg.index("if self.audit_manager:")
         assert read_idx < gate_idx, (

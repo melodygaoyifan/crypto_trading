@@ -152,7 +152,10 @@ class TestGateHysteresis:
 class TestReentryCooldown:
     def test_branch_exists_and_only_blocks_entry_from_flat(self):
         blk = MAIN[MAIN.find("[P232] Re-entry cooldown"):]
-        blk = blk[:2200]
+        # [P287] widened from 2200: the block's comment grew (restart-
+        # direction correction); the pin is on the block's CONTENT, not a
+        # character budget.
+        blk = blk[:4000]
         assert "_cd_pre == 0" in blk, (
             "the cooldown must require a FLAT book — anything else can "
             "defer an exit (P195 violation)"

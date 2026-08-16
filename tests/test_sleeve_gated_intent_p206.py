@@ -274,6 +274,20 @@ class TestVetoRosterCompleteness:
                          strip_docstrings=True)
         src += code_only(repo / "defense" / "trade_gate.py",
                          strip_docstrings=True)
+        # [P287] The guard's first blind spot, found live: ProfitMax's
+        # [FALSE_BREAKOUT_VETO]/[LOSS_STREAK_HALT] literals live in
+        # signals/profit_max_adapter.py and reach the intent through a
+        # runtime-composed write in main.py — invisible to the original
+        # three-file corpus, so an ACTIVE-by-default component's vetoes
+        # inherited liquidate-the-sleeve semantics unclassified. The corpus
+        # now spans every file that authors a veto_reason string the sleeve
+        # can see. auto_recovery_gate.py included for its future writers
+        # (its current [AUTO_RECOVERY_LATCH] example is docstring-only; the
+        # live write site is main.py).
+        src += code_only(repo / "signals" / "profit_max_adapter.py",
+                         strip_docstrings=True)
+        src += code_only(repo / "risk" / "auto_recovery_gate.py",
+                         strip_docstrings=True)
         # excise the classification tuples themselves — a roster entry must
         # be justified by a REAL write site, not by its own definition
         src = re.sub(r"_SLEEVE_HOLD_VETOES\s*=\s*\([^)]*\)", "", src)
@@ -373,6 +387,13 @@ class TestVetoStringCouplingDriftGuard:
         # [P265] DATA_HEALTH_* reasons surface via "[TRADE_GATE] {reason.name}"
         # — the enum members live in trade_gate.py.
         src += code_only(repo / "defense" / "trade_gate.py",
+                         strip_docstrings=True)
+        # [P287] ProfitMax's veto literals live in signals/ (see the
+        # completeness guard above); without this the new HOLD members
+        # would read as having no write site.
+        src += code_only(repo / "signals" / "profit_max_adapter.py",
+                         strip_docstrings=True)
+        src += code_only(repo / "risk" / "auto_recovery_gate.py",
                          strip_docstrings=True)
         # Excise the definition statements themselves.
         src = re.sub(r"_SLEEVE_HOLD_VETOES\s*=\s*\([^)]*\)", "", src)

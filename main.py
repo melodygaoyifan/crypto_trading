@@ -1683,6 +1683,15 @@ class ProductionConfig:
     # only after the WOULD-HOLD evidence accumulates — holding past the
     # enter threshold loosens the EXIT side (P141).
     alpha_gate_hold_ratio: float = 0.0
+    # [P287] v9-PATCH-2 FRICTION_EXCEEDS_EDGE secondary veto enforcement.
+    # The block was DEAD SINCE BIRTH (`order_type` NameError swallowed at
+    # DEBUG), so this veto has never once fired live. Repaired SHADOW-FIRST:
+    # False (default, and deliberately NOT in the live profile) = the
+    # arithmetic runs and logs [V9P2-SHADOW] WOULD-VETO; True = the veto
+    # actually sets veto_active. Arming it is a P141 operator decision —
+    # on 2026-08-16 live numbers (BTC alpha ~30bps vs friction x1.5 ~
+    # 34.5bps) enforcement would flatten the standing BTC long.
+    dynamic_alpha_gate_enforce: bool = False
     # [P232] Sleeve re-entry cooldown (the P168 rebuild-cooldown ported to
     # the venue that trades). After the sleeve flattens an asset, block NEW
     # entries (either direction — P168 removed the flip exemption for
@@ -2006,6 +2015,8 @@ class ProductionConfig:
                 data.get("fast_risk_sleeve_enabled", False)),
             alpha_gate_hold_ratio=float(
                 data.get("alpha_gate_hold_ratio", 0.0)),
+            dynamic_alpha_gate_enforce=bool(
+                data.get("dynamic_alpha_gate_enforce", False)),
             coinbase_reentry_cooldown_ticks=int(
                 data.get("coinbase_reentry_cooldown_ticks", 0)),
             trend_assets=list(
@@ -2146,7 +2157,23 @@ _SLEEVE_HOLD_VETOES = ("EXPOSURE_DELTA_BELOW_THRESHOLD", "FLIP_PERSIST_HOLD",
                        # writer was missed, so a Kraken API disconnect
                        # still liquidated the Coinbase book. Found by the
                        # P276 roster guard's first enumeration.
-                       "DISCONNECTED_MID_TICK")
+                       "DISCONNECTED_MID_TICK",
+                       # [P287] ProfitMax's two vetoes, written in
+                       # signals/profit_max_adapter.py (OUTSIDE the original
+                       # P276 scan corpus — the write site in main.py:~13654
+                       # is runtime-composed, so the roster guard never saw
+                       # them) and applied verbatim to the intent. Both were
+                       # unclassified, so the translator's default LIQUIDATED
+                       # every routed asset on them. FALSE_BREAKOUT_VETO is
+                       # an ENTRY-quality veto ("don't enter on this
+                       # breakout") — flattening a HELD position on it is a
+                       # category error; LOSS_STREAK_HALT means "stop
+                       # trading", which for the sleeve is hold-with-stop,
+                       # not a forced market exit (P195: a halt must not be
+                       # the thing that realizes the loss). Exits still flow
+                       # through every other path (signal flatten, venue
+                       # stop, FastRisk, FORCE_FLAT, fuse).
+                       "[FALSE_BREAKOUT_VETO]", "[LOSS_STREAK_HALT]")
 
 # [P265] NO_TRADE subtypes that are DATA-integrity conditions (state unknown ->
 # HOLD), as opposed to market-risk conditions (flash crash, extreme DVOL,
@@ -2436,6 +2463,223 @@ def stop_reconcile_intended_target(manage_status, intended_target):
     if manage_status in ("OK", "NOOP"):
         return intended_target
     return None
+
+
+def fuse_feed_freshness(reconcile_ok, equity, age_sec, max_age_sec=28800.0):
+    """[P287] Gate for the P209 fuse feed — pure, the feed's skip/record
+    decision flows THROUGH this function (P251 rule).
+
+    The old gate checked ``_reconcile_ok`` alone, but that flag certifies
+    only the POSITIONS endpoint (set by reconcile_positions);
+    sleeve_equity_usd() fails soft internally WITHOUT touching it, so a
+    portfolio-endpoint outage passed the gate with last-known equity and fed
+    delta=0 "no loss" every tick while positions bled. ``age_sec`` comes
+    from the sleeve's sleeve_equity_age_sec() accessor; ``None`` means the
+    accessor is absent/unreadable (older sleeve build) and preserves the
+    pre-P287 behavior rather than silencing the feed.
+
+    Returns ``(ok, reason)``. Skipping leaves a GAP in the 28d window
+    (documented, conservative); recording a fabricated no-loss delta is the
+    failure this exists to prevent.
+    """
+    if not reconcile_ok:
+        return False, "reconcile_not_ok"
+    try:
+        eq = float(equity or 0.0)
+    except (TypeError, ValueError):  # noqa: silent-swallow — value coercion; the refusal REASON is the return value and the caller logs it
+        return False, "equity_unreadable"
+    if eq <= 0:
+        return False, "equity_nonpositive"
+    if age_sec is not None:
+        try:
+            if float(age_sec) > float(max_age_sec):
+                return False, f"equity_stale_{float(age_sec):.0f}s"
+        except (TypeError, ValueError):  # noqa: silent-swallow — a PRESENT accessor returning garbage cannot certify freshness; refusal returned to a logging caller
+            return False, "equity_age_unreadable"
+    return True, "ok"
+
+
+def sleeve_equity_freshness(sleeve_present, age_sec, max_age_sec=28800.0):
+    """[P287] Whether the SLEEVE half of the combined equity figure can be
+    certified fresh (feeds ``sleeve_fresh`` / the combined ``equity_valid``
+    in equity_history.jsonl).
+
+    The combined ``equity_valid`` used to certify only the Kraken half — a
+    portfolio-endpoint outage froze the sleeve half for days while rows kept
+    saying valid, re-creating the P265g Sharpe-of-a-constant defect through
+    the unlabeled component. Semantics:
+      - no sleeve object: vacuously True (combined == Kraken; Kraken's own
+        validity governs).
+      - age unknown (accessor absent on an older sleeve build, or raising):
+        True — preserves the pre-P287 meaning of the field rather than
+        invalidating every row on a build mismatch.
+      - age known: fresh iff within max_age_sec (default 8h = 2 ticks).
+    """
+    if not sleeve_present:
+        return True
+    if age_sec is None:
+        return True
+    try:
+        return float(age_sec) <= float(max_age_sec)
+    except (TypeError, ValueError):  # noqa: silent-swallow — value coercion; unreadable age fails toward NOT-fresh, the honest direction
+        return False
+
+
+def v9p2_gate_decision(alpha_bps, friction_bps, hold_active, enforce):
+    """[P287] The v9-PATCH-2 dynamic alpha gate's decision — pure, so the
+    block that spent its whole life raising NameError into a DEBUG swallow
+    is behaviorally testable (P206/P234 pattern).
+
+    Returns ``(halve_urgency, action)`` with action in:
+      - "none"              alpha clears friction
+      - "hold_exempt"       P232 hold band governs; never overridden
+      - "veto"              enforce=True: set FRICTION_EXCEEDS_EDGE
+      - "shadow_would_veto" enforce=False (default): log-only
+
+    ``halve_urgency`` (alpha < friction x 1.5) is advisory execution pacing,
+    not a veto, and applies regardless of the enforce flag — it is the half
+    of the original design that is safe to arm without an operator decision.
+    """
+    a = float(alpha_bps or 0.0)
+    f = float(friction_bps or 0.0)
+    halve = a < f * 1.5
+    if a >= f:
+        return halve, "none"
+    if hold_active:
+        return halve, "hold_exempt"
+    return halve, ("veto" if enforce else "shadow_would_veto")
+
+
+def partial_consensus_trigger(veto_reason):
+    """[P287] Which PartialConsensus trigger (if any) a veto_reason matches.
+
+    The FIX-L1-05 list ['CONFLICT', 'NO_CONSENSUS', 'ALPHA_GATE'] matched
+    nothing real for two of its three tags (P54's class): no writer anywhere
+    composes 'ALPHA_GATE' (the real string is "[v3.6.1] Alpha gate:",
+    integration_v36.py) or 'NO_CONSENSUS' (no producer at all — dropped
+    rather than kept as a dead trigger). Returns:
+      - "live"   — 'CONFLICT' (e.g. "[v3.6.1] NO_TRADE: ALL_CONFLICT_FLAT"),
+                   the only trigger that has ever fired; keeps ENFORCING.
+      - "shadow" — a real alpha-gate veto; newly matchable, so LOG-ONLY:
+                   overriding an alpha-gate veto is a loosening that needs
+                   its own recorded decision before it may change an intent.
+      - None     — no trigger.
+    """
+    r = veto_reason or ""
+    if "CONFLICT" in r:
+        return "live"
+    if "Alpha gate" in r:
+        return "shadow"
+    return None
+
+
+def resolve_panic_score(market_data):
+    """[P287] The crowd panic score for the EC panic amplifier.
+
+    The old read — ``market_data.get('_ssc_panic',
+    market_data.get('panic_score', 0.0))`` — resolved two keys with NO
+    writer anywhere (the SSC block writes only _ssc_composite/_ssc_direction/
+    _ssc_crowding; the real value is NESTED at market_data["crowd"]
+    ["panic_score"], injected from macro_crowd_context — the neighboring
+    fringe block reads it there correctly). So the amplifier's panic term
+    was a constant 0 and, with vix_urgency capped at 1.0, its maximum was
+    0.5 < the 0.75 threshold: PANIC_EXTREME was arithmetically unreachable.
+    Fixing the read ARMS that branch (long x0.5 / short x1.3 sizing +
+    gate x0.8), bounded by the P225 terminal clamp. Flat keys kept as
+    legacy fallbacks only.
+    """
+    try:
+        crowd = market_data.get("crowd") or {}
+        v = crowd.get("panic_score")
+        if v is not None:
+            return float(v)
+    except (TypeError, ValueError, AttributeError):  # noqa: silent-swallow — value coercion; fallback chain below
+        pass
+    try:
+        return float(market_data.get("_ssc_panic",
+                                     market_data.get("panic_score", 0.0))
+                     or 0.0)
+    except (TypeError, ValueError):  # noqa: silent-swallow — value coercion; neutral 0 is the honest absent value
+        return 0.0
+
+
+def cc_onchain_injection(cc_entry):
+    """[P287] market_data fields to inject from a CryptoCompare on-chain
+    entry — ONLY what the feed actually produced this cycle. Absent stays
+    absent (P2): the EC-WHALE cascade and short_bias consumers read these
+    keys, and before this no injection site existed AT ALL, so both were
+    structurally dead (distinct from the recorded P216/P223 quota
+    starvation — restoring quota changed nothing while the keys never
+    reached the dict). Never fabricates from Blockchair (P223 rule: it has
+    no large-transaction count and inventing one to satisfy the consumers
+    is the defect class this codebase keeps finding).
+    """
+    if cc_entry is None or getattr(cc_entry, "is_mock", True):
+        return {}
+    try:
+        ltc = int(getattr(cc_entry, "large_transaction_count", 0) or 0)
+        atv = float(getattr(cc_entry, "average_transaction_value", 0.0)
+                    or 0.0)
+    except (TypeError, ValueError):  # noqa: silent-swallow — malformed feed values; absent beats fabricated
+        return {}
+    out = {}
+    if ltc > 0:
+        out["large_transaction_count"] = float(ltc)
+        if atv > 0:
+            out["average_transaction_value"] = atv
+    return out
+
+
+def bt_oi_change_4h(prev_oi, cur_oi):
+    """[P287] Inter-tick open-interest delta for the bull-transition
+    detector's ``oi_change_4h`` input (which had NO producer anywhere —
+    the detector read a permanent fabricated 0).
+
+    Returns the delta, or None when it must NOT be written (absent stays
+    absent, P2): missing either reading, or a >5x / <0.2x jump — the
+    ``open_interest`` key has two scale-mixed producers (CoinGlass global
+    vs Kraken venue, the recorded P253c decision), and an inter-tick source
+    switch is a scale artifact, not a market move. Callers should re-anchor
+    on the new value either way.
+    """
+    try:
+        if prev_oi is None or cur_oi is None:
+            return None
+        p = float(prev_oi)
+        c = float(cur_oi)
+    except (TypeError, ValueError):  # noqa: silent-swallow — value coercion; None means "do not write the key" (P2: absent stays absent)
+        return None
+    if p <= 0 or c <= 0:
+        return None
+    ratio = c / p
+    if ratio > 5.0 or ratio < 0.2:
+        return None
+    return c - p
+
+
+def bt_funding_streak_update(state, utc_day, funding_rate):
+    """[P287] Advance the per-asset consecutive-positive-funding streak
+    (days) for the bull-transition detector's
+    ``funding_positive_streak_days`` input (no producer existed).
+
+    ``state`` is ``{"day": str|None, "streak": int}`` — mutated in place and
+    returned. Sampled at the FIRST tick of each UTC day (funding within a
+    day can flip; one sample/day is the honest granularity a daily streak
+    supports). RAM-only by design: a restart resets the streak to 0, which
+    only DELAYS the tightening this detector applies (shorts-block /
+    short-reduction) — the fail-safe direction. A None funding_rate leaves
+    the state untouched (absence is not a sign).
+    """
+    if funding_rate is None:
+        return state
+    try:
+        fr = float(funding_rate)
+    except (TypeError, ValueError):  # noqa: silent-swallow — value coercion; malformed funding leaves the streak untouched (absence is not a sign)
+        return state
+    if state.get("day") != utc_day:
+        state["day"] = utc_day
+        state["streak"] = (int(state.get("streak", 0)) + 1) if fr > 0 else 0
+    return state
 
 
 async def sleeve_fast_risk_action(sleeve, asset: str, action_name: str,
@@ -6462,9 +6706,25 @@ class HMATSProductionRunner:
                 # _p0_last_combined_equity is persisted/restored so the held
                 # value survives the restart that creates the hole.
                 _p0_sleeve = getattr(self, "_coinbase_sleeve", None)
-                _p0_sleeve_eq = (
-                    float(getattr(_p0_sleeve, "_last_equity_usd", 0.0) or 0.0)
-                    if _p0_sleeve is not None else 0.0)
+                # [P287] Read the sleeve equity LIVE, exactly as P253d did
+                # for _update_drawdown_snapshot next door and left THIS
+                # consumer on the cached copy: the heartbeat refreshes
+                # _last_equity_usd AFTER decide, so the SOTA controller —
+                # which can VETO the sleeve and holds the only 35% kill
+                # switch plus the 10% daily-loss switch — judged every
+                # intra-bar drawdown one 4H bar late. sleeve_equity_usd()
+                # serves its own last-known value on API error; the getattr
+                # fallback covers a sleeve object without the method. The
+                # P261 combined/held semantics below are unchanged.
+                _p0_sleeve_eq = 0.0
+                if _p0_sleeve is not None:
+                    try:
+                        _p0_sleeve_eq = float(
+                            _p0_sleeve.sleeve_equity_usd() or 0.0)
+                    except Exception:
+                        _p0_sleeve_eq = float(
+                            getattr(_p0_sleeve, "_last_equity_usd", 0.0)
+                            or 0.0)
                 _p0_kraken_eq = equity
                 equity, _p0_new_held, _p0_src = combined_p0_equity(
                     _p0_kraken_eq, _p0_sleeve_eq,
@@ -6886,10 +7146,21 @@ class HMATSProductionRunner:
                 market_data["mark_price"] = _kf_ticker.mark_price
                 market_data["futures_volume_24h"] = _kf_ticker.volume_24h
 
-                # Recompute funding_bias with Kraken data
+                # [P287] Recompute funding_bias from the EFFECTIVE rate.
+                # This used to read _kf_ticker.funding_rate_8h (Kraken)
+                # AFTER the venue-aware block above may have replaced
+                # market_data["funding_rate"] with the Coinbase rate — so
+                # with coinbase_venue_aware_funding ON the two keys could
+                # disagree in SIGN on the same tick (P218's measured table:
+                # BTC and SOL flip; SOL's Kraken -0.000378 saturates the
+                # bias at -1.0 where the venue-consistent value is +0.56).
+                # funding_bias has NO live signal consumer today (verified:
+                # only the log line + _diag_record read it) — this keeps the
+                # display honest before anything ever consumes the key.
                 import numpy as np
                 market_data["funding_bias"] = float(
-                    np.clip(_kf_ticker.funding_rate_8h / 0.0003, -1.0, 1.0)
+                    np.clip(float(market_data.get("funding_rate", 0.0) or 0.0)
+                            / 0.0003, -1.0, 1.0)
                 )
 
                 logger.info(
@@ -7336,6 +7607,31 @@ class HMATSProductionRunner:
             except Exception as e:
                 logger.warning(f"[ONCHAIN] Feed read failed: {e}")
 
+        # [P287] large_transaction_count / average_transaction_value had NO
+        # market_data injection site anywhere — the EC-WHALE cascade
+        # (large-tx z-score) and short_bias's on-chain inputs read constants
+        # 0 forever, and restoring the CryptoCompare quota (P216/P223)
+        # would have changed nothing because the keys never reached the
+        # dict these consumers read. Inject ONLY what the CC feed actually
+        # produced (cc_onchain_injection: mock/absent/zero -> {}, absent
+        # stays absent per P2; never fabricated from Blockchair per P223).
+        if getattr(self, "_cc_onchain", None) is not None:
+            try:
+                # explicit keys, not dict.update — a computed-key write
+                # makes market_data unprovable to the orphan-read scanner
+                # (dynamic_site_count is deliberately not re-baselineable).
+                _cc_inj = cc_onchain_injection(
+                    (getattr(self._cc_onchain, "_data", {}) or {}).get(asset))
+                if "large_transaction_count" in _cc_inj:
+                    market_data["large_transaction_count"] = (
+                        _cc_inj["large_transaction_count"])
+                if "average_transaction_value" in _cc_inj:
+                    market_data["average_transaction_value"] = (
+                        _cc_inj["average_transaction_value"])
+            except Exception as _cc_inj_err:  # noqa: silent-swallow — enrichment only; absence is the honest degraded state and consumers treat absent as no-signal
+                logger.debug(f"[P287] cc onchain injection skipped: "
+                             f"{type(_cc_inj_err).__name__}")
+
         # [SOTA-ACT GA-1c] Periodic weight evaluation (auto-triggers if interval elapsed)
         try:
             if self.sota_integration is not None:
@@ -7658,8 +7954,15 @@ class HMATSProductionRunner:
                 agent_signals['nfci_stress'] = False
 
             # --- [P0-4] Panic Amplifier composite ---
+            # [P287] panic read through resolve_panic_score(): the old flat
+            # reads (_ssc_panic / panic_score) had NO writer — the real value
+            # is nested at market_data["crowd"]["panic_score"] — so the
+            # panic term was a constant 0 and PANIC_EXTREME (threshold 0.75,
+            # max reachable 0.5) could never fire. This ARMS that branch
+            # (sizing long x0.5 / short x1.3 + gate x0.8, bounded by the
+            # P225 terminal clamp).
             _ec_vix = float(agent_signals.get('macro_vix_urgency', 0.0) or 0.0)
-            _ec_panic = float(market_data.get('_ssc_panic', market_data.get('panic_score', 0.0)) or 0.0)
+            _ec_panic = resolve_panic_score(market_data)
             _ec_liq_imb = abs(float(market_data.get('liquidation_imbalance', 0.0) or 0.0))
             _ec_panic_amp = _ec_panic * 0.5 + _ec_vix * 0.3 + _ec_liq_imb * 0.2
             agent_signals['ec_panic_amplifier'] = round(_ec_panic_amp, 3)
@@ -7968,6 +8271,69 @@ class HMATSProductionRunner:
                 logger.warning(f"[REGIME] Navigator failed: {e}")
         
         # -----------------------------------------------------------------
+        # [P287] BULL-TRANSITION DETECTOR INPUTS, produced honestly. The
+        # MOD-1 block below read `self._price_history` — an attribute with
+        # NO initializer anywhere — so its very first statement raised
+        # AttributeError into the DEBUG swallow at the bottom: the detector
+        # NEVER EVALUATED ONCE in its life (and P227b's persistence of its
+        # state machine was vacuous — it persisted a machine that was never
+        # fed). Two of its four inputs were also producer-less orphan reads
+        # (funding_positive_streak_days, oi_change_4h). This block maintains
+        # all three, per asset, every tick:
+        #   - price/latest-price history: real closes only (data_valid and
+        #     not the synthetic fallback — the P253 stale-guard condition;
+        #     synthetic bars in an MA50 would poison the btc_above_ma50
+        #     condition for 50 bars).
+        #   - oi_change_4h via bt_oi_change_4h (absent OI -> key absent,
+        #     never a fabricated 0; scale-mixed producer jumps rejected).
+        #   - funding_positive_streak_days via bt_funding_streak_update
+        #     (UTC-day granularity; RAM-only — restart resets the streak,
+        #     which only DELAYS this tightening-only control).
+        # Arming note: the detector is tightening-only (blocks/reduces
+        # SHORTS in confirmed bull transitions) so repairing it needs no
+        # enforce flag — it cannot open risk, only refuse it.
+        # -----------------------------------------------------------------
+        try:
+            if not hasattr(self, "_price_history"):
+                self._price_history: Dict[str, list] = {}
+            if not hasattr(self, "_latest_prices"):
+                self._latest_prices: Dict[str, float] = {}
+            if not hasattr(self, "_bt_prev_oi"):
+                self._bt_prev_oi: Dict[str, float] = {}
+            if not hasattr(self, "_bt_funding_streak"):
+                self._bt_funding_streak: Dict[str, dict] = {}
+            _bt_px = float(market_data.get("current_price", 0.0) or 0.0)
+            _bt_real = bool(market_data.get("data_valid")) and (
+                market_data.get("_source") != "synthetic_fallback")
+            if _bt_px > 0 and _bt_real:
+                self._latest_prices[asset] = _bt_px
+                _bt_hist = self._price_history.setdefault(asset, [])
+                _bt_hist.append(_bt_px)
+                del _bt_hist[:-200]  # bound; MA50 needs 50
+            _bt_oi_cur = market_data.get("open_interest")
+            _bt_oi_delta = bt_oi_change_4h(
+                self._bt_prev_oi.get(asset), _bt_oi_cur)
+            if _bt_oi_delta is not None:
+                market_data["oi_change_4h"] = float(_bt_oi_delta)
+            try:
+                if _bt_oi_cur is not None and float(_bt_oi_cur) > 0:
+                    self._bt_prev_oi[asset] = float(_bt_oi_cur)
+            except (TypeError, ValueError):  # noqa: silent-swallow — malformed OI reading; stash keeps the prior anchor
+                pass
+            _bt_fs = bt_funding_streak_update(
+                self._bt_funding_streak.setdefault(
+                    asset, {"day": None, "streak": 0}),
+                datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                market_data.get("funding_rate"))
+            if _bt_fs.get("day") is not None:
+                market_data["funding_positive_streak_days"] = int(
+                    _bt_fs.get("streak", 0))
+        except Exception as _bt_in_err:
+            logger.warning(f"[P287][BULL-TRANSITION] input maintenance "
+                           f"failed: {type(_bt_in_err).__name__}: "
+                           f"{_bt_in_err}")
+
+        # -----------------------------------------------------------------
         # [MOD-1] BULL TRANSITION DETECTOR (Audit S23: mild bull blind spot)
         # Runs after regime navigator, before short-bias agent.
         # -----------------------------------------------------------------
@@ -8022,7 +8388,12 @@ class HMATSProductionRunner:
                         f'({_bull_signal.conditions_met} conditions)'
                     )
             except Exception as e:
-                logger.debug(f'[BULL-TRANSITION] Error: {e}')
+                # [P287] was logger.debug — which is how a NameError-class
+                # fault (missing _price_history) kept this control dead and
+                # invisible for its entire life. A risk control failing is
+                # never a debug-level event (P160/P265h class).
+                logger.warning(f'[BULL-TRANSITION] evaluate FAILED: '
+                               f'{type(e).__name__}: {e}')
 
         # -----------------------------------------------------------------
         # TASK 4: SHORT-BIAS AGENT - Dedicated Short Signal Validation
@@ -8745,6 +9116,13 @@ class HMATSProductionRunner:
                 )
                 _ll_signal = self._lead_lag_engine.generate_signal(asset)
                 if _ll_signal and _ll_signal.confidence > 0.2:
+                    # [P287] SOLE writer of the lead_lag_* family (with the
+                    # micro agent) — the B6 beta-catch-up block used to
+                    # OVERWRITE lead_lag_edge/lead_lag_confidence with a
+                    # different estimator's numbers, so consumers gating on
+                    # lead_lag_authority consumed B6's edge certified by
+                    # THIS estimator's confidence flag (mixed provenance).
+                    # B6 now writes namespaced b6_lead_lag_* keys.
                     agent_signals['lead_lag_signal'] = _ll_signal.signal
                     agent_signals['lead_lag_confidence'] = _ll_signal.confidence
                     agent_signals['lead_lag_urgency'] = _ll_signal.urgency
@@ -9440,13 +9818,21 @@ class HMATSProductionRunner:
                     # CVD divergence proxy: sign of cumulative imbalance
                     _cvd_div = float(_ll_np.tanh(_ll_edge_bps / 50.0))  # [-1, 1]
 
-                    agent_signals['lead_lag_edge'] = round(float(_ll_edge_bps), 2)
-                    agent_signals['lead_lag_confidence'] = round(float(_ll_conf), 4)
+                    # [P287] NAMESPACED. This block used to overwrite
+                    # lead_lag_edge/lead_lag_confidence — the same keys the
+                    # LeadLagAlphaEngine block (~2,300 lines up) and the
+                    # micro agent own — with a DIFFERENT estimator's numbers
+                    # (beta catch-up, not exchange lead-lag), so the fusion
+                    # timing input and the alpha boost consumed B6's edge
+                    # gated by the other estimator's confidence/authority
+                    # flag. B6's values now live under their own names;
+                    # lead_lag_* provenance is micro/engine only.
+                    agent_signals['b6_lead_lag_edge'] = round(float(_ll_edge_bps), 2)
+                    agent_signals['b6_lead_lag_confidence'] = round(float(_ll_conf), 4)
                     agent_signals['cvd_divergence'] = round(_cvd_div, 4)
 
-                    # Also inject into market_data for v36 execution layer
-                    market_data['lead_lag_edge'] = agent_signals['lead_lag_edge']
-                    market_data['lead_lag_confidence'] = agent_signals['lead_lag_confidence']
+                    market_data['b6_lead_lag_edge'] = agent_signals['b6_lead_lag_edge']
+                    market_data['b6_lead_lag_confidence'] = agent_signals['b6_lead_lag_confidence']
 
                     if abs(_ll_edge_bps) >= 10.0:
                         logger.info(
@@ -13461,6 +13847,13 @@ class HMATSProductionRunner:
                 _fp_curdir = float(_fp_pos.get("direction", 0.0) or 0.0)
                 _fp_curexp = abs(float(_fp_pos.get("exposure", 0.0) or 0.0))
                 # update the per-asset consecutive-direction counter every tick
+                # [P287] semantic note (dormant Kraken path — _fp_is_flip
+                # needs a _paper_positions entry, {} since June): flat ticks
+                # do NOT reset the counter, so "dir=+1, flat x10, dir=+1"
+                # counts as consec=2 — WEAKER than the docstring's
+                # "CONSECUTIVE ticks" contract. Recorded, not changed: the
+                # sleeve has its own P198 flip-persist; revisit on any
+                # Kraken revival.
                 _fp_state = self._flip_persist.setdefault(asset, {"dir": 0, "consec": 0})
                 if _fp_newdir != 0:
                     if _fp_newdir == _fp_state["dir"]:
@@ -14331,6 +14724,27 @@ class HMATSProductionRunner:
 
         # --- [v9-PATCH-2] Dynamic Alpha Gate based on market impact ---
         # [FIX-31] _PATCH_2_ACTIVE flag removed (was always True since WIRE-5)
+        # [P287] DEAD SINCE BIRTH, repaired SHADOW-FIRST. `order_type` was an
+        # undefined name (grep: no assignment in this function, none at
+        # module scope), so every pass raised NameError straight into the
+        # DEBUG swallow below — the FRICTION_EXCEEDS_EDGE secondary veto and
+        # the urgency-halving NEVER fired once, while the diag line reported
+        # {'active': True} unconditionally and P231/P232 described the veto
+        # as a live control. Repair decisions:
+        #   - fee side is TAKER unconditionally: an order-type guess here
+        #     would understate friction exactly when it guessed maker and
+        #     the sleeve's ladder crossed; overcharging is the safe
+        #     direction (P167).
+        #   - the decision flows through pure v9p2_gate_decision() (P234:
+        #     a block that spent its life dead needs behavioral tests, not
+        #     source pins).
+        #   - the veto is gated on dynamic_alpha_gate_enforce (default
+        #     False, NOT in the live profile): on 2026-08-16 live numbers
+        #     (BTC alpha ~30bps vs friction x1.5 ~ 34.5bps) enforcement
+        #     would flatten the standing BTC long — arming a veto that has
+        #     never run is a P141 operator decision, so it logs
+        #     [V9P2-SHADOW] WOULD-VETO until deliberately enabled.
+        _v9p2_health = "not_called"
         if self._impact_model and intent.is_actionable and not intent.veto_active and intent.target_exposure > 0:
             try:
                 _size_usd = intent.target_exposure * self.config.initial_capital
@@ -14339,42 +14753,57 @@ class HMATSProductionRunner:
                     size_usd=_size_usd,
                 )
                 _fee_ctx = market_data.get("fee_context", {}) if market_data else {}
-                if order_type == "LIMIT":
-                    _fee_bps = float(_fee_ctx.get("maker_fee_bps", 16.0))
-                else:
-                    _fee_bps = float(_fee_ctx.get("taker_fee_bps", 26.0))
+                _fee_bps = float(_fee_ctx.get("taker_fee_bps", 26.0))
                 _friction_bps = _impact.total_impact_bps + _fee_bps
+                _v9p2_halve, _v9p2_action = v9p2_gate_decision(
+                    intent.alpha_estimated_bps, _friction_bps,
+                    bool(getattr(intent, "alpha_gate_hold", False)),
+                    bool(getattr(self.config,
+                                 "dynamic_alpha_gate_enforce", False)))
 
-                if intent.alpha_estimated_bps < _friction_bps * 1.5:
+                if _v9p2_halve:
                     logger.info(
                         f"[v9-PATCH-2] ALPHA_GATE: {asset} alpha={intent.alpha_estimated_bps:.1f}bps "
                         f"< frictionx1.5={_friction_bps*1.5:.1f}bps ->urgency halved"
                     )
                     intent.execution_urgency = getattr(intent, 'execution_urgency', 1.0) * 0.5
 
-                if intent.alpha_estimated_bps < _friction_bps:
-                    if getattr(intent, "alpha_gate_hold", False):
-                        # [P232] The hysteresis hold band deliberately keeps a
-                        # position whose alpha sits between hold and enter
-                        # thresholds; without this exemption the secondary
-                        # veto silently overrides the band and flattens
-                        # anyway (the consistency gap the P231 research
-                        # flagged for main.py's friction veto).
-                        logger.info(
-                            f"[v9-PATCH-2] {asset} alpha "
-                            f"{intent.alpha_estimated_bps:.1f} < friction "
-                            f"{_friction_bps:.1f} but GATE-HYST hold is "
-                            f"active — not overriding the hold band"
-                        )
-                    else:
-                        logger.warning(
-                            f"[v9-PATCH-2] ALPHA_GATE_VETO: {asset} alpha={intent.alpha_estimated_bps:.1f}bps "
-                            f"< friction={_friction_bps:.1f}bps"
-                        )
-                        intent.veto_active = True
-                        intent.veto_reason = "FRICTION_EXCEEDS_EDGE"
+                if _v9p2_action == "hold_exempt":
+                    # [P232] The hysteresis hold band deliberately keeps a
+                    # position whose alpha sits between hold and enter
+                    # thresholds; without this exemption the secondary
+                    # veto silently overrides the band and flattens
+                    # anyway (the consistency gap the P231 research
+                    # flagged for main.py's friction veto).
+                    logger.info(
+                        f"[v9-PATCH-2] {asset} alpha "
+                        f"{intent.alpha_estimated_bps:.1f} < friction "
+                        f"{_friction_bps:.1f} but GATE-HYST hold is "
+                        f"active — not overriding the hold band"
+                    )
+                elif _v9p2_action == "veto":
+                    logger.warning(
+                        f"[v9-PATCH-2] ALPHA_GATE_VETO: {asset} alpha={intent.alpha_estimated_bps:.1f}bps "
+                        f"< friction={_friction_bps:.1f}bps"
+                    )
+                    intent.veto_active = True
+                    intent.veto_reason = "FRICTION_EXCEEDS_EDGE"
+                elif _v9p2_action == "shadow_would_veto":
+                    logger.warning(
+                        f"[V9P2-SHADOW] WOULD-VETO: {asset} "
+                        f"alpha={intent.alpha_estimated_bps:.1f}bps < "
+                        f"friction={_friction_bps:.1f}bps "
+                        f"(impact={_impact.total_impact_bps:.1f} + "
+                        f"fee={_fee_bps:.1f}, taker-priced) — "
+                        f"dynamic_alpha_gate_enforce=false, intent unchanged"
+                    )
+                _v9p2_health = "ok"
             except Exception as e:
-                logger.debug(f"[v9-PATCH-2] Dynamic alpha gate skipped: {e}")
+                # [P287] was logger.debug — the swallow that hid the
+                # NameError for this block's entire life.
+                _v9p2_health = f"raised:{type(e).__name__}"
+                logger.warning(f"[v9-PATCH-2] Dynamic alpha gate FAILED: "
+                               f"{type(e).__name__}: {e}")
         # --- end [v9-PATCH-2] ---
 
         # [FIX-L1-06] MetaDecision: ACTIVE sizing adjustment
@@ -14660,7 +15089,15 @@ class HMATSProductionRunner:
         )
         _diag_record('lead_lag_amplifier', called=bool(self.config.lead_lag_amplifier_enabled), output={'applied': getattr(intent, 'lead_lag_amplifier_applied', False), 'multiplier': getattr(intent, 'confidence_multiplier', 1.0)}, consumed=bool(getattr(intent, 'lead_lag_amplifier_applied', False)))
         _diag_record('profit_max_adapter', called=profit_max_called, output={'veto': profit_max_result.veto if profit_max_result else False, 'conv_mult': profit_max_result.conviction_multiplier if profit_max_result else 'N/A', 'size_mult': profit_max_result.size_multiplier if profit_max_result else 'N/A', 'quality': profit_max_result.signal_quality_score if profit_max_result else 'N/A'}, consumed=bool(profit_max_result), note='runs only on actionable, non-vetoed intents', expect_consumption=bool(profit_max_called))
-        _diag_record('dynamic_alpha_gate', called=bool(self._impact_model), output={'active': True}, consumed=True)  # [FIX-31] was _PATCH_2_ACTIVE
+        # [P287] was output={'active': True}, consumed=True UNCONDITIONALLY —
+        # the diag certified a block that raised NameError on every pass as
+        # healthy for its entire life. Now reports what actually happened.
+        _diag_record('dynamic_alpha_gate', called=bool(self._impact_model),
+                     output={'health': _v9p2_health,
+                             'enforce': bool(getattr(
+                                 self.config, 'dynamic_alpha_gate_enforce',
+                                 False))},
+                     consumed=(_v9p2_health == 'ok'))  # [FIX-31] was _PATCH_2_ACTIVE
         _diag_record('meta_decision', called=bool(self._meta_decision), output={'aggressiveness': agent_signals.get('meta_aggressiveness', 1.0)}, consumed=True, note='ACTIVE: modifies sizing')  # [FIX-L1-06]
         _aggressive_allocator_applicable = bool(
             self.config.allocation_config
@@ -14774,12 +15211,23 @@ class HMATSProductionRunner:
         # =================================================================
         # [FIX-L1-05] PartialConsensusChecker -ACTIVE: override veto with reduced size
         # Only fires on vetoed intents with signal conflict / alpha gate fail
+        # [P287] The old trigger list ['CONFLICT', 'NO_CONSENSUS',
+        # 'ALPHA_GATE'] was two-thirds dead: no writer anywhere composes
+        # 'ALPHA_GATE' (the real string is "[v3.6.1] Alpha gate:") or
+        # 'NO_CONSENSUS' (no producer at all) — P54's substring-mismatch
+        # class in a list P54 didn't cover. Classification now flows
+        # through pure partial_consensus_trigger(): 'live' (CONFLICT — the
+        # only trigger that ever fired) keeps ENFORCING; 'shadow' (a real
+        # alpha-gate veto, newly matchable) is LOG-ONLY, because arming an
+        # override of an alpha-gate veto is a LOOSENING that needs its own
+        # recorded decision.
         # =================================================================
+        _pc_trigger = partial_consensus_trigger(
+            intent.veto_reason if intent.veto_active else None)
         if (self._partial_consensus is not None
                 and getattr(self._partial_consensus, 'enabled', False)
                 and intent.veto_active
-                and any(tag in (intent.veto_reason or '')
-                        for tag in ['CONFLICT', 'NO_CONSENSUS', 'ALPHA_GATE'])):
+                and _pc_trigger is not None):
             try:
                 from types import SimpleNamespace
                 from signals.partial_consensus import DisableConditions
@@ -14819,7 +15267,19 @@ class HMATSProductionRunner:
                         dvol_zscore=market_data.get('dvol_zscore', 0.0),
                     ),
                 )
-                if pc_result.is_partial_consensus:
+                if pc_result.is_partial_consensus and _pc_trigger == "shadow":
+                    # [P287] SHADOW-ONLY: the alpha-gate trigger became
+                    # matchable for the first time here — the override is
+                    # NOT applied until its loosening gets its own P-entry.
+                    logger.info(
+                        f"[PARTIAL-CONSENSUS-SHADOW] {asset}: WOULD-OVERRIDE "
+                        f"alpha-gate veto — scale={pc_result.scale_factor:.2f}, "
+                        f"aligned={pc_result.aligned_agents}, "
+                        f"veto={str(intent.veto_reason)[:80]} "
+                        f"(log-only; enforcement needs its own recorded "
+                        f"decision)"
+                    )
+                elif pc_result.is_partial_consensus:
                     # [FIX-L1-05] ACTIVE: override veto, apply reduced scale, T1 only
                     _pc_old_veto = intent.veto_reason
                     _pc_old_exp = intent.target_exposure
@@ -16200,7 +16660,17 @@ class HMATSProductionRunner:
                     self._sleeve_flatten_tick[asset] = int(
                         getattr(self, "_live_round_count", 0) or 0)
                 if self.fast_risk_tick:
-                    if _frs_st in ("EXITED", "REDUCED"):
+                    # [P287] REDUCE_NOOP added: on a 1-contract asset a
+                    # REDUCE_50 is inexpressible BY DESIGN (the venue stop
+                    # is the protection), so without a baseline/cooldown
+                    # refresh the same standing depth-drop re-warned every
+                    # cooldown window forever with nothing the operator
+                    # could do (P202/P240: severity must track available
+                    # action). Refreshing masks nothing real: the depth
+                    # trigger can only produce REDUCE_50 — inexpressible
+                    # while |contracts| <= 1 — and the price-move EXIT_ONLY
+                    # trigger anchors to the 4H anchor, not this baseline.
+                    if _frs_st in ("EXITED", "REDUCED", "REDUCE_NOOP"):
                         self.fast_risk_tick.on_reduce_executed(
                             asset,
                             new_depth=market_data.get(
@@ -18715,15 +19185,29 @@ class HMATSProductionRunner:
                     logger.debug(f"[WIRE-DERIV] Legacy carry restore skipped: {e}")
 
             # [AC-5] Restore daily fill budget via AntiChurnManager
-            self._anti_churn.from_dict(data)
+            # [P287] own guard, like every sibling restore above: these were
+            # the last two UNWRAPPED restores, so one malformed field here
+            # aborted to the outer handler AFTER most governors had already
+            # restored — and run_live then logged "FRESH governors" about a
+            # boot that was in fact mostly restored.
+            try:
+                self._anti_churn.from_dict(data)
+            except Exception as _ac_re:
+                logger.warning(f"[AC-5] restore skipped: "
+                               f"{type(_ac_re).__name__}: {_ac_re}")
 
             # L4-14: Restore regime smoother state
             rs_data = data.get("regime_smoother_state", {})
             if rs_data and hasattr(self, '_regime_smoother_state'):
-                self._regime_smoother_state.update(rs_data)
-                if hasattr(self, '_market_pipeline') and self._market_pipeline:
-                    self._market_pipeline._regime_smoother_state.update(rs_data)
-                logger.info(f"[PAPER] Restored regime smoother: {list(rs_data.keys())}")
+                try:
+                    self._regime_smoother_state.update(rs_data)
+                    if hasattr(self, '_market_pipeline') and self._market_pipeline:
+                        self._market_pipeline._regime_smoother_state.update(rs_data)
+                    logger.info(f"[PAPER] Restored regime smoother: {list(rs_data.keys())}")
+                except Exception as _rs_re:
+                    logger.warning(f"[L4-14] regime smoother restore "
+                                   f"skipped: {type(_rs_re).__name__}: "
+                                   f"{_rs_re}")
 
             self._paper_restore_error = ""
             return True
@@ -20066,11 +20550,17 @@ class HMATSProductionRunner:
         # not trading at all is worse, and the loss is announced.
         try:
             if not self._load_paper_positions(restore_positions=False):
+                # [P287] honest wording: a False here is EITHER a payload
+                # rejected up front (truly fresh) OR an exception mid-restore
+                # (governors before the failing field KEPT their state, later
+                # ones are fresh). The old "FRESH governors" text claimed a
+                # full reset the mid-restore path does not perform.
                 logger.error(
-                    f"[P211] Persisted state malformed "
-                    f"({self._paper_restore_error or 'unknown'}) — LIVE starting "
-                    f"with FRESH governors. The existence fuse's 28d window "
-                    f"restarts from now and cannot see prior losses."
+                    f"[P211] Persisted state restore FAILED "
+                    f"({self._paper_restore_error or 'unknown'}) — governors "
+                    f"are FRESH or PARTIALLY restored (those before the "
+                    f"failing field kept state). Treat the existence fuse's "
+                    f"28d continuity as UNKNOWN this boot."
                 )
         except Exception as _gr_err:
             logger.error(
@@ -20430,6 +20920,7 @@ class HMATSProductionRunner:
                 _hb_kraken_eq = 0.0
                 _hb_sleeve_eq = 0.0
                 _hb_eq_valid = False
+                _hb_sleeve_fresh = True  # [P287] no sleeve -> vacuously fresh
                 _hb_positions = {}
                 # [P265] The equity read lives OUTSIDE the audit_manager gate
                 # — a logging object must never be load-bearing for a data
@@ -20450,9 +20941,30 @@ class HMATSProductionRunner:
                     except Exception:
                         pass
                 _hb_slv = getattr(self, "_coinbase_sleeve", None)
+                # [P287] Per-half validity. The combined equity_valid used
+                # to certify only the KRAKEN read — during a sleeve
+                # portfolio-endpoint outage the sleeve half froze for days
+                # while rows kept saying valid: the P265g
+                # Sharpe-of-a-constant defect re-entering through the
+                # unlabeled half. sleeve_equity_age_sec() is the sleeve's
+                # freshness accessor (getattr-defended, P85: absent on an
+                # older build -> unknown -> treated fresh, preserving the
+                # field's old meaning). Combined equity_valid = AND of the
+                # halves; both halves recorded so downstream can tell WHICH
+                # half went stale.
+                _hb_sleeve_age = None
                 if _hb_slv is not None:
                     _hb_sleeve_eq = float(
                         getattr(_hb_slv, "_last_equity_usd", 0.0) or 0.0)
+                    _hb_age_fn = getattr(_hb_slv, "sleeve_equity_age_sec",
+                                         None)
+                    if callable(_hb_age_fn):
+                        try:
+                            _hb_sleeve_age = _hb_age_fn()
+                        except Exception:  # noqa: silent-swallow — a raising accessor cannot certify freshness; inf fails the bound below
+                            _hb_sleeve_age = float("inf")
+                _hb_sleeve_fresh = sleeve_equity_freshness(
+                    _hb_slv is not None, _hb_sleeve_age)
                 _hb_equity = _hb_kraken_eq + _hb_sleeve_eq
                 try:
                     if self.audit_manager:
@@ -20766,19 +21278,47 @@ class HMATSProductionRunner:
                                 if _fz is not None and _fz_sleeve is not None:
                                     _fz_eq = float(
                                         getattr(_fz_sleeve, "_last_equity_usd", 0.0) or 0.0)
-                                    _fz_fresh = bool(
-                                        getattr(_fz_sleeve, "_reconcile_ok", False))
-                                    if not _fz_fresh or _fz_eq <= 0:
+                                    # [P287] _reconcile_ok alone certified only
+                                    # the POSITIONS endpoint; sleeve_equity_usd()
+                                    # fails soft internally WITHOUT touching it,
+                                    # so a portfolio-endpoint outage passed the
+                                    # old gate with last-known equity and fed
+                                    # delta=0 "no loss" every tick while
+                                    # positions bled. sleeve_equity_age_sec()
+                                    # (getattr-defended, P85 — absent on an
+                                    # older sleeve build -> None -> old
+                                    # behavior) bounds it; the decision flows
+                                    # through pure fuse_feed_freshness (P251).
+                                    _fz_age = None
+                                    _fz_age_fn = getattr(
+                                        _fz_sleeve, "sleeve_equity_age_sec",
+                                        None)
+                                    if callable(_fz_age_fn):
+                                        try:
+                                            _fz_age = _fz_age_fn()
+                                        except Exception:  # noqa: silent-swallow — a raising accessor cannot certify freshness; inf fails the bound
+                                            _fz_age = float("inf")
+                                    _fz_ok, _fz_gate_why = fuse_feed_freshness(
+                                        bool(getattr(_fz_sleeve,
+                                                     "_reconcile_ok", False)),
+                                        _fz_eq, _fz_age)
+                                    if not _fz_ok:
                                         # sleeve_equity_usd() returns the last
                                         # KNOWN value on API failure, so a stale
                                         # read would compute delta=0 and enter
                                         # the window as "no loss". Skipping
                                         # leaves a gap; recording a fabricated
                                         # zero would understate the drawdown.
-                                        logger.debug(
-                                            "[P209] fuse feed skipped: sleeve "
-                                            f"equity not fresh (ok={_fz_fresh}, "
-                                            f"eq=${_fz_eq:,.2f})")
+                                        # [P287] stale-age skips WARN (a
+                                        # sustained outage starving Rule #3's
+                                        # window is not a debug-level event).
+                                        (logger.warning
+                                         if str(_fz_gate_why).startswith(
+                                             "equity_stale")
+                                         else logger.debug)(
+                                            "[P209] fuse feed skipped: "
+                                            f"{_fz_gate_why} "
+                                            f"(eq=${_fz_eq:,.2f})")
                                     else:
                                         _fz_anchor = getattr(
                                             self, "_fuse_sleeve_anchor_equity", None)
@@ -20791,19 +21331,28 @@ class HMATSProductionRunner:
                                         _fz_delta = (
                                             _fz_eq - float(_fz_anchor)
                                             if _fz_anchor else 0.0)
-                                        self._fuse_sleeve_anchor_equity = _fz_eq
-                                        self._fuse_equity_basis = "coinbase_sleeve"
                                         # record_pnl ONLY. on_trade_close() is
                                         # deliberately NOT called: it counts a
                                         # CONSECUTIVE-LOSS streak and suspends at
                                         # 10, and a 4H mark-to-market tick is not
                                         # a trade — ten red ticks (~1.7 days of
                                         # normal drift) would halt the system.
+                                        # [P287] record FIRST, advance the
+                                        # anchor AFTER record_pnl returns: the
+                                        # old order advanced the anchor first,
+                                        # so an exception inside record_pnl
+                                        # (swallowed by this block's handler)
+                                        # moved the anchor past the interval
+                                        # and permanently DROPPED its loss
+                                        # from Rule #3's 28d window
+                                        # (loss-forgiveness direction).
                                         _fz.record_pnl(
                                             realized_pnl=_fz_delta,
                                             current_equity=_fz_eq,
                                             trade_count=0,
                                         )
+                                        self._fuse_sleeve_anchor_equity = _fz_eq
+                                        self._fuse_equity_basis = "coinbase_sleeve"
                                         _fz_st = _fz.get_status()
                                         logger.info(
                                             f"[P209][FUSE-FEED] sleeve "
@@ -20936,6 +21485,17 @@ class HMATSProductionRunner:
                                 # indistinguishable from healthy. Feeds the heartbeat.
                                 _m_summary = {}
                                 _cb_stop_summary = {}  # [P197]
+                                # [P287] eventfilter-claim dict, initialized
+                                # BEFORE the per-asset branches: it used to be
+                                # written only on the fully-managed path, so
+                                # HOLD / MA-veto / cooldown ticks left the
+                                # LAST pre-hold direction in place — a
+                                # high-water mark (P155-L5 shape) feeding a
+                                # September P166 exam ledger a direction the
+                                # book did not hold. Every branch now writes
+                                # its honest claim.
+                                if not hasattr(self, "_enh_gated_dirs"):
+                                    self._enh_gated_dirs = {}
                                 if _flag and _rp is not None and _sl is not None:
                                     for _m_a in self.config.assets:
                                         if _rp.venue_for(_m_a) != "coinbase":
@@ -20957,6 +21517,17 @@ class HMATSProductionRunner:
                                                 _m_summary[_m_a] = (
                                                     f"HOLD({_m_why},"
                                                     f"{_sl.signed_contracts(_m_a)}ct)")
+                                                # [P287] the honest eventfilter
+                                                # claim on HOLD = the position
+                                                # actually held (sign), not the
+                                                # last pre-hold direction.
+                                                _enh_p = int(
+                                                    _sl.signed_contracts(_m_a)
+                                                    or 0)
+                                                self._enh_gated_dirs[_m_a] = (
+                                                    1.0 if _enh_p > 0 else
+                                                    (-1.0 if _enh_p < 0
+                                                     else 0.0))
                                                 logger.info(
                                                     f"[COINBASE-MANAGE] {_m_a}: HOLD "
                                                     f"({_m_why}) pos="
@@ -21018,6 +21589,14 @@ class HMATSProductionRunner:
                                                 _m_summary[_m_a] = (
                                                     f"MA_VETO(entry,ma={_maf_ma:+.2f},"
                                                     f"dir={_m_dir:+.2f})")
+                                                # [P287] blocked entry-from-flat:
+                                                # the honest claim is the held
+                                                # position (block_entry fires
+                                                # only at pos==0 -> 0.0).
+                                                self._enh_gated_dirs[_m_a] = (
+                                                    1.0 if _maf_pos > 0 else
+                                                    (-1.0 if _maf_pos < 0
+                                                     else 0.0))
                                                 _st_res = await _sl.ensure_protective_stop(
                                                     _m_a, intended_target=0)
                                                 _cb_stop_summary[_m_a] = _st_res.get("status")
@@ -21041,9 +21620,19 @@ class HMATSProductionRunner:
                                         # of a flatten — exits, reduces and
                                         # managing an existing position are
                                         # never deferred (P195). Default 0 =
-                                        # OFF; in-memory (restart only
-                                        # shortens the wait — conservative,
-                                        # same trade-off as P198's streak).
+                                        # OFF; in-memory. [P287] direction
+                                        # correction: a restart ERASES an
+                                        # armed cooldown and admits an
+                                        # entry-from-flat immediately after a
+                                        # flatten — that is a LOOSENING, not
+                                        # the "conservative" trade-off the
+                                        # old comment (and P232) claimed.
+                                        # P198's streak reset DELAYS a flip
+                                        # (tightening); this is not the same
+                                        # trade-off. Accepted as-is: worst
+                                        # case is one un-cooled re-entry per
+                                        # restart; persisting it is a P154
+                                        # candidate, not assumed done.
                                         _cd_n = int(getattr(
                                             self.config,
                                             "coinbase_reentry_cooldown_ticks",
@@ -21060,6 +21649,11 @@ class HMATSProductionRunner:
                                                 _m_summary[_m_a] = (
                                                     f"COOLDOWN({_cd_age}/{_cd_n}t,"
                                                     f"dir={_m_dir:+.2f})")
+                                                # [P287] cooldown gates entries
+                                                # FROM FLAT only (_cd_pre == 0
+                                                # by construction) — the honest
+                                                # claim is flat.
+                                                self._enh_gated_dirs[_m_a] = 0.0
                                                 logger.info(
                                                     f"[COINBASE-COOLDOWN] {_m_a}: entry "
                                                     f"suppressed {_cd_age}/{_cd_n} ticks "
@@ -21071,8 +21665,9 @@ class HMATSProductionRunner:
                                                 continue
                                         # [P277] stash the FINAL gated dir
                                         # for the eventfilter shadow's claim
-                                        if not hasattr(self, "_enh_gated_dirs"):
-                                            self._enh_gated_dirs = {}
+                                        # ([P287] dict init hoisted above the
+                                        # branches; the HOLD/MA-veto/cooldown
+                                        # branches write their own claims)
                                         self._enh_gated_dirs[_m_a] = _m_dir
                                         _m_res = await _sl.manage_to_signal(_m_a, _m_dir)
                                         _m_st = _m_res.get("status")
@@ -21263,7 +21858,16 @@ class HMATSProductionRunner:
                             "sleeve_equity": round(_hb_sleeve_eq, 4),
                             # [P253] validity travels with the number — a
                             # stale equity must be distinguishable downstream
-                            "equity_valid": _hb_eq_valid,
+                            # [P287] ...and it must certify BOTH halves:
+                            # equity_valid is now kraken_valid AND
+                            # sleeve_fresh (the old field certified only the
+                            # Kraken half while the sleeve half could freeze
+                            # for days — Sharpe-of-a-constant, P265g class).
+                            # Halves recorded so a stale row names its cause.
+                            "equity_valid": bool(_hb_eq_valid
+                                                 and _hb_sleeve_fresh),
+                            "kraken_valid": bool(_hb_eq_valid),
+                            "sleeve_fresh": bool(_hb_sleeve_fresh),
                             "tick": self._live_round_count,
                             "positions": len(_hb_positions),
                         }
@@ -21370,8 +21974,16 @@ class HMATSProductionRunner:
                 if getattr(self, "_mlp_shadow", None) is not None:
                     try:
                         _ob = getattr(self, "_obs_builder", None)
-                        _mls_feats = dict(getattr(
-                            _ob, "last_raw_features", {}) or {})
+                        # [P287] per-asset dicts COPIED, not shared: the old
+                        # shallow dict() copied only the outer mapping, so
+                        # `.update(_fv)` below mutated the obs builder's
+                        # single-source stash in place, injecting fv2 keys
+                        # into last_raw_features itself — any second consumer
+                        # of the "single-source" stash inherited
+                        # shadow-merged features. (The presence copy below
+                        # was already deep; the inconsistency was the tell.)
+                        _mls_feats = {a: dict(f) for a, f in (getattr(
+                            _ob, "last_raw_features", {}) or {}).items()}
                         _mls_pres = {a: dict(p) for a, p in (getattr(
                             _ob, "last_raw_presence", {}) or {}).items()}
                         try:

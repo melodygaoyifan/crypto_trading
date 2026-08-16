@@ -195,19 +195,34 @@ class TestStaleEquityIsSkipped:
 
     def test_feed_requires_a_fresh_reconcile(self):
         """`sleeve_equity_usd()` returns the last KNOWN value on API failure, so
-        an unguarded delta would be 0.0 and enter the window as 'no loss'."""
+        an unguarded delta would be 0.0 and enter the window as 'no loss'.
+        [P287] The gate now flows through pure fuse_feed_freshness() (which
+        also bounds equity AGE — _reconcile_ok alone certified only the
+        positions endpoint, so a portfolio-endpoint outage fed 'no loss'
+        every tick)."""
         blk = _feed_block()
         assert "_reconcile_ok" in blk
-        assert "_fz_eq <= 0" in blk
-        i_guard = blk.index("if not _fz_fresh or _fz_eq <= 0:")
+        assert "fuse_feed_freshness(" in blk, (
+            "the freshness decision no longer flows through the pure "
+            "function (P251 rule)")
+        i_guard = blk.index("if not _fz_ok:")
         i_rec = blk.index("_fz.record_pnl(")
         assert i_guard < i_rec, "freshness guard must precede record_pnl"
 
     def test_a_skip_records_nothing(self):
         """A gap in the series is honest; a fabricated zero is not."""
         blk = _feed_block()
-        head = blk[blk.index("if not _fz_fresh"):blk.index("else:")]
+        head = blk[blk.index("if not _fz_ok:"):blk.index("else:")]
         assert "record_pnl" not in head
+
+    def test_p287_anchor_advances_only_after_record_pnl(self):
+        """[P287] loss-forgiveness ordering: the old block advanced the
+        anchor BEFORE record_pnl, so an exception there (swallowed by the
+        block's handler) permanently dropped the interval's loss from the
+        28d window."""
+        blk = _feed_block()
+        assert blk.index("_fz.record_pnl(") < blk.index(
+            "self._fuse_sleeve_anchor_equity = _fz_eq")
 
 
 # ---------------------------------------------------------------------------
