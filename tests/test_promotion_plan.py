@@ -47,10 +47,19 @@ def test_decide_strategy_promote_blocked_when_short_window():
     assert "Iron Law 7" in reason
 
 
-def test_decide_strategy_kill_maps_to_archive():
+def test_decide_strategy_kill_maps_to_archive_only_on_a_full_window():
+    # [P287] ARCHIVE is state-changing and requires the >=30d window exactly
+    # like PROMOTE. The scorer's <=14d branch KILLs aggressively on noise
+    # (max|IC| < 0.05 over ~10 days is a normal quiet-strategy outcome), and
+    # the Monday september_check trajectory reads drop 10d reports into the
+    # dir promotion_plan reads newest-first — an unguarded KILL->ARCHIVE
+    # would have archived the September roster off a noise window.
     rec = {"verdict": "KILL"}
-    action, _ = decide_strategy_action(rec, shadow_window_days=14)
+    action, _ = decide_strategy_action(rec, shadow_window_days=30)
     assert action is StrategyAction.ARCHIVE
+    short_action, short_reason = decide_strategy_action(rec, shadow_window_days=14)
+    assert short_action is StrategyAction.HOLD_SHADOW
+    assert "informational" in short_reason.lower() or "30" in short_reason
 
 
 def test_decide_strategy_insufficient_extends():

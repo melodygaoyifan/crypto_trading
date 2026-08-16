@@ -89,6 +89,13 @@ def main() -> int:
     by_regime: dict = {}
     gated_srs, kept_srs = [], []
     n_flat = 0
+    # [P287] Kraken's public OHLC serves only ~720 bars (~120 days). As the
+    # ledger outgrows that, older directional records silently dropped out
+    # via fwd_return -> None while the header still reported the FULL
+    # span/record counts — a truncated window wearing a full-history label.
+    # Count the unjoinable records and label the effective joined window.
+    n_unjoinable = 0
+    n_unknown_asset = 0
     t0, t1 = None, None
     for r in recs:
         try:
@@ -103,9 +110,11 @@ def main() -> int:
             continue
         a = r.get("asset")
         if a not in ohlc:
+            n_unknown_asset += 1
             continue
         fr = fwd_return(*ohlc[a], ep, 1)
         if fr is None:
+            n_unjoinable += 1
             continue
         sr = (1 if sig > 0 else -1) * fr
         reg = str(r.get("regime") or "UNKNOWN")
@@ -120,7 +129,21 @@ def main() -> int:
 
     span_d = (t1 - t0) / 86400 if (t0 and t1) else 0.0
     n_dir = sum(v[0] for v in by_regime.values())
-    print(f"records: {len(recs)}  span: {span_d:.1f}d  directional: {n_dir}  flat: {n_flat}")
+    print(f"records: {len(recs)}  span: {span_d:.1f}d  directional: {n_dir}  flat: {n_flat}"
+          f"  price-unjoinable: {n_unjoinable}"
+          + (f"  unknown-asset: {n_unknown_asset}" if n_unknown_asset else ""))
+    # [P287] the effective joined window is what the numbers below cover
+    price_t0 = min((ts[0] for ts, _ in ohlc.values() if ts), default=None)
+    if price_t0 is not None:
+        p0 = datetime.fromtimestamp(price_t0).strftime("%Y-%m-%d")
+        print(f"price series: ~720-bar Kraken window starting {p0} — every "
+              f"number below covers the JOINED window only")
+    if n_unjoinable:
+        print(f"NOTE: {n_unjoinable} directional records could not be "
+              f"joined to a forward price (mostly older than the ~720-bar "
+              f"Kraken OHLC window, plus the newest bar's incomplete "
+              f"horizon) and are EXCLUDED — totals below are NOT the "
+              f"ledger's full history.")
     if n_dir < 250:
         print(f"NOTE: {n_dir} directional ticks < 250 — accumulation is thin; "
               f"treat every number below as provisional.")

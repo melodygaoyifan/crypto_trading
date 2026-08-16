@@ -49,6 +49,38 @@ MIN_DIRECTIONAL = 40
 ASSET = "BTC"
 HORIZON_BARS = 4  # 16h at 4H bars — the certified decision horizon
 
+# [P287] Defaults are the dirs `scripts/september_check.py` PULLS INTO —
+# the previous defaults (data/strategy_shadow, data/evidence_reports) were
+# operator-local test residue, never live evidence (P255). Following this
+# script's own docstring ("run september_check first") then left the checker
+# reading the untracked local dirs while the fresh pull sat next door.
+DEFAULT_LEDGER_DIR = REPO / "data" / "strategy_shadow_pulled"
+DEFAULT_REPORTS_DIR = REPO / "data" / "evidence_reports_pulled"
+
+
+def _ic_from_stats(st: dict, horizon: int):
+    """[P287] Extract the horizon IC from a compute_per_strategy_ic record.
+
+    The scorer's SUCCESS shape is `ic_per_horizon` (compute_shadow_ic.py
+    :478); `ic_per_h` exists only on its `ohlcv_missing` ERROR record. The
+    pre-P287 read of `ic_per_h` alone meant the 16h kill-screen was
+    structurally UNEVALUATED on every successful run (a P174-class check
+    that could not fire, and a P2 reader/writer key mismatch). Both shapes
+    and both int/str keys are accepted; None = could not be evaluated,
+    which `decide()` treats as failing (P199)."""
+    ic_map = st.get("ic_per_horizon")
+    if not isinstance(ic_map, dict) or not ic_map:
+        ic_map = st.get("ic_per_h")
+    if not isinstance(ic_map, dict):
+        return None
+    v = ic_map.get(horizon, ic_map.get(str(horizon)))
+    if v is None:
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
 
 def decide(today: date, span_days: float, n_directional: int,
            ic16, trend_closed_latest) -> tuple:
@@ -101,9 +133,8 @@ def _trend_closed_latest(reports_dir: Path):
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--ledger-dir", default=str(REPO / "data" / "strategy_shadow"))
-    ap.add_argument("--reports-dir",
-                    default=str(REPO / "data" / "evidence_reports"))
+    ap.add_argument("--ledger-dir", default=str(DEFAULT_LEDGER_DIR))
+    ap.add_argument("--reports-dir", default=str(DEFAULT_REPORTS_DIR))
     ap.add_argument("--today", default=None,
                     help="override for tests (YYYY-MM-DD)")
     args = ap.parse_args()
@@ -144,6 +175,18 @@ def main() -> int:
                       file=sys.stderr)
                 return 2
 
+    # [P287] The pulled dirs not existing means september_check has never
+    # run on this machine — refuse rather than evaluate nothing (P255/P199).
+    for _d, _what in ((Path(args.ledger_dir), "ledgers"),
+                      (Path(args.reports_dir), "evidence reports")):
+        if not _d.exists():
+            print(f"P285 CANNOT BE EVALUATED: {_d} does not exist — the "
+                  f"{_what} have not been pulled. Run "
+                  f"scripts/september_check.py first (it pulls fresh server "
+                  f"evidence into the *_pulled dirs; local data/ is never "
+                  f"live evidence, P255).", file=sys.stderr)
+            return 2
+
     ledger = Path(args.ledger_dir) / f"mlpshadow_{ASSET}.jsonl"
     if not ledger.exists():
         print(f"P285 CANNOT BE EVALUATED: {ledger} does not exist. Pull "
@@ -174,9 +217,7 @@ def main() -> int:
               "operator-local after refresh_ohlcv_4h.py (P213). A missing "
               "price series is not a verdict (P199).", file=sys.stderr)
         return 2
-    ic_h = st.get("ic_per_h", {}).get(HORIZON_BARS)
-    if ic_h is not None:
-        ic16 = float(ic_h)
+    ic16 = _ic_from_stats(st, HORIZON_BARS)
 
     trend_closed = _trend_closed_latest(Path(args.reports_dir))
 

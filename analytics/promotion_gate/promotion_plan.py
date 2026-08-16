@@ -24,9 +24,10 @@ Iron Laws honored:
 Decision matrix per shadow strategy:
   Verdict from shadow_ic report  | Plan action
   -----------------------------  | -----------
-  PROMOTE                        | PROMOTE_TO_FUSION (advisory)
+  PROMOTE                        | PROMOTE_TO_FUSION (advisory; window >=30d)
   HOLD                           | HOLD_SHADOW
-  KILL                           | ARCHIVE
+  KILL                           | ARCHIVE (window >=30d, P287 — a KILL off a
+                                 |   short trajectory read becomes HOLD_SHADOW)
   INSUFFICIENT_SAMPLES           | EXTEND_SHADOW
 
 Decision matrix per sleeve:
@@ -133,7 +134,24 @@ def decide_strategy_action(
             )
         return (StrategyAction.PROMOTE_TO_FUSION, "verdict=PROMOTE + window >= 30d")
     if verdict == "KILL":
-        return (StrategyAction.ARCHIVE, "verdict=KILL")
+        # [P287] ARCHIVE is state-changing and gets the SAME window guard as
+        # PROMOTE. The scorer's short-window branch KILLs "aggressively" on
+        # max(|IC|) < 0.05 — a normal outcome for a quiet strategy over a
+        # 10-day trajectory read — and september_check's weekly Monday runs
+        # drop exactly such reports into the directory latest_report() reads
+        # newest-first. Before this guard, running the plan generator any
+        # time after a Monday recommended archiving the September candidates
+        # off a noise window, contradicting the decision tree's promise that
+        # trajectory reads are informational only. (window_days absent reads
+        # as 0 upstream and lands here too — unknown window never archives.)
+        if shadow_window_days < MIN_SHADOW_DAYS_FOR_PROMOTION:
+            return (
+                StrategyAction.HOLD_SHADOW,
+                f"verdict=KILL but shadow_window_days={shadow_window_days} < "
+                f"{MIN_SHADOW_DAYS_FOR_PROMOTION} — trajectory read is "
+                f"informational only, no ARCHIVE off a short window (P287)"
+            )
+        return (StrategyAction.ARCHIVE, "verdict=KILL + window >= 30d")
     if verdict == "INSUFFICIENT_SAMPLES":
         return (StrategyAction.EXTEND_SHADOW, "verdict=INSUFFICIENT_SAMPLES")
     if verdict == "HOLD":

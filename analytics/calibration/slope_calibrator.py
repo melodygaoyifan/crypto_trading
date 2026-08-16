@@ -47,7 +47,23 @@ SLOPE_CAP = 49.0        # 65 x 0.75 — today's effective ceiling, never exceed
 HORIZONS = (1, 4)       # 4h, 16h
 # Live thresholds as of P230 verification (decomposition in CLAUDE.md P231);
 # refreshed automatically when a newer diag value is passed via --thresholds.
+# [P287] These are a SNAPSHOT of the live gate arithmetic (friction x
+# smart-beta gate mult), not a constant of nature — friction moves (the
+# P270 maker-first activation changed priced friction AFTER this stamp),
+# and the P237 tripwire consumes the TRADEABLE/GATE-CLOSED verdict string
+# these produce verbatim. Provenance is stamped and staleness warned below
+# so a Sep-1 deactivation decision cannot silently ride a frozen snapshot.
 DEFAULT_THRESHOLDS = {"BTC": 28.93, "ETH": 42.77, "SOL": 55.34}
+THRESHOLDS_STAMPED = "2026-08-08"   # P230 verification date
+THRESHOLDS_STALE_AFTER_DAYS = 30
+
+
+def default_thresholds_age_days(today=None) -> int:
+    """[P287] Days since the default thresholds were verified against the
+    live gate. Pure for tests."""
+    t = today or datetime.now(timezone.utc).date()
+    stamped = datetime.strptime(THRESHOLDS_STAMPED, "%Y-%m-%d").date()
+    return (t - stamped).days
 
 
 def shrunk_slope(pairs: list[tuple[float, float]], overlap: int) -> dict:
@@ -115,9 +131,35 @@ def main() -> int:
     print(f"Shadow slope calibration — {args.window_days}d window, "
           f"shrink k={SHRINK_K}, prior=0, floor=0, cap={SLOPE_CAP}")
     print(f"live constants for comparison: trend 40 x 0.75 = 30.0 effective; "
-          f"quant 65 x 0.75 = 48.75 effective (both bps/unit)\n")
+          f"quant 65 x 0.75 = 48.75 effective (both bps/unit)")
+    # [P287] threshold provenance — printed in every report so the verdict
+    # strings the tripwire consumes carry their own freshness.
+    using_defaults = args.thresholds is None
+    thr_age = default_thresholds_age_days() if using_defaults else None
+    if using_defaults:
+        print(f"thresholds: P230 defaults, verified {THRESHOLDS_STAMPED} "
+              f"({thr_age}d ago)")
+        if thr_age is not None and thr_age > THRESHOLDS_STALE_AFTER_DAYS:
+            print(f"!! THRESHOLD STALENESS: the default enter thresholds "
+                  f"were verified {thr_age}d ago (> "
+                  f"{THRESHOLDS_STALE_AFTER_DAYS}d). Friction has moved "
+                  f"since (e.g. maker-first, P270) and the tripwire keys on "
+                  f"the TRADEABLE/GATE-CLOSED strings below — re-derive the "
+                  f"thresholds from the live gate arithmetic (CLAUDE.md "
+                  f"P231 decomposition) and pass --thresholds. This tool "
+                  f"cannot compute them itself (needs container state).")
+    else:
+        print("thresholds: operator-supplied via --thresholds")
+    print()
     report = {"generated": datetime.now(timezone.utc).isoformat(),
-              "window_days": args.window_days, "assets": {}}
+              "window_days": args.window_days,
+              "thresholds_provenance": {
+                  "source": "P230_defaults" if using_defaults else "cli",
+                  "stamped": THRESHOLDS_STAMPED if using_defaults else None,
+                  "age_days": thr_age,
+                  "stale": bool(using_defaults and thr_age is not None
+                                and thr_age > THRESHOLDS_STALE_AFTER_DAYS)},
+              "assets": {}}
     for a in KRAKEN_PAIRS:
         report["assets"][a] = {}
         for h in HORIZONS:

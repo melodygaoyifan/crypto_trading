@@ -28,6 +28,10 @@ WHAT IT DOES (operator machine, needs ssh hmats + the training venv)
 Run weekly (and on the decision dates):
     python -X utf8 scripts/september_check.py
     python -X utf8 scripts/september_check.py --window-days 30   # the exam
+
+Exit codes (P287): 3 = the P237 tripwire FIRED (grep-able, outranks scorer
+failures); 2 = refusal (no fresh pull / scorer refusal); 1 = scorer failure;
+0 = ok. A tripwire REFUSAL is surfaced in the RESULT line, not the rc.
 """
 from __future__ import annotations
 
@@ -48,6 +52,10 @@ REPORTS_DIR = REPO / "data" / "evidence_reports_pulled"
 OHLCV_DIR = REPO / "training" / "training_data" / "drl_training"
 
 # candidate -> (ledger prefix, first-live date, what a PASS flips)
+# [P287] This roster must cover EVERY accruing candidate the scorer reads —
+# the pre-P287 list omitted the five P277 families and mlpshadow, i.e. the
+# one command that prints "days left" was silent on six exam dates (the
+# exact operator-must-remember gap this script exists to close, P230/P271).
 CANDIDATES = {
     "regimebook":     ("regimebook",     "2026-08-10", "regimebook_mode enforce (P256 seat)"),
     "regimebook_adj": ("regimebook",     "2026-08-10", "ADJ params into the seat"),
@@ -56,6 +64,16 @@ CANDIDATES = {
     "volskip":        ("regimebook",     "2026-08-16", "volskip into the ETH seat path"),
     "etfflow":        ("etfflow",        "2026-08-16", "ETF-flow candidate -> own P-entry"),
     "breadth books":  ("regimebook",     "2026-08-16", "widening decision (routing + books)"),
+    # [P277] enhancement families (all first-live at the P277 deploy)
+    "stablecoinflow": ("stablecoinflow", "2026-08-16", "P277 candidate -> own P-entry"),
+    "oidiv_confirm":  ("oidiv",          "2026-08-16", "P277 candidate -> own P-entry"),
+    "oidiv_fade":     ("oidiv",          "2026-08-16", "P277 candidate -> own P-entry"),
+    "calbasis":       ("calbasis",       "2026-08-16", "P277 candidate -> own P-entry"),
+    "xsmom":          ("xsmom",          "2026-08-16", "P277 candidate -> own P-entry"),
+    "eventfilter":    ("eventfilter",    "2026-08-16", "enforcement -> own P-entry (P277)"),
+    # [P284/P285c] the trained-model Rung-3 shadow; seat WITHDRAWN (P285c),
+    # ledger accrues as free evidence toward the ~09-15 read
+    "mlpshadow":      ("mlpshadow",      "2026-08-16", "P285c-withdrawn; read is informational"),
 }
 
 KRAKEN_PAIRS_BREADTH = {"XRP": "XRPUSD", "ADA": "ADAUSD", "LTC": "LTCUSD",
@@ -87,22 +105,23 @@ def pull_from_server() -> bool:
     return ok
 
 
-def refresh_prices() -> None:
-    _run([sys.executable, "-X", "utf8",
-          str(REPO / "training" / "scripts" / "refresh_ohlcv_4h.py")])
+def refresh_prices() -> int:
+    return _run([sys.executable, "-X", "utf8",
+                 str(REPO / "training" / "scripts" / "refresh_ohlcv_4h.py")])
 
 
-def build_breadth_ohlcv() -> None:
+def build_breadth_ohlcv() -> int:
     """Kraken public OHLC -> {ASSET}_4H_ohlcv.parquet for the breadth
     assets. ~720 bars (~120d) — enough for every 30d window this script
     scores. Merges with any existing file so history GROWS past Kraken's
     own window (the P266 CoinGlass lesson: a bounded-depth API feeding an
     overwriting fetcher caps history forever)."""
+    n_failed = 0
     try:
         import pandas as pd
     except ImportError:
         print("  !! pandas missing — breadth OHLCV skipped")
-        return
+        return len(KRAKEN_PAIRS_BREADTH)
     for asset, pair in KRAKEN_PAIRS_BREADTH.items():
         try:
             url = (f"https://api.kraken.com/0/public/OHLC?pair={pair}"
@@ -135,8 +154,10 @@ def build_breadth_ohlcv() -> None:
             df.to_parquet(out, index=False)
             print(f"  breadth OHLCV {asset}: {len(df)} bars -> {out.name}")
         except Exception as e:
+            n_failed += 1
             print(f"  !! breadth OHLCV {asset} FAILED: "
                   f"{type(e).__name__}: {e}")
+    return n_failed
 
 
 def run_scorer(window_days: int) -> int:
@@ -172,6 +193,21 @@ def countdown() -> None:
           f"per-asset trend_assets removal (P237)")
 
 
+def _final_rc(scorer_rc: int, tripwire_rc: int) -> int:
+    """[P287] Exit-code contract, pure so it is testable:
+      3 = the P237 tripwire FIRED (tripwire_check's own grep-able contract,
+          previously discarded — a FIRED tripwire survived only as
+          scrollback). FIRED outranks a scorer failure: the deactivation
+          decision is the more urgent signal.
+      else the scorer's rc (2 = its refusal, 1 = failure, 0 = ok).
+    A tripwire REFUSAL (rc 2, e.g. no reports pulled) does NOT fail the
+    run — it is surfaced in the RESULT line instead, because the scorer
+    half of the run is still valid evidence."""
+    if tripwire_rc == 3:
+        return 3
+    return scorer_rc
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--window-days", type=int, default=10,
@@ -188,15 +224,25 @@ def main() -> int:
                   "never live evidence). Use --no-pull to override.")
             return 2
     print("[2/5] refreshing home-asset OHLCV...")
-    refresh_prices()
+    prices_rc = refresh_prices()
     print("[3/5] building breadth-asset OHLCV from Kraken...")
-    build_breadth_ohlcv()
+    breadth_failed = build_breadth_ohlcv()
     print(f"[4/5] scoring all candidates (window={args.window_days}d)...")
     rc = run_scorer(args.window_days)
     print("[5/5] tripwire status...")
-    run_tripwire()
+    tw_rc = run_tripwire()
     countdown()
-    return rc
+    # [P287] one unmissable RESULT line — step failures used to be `!!`
+    # noise mid-scroll above a normal-looking verdict table, and the
+    # tripwire's exit code was dropped entirely.
+    tw_txt = {0: "not fired", 2: "REFUSED (reports unreadable/missing)",
+              3: "*** FIRED ***"}.get(tw_rc, f"rc={tw_rc}")
+    print(f"\nRESULT: scorer rc={rc} | tripwire {tw_txt} | "
+          f"price refresh {'OK' if prices_rc == 0 else 'FAILED'} | "
+          f"breadth OHLCV failures {breadth_failed}"
+          + ("  <- some price series are stale; forward joins shrink "
+             "accordingly" if (prices_rc != 0 or breadth_failed) else ""))
+    return _final_rc(rc, tw_rc)
 
 
 if __name__ == "__main__":

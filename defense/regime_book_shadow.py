@@ -418,6 +418,31 @@ class RegimeBookShadow:
             return None
         return [h[k] for k in sorted(h)]
 
+    def carry_rate_bar(self, asset: str) -> Optional[float]:
+        """[P287] Per-4H-bar funding carry from the newest COMPLETED day.
+
+        The history stores the day's LAST 8h funding EVENT rate
+        (refresh_funding_daily); an 8h event spans two 4H bars, so the
+        per-bar carry is rate/2 — the P245 convention (shorts collect when
+        positive). This closes the docstring's promise that every ledger
+        row separates price-claim from carry: pre-P287 `carry_rate_bar`
+        was None on every row ever written, so the BTC funding legs — the
+        roster's only uncertified component (P262) — could not have their
+        carry attributed from the ledger at the ~09-09 read (the P245
+        lesson: perp realized PnL = price + carry). None when the history
+        is absent or stale (same bound as the z, P265) — absent funding
+        stays honest, never a fabricated 0.0 (P2)."""
+        h = self._fund_hist.get(asset)
+        if not h:
+            return None
+        age = self.funding_age_days(asset)
+        if age is None or age > self.FUND_MAX_AGE_DAYS:
+            return None
+        try:
+            return float(h[max(h)]) / 2.0
+        except (TypeError, ValueError):  # noqa: silent-swallow — malformed stored rate = no carry claim; the z path warns on its own
+            return None
+
     # [P265] Staleness bound on the funding input. Once >=30 days of history
     # are persisted, a sustained fapi outage used to leave `_fund_hist`
     # frozen: causal_funding_z still returned a NUMBER (the z of the last
@@ -718,7 +743,11 @@ class RegimeBookShadow:
                 # so flat rows contribute zero, never a saturated claim (P224)
                 "confidence": abs(float(target)),
                 "price": float(price),
-                "carry_rate_bar": carry_rate_bar,
+                # [P287] explicit caller value wins; otherwise derived from
+                # the persisted funding history (None when absent/stale)
+                "carry_rate_bar": (carry_rate_bar
+                                   if carry_rate_bar is not None
+                                   else self.carry_rate_bar(asset)),
             }
             path = self._dir / f"regimebook_{asset}.jsonl"
             with open(path, "a", encoding="utf-8") as f:
