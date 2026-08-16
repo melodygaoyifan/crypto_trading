@@ -53,7 +53,25 @@ BOOKS_VERSION = {
     "BTC": "v1_full",
     "ETH": "v1_full",           # trend-only IS the full measured ETH book
     "SOL": "v1_degraded_no_bear_leg",
+    # [P271] breadth assets below: trend-only, see BREADTH_ASSETS
 }
+
+# [P271] The five NEVER-FITTED assets the P262 unread-era probe certified:
+# trend/hold beat flat on 5/5 (BNB +406%, DOGE +672%, XRP +276%, ADA +391%,
+# LTC +68%, 2020-2026 at 10bps RT) — evidence from data no selection ever
+# touched, which the home window structurally cannot provide. All five are
+# listed as CDE 20DEC30 nano perps (probed 2026-08-15) and all five serve
+# Kraken public 4H OHLC (probed 2026-08-16), so their books are computable
+# by this harness with zero new data sources. Book form: TREND-ONLY (bull ->
+# long, else flat) — exactly the mechanism the probe certified; no funding
+# legs (P262 marks funding legs as the UNCERTIFIED slice even on BTC).
+# These are OBSERVATION-ONLY forward ledgers: trading any of them requires
+# an operator decision + routing + sleeve asset extension (P141), judged on
+# this ledger's P166 read. Volumes are thin (XRP/ADA ~3.8k ct/day, BNB ~200)
+# — recorded, and a reason the forward read matters more than the probe.
+BREADTH_ASSETS = ("XRP", "ADA", "LTC", "DOGE", "BNB")
+for _ba in BREADTH_ASSETS:
+    BOOKS_VERSION[_ba] = "v1_breadth_trend_only"
 
 
 def regime_label(closes) -> str:
@@ -252,10 +270,21 @@ def book_target(asset: str, regime: str, funding_z: Optional[float]) -> tuple:
         return 0.0, "trend_flat"        # trend-only: flat outside bull
     if asset == "SOL":
         return 0.0, "flat_degraded"     # bear ridge leg pending full parity
+    if asset in BREADTH_ASSETS:
+        # [P271] trend-only, the P262-certified mechanism verbatim: the
+        # bull leg is handled by the shared bull block above ONLY for
+        # BTC/ETH/SOL, so breadth needs its own explicit legs — falling
+        # through to the generic flat would silently record a dead book.
+        if regime == "bull":
+            return 1.0, "trend_hold"
+        return 0.0, "trend_flat"
     return 0.0, "flat"
 
 
-KRAKEN_PAIRS = {"BTC": "XBTUSD", "ETH": "ETHUSD", "SOL": "SOLUSD"}
+KRAKEN_PAIRS = {"BTC": "XBTUSD", "ETH": "ETHUSD", "SOL": "SOLUSD",
+                # [P271] breadth — all five probed OK at interval=240
+                "XRP": "XRPUSD", "ADA": "ADAUSD", "LTC": "LTCUSD",
+                "DOGE": "XDGUSD", "BNB": "BNBUSD"}
 BINANCE_SYMBOLS = {"BTC": "BTCUSDT", "ETH": "ETHUSDT", "SOL": "SOLUSDT"}
 SOL_MODEL_PATH = Path("configs") / "regimebook" / "SOL_bear_ridge.json"
 FEATURE_STASH_MAX_AGE_S = 2 * 3600   # one 4H tick's worth of tolerance
@@ -670,19 +699,26 @@ class RegimeBookShadow:
             # (regimebook_*), distinct strategy name, so the scorer groups it
             # as its own candidate with zero scorer changes. Fail-soft: the
             # raw record above is already written and returned.
-            try:
-                ke, kf, mh = ADJ_PARAMS.get(asset, (1, 1, 0))
-                adj = adjust_step(self._adj_state.setdefault(asset, {}),
-                                  float(target), ke, kf, mh)
-                arec = dict(rec, strategy="regimebook_adj",
-                            direction=float(adj), confidence=abs(float(adj)),
-                            adj_params=[ke, kf, mh])
-                apath = self._dir / f"regimebook_adj_{asset}.jsonl"
-                with open(apath, "a", encoding="utf-8") as f:
-                    f.write(json.dumps(arec) + "\n")
-            except Exception as _adj_e:  # noqa: silent-swallow — the adjusted ledger is an overlay; its failure must not lose the raw record (logged)
-                logger.warning("[REGIMEBOOK] %s adjusted-ledger write failed: "
-                               "%s", asset, type(_adj_e).__name__)
+            # [P271] adj leg only for assets the mechanism lab actually
+            # measured (BTC/ETH/SOL) — the old (1, 1, 0) .get() default is a
+            # near-passthrough that would duplicate every breadth row under
+            # a second strategy name and dilute the scorer with unmeasured
+            # candidates.
+            if asset in ADJ_PARAMS:
+                try:
+                    ke, kf, mh = ADJ_PARAMS[asset]
+                    adj = adjust_step(self._adj_state.setdefault(asset, {}),
+                                      float(target), ke, kf, mh)
+                    arec = dict(rec, strategy="regimebook_adj",
+                                direction=float(adj),
+                                confidence=abs(float(adj)),
+                                adj_params=[ke, kf, mh])
+                    apath = self._dir / f"regimebook_adj_{asset}.jsonl"
+                    with open(apath, "a", encoding="utf-8") as f:
+                        f.write(json.dumps(arec) + "\n")
+                except Exception as _adj_e:  # noqa: silent-swallow — the adjusted ledger is an overlay; its failure must not lose the raw record (logged)
+                    logger.warning("[REGIMEBOOK] %s adjusted-ledger write "
+                                   "failed: %s", asset, type(_adj_e).__name__)
             # [P259] The banded-forecast OVERLAY ledger (BTC/ETH exports only
             # — the lab earners). Same glob prefix, distinct strategy name.
             try:
@@ -728,7 +764,7 @@ class RegimeBookShadow:
             return None
 
     # ---------------- one-call orchestrator for main.py ----------------
-    def tick(self, assets=("BTC", "ETH", "SOL")):
+    def tick(self, assets=("BTC", "ETH", "SOL") + BREADTH_ASSETS):
         """The single loop-level entry point: per asset, refresh funding
         (daily), fetch closes, record. Every failure is per-asset and
         fail-soft; a summary line makes silence impossible (P155)."""

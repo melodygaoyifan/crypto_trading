@@ -100,3 +100,7 @@ analytics/ic/reports/*
 !analytics/ic/reports/strategy_sign_flip_20260425_0641.json
 analytics/sixty_day_review/reports/*
 !analytics/sixty_day_review/reports/sixty_day_review_20260429_05*.json
+
+# [P271] september_check pulls — server evidence copies, never live truth
+data/strategy_shadow_pulled/
+data/evidence_reports_pulled/

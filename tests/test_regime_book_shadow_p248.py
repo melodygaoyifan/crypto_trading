@@ -240,7 +240,10 @@ def test_tick_orchestrator_is_per_asset_failsoft(harness, monkeypatch):
 def test_mainpy_wiring_exists():
     src = (REPO / "main.py").read_text(encoding="utf-8", errors="ignore")
     assert "RegimeBookShadow(data_dir=" in src, "init missing (P152 shape)"
-    assert "._regime_book_shadow.tick((" in src, "loop-level tick call missing"
+    # [P271] the call is now argument-less: the harness default roster
+    # includes the breadth assets, so main.py cannot silently pin an
+    # out-of-date explicit tuple that starves the new ledgers
+    assert "._regime_book_shadow.tick()" in src, "loop-level tick call missing"
     assert "observe_features(" in src, "SOL parity stash missing"
 
 

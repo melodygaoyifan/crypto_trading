@@ -20934,7 +20934,9 @@ class HMATSProductionRunner:
                 # starve it (the P227 lesson).
                 if self._regime_book_shadow is not None:
                     try:
-                        self._regime_book_shadow.tick(("BTC", "ETH", "SOL"))
+                        # [P271] no explicit roster: the harness default now
+                        # includes the five P262-certified breadth assets
+                        self._regime_book_shadow.tick()
                     except Exception as _rbs_e:  # noqa: silent-swallow
                         logger.warning(f"[REGIMEBOOK] tick failed: "
                                        f"{type(_rbs_e).__name__} — ledger "
