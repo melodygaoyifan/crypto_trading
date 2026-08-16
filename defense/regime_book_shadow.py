@@ -327,6 +327,37 @@ class RegimeBookShadow:
         self._funding_stale: Dict[str, bool] = {}  # [P265] per-asset stale-z latch (re-armable)
 
     # ---------------- [P256] the SEAT accessor -------------------------
+    def advisory_snapshot(self, assets) -> dict:
+        """[P272] Passive-holdings advisory: the certified book label for
+        assets the OPERATOR holds outside the system (recorded decision
+        2026-08-16: the 12,300-XRP Kraken bag and ~$3k BTC are deliberate
+        holds the system does not trade). This surfaces what the certified
+        trend/hold mechanism says about them in the 4H heartbeat — purely
+        informational, trades nothing, and a label CHANGE is flagged once
+        (the first snapshot after the flip) so the operator sees regime
+        turns without alert spam (P202).
+
+        Returns {asset: {"regime", "direction", "changed"}} from the LAST
+        recorded tick (the harness runs after the heartbeat, so labels are
+        one tick stale — immaterial at regime horizon; the caller hedges
+        the text). Assets with no record yet are omitted — absence must
+        never render as a confident label (P2)."""
+        if not hasattr(self, "_advisory_prev"):
+            self._advisory_prev: dict = {}
+        out = {}
+        for a in assets or ():
+            rec = self._last_records.get(a)
+            if not rec:
+                continue
+            label = f"{rec.get('regime')}/{rec.get('direction', 0.0):+.0f}"
+            changed = (a in self._advisory_prev
+                       and self._advisory_prev[a] != label)
+            self._advisory_prev[a] = label
+            out[a] = {"regime": rec.get("regime"),
+                      "direction": rec.get("direction", 0.0),
+                      "changed": changed}
+        return out
+
     def last_direction(self, asset: str, max_age_s: float = 6 * 3600):
         """The book's most recent recorded target for `asset`, or None.
 

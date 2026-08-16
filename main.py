@@ -1626,6 +1626,14 @@ class ProductionConfig:
     # the live profile until deliberately enabled (P141).
     coinbase_maker_first: bool = False
     coinbase_maker_wait_sec: float = 45.0
+    # [P272] Per-asset contract caps (vol-parity PREP; empty = the scalar
+    # cap everywhere, byte-identical to today). Raising values is the
+    # September sizing activation — own P-entry + operator flip.
+    coinbase_max_contracts_by_asset: Dict[str, int] = field(default_factory=dict)
+    # [P272] Passive-holdings advisory: assets the OPERATOR holds outside
+    # the system whose certified book label appears in the 4H heartbeat
+    # (informational only; trades nothing). Empty = no advisory line.
+    passive_advisory_assets: List[str] = field(default_factory=list)
     # [P256] The regimebook SEAT: "off" (default — harness records, nothing
     # consumed), or "enforce" — the P248/P250 book target OVERRIDES the
     # direction seat (the same quant-slot injection the trend layer uses),
@@ -1958,6 +1966,11 @@ class ProductionConfig:
                 data.get("coinbase_maker_first", False)),
             coinbase_maker_wait_sec=float(
                 data.get("coinbase_maker_wait_sec", 45.0) or 45.0),
+            # [P272] declared + parsed together (the P201 rule)
+            coinbase_max_contracts_by_asset=dict(
+                data.get("coinbase_max_contracts_by_asset", {}) or {}),
+            passive_advisory_assets=list(
+                data.get("passive_advisory_assets", []) or []),
             # [P256] declared + parsed together (the P201 rule)
             regimebook_mode=str(
                 data.get("regimebook_mode", "off") or "off"),
@@ -19672,6 +19685,50 @@ class HMATSProductionRunner:
         logger.info(f"[BACKTEST] Completed: {results}")
         return results
     
+    async def _unmanaged_holdings_text(self) -> Optional[str]:
+        """[P273] Value the Kraken holdings the system deliberately does NOT
+        manage or count (operator decision 2026-08-16: the XRP bag + BTC are
+        holds; the equity feeds read Kraken USD-only). DISPLAY-ONLY: this
+        number must never reach P0 equity, the fuse, or any drawdown anchor
+        — a $12k jump in counted equity would corrupt every persisted
+        anchor (the P261 class). 1h cache; fail-soft (caller renders the
+        failure honestly rather than as $0 — absence is not zero, P2)."""
+        now = time.time()
+        cached = getattr(self, "_unmanaged_cache", None)
+        if cached and now - cached[0] < 3600:
+            return cached[1]
+        acct = getattr(self, "account_sync", None)
+        client = getattr(acct, "exchange_client", None)
+        if client is None:
+            return None
+        bal = await asyncio.to_thread(client.fetch_balance)
+        total = (bal or {}).get("total", {}) or {}
+        parts, total_usd = [], 0.0
+        for sym, amt in total.items():
+            if sym in ("USD", "USDT", "USDC") or not amt or amt <= 0:
+                continue
+            try:
+                t = await asyncio.to_thread(client.fetch_ticker, f"{sym}/USD")
+                px = float(t.get("last") or 0.0)
+            except Exception:  # noqa: silent-swallow — an unlisted pair/dust is expected shape; it renders as unpriced below, never as $0
+                px = 0.0
+            usd = amt * px
+            if px <= 0:
+                if amt >= 1.0:  # dust with no market stays invisible
+                    parts.append(f"{sym} {amt:,.0f} (unpriced)")
+                continue
+            if usd < 25:
+                continue
+            total_usd += usd
+            parts.append(f"{sym} {amt:,.0f}≈${usd:,.0f}")
+        idle_usd = float(total.get("USD") or 0.0)
+        txt = (f"Kraken idle ${idle_usd:,.0f} + " if idle_usd > 100 else "")
+        txt += ", ".join(parts) if parts else "none"
+        if total_usd:
+            txt += f" | unmanaged total ≈ ${total_usd:,.0f}"
+        self._unmanaged_cache = (now, txt)
+        return txt
+
     def _ensure_coinbase_sleeve(self):
         """[P263] Build (once) and return the Coinbase sleeve, or None.
 
@@ -19732,6 +19789,9 @@ class HMATSProductionRunner:
                     self.config, "coinbase_maker_first", False)),
                 maker_wait_sec=float(getattr(
                     self.config, "coinbase_maker_wait_sec", 45.0) or 45.0),
+                # [P272] per-asset caps (empty dict = scalar fallback)
+                max_contracts_by_asset=dict(getattr(
+                    self.config, "coinbase_max_contracts_by_asset", {}) or {}),
             )
             return self._coinbase_sleeve
         except Exception as _e:
@@ -20271,6 +20331,56 @@ class HMATSProductionRunner:
                                     "runs after this message — see "
                                     "[COINBASE-MANAGE])"
                                 )
+                        # [P273] Capital-utilization truth: how much of the
+                        # sleeve's equity the book actually deploys, and the
+                        # unmanaged holdings the equity feeds deliberately do
+                        # NOT count (folding them into P0 equity would
+                        # corrupt every drawdown anchor — the P261 class —
+                        # so this is DISPLAY-ONLY honesty). Fail-soft.
+                        _hb_util_txt = "unreadable"
+                        try:
+                            _hb_sl2 = getattr(self, "_coinbase_sleeve", None)
+                            if _hb_sl2 is not None:
+                                _exp = _hb_sl2.sleeve_exposure()
+                                _hb_util_txt = (
+                                    f"gross {_exp['gross_pct']:.0%} / net "
+                                    f"{_exp['net_pct']:+.0%} of sleeve equity"
+                                    + ("" if _exp.get("priced_ok")
+                                       else " (partially unpriced)"))
+                        except Exception:  # noqa: silent-swallow — display-only utilization text; the risk controls read sleeve_exposure themselves
+                            pass
+                        _hb_unmanaged_txt = "n/a"
+                        try:
+                            _uh = await self._unmanaged_holdings_text()
+                            if _uh:
+                                _hb_unmanaged_txt = _uh
+                        except Exception:  # noqa: silent-swallow — display-only portfolio truth; valuation failure must not break the heartbeat
+                            _hb_unmanaged_txt = "valuation failed this tick"
+                        # [P272] passive-holdings advisory line (fail-soft:
+                        # heartbeat text only, the ledgers carry the truth)
+                        _hb_adv_txt = "off"
+                        _adv_assets = getattr(
+                            self.config, "passive_advisory_assets", None) or []
+                        if _adv_assets:
+                            _hb_adv_txt = "no book data yet"
+                            _rbs_adv = getattr(
+                                self, "_regime_book_shadow", None)
+                            if _rbs_adv is not None:
+                                try:
+                                    _snap = _rbs_adv.advisory_snapshot(
+                                        _adv_assets)
+                                    if _snap:
+                                        _hb_adv_txt = ", ".join(
+                                            f"{_a}={_s['regime']}/"
+                                            f"{_s['direction']:+.0f}"
+                                            + (" **FLIPPED**"
+                                               if _s["changed"] else "")
+                                            for _a, _s in _snap.items()
+                                        ) + " (certified trend/hold book; "
+                                        _hb_adv_txt += ("+1=hold, 0=be flat; "
+                                                        "prev tick)")
+                                except Exception:  # noqa: silent-swallow — advisory text only; the harness's own logs carry failures
+                                    _hb_adv_txt = "unreadable this tick"
                         self.audit_manager.log_event(
                             AlertSeverity.INFO, AlertCategory.TRADING,
                             _hb_msg,
@@ -20284,6 +20394,18 @@ class HMATSProductionRunner:
                                     f"CB ${_hb_sleeve_eq:,.0f})"),
                                 "Positions (Kraken)": ", ".join(f"{a}={v}" for a, v in _hb_positions.items()) if _hb_positions else "FLAT",
                                 "Coinbase sleeve": _hb_cb_txt,
+                                # [P272] Passive-holdings advisory: what the
+                                # certified trend/hold book says about assets
+                                # the operator holds OUTSIDE the system
+                                # (recorded decision 2026-08-16: XRP + BTC
+                                # bags are deliberate holds). Informational
+                                # only; labels are one tick stale by design
+                                # (the harness runs after this message).
+                                "Passive books (advisory)": _hb_adv_txt,
+                                # [P273] utilization + the capital the risk
+                                # anchors deliberately do not count
+                                "Sleeve utilization": _hb_util_txt,
+                                "Unmanaged (NOT in equity/risk)": _hb_unmanaged_txt,
                                 "Analysis": "\n".join(_hb_lines),
                             },
                         )
@@ -20615,7 +20737,7 @@ class HMATSProductionRunner:
                                             _maf_pos = int(
                                                 _sl.signed_contracts(_m_a) or 0)
                                             _maf_raw = int(
-                                                _sl.target_for_signal(_m_dir))
+                                                _sl.target_for(_m_a, _m_dir))
                                             (_maf_led, _maf_act,
                                              _maf_why) = sleeve_ma_filter_decision(
                                                 _maf_pos, _maf_raw, _maf_ma)
@@ -20715,7 +20837,7 @@ class HMATSProductionRunner:
                                         try:
                                             _cd_sent_flat = (
                                                 _cd_pre != 0
-                                                and _sl.target_for_signal(_m_dir) == 0
+                                                and _sl.target_for(_m_a, _m_dir) == 0
                                                 and _m_st == "OK")
                                             _cd_now_flat = (
                                                 _cd_pre != 0 and
@@ -20767,7 +20889,7 @@ class HMATSProductionRunner:
                                             _m_a,
                                             intended_target=stop_reconcile_intended_target(
                                                 _m_st,
-                                                _sl.target_for_signal(_m_dir)))
+                                                _sl.target_for(_m_a, _m_dir)))
                                         _st_st = _st_res.get("status")
                                         _cb_stop_summary[_m_a] = _st_st
                                         if _st_st in ("PLACED", "FAILED", "ERROR",

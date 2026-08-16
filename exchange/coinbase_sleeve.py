@@ -69,7 +69,8 @@ class CoinbaseSleeve:
                  max_net_exposure: Optional[float] = None,
                  max_asset_exposure: Optional[Dict[str, float]] = None,
                  maker_first: bool = False,
-                 maker_wait_sec: float = 45.0) -> None:
+                 maker_wait_sec: float = 45.0,
+                 max_contracts_by_asset: Optional[Dict[str, int]] = None) -> None:
         self._adapter = adapter
         # [P270] Maker-first execution. CDE charges 0bps maker vs 3bps taker
         # (probed 2026-08-15: post_only is genuinely ENFORCED — a crossing
@@ -82,6 +83,16 @@ class CoinbaseSleeve:
         # places differently-shaped real orders (P141, operator-watched).
         self._maker_first = bool(maker_first)
         self._maker_wait_sec = max(5.0, float(maker_wait_sec or 45.0))
+        # [P272] Per-asset contract caps — the vol-parity PREP (flat +/-1 is
+        # accidentally ~2.4x more BTC dollar-risk than ETH per contract; the
+        # 2025-26 vol-targeting evidence says size inversely to vol). An
+        # asset absent from the dict falls back to the scalar cap, so an
+        # empty dict is byte-identical to today. Raising any value is the
+        # September sizing activation (own P-entry + operator flip) — note
+        # the driver's target_for_signal still emits +/-1 targets, so caps
+        # alone change nothing until that activation also sizes targets.
+        self._max_contracts_by_asset: Dict[str, int] = {
+            k: int(v) for k, v in (max_contracts_by_asset or {}).items()}
         # [P210] Per-asset gross cap as a fraction of SLEEVE equity. Wired from
         # config post_leverage_caps — the same policy the Kraken path applies,
         # against the equity that actually backs these positions. See can_trade
@@ -512,9 +523,14 @@ class CoinbaseSleeve:
         # must not block getting UNDER the cap. Only gate orders that INCREASE
         # absolute exposure, so an over-cap position (venue drift, a lowered
         # limit, a manual fill) can always be trimmed back down.
-        if resulting > self._max_contracts_per_asset and resulting > abs(cur):
+        # [P272] per-asset cap wins when configured; scalar is the fallback.
+        # getattr-defended: this is the live order path (P85) — pre-P272
+        # pickles/fixtures without the dict must not refuse every order.
+        _cap = int(getattr(self, "_max_contracts_by_asset", {}).get(
+            asset, self._max_contracts_per_asset))
+        if resulting > _cap and resulting > abs(cur):
             return False, (f"coinbase_contract_cap: {resulting:.0f} > "
-                           f"{self._max_contracts_per_asset} for {asset}")
+                           f"{_cap} for {asset}")
 
         # [P208] NET exposure budget across the whole sleeve. The per-asset
         # contract cap above does not aggregate, so all-three-long is ~+0.5x net
@@ -720,6 +736,23 @@ class CoinbaseSleeve:
             return -1
         return 0
 
+    def target_for(self, asset: str, direction: float,
+                   threshold: float = 0.15) -> int:
+        """[P273] SIZED per-asset target: sign from target_for_signal x the
+        configured per-asset size. The configured cap IS the target — the
+        book runs at full configured size or flat/reversed; partial sizes
+        would need a conviction-magnitude input the +/-1-era driver never
+        had. Default size 1 = the historical behavior exactly. Sizing above
+        1 was activated 2026-08-16 by explicit operator instruction ("use
+        as much money as possible"), bounded by the STANDING policy caps —
+        can_trade's per-asset cap, the P208 net budget (0.50) and the P210
+        gross caps all still gate every order independently. getattr-
+        defended: live order path (P85)."""
+        sign = self.target_for_signal(direction, threshold)
+        size = int(getattr(self, "_max_contracts_by_asset", {}).get(
+            asset, 1) or 1)
+        return sign * max(1, size)
+
     async def manage_to_signal(self, asset: str, direction: float,
                                threshold: float = 0.15) -> Dict[str, Any]:
         """Per-tick driver: move `asset` to the contract target implied by the
@@ -739,7 +772,7 @@ class CoinbaseSleeve:
             # the streak pauses rather than resets.
             return {"status": "SKIPPED_STALE", "asset": asset,
                     "reason": "reconcile_failed"}
-        target = self.target_for_signal(direction, threshold)
+        target = self.target_for(asset, direction, threshold)  # [P273] sized
         # [P198] Flip-persistence: an opposing target against a LIVE position
         # must persist `_flip_persist_ticks` consecutive ticks before the flip
         # executes; until then, hold the current position (no close, no

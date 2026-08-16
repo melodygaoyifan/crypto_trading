@@ -380,7 +380,9 @@ class TestP251StaleSnapshotGuard:
         i = MAIN.find("_cd_sent_flat = (")
         assert i > 0, "sent-based flatten record is gone"
         blk = MAIN[i:i + 400]
-        assert "target_for_signal(_m_dir) == 0" in blk
+        # [P273] the driver's targets are SIZED per asset now; the cooldown
+        # still records on a SENT flatten (target == 0), whatever the size
+        assert "target_for(_m_a, _m_dir) == 0" in blk
         assert '== "OK"' in blk
         assert "_cd_now_flat" in MAIN[i:i + 600], (
             "keep the observed-fill record as the belt to the sent strap"
