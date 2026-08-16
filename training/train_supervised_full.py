@@ -71,6 +71,11 @@ BARS_PER_YEAR = 6 * 365
 
 # ---------------------------------------------------------------- stages 1-2
 def load_asset(asset):
+    # [P280] refuse leaked/unverifiable regime features before any lab or
+    # model touches them (shared enforcement with train_drl_full; the
+    # parquet + gmm_config are one artifact set, P215)
+    from splits import assert_clean_gmm
+    assert_clean_gmm(asset)
     df = pd.read_parquet(DATA_DIR / f"{asset}_4H_full.parquet")
     manifest = json.loads((REPO / "configs" / "feature_manifest.json").read_text(encoding="utf-8"))
     feats = [c for c in manifest["all_features"] if c in df.columns]

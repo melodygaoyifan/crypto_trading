@@ -100,3 +100,44 @@ def validation_spend(asset):
     ledger = _load_ledger()
     return sorted({r["experiment"] for r in ledger["records"]
                    if r["asset"] == asset and r["purpose"] == "validation"})
+
+
+def assert_clean_gmm(asset: str) -> dict:
+    """[P280] REFUSE to train/evaluate on a parquet whose regime features
+    came from a leaked GMM fit.
+
+    The parquet's regime_proba columns and the training-side gmm_config are
+    ONE artifact set (P215): the config's ``fit_policy`` records whether the
+    GMM that produced them was fit split-aware (clean, P200) or on 100% of
+    history (the P164 leak). Verifying this was a HUMAN step (Guide V2 §3;
+    the P257 launch did it by hand) — the P279 research found no trainer or
+    lab enforces it, so a run that skips the manual check trains on
+    whatever is on disk. This helper is the enforcement: called at startup
+    by train_drl_full and by regime_model_lab's loader.
+
+    A MISSING config or MISSING fit_policy also refuses (a pre-P200 fit is
+    leaky by construction, and a check that cannot run must never read as a
+    check that passed, P159). There is deliberately NO override flag — a
+    leaked GMM has no legitimate training use; visualization uses
+    rebuild_pipeline's explicit --gmm-no-split path, which never reaches
+    here. Returns the parsed config on success.
+    """
+    cfg_path = (REPO / "training" / "training_data" / "gmm_models"
+                / asset / "gmm_config.json")
+    if not cfg_path.exists():
+        raise SystemExit(
+            f"[CLEAN-GMM] REFUSING: {cfg_path} does not exist — the "
+            f"regime features' provenance cannot be verified. Run "
+            f"`python -X utf8 training/scripts/rebuild_pipeline.py "
+            f"--smooth 2` (fits split-aware GMMs + parquets as one set, "
+            f"P215) and retry.")
+    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    policy = cfg.get("fit_policy")
+    if policy != "split_aware":
+        raise SystemExit(
+            f"[CLEAN-GMM] REFUSING: {asset} gmm_config fit_policy="
+            f"{policy!r}, need 'split_aware'. A full-sample fit is the "
+            f"P164/P200 leak — every regime feature in the parquet saw "
+            f"the future. Rebuild with rebuild_pipeline.py (never "
+            f"--gmm-no-split for training) and retry.")
+    return cfg

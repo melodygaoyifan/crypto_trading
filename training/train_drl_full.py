@@ -3182,6 +3182,15 @@ def main():
                       f"(n_stack=8 memory: {args.buffer_size * 8 * 126 * 4 * 2 / 1e9:.1f} GB)")
         args.buffer_size = 500_000
 
+    # [P280] HARD GATE: refuse a leaked/unverifiable GMM before spending a
+    # single GPU-minute. The parquet's regime features and the training-side
+    # gmm_config are one artifact set (P215); this was a manual Guide-§3
+    # check until P279 found nothing enforces it.
+    from splits import assert_clean_gmm
+    _gmm_cfg = assert_clean_gmm(args.asset)
+    logger.info(f"  [CLEAN-GMM] {args.asset}: fit_policy=split_aware "
+                f"k={_gmm_cfg.get('n_components')} — verified")
+
     # Resolve data path
     data_path = args.data or str(_TRAINING_DIR / "training_data" / "drl_training" / f"{args.asset}_4H_full.parquet")
     logger.info(f"Loading data: {data_path}")
