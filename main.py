@@ -1620,6 +1620,12 @@ class ProductionConfig:
     # getattr defaults so wiring them changes no current behaviour.
     trend_regime_gate: str = "shadow"
     coinbase_flip_persist_ticks: int = 2
+    # [P270] Maker-first sleeve execution: post-only at the touch (CDE maker
+    # = 0bps vs taker 3bps; post_only enforcement probed live 2026-08-15),
+    # intra-call poll -> cancel -> cross remainder. Default OFF; absent from
+    # the live profile until deliberately enabled (P141).
+    coinbase_maker_first: bool = False
+    coinbase_maker_wait_sec: float = 45.0
     # [P256] The regimebook SEAT: "off" (default — harness records, nothing
     # consumed), or "enforce" — the P248/P250 book target OVERRIDES the
     # direction seat (the same quant-slot injection the trend layer uses),
@@ -1947,6 +1953,11 @@ class ProductionConfig:
                 data.get("trend_regime_gate", "shadow") or "shadow"),
             coinbase_flip_persist_ticks=int(
                 data.get("coinbase_flip_persist_ticks", 2) or 0),
+            # [P270] declared + parsed together (the P201 rule)
+            coinbase_maker_first=bool(
+                data.get("coinbase_maker_first", False)),
+            coinbase_maker_wait_sec=float(
+                data.get("coinbase_maker_wait_sec", 45.0) or 45.0),
             # [P256] declared + parsed together (the P201 rule)
             regimebook_mode=str(
                 data.get("regimebook_mode", "off") or "off"),
@@ -2383,7 +2394,9 @@ async def sleeve_fast_risk_action(sleeve, asset: str, action_name: str,
         if cur == 0:
             return "FLAT", "no sleeve position"
         if action_name == "EXIT_ONLY":
-            res = await sleeve.execute_target(asset, 0)
+            # [P270] urgent=True: the watchdog exists for immediacy — a
+            # maker-wait window here would hold risk open to save 3bps
+            res = await sleeve.execute_target(asset, 0, urgent=True)
             return "EXITED", f"execute_target(0) -> {res.get('status')}"
         if action_name == "REDUCE_50":
             if abs(cur) <= 1:
@@ -2391,7 +2404,7 @@ async def sleeve_fast_risk_action(sleeve, asset: str, action_name: str,
                         f"|contracts|={abs(cur)} — 1-contract granularity, "
                         f"cannot halve (venue-resting stop still protects)")
             _tgt = int(cur / 2)  # truncates toward zero = a genuine reduce
-            res = await sleeve.execute_target(asset, _tgt)
+            res = await sleeve.execute_target(asset, _tgt, urgent=True)
             return "REDUCED", f"execute_target({_tgt}) -> {res.get('status')}"
         return "IGNORED", f"unhandled action {action_name!r}"
     except Exception as e:  # fail-soft: watchdog must never kill the loop
@@ -5485,6 +5498,20 @@ class HMATSProductionRunner:
         except Exception as _rbs_err:
             logger.warning(f"  [P248] RegimeBookShadow init failed: "
                            f"{type(_rbs_err).__name__}: {_rbs_err}")
+
+        # [P270] ETF-flow shadow — BTC/ETH spot-ETF daily net flow as a
+        # forward-ledgered direction candidate (observation-only, Iron Law
+        # 7). Same self-contained pattern as P248; its 30d P166 clock starts
+        # at the first deploy that runs it.
+        self._etf_flow_shadow = None
+        try:
+            from defense.etf_flow_shadow import EtfFlowShadow
+            self._etf_flow_shadow = EtfFlowShadow(data_dir="data")
+            logger.info("  [P270] EtfFlowShadow: ACTIVE (observation-only; "
+                        "BTC+ETH, CoinGlass v4 ETF flow-history)")
+        except Exception as _efs_err:
+            logger.warning(f"  [P270] EtfFlowShadow init failed: "
+                           f"{type(_efs_err).__name__}: {_efs_err}")
 
         # =====================================================================
         # [v5.1 Phase 6] ML factor fusion agent shadow harness (SHADOW)
@@ -16476,7 +16503,9 @@ class HMATSProductionRunner:
                             # target 0 = flatten. can_trade permits a reduce even
                             # when the sleeve is halted (P195), so a tripped
                             # drawdown halt cannot block the emergency exit.
-                            _cb_r = await _cb_sleeve.execute_target(_cb_a, 0)
+                            # [P270] urgent=True: FORCE_FLAT never maker-waits
+                            _cb_r = await _cb_sleeve.execute_target(
+                                _cb_a, 0, urgent=True)
                             logger.critical(
                                 f"[EMERGENCY_FLAT] Coinbase {_cb_a}: "
                                 f"{_cb_r.get('status')} "
@@ -19698,6 +19727,11 @@ class HMATSProductionRunner:
                 max_contracts_per_asset=int(getattr(
                     self.config, "coinbase_max_contracts_per_asset",
                     1) or 1),
+                # [P270] maker-first (default OFF; 0bps vs 3bps taker)
+                maker_first=bool(getattr(
+                    self.config, "coinbase_maker_first", False)),
+                maker_wait_sec=float(getattr(
+                    self.config, "coinbase_maker_wait_sec", 45.0) or 45.0),
             )
             return self._coinbase_sleeve
         except Exception as _e:
@@ -20904,6 +20938,16 @@ class HMATSProductionRunner:
                     except Exception as _rbs_e:  # noqa: silent-swallow
                         logger.warning(f"[REGIMEBOOK] tick failed: "
                                        f"{type(_rbs_e).__name__} — ledger "
+                                       f"stale this cycle")
+
+                # [P270] ETF-flow shadow tick — same loop-level placement so
+                # no sleeve/heartbeat branch can starve it (P227 lesson).
+                if getattr(self, "_etf_flow_shadow", None) is not None:
+                    try:
+                        self._etf_flow_shadow.tick()
+                    except Exception as _efs_e:  # noqa: silent-swallow
+                        logger.warning(f"[ETFFLOW] tick failed: "
+                                       f"{type(_efs_e).__name__} — ledger "
                                        f"stale this cycle")
 
                 _wait_secs_live = self._seconds_until_next_4h_candle(offset_seconds=90)

@@ -415,6 +415,22 @@
    "start": 9100,
    "end": 13034,
    "purpose": "DIAGNOSIS of the spent P259b validation read \u2014 IC/decomposition of the same candidate family, no new candidate"
+  },
+  {
+   "ts": "2026-08-15T23:52:27.223645+00:00",
+   "experiment": "volskip_p270",
+   "asset": "ETH",
+   "start": 9100,
+   "end": 13095,
+   "purpose": "validation"
+  },
+  {
+   "ts": "2026-08-15T23:52:27.285145+00:00",
+   "experiment": "volskip_p270",
+   "asset": "SOL",
+   "start": 9100,
+   "end": 13034,
+   "purpose": "validation"
   }
  ]
 }

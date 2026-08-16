@@ -24,6 +24,7 @@ Sync (reuses the adapter's RESTClient); fail-soft (never raises to the caller).
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import math
@@ -66,8 +67,21 @@ class CoinbaseSleeve:
                  protective_stop_assets=None,
                  flip_persist_ticks: int = 0,
                  max_net_exposure: Optional[float] = None,
-                 max_asset_exposure: Optional[Dict[str, float]] = None) -> None:
+                 max_asset_exposure: Optional[Dict[str, float]] = None,
+                 maker_first: bool = False,
+                 maker_wait_sec: float = 45.0) -> None:
         self._adapter = adapter
+        # [P270] Maker-first execution. CDE charges 0bps maker vs 3bps taker
+        # (probed 2026-08-15: post_only is genuinely ENFORCED — a crossing
+        # post-only previews PREVIEW_INVALID_LIMIT_PRICE_POST_ONLY, so this
+        # cannot silently degrade into taker wearing maker's name, the P169
+        # shape). When on, execute_target tries a post-only order joining the
+        # touch, polls up to maker_wait_sec INSIDE the same call, cancels,
+        # and crosses the remainder — an entry is NEVER left resting across
+        # ticks (the P265 dead-signal-fill class). Default OFF: enabling
+        # places differently-shaped real orders (P141, operator-watched).
+        self._maker_first = bool(maker_first)
+        self._maker_wait_sec = max(5.0, float(maker_wait_sec or 45.0))
         # [P210] Per-asset gross cap as a fraction of SLEEVE equity. Wired from
         # config post_leverage_caps — the same policy the Kraken path applies,
         # against the equity that actually backs these positions. See can_trade
@@ -1069,8 +1083,102 @@ class CoinbaseSleeve:
                            f"({type(e).__name__}: {e}); position may be unprotected")
             return {"status": "ERROR", "asset": asset, "reason": str(e)}
 
+    async def _maker_first_attempt(self, pid: str, asset: str, side: str,
+                                   base_size: float) -> str:
+        """[P270] One post-only attempt joining the touch, resolved INSIDE
+        this call. Returns:
+          "DONE"          — order left the book (filled or gone); caller
+                            recomputes the remaining delta from reconcile
+          "FALLBACK"      — no maker fill possible (no bid/ask, placement
+                            rejected, e.g. price crossed between quote and
+                            place); caller proceeds straight to the cross
+          "CANCEL_FAILED" — timeout AND the cancel failed: the maker order
+                            may still be live, so the caller must NOT place
+                            the cross (two live orders for one delta = the
+                            P265 double-order class). Next tick's stale-entry
+                            sweep retries.
+        Never raises."""
+        try:
+            from exchange.adapter import OrderRequest
+            # Join the touch: post-only BUY at the best bid / SELL at the
+            # best ask. Mid-based pricing is NOT safe here — on a 1-tick
+            # spread, mid rounds onto the opposite touch and the venue
+            # rejects the post-only (correctly).
+            try:
+                bb = self._adapter._client.get_best_bid_ask(product_ids=[pid])
+                books = _g(bb, "pricebooks") or []
+                book = books[0] if books else None
+                bids = _g(book, "bids") or []
+                asks = _g(book, "asks") or []
+                best_bid = _f(_g(bids[0], "price")) if bids else 0.0
+                best_ask = _f(_g(asks[0], "price")) if asks else 0.0
+            except Exception as e:
+                self._maker_log_once(asset, f"no best_bid_ask "
+                                     f"({type(e).__name__}) — taker fallback")
+                return "FALLBACK"
+            px = best_bid if side == "BUY" else best_ask
+            if not (px and math.isfinite(px) and px > 0):
+                self._maker_log_once(asset, "empty book side — taker fallback")
+                return "FALLBACK"
+            req = OrderRequest(symbol=pid, side=side, size=base_size,
+                               order_type="LIMIT", price=px, post_only=True)
+            res = await self._adapter.place_order(req)
+            if not res.success:
+                # includes INVALID_LIMIT_PRICE_POST_ONLY when the touch moved
+                # through our price between quote and place — cross instead
+                logger.info(f"[COINBASE-MAKER] {asset}: post-only rejected "
+                            f"({res.error_code}) — taker fallback")
+                return "FALLBACK"
+            oid = str(res.order_id or "")
+            if not oid:
+                # accepted but no id to poll/cancel by: treat as DONE and let
+                # the caller's reconcile+remainder logic settle the truth —
+                # never place a blind second order beside an untracked one.
+                logger.warning(f"[COINBASE-MAKER] {asset}: accepted post-only "
+                               f"carried no order_id — resolving via "
+                               f"reconcile only")
+                return "DONE"
+            deadline = time.monotonic() + self._maker_wait_sec
+            while time.monotonic() < deadline:
+                await asyncio.sleep(5.0)
+                try:
+                    open_orders = await self._adapter.fetch_open_orders(pid)
+                except Exception:
+                    continue  # transient list failure — keep waiting
+                still_open = any(
+                    str(_g(o, "order_id") or _g(o, "id") or "") == oid
+                    for o in (open_orders or []))
+                if not still_open:
+                    logger.info(f"[COINBASE-MAKER] {asset}: post-only left "
+                                f"the book within the window (filled at "
+                                f"0bps maker)")
+                    return "DONE"
+            if await self._adapter.cancel_order(oid, pid):
+                logger.info(f"[COINBASE-MAKER] {asset}: unfilled after "
+                            f"{self._maker_wait_sec:.0f}s — cancelled, "
+                            f"crossing the remainder")
+                return "DONE"
+            logger.warning(f"[COINBASE-MAKER] {asset}: timeout AND cancel "
+                           f"FAILED — order {oid} may be live; refusing to "
+                           f"place the cross (double-order risk, P265). "
+                           f"Next tick retries.")
+            return "CANCEL_FAILED"
+        except Exception as e:  # noqa: silent-swallow — a maker attempt must never break execution; fallback is the stated consequence (logged)
+            logger.warning(f"[COINBASE-MAKER] {asset}: attempt error "
+                           f"({type(e).__name__}: {e}) — taker fallback")
+            return "FALLBACK"
+
+    def _maker_log_once(self, asset: str, msg: str) -> None:
+        key = f"maker:{asset}:{msg}"
+        if not hasattr(self, "_maker_warned"):
+            self._maker_warned: set = set()
+        if key not in self._maker_warned:
+            self._maker_warned.add(key)
+            logger.info(f"[COINBASE-MAKER] {asset}: {msg}")
+
     async def execute_target(self, asset: str, target_signed_contracts: int,
-                             order_type: str = "LIMIT") -> Dict[str, Any]:
+                             order_type: str = "LIMIT",
+                             urgent: bool = False) -> Dict[str, Any]:
         """Move `asset` to a target signed contract count (e.g. +1 long, -1
         short, 0 flat) via a single marketable order. Risk-gated by can_trade.
         This is the isolated Coinbase execution primitive the engine fork calls.
@@ -1152,6 +1260,49 @@ class CoinbaseSleeve:
                              f"refusing to place a priceless order")
                 return {"status": "ERROR", "asset": asset,
                         "reason": f"no_price:mid={mid!r}"}
+            # [P270] Maker-first ladder: post-only at the touch (0bps) ->
+            # poll inside this call -> cancel -> cross whatever remains at
+            # taker (3bps). Skipped when urgent (FORCE_FLAT and the fast-risk
+            # watchdog need immediacy, not fee savings) or for non-LIMIT
+            # callers. Resolved remainder from a fresh reconcile so a partial
+            # maker fill is crossed exactly once, never double-ordered.
+            maker_note = None
+            if self._maker_first and not urgent and order_type == "LIMIT":
+                _mk = await self._maker_first_attempt(pid, asset, side,
+                                                      base_size)
+                if _mk == "CANCEL_FAILED":
+                    return {"status": "FAILED", "asset": asset, "side": side,
+                            "reason": "maker_cancel_failed_no_cross"}
+                if _mk == "DONE":
+                    self.reconcile_positions()
+                    if not self._reconcile_ok:
+                        # cannot see the book after the maker attempt —
+                        # crossing blind can double-fill (P141/P253 rule)
+                        return {"status": "SKIPPED_STALE", "asset": asset,
+                                "reason": "post_maker_reconcile_failed"}
+                    cur = self.signed_contracts(asset)
+                    delta = int(round(target_signed_contracts - cur))
+                    if delta == 0:
+                        logger.info(f"[COINBASE_SLEEVE] execute_target "
+                                    f"{asset} {side} filled as MAKER (0bps) "
+                                    f"-> now={cur}ct")
+                        return {"status": "OK", "asset": asset, "side": side,
+                                "contracts": n_contracts, "maker": True,
+                                "position_after": cur}
+                    # partial (or none) filled as maker — cross the remainder
+                    side = "BUY" if delta > 0 else "SELL"
+                    n_contracts = abs(delta)
+                    base_size = n_contracts * cs
+                    maker_note = "partial_maker"
+                    # refresh the price for the cross: the maker window may
+                    # have been most of a minute, and the old mid is what the
+                    # priceless-order guard above certified, not this one
+                    prod = self._adapter._client.get_product(product_id=pid)
+                    mid = _f(_g(prod, "mid_market_price") or _g(prod, "price"))
+                    if not (mid and math.isfinite(mid) and mid > 0):
+                        return {"status": "ERROR", "asset": asset,
+                                "reason": f"no_price_post_maker:mid={mid!r}"}
+                # _mk == "FALLBACK": fall through to the marketable cross
             px = mid * (1.002 if side == "BUY" else 0.998)
             req = OrderRequest(symbol=pid, side=side, size=base_size,
                                order_type=order_type, price=px, post_only=False)
@@ -1159,9 +1310,11 @@ class CoinbaseSleeve:
             self.reconcile_positions()
             logger.info(f"[COINBASE_SLEEVE] execute_target {asset} {side} "
                         f"{n_contracts}ct -> success={res.success} "
-                        f"now={self.signed_contracts(asset)}ct")
+                        f"now={self.signed_contracts(asset)}ct"
+                        + (f" ({maker_note})" if maker_note else ""))
             return {"status": "OK" if res.success else "FAILED", "asset": asset,
                     "side": side, "contracts": n_contracts, "order": res,
+                    "maker_note": maker_note,
                     "position_after": self.signed_contracts(asset)}
         except Exception as e:
             logger.error(f"[COINBASE_SLEEVE] execute_target {asset} error: "

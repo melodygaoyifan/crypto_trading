@@ -1,0 +1,53 @@
+{
+ "generated": "2026-08-15T23:52:27.134277+00:00",
+ "candidate": "volskip_q0.8_entry_filter",
+ "note": "single sanctioned validation read (P259b ordering rule); window multiply-read for other candidates \u2014 comparisons vs the base book carry the P260 discount",
+ "assets": {
+  "ETH": {
+   "window": [
+    9100,
+    13095
+   ],
+   "base_book": {
+    "gross": 0.5242,
+    "cost": 0.024,
+    "net": 0.5002
+   },
+   "volskip": {
+    "gross": 0.588,
+    "cost": 0.0224,
+    "net": 0.5656
+   },
+   "buy_and_hold": {
+    "gross": 0.1661,
+    "cost": 0.0,
+    "net": 0.1661
+   },
+   "increment_net": 0.0654,
+   "expanding_thr_at_end": 0.018769
+  },
+  "SOL": {
+   "window": [
+    9100,
+    13034
+   ],
+   "base_book": {
+    "gross": 0.1357,
+    "cost": 0.0429,
+    "net": 0.0928
+   },
+   "volskip": {
+    "gross": 0.1357,
+    "cost": 0.0429,
+    "net": 0.0928
+   },
+   "buy_and_hold": {
+    "gross": -0.2118,
+    "cost": 0.0,
+    "net": -0.2118
+   },
+   "increment_net": 0.0,
+   "expanding_thr_at_end": 0.028449
+  }
+ }
+}

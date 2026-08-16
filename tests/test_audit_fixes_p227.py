@@ -49,7 +49,11 @@ class _FakeSleeve:
     def signed_contracts(self, asset):
         return self._contracts
 
-    async def execute_target(self, asset, target, order_type="LIMIT"):
+    async def execute_target(self, asset, target, order_type="LIMIT",
+                             urgent=False):
+        # [P270] the watchdog passes urgent=True (emergency exits must never
+        # maker-wait); the fake accepts and records it like the real ctor
+        self.last_urgent = urgent
         if self._boom:
             raise RuntimeError("venue exploded")
         self.calls.append((asset, target))

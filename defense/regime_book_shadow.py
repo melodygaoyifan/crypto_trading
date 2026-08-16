@@ -95,6 +95,20 @@ def causal_funding_z(daily_rates) -> Optional[float]:
 # ledger below is its forward exam alongside the raw book's.
 ADJ_PARAMS = {"BTC": (1, 2, 0), "ETH": (3, 1, 0), "SOL": (1, 1, 6)}
 
+# [P270] High-vol entry-skip overlay — ETH ONLY, the entry_filter_lab's sole
+# THREE-era winner (design +0.088->+0.136, pre-design +1.473->+1.536, and
+# the single ledgered validation read +0.500->+0.566; SOL's validation
+# increment was exactly 0.0 — no ledger, and BTC's base stood in-design).
+# The threshold is the CONSTANT causal expanding-q0.80 value exported at
+# read time (training/reports/volskip_validation_read_p270.json), refreshed
+# per re-export — the lab's expanding quantile moves glacially over 6y, and
+# a constant snapshot is the same deliberate lab/live divergence the P259
+# banded export recorded for its sigma. Entries are gated; exits NEVER are
+# (the P195/P236 asymmetry); a flip whose entry leg is vol-blocked degrades
+# to a flatten.
+VOLSKIP_THR = {"ETH": 0.018769}   # rolling-20 4H log-ret std, q0.80
+VOLSKIP_MIN_CLOSES = 21
+
 
 def adjust_step(state: dict, want: float, k_exit: int, k_flip: int,
                 min_hold: int) -> float:
@@ -278,6 +292,7 @@ class RegimeBookShadow:
         self._banded_models: Dict[str, Optional[dict]] = {
             a: self._load_banded(a, repo_root) for a in ("BTC", "ETH", "SOL")}
         self._banded_state: Dict[str, dict] = {}
+        self._volskip_state: Dict[str, dict] = {}  # [P270] asset -> {"cur"}
         self._sol_model = self._load_sol_model(repo_root)
         self._warned: set = set()
         self._funding_stale: Dict[str, bool] = {}  # [P265] per-asset stale-z latch (re-armable)
@@ -499,6 +514,53 @@ class RegimeBookShadow:
                    else float(banded))
         return overlay, float(banded), float(s)
 
+    def _volskip_target(self, asset: str, closes, raw_target: float):
+        """[P270] One live step of the entry_filter_lab volskip mechanism.
+
+        Returns (filtered_target, vol20, allow) or None when the asset has
+        no exported threshold. Single-step form of apply_entry_filter:
+          - exits (raw -> 0) are ALWAYS honored;
+          - entries from flat and the entry LEG of a flip require
+            vol20 <= VOLSKIP_THR (a blocked flip degrades to flatten);
+          - unavailable vol reads as allow=False — absence must not open
+            positions the filter would have vetoed, and can never force an
+            exit (P2: absence is not a signal).
+        State starts flat (cur=0): a one-time initialization transient, the
+        same accepted shape as the adjust ledger's in-memory state.
+        """
+        thr = VOLSKIP_THR.get(asset)
+        if thr is None:
+            return None
+        vol20 = None
+        allow = False
+        try:
+            if closes is not None and len(closes) >= VOLSKIP_MIN_CLOSES:
+                import math as _m
+                w = closes[-VOLSKIP_MIN_CLOSES:]
+                rets = [_m.log(w[i + 1] / w[i]) for i in range(len(w) - 1)
+                        if w[i] > 0 and w[i + 1] > 0]
+                if len(rets) >= VOLSKIP_MIN_CLOSES - 1:
+                    mu = sum(rets) / len(rets)
+                    # ddof=1 to match pandas.Series.rolling(20).std()
+                    var = sum((r - mu) ** 2 for r in rets) / (len(rets) - 1)
+                    vol20 = var ** 0.5
+                    allow = vol20 <= thr
+        except Exception:  # noqa: silent-swallow — vol failure means allow=False (entries blocked, exits untouched); ledger row records vol=None
+            vol20, allow = None, False
+        st = self._volskip_state.setdefault(asset, {"cur": 0.0})
+        cur = float(st.get("cur", 0.0))
+        want = float(raw_target)
+        if want == cur:
+            pass
+        elif want == 0.0:
+            cur = 0.0                      # exit — always honored
+        elif cur == 0.0:
+            cur = want if allow else 0.0   # entry from flat
+        else:
+            cur = want if allow else 0.0   # flip: entry leg gated
+        st["cur"] = cur
+        return cur, vol20, allow
+
     def observe_features(self, asset: str, market_data: dict,
                          agent_signals: Optional[dict] = None):
         """Stash the SOL model's named features from the tick's live dicts.
@@ -638,6 +700,26 @@ class RegimeBookShadow:
             except Exception as _bd_e:  # noqa: silent-swallow — overlay leg; failure must not lose the raw record (logged)
                 logger.warning("[REGIMEBOOK] %s banded-ledger write failed: "
                                "%s", asset, type(_bd_e).__name__)
+            # [P270] The volskip ENTRY-FILTER ledger (ETH only — the
+            # entry_filter_lab's sole three-era winner). Same glob prefix,
+            # distinct strategy name, zero scorer changes. Fail-soft: the
+            # raw record above is already written and returned.
+            try:
+                vsk = self._volskip_target(asset, closes, float(target))
+                if vsk is not None:
+                    _vt, _vol, _allow = vsk
+                    vrec = dict(rec, strategy="regimebook_volskip",
+                                direction=float(_vt),
+                                confidence=abs(float(_vt)),
+                                vol20=None if _vol is None else round(_vol, 6),
+                                vol_thr=VOLSKIP_THR.get(asset),
+                                entry_allowed=bool(_allow))
+                    vpath = self._dir / f"regimebook_volskip_{asset}.jsonl"
+                    with open(vpath, "a", encoding="utf-8") as f:
+                        f.write(json.dumps(vrec) + "\n")
+            except Exception as _vs_e:  # noqa: silent-swallow — overlay leg; failure must not lose the raw record (logged)
+                logger.warning("[REGIMEBOOK] %s volskip-ledger write failed: "
+                               "%s", asset, type(_vs_e).__name__)
             return rec
         except Exception as e:  # noqa: BLE001
             logger.warning("[REGIMEBOOK] %s tick record failed: %s — shadow "

@@ -1,0 +1,388 @@
+{
+ "generated": "2026-08-15T23:51:28.192770+00:00",
+ "design_era": [
+  3000,
+  9100
+ ],
+ "pre_design_era": [
+  800,
+  3000
+ ],
+ "note": "DESIGN-ERA selection + pre-design stability ONLY. No validation-era bar scored (hard-asserted). A mechanism earns a forward ledger only on BOTH-era wins; nothing here deploys anything.",
+ "volskip": {
+  "BTC": {
+   "base": {
+    "design": {
+     "gross": 1.2002,
+     "cost": 0.1305,
+     "net": 1.0697,
+     "turnover_units": 435.0
+    },
+    "pre_design": {
+     "gross": 0.7119,
+     "cost": 0.0261,
+     "net": 0.6858,
+     "turnover_units": 87.0
+    }
+   },
+   "grid": {
+    "q0.67": {
+     "design": {
+      "gross": 1.0808,
+      "cost": 0.1227,
+      "net": 0.9581,
+      "turnover_units": 409.0
+     },
+     "pre_design": {
+      "gross": 0.8559,
+      "cost": 0.0165,
+      "net": 0.8394,
+      "turnover_units": 55.0
+     }
+    },
+    "q0.8": {
+     "design": {
+      "gross": 1.0691,
+      "cost": 0.1227,
+      "net": 0.9464,
+      "turnover_units": 409.0
+     },
+     "pre_design": {
+      "gross": 0.9616,
+      "cost": 0.0189,
+      "net": 0.9427,
+      "turnover_units": 63.0
+     }
+    },
+    "q0.9": {
+     "design": {
+      "gross": 1.1777,
+      "cost": 0.1305,
+      "net": 1.0472,
+      "turnover_units": 435.0
+     },
+     "pre_design": {
+      "gross": 0.6609,
+      "cost": 0.0231,
+      "net": 0.6378,
+      "turnover_units": 77.0
+     }
+    }
+   },
+   "selected_q": 0.9,
+   "verdict": "base stands"
+  },
+  "ETH": {
+   "base": {
+    "design": {
+     "gross": 0.144,
+     "cost": 0.056,
+     "net": 0.088,
+     "turnover_units": 140.0
+    },
+    "pre_design": {
+     "gross": 1.4956,
+     "cost": 0.0228,
+     "net": 1.4728,
+     "turnover_units": 57.0
+    }
+   },
+   "grid": {
+    "q0.67": {
+     "design": {
+      "gross": 0.1759,
+      "cost": 0.0528,
+      "net": 0.1231,
+      "turnover_units": 132.0
+     },
+     "pre_design": {
+      "gross": 1.5159,
+      "cost": 0.0188,
+      "net": 1.4971,
+      "turnover_units": 47.0
+     }
+    },
+    "q0.8": {
+     "design": {
+      "gross": 0.1903,
+      "cost": 0.0544,
+      "net": 0.1359,
+      "turnover_units": 136.0
+     },
+     "pre_design": {
+      "gross": 1.5565,
+      "cost": 0.0204,
+      "net": 1.5361,
+      "turnover_units": 51.0
+     }
+    },
+    "q0.9": {
+     "design": {
+      "gross": 0.144,
+      "cost": 0.056,
+      "net": 0.088,
+      "turnover_units": 140.0
+     },
+     "pre_design": {
+      "gross": 1.5565,
+      "cost": 0.0204,
+      "net": 1.5361,
+      "turnover_units": 51.0
+     }
+    }
+   },
+   "selected_q": 0.8,
+   "verdict": "EARNS BOTH ERAS"
+  },
+  "SOL": {
+   "base": {
+    "design": {
+     "gross": 1.3027,
+     "cost": 0.0923,
+     "net": 1.2104,
+     "turnover_units": 142.0
+    },
+    "pre_design": {
+     "gross": 3.3571,
+     "cost": 0.0546,
+     "net": 3.3025,
+     "turnover_units": 84.0
+    }
+   },
+   "grid": {
+    "q0.67": {
+     "design": {
+      "gross": 1.3685,
+      "cost": 0.0884,
+      "net": 1.2801,
+      "turnover_units": 136.0
+     },
+     "pre_design": {
+      "gross": 3.5062,
+      "cost": 0.0507,
+      "net": 3.4555,
+      "turnover_units": 78.0
+     }
+    },
+    "q0.8": {
+     "design": {
+      "gross": 1.3781,
+      "cost": 0.0897,
+      "net": 1.2884,
+      "turnover_units": 138.0
+     },
+     "pre_design": {
+      "gross": 3.4221,
+      "cost": 0.0507,
+      "net": 3.3714,
+      "turnover_units": 78.0
+     }
+    },
+    "q0.9": {
+     "design": {
+      "gross": 1.3027,
+      "cost": 0.0923,
+      "net": 1.2104,
+      "turnover_units": 142.0
+     },
+     "pre_design": {
+      "gross": 3.6177,
+      "cost": 0.0507,
+      "net": 3.567,
+      "turnover_units": 78.0
+     }
+    }
+   },
+   "selected_q": 0.8,
+   "verdict": "EARNS BOTH ERAS"
+  }
+ },
+ "htf": {
+  "BTC": {
+   "base": {
+    "design": {
+     "gross": 1.2002,
+     "cost": 0.1305,
+     "net": 1.0697,
+     "turnover_units": 435.0
+    },
+    "pre_design": {
+     "gross": 0.7119,
+     "cost": 0.0261,
+     "net": 0.6858,
+     "turnover_units": 87.0
+    }
+   },
+   "grid": {
+    "sma400": {
+     "design": {
+      "gross": 1.0384,
+      "cost": 0.0843,
+      "net": 0.9541,
+      "turnover_units": 281.0
+     },
+     "pre_design": {
+      "gross": 1.0015,
+      "cost": 0.0153,
+      "net": 0.9862,
+      "turnover_units": 51.0
+     }
+    },
+    "sma600": {
+     "design": {
+      "gross": 1.1218,
+      "cost": 0.0843,
+      "net": 1.0375,
+      "turnover_units": 281.0
+     },
+     "pre_design": {
+      "gross": 0.9202,
+      "cost": 0.0165,
+      "net": 0.9037,
+      "turnover_units": 55.0
+     }
+    },
+    "sma900": {
+     "design": {
+      "gross": 1.3057,
+      "cost": 0.084,
+      "net": 1.2217,
+      "turnover_units": 280.0
+     },
+     "pre_design": {
+      "gross": 0.3287,
+      "cost": 0.0192,
+      "net": 0.3095,
+      "turnover_units": 64.0
+     }
+    }
+   },
+   "selected_w": 900,
+   "verdict": "ERA-FRAGILE"
+  },
+  "ETH": {
+   "base": {
+    "design": {
+     "gross": 0.144,
+     "cost": 0.056,
+     "net": 0.088,
+     "turnover_units": 140.0
+    },
+    "pre_design": {
+     "gross": 1.4956,
+     "cost": 0.0228,
+     "net": 1.4728,
+     "turnover_units": 57.0
+    }
+   },
+   "grid": {
+    "sma400": {
+     "design": {
+      "gross": 0.0575,
+      "cost": 0.0464,
+      "net": 0.0111,
+      "turnover_units": 116.0
+     },
+     "pre_design": {
+      "gross": 1.561,
+      "cost": 0.0212,
+      "net": 1.5398,
+      "turnover_units": 53.0
+     }
+    },
+    "sma600": {
+     "design": {
+      "gross": 0.007,
+      "cost": 0.0544,
+      "net": -0.0474,
+      "turnover_units": 136.0
+     },
+     "pre_design": {
+      "gross": 1.561,
+      "cost": 0.0212,
+      "net": 1.5398,
+      "turnover_units": 53.0
+     }
+    },
+    "sma900": {
+     "design": {
+      "gross": 0.2135,
+      "cost": 0.052,
+      "net": 0.1615,
+      "turnover_units": 130.0
+     },
+     "pre_design": {
+      "gross": 0.8822,
+      "cost": 0.0224,
+      "net": 0.8598,
+      "turnover_units": 56.0
+     }
+    }
+   },
+   "selected_w": 900,
+   "verdict": "ERA-FRAGILE"
+  },
+  "SOL": {
+   "base": {
+    "design": {
+     "gross": 1.3027,
+     "cost": 0.0923,
+     "net": 1.2104,
+     "turnover_units": 142.0
+    },
+    "pre_design": {
+     "gross": 3.3571,
+     "cost": 0.0546,
+     "net": 3.3025,
+     "turnover_units": 84.0
+    }
+   },
+   "grid": {
+    "sma400": {
+     "design": {
+      "gross": 1.0584,
+      "cost": 0.0663,
+      "net": 0.9921,
+      "turnover_units": 102.0
+     },
+     "pre_design": {
+      "gross": 3.4684,
+      "cost": 0.0481,
+      "net": 3.4203,
+      "turnover_units": 74.0
+     }
+    },
+    "sma600": {
+     "design": {
+      "gross": 1.0285,
+      "cost": 0.0754,
+      "net": 0.9531,
+      "turnover_units": 116.0
+     },
+     "pre_design": {
+      "gross": 3.3571,
+      "cost": 0.0546,
+      "net": 3.3025,
+      "turnover_units": 84.0
+     }
+    },
+    "sma900": {
+     "design": {
+      "gross": 1.1913,
+      "cost": 0.0754,
+      "net": 1.1159,
+      "turnover_units": 116.0
+     },
+     "pre_design": {
+      "gross": 3.3994,
+      "cost": 0.052,
+      "net": 3.3474,
+      "turnover_units": 80.0
+     }
+    }
+   },
+   "selected_w": 900,
+   "verdict": "base stands"
+  }
+ }
+}
