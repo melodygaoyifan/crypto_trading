@@ -1,7 +1,8 @@
 {
  "dictget_count": 42,
  "flags_count": 0,
- "tryexcept_count": 672,
+ "tryexcept_count": 676,
+ "_p282_note": "672 -> 676: four fail-soft guards from P281/P282 — calbasis state restore + persist (enhancement_shadows, both log via warning/transition), the CDE funding-history accrual append (main.py, noqa'd: an archive write must never touch the tick; gaps are visible in the file itself), and ds_model_pipeline's window-ledger record guard (prints its failure). Bumped by hand with attribution, never --update (P171).",
  "_p277_note": "671 -> 672: the _enh_oi_stash guard in the per-asset tick (main.py, P277). A stash miss means one flat oidiv ledger row, never a tick fault; noqa'd; counter not noqa-aware; bumped by hand, never --update (P171).",
  "_p273_note": "670 -> 671: the per-symbol fetch_ticker guard inside _unmanaged_holdings_text (main.py, P273). An unlisted pair or dust symbol is an EXPECTED data shape, not an error — it renders as '(unpriced)' in the display-only heartbeat line, never as $0 (absence is not zero, P2). noqa'd; counter is not noqa-aware; bumped by hand, never --update (P171).",
  "_p272_note": "669 -> 670: the passive-holdings advisory guard in run_live's heartbeat block (main.py, P272). Deliberate fail-soft: the advisory is heartbeat TEXT about assets the operator holds outside the system — a fault in it must never break the heartbeat, and the harness's own logs carry any real failure. Carries noqa: silent-swallow; this counter comes from silent_failure_audit which is not noqa-aware. Bumped by hand, never via --update (P171).",

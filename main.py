@@ -20793,6 +20793,27 @@ class HMATSProductionRunner:
                                     if not hasattr(self, "_coinbase_funding_8h"):
                                         self._coinbase_funding_8h = {}
                                     self._coinbase_funding_8h[_f_a] = float(_f_raw) * 8.0
+                                    # [P282] ACCRUE the venue-true funding
+                                    # history — the deepest derivatives
+                                    # feature is still the wrong venue's
+                                    # (Binance) series with a probed SIGN
+                                    # flip vs CDE on BTC/SOL (P218). No CDE
+                                    # archive exists or can be fetched;
+                                    # every tick not persisted adds a tick
+                                    # to the P279-D3 depth clock. Append-
+                                    # only JSONL, fail-soft.
+                                    try:
+                                        import json as _fj
+                                        with open("data/cde_funding_history"
+                                                  ".jsonl", "a",
+                                                  encoding="utf-8") as _ff:
+                                            _ff.write(_fj.dumps({
+                                                "ts": time.time(),
+                                                "asset": _f_a,
+                                                "funding_8h": float(_f_raw)
+                                                * 8.0}) + "\n")
+                                    except Exception:  # noqa: silent-swallow — the accrual is a data archive; its failure must never touch the tick (the archive's gaps are visible in the file itself)
+                                        pass
                                     _f_active = [st.evaluate(_f_a, _f_md) for st in self._funding_strategies]
                                     _f_active = [s for s in _f_active if s.direction != 0.0]
                                     if _f_active:
