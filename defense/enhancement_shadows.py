@@ -243,7 +243,7 @@ class EnhancementShadows:
                 rets[a] = closes[-1] / closes[-XS_LOOKBACK_BARS] - 1.0
         if len(rets) < 6:
             return {a: 0.0 for a in closes_by_asset or {}}
-        ranked = sorted(rets, key=rets.get, reverse=True)
+        ranked = sorted(rets, key=lambda a: rets[a], reverse=True)
         out = {a: 0.0 for a in rets}
         for a in ranked[:XS_TOP_K]:
             out[a] = 1.0
