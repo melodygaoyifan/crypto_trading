@@ -19,7 +19,11 @@ clean-GMM verified). The live harness (defense/mlp_shadow.py) implements
 the forward pass in ~5 lines of stdlib math and REFUSES on any feature
 coverage gap (the parity discipline whose absence killed the SOL ridge).
 
-Run weekly (operator, or with make refresh-data):
+CADENCE MECHANISM ([P287]): `make refresh-data` (training/Makefile) now
+invokes this script as its LAST step, fail-soft — so the weekly refit
+actually has a mechanism instead of depending on an operator remembering
+(the P230 class). An export failure warns loudly but never blocks the
+data refresh. Manual run remains:
     python -X utf8 training/scripts/export_mlp_shadow.py
 """
 from __future__ import annotations

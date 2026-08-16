@@ -3228,9 +3228,11 @@ def main():
             if not _fv2:
                 raise SystemExit(
                     "--include-fv2 passed but the parquet has no fv2_* columns. "
-                    "Run training/scripts/build_flow_features.py AFTER the "
-                    "rebuild (the rebuild rewrites parquets without them). "
-                    "Refusing to train silently without the requested features.")
+                    "Re-run training/scripts/rebuild_pipeline.py — since P266 "
+                    "it builds the fv2 flow features itself (STEP 5b) and a "
+                    "parquet without them means the rebuild failed or is "
+                    "pre-P266. Refusing to train silently without the "
+                    "requested features.")
             # INSERT BEFORE the trailing regime_proba block: the LSTM-FiLM-A
             # extractor slices regime as obs[-12:-4] and env state as the last
             # 4, both END-relative. regime_proba must therefore remain the

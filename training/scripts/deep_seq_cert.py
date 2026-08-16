@@ -229,7 +229,7 @@ def main() -> int:
                 "sharpe": round(sh, 3),
                 "ci": [None if clo is None else round(clo, 3),
                        None if chi is None else round(chi, 3)],
-                "dsr": round(dsr(sh, int(mask.sum()), N_TRIALS), 3),
+                "dsr": round(dsr(sh, int(mask.sum()), N_TRIALS, seg=seg), 3),
                 "passes": passes}
             r = out["assets"][asset][family]
             print(f"[{asset}] {family}: net {r['net_pct']:+7.2f}%  "

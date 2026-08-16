@@ -3,12 +3,20 @@ Fetch historical Coinglass data (funding rate, OI, liquidation)
 for DRL training integration.
 
 Usage:
-    python -X utf8 scripts/fetch_coinglass_history.py
+    python -X utf8 scripts/fetch_coinglass_history.py [--interval {4h,1d}]
 
-Outputs:
-    training/training_data/coinglass_history/{BTC,ETH,SOL}_funding_4h.parquet
-    training/training_data/coinglass_history/{BTC,ETH,SOL}_oi_4h.parquet
-    training/training_data/coinglass_history/{BTC,ETH,SOL}_liquidation_4h.parquet
+Outputs (per --interval; default 4h):
+    training/training_data/coinglass_history/{BTC,ETH,SOL}_funding_{iv}.parquet
+    training/training_data/coinglass_history/{BTC,ETH,SOL}_oi_{iv}.parquet
+    training/training_data/coinglass_history/{BTC,ETH,SOL}_liquidation_{iv}.parquet
+
+[P287] BOTH intervals must be kept fresh, and the 1d files are the ones
+that matter most: `rebuild_pipeline._load_coinglass_daily` reads ONLY the
+`*_oi_1d.parquet` / `*_liquidation_1d.parquet` archives — the 4h files
+feed nothing on the training path. Before P287 this script could only
+write 4h (INTERVAL was an un-parameterized constant), so the consumed 1d
+archives were a one-shot window no command could extend. `make
+refresh-data` now runs both intervals.
 
 API: Coinglass v3 (https://open-api-v3.coinglass.com)
 Auth: CG-API-KEY header
@@ -40,7 +48,10 @@ from dotenv import load_dotenv
 
 BASE_URL = "https://open-api-v3.coinglass.com"
 ASSETS = ["BTC", "ETH", "SOL"]
+# Default interval; override with --interval. "1d" writes the archives the
+# rebuild actually consumes (see module docstring, [P287]).
 INTERVAL = "4h"
+VALID_INTERVALS = ("4h", "1d")
 MAX_LIMIT = 4500  # max per request
 RATE_LIMIT_SLEEP = 0.5  # seconds between requests
 
@@ -300,7 +311,10 @@ def _to_float(val) -> float:
         return 0.0
 
 
-def main():
+def main(interval: str = INTERVAL):
+    if interval not in VALID_INTERVALS:
+        print(f"[ERROR] interval must be one of {VALID_INTERVALS}, got {interval!r}")
+        sys.exit(2)
     api_key = get_api_key()
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -308,7 +322,7 @@ def main():
     print("COINGLASS HISTORICAL DATA FETCHER (v3 API)")
     print(f"API Key: {api_key[:8]}...{api_key[-4:]}")
     print(f"Assets: {ASSETS}")
-    print(f"Interval: {INTERVAL}")
+    print(f"Interval: {interval}")
     print(f"Lookback: {LOOKBACK_DAYS} days")
     print(f"Output: {OUTPUT_DIR}")
     print("=" * 70)
@@ -318,7 +332,7 @@ def main():
     print("\n[PHASE 1] Probing endpoints...")
     for name, ep in ENDPOINTS.items():
         sym = SYMBOL_MAP["BTC"][ep["symbol_type"]]
-        params = {"symbol": sym, "interval": "4h", "limit": 2}
+        params = {"symbol": sym, "interval": interval, "limit": 2}
         if ep["exchange"]:
             params["exchange"] = ep["exchange"]
         result = fetch_endpoint(api_key, ep["path"], params)
@@ -345,7 +359,7 @@ def main():
                 api_key=api_key,
                 endpoint_path=ep["path"],
                 symbol=asset,
-                interval=INTERVAL,
+                interval=interval,
                 lookback_days=LOOKBACK_DAYS,
                 exchange=ep.get("exchange"),
                 symbol_type=ep.get("symbol_type", "coin"),
@@ -371,7 +385,7 @@ def main():
 
             # Save — [P266] MERGE with the existing archive (never overwrite;
             # see merge_history), atomic write so a crash cannot truncate it.
-            out_path = OUTPUT_DIR / f"{asset}_{name}_{INTERVAL}.parquet"
+            out_path = OUTPUT_DIR / f"{asset}_{name}_{interval}.parquet"
             existing = None
             if out_path.exists():
                 try:
@@ -412,8 +426,11 @@ def main():
     total_rows = sum(info["rows"] for info in summary.values())
     print(f"\n  Total: {total_rows} data points across {len(summary)} files")
 
-    # Save summary
-    summary_path = OUTPUT_DIR / "fetch_summary.json"
+    # Save summary (interval-suffixed so a 1d run cannot clobber the 4h
+    # record; the legacy un-suffixed name stays for 4h)
+    summary_path = OUTPUT_DIR / (
+        "fetch_summary.json" if interval == "4h"
+        else f"fetch_summary_{interval}.json")
     with open(summary_path, "w") as f:
         json.dump(summary, f, indent=2)
     print(f"\n  Summary: {summary_path}")
@@ -439,4 +456,11 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    import argparse
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--interval", choices=list(VALID_INTERVALS),
+                    default=INTERVAL,
+                    help="candle interval to fetch/merge; '1d' writes the "
+                         "archives rebuild_pipeline consumes ([P287])")
+    args = ap.parse_args()
+    main(interval=args.interval)

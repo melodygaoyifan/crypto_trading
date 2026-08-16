@@ -153,10 +153,12 @@ refresh-data:
 	$(PYTHON) -X utf8 fetch_binance_full.py
 	$(PYTHON) -X utf8 scripts/fetch_binance_funding.py
 	$(PYTHON) -X utf8 scripts/fetch_coinglass_history.py
+	$(PYTHON) -X utf8 scripts/fetch_coinglass_history.py --interval 1d
 	$(PYTHON) -X utf8 scripts/fetch_binance_futures_daily.py
 	$(PYTHON) -X utf8 scripts/rebuild_pipeline.py --smooth 2 --skip-gmm
 	$(PYTHON) -X utf8 scripts/generate_split_manifest.py
 	$(PYTHON) -X utf8 scripts/refresh_ohlcv_4h.py
+	-$(PYTHON) -X utf8 scripts/export_mlp_shadow.py || echo "⚠️  export_mlp_shadow FAILED — the P284 weekly-refit cadence did NOT run this cycle (data refresh itself is unaffected)"
 	@echo "✅ refresh-data complete — run 'make check' for freshness status"
 
 clean:

@@ -39,7 +39,11 @@ from training.splits import DESIGN_ERA, purged_folds, record_window_usage  # noq
 from training.eval_report import seg_metrics  # noqa: E402
 from training.provenance import provenance_stamp  # noqa: E402
 
-COST_BPS = {"BTC": 6.0, "ETH": 8.0, "SOL": 13.0}
+# [P287] single-sourced from the supervised zoo (P172): these are
+# ROUND-TRIP bps (P281 convention) and are halved per leg at the charge
+# site — the restated local copy used to charge full RT per leg (2x).
+from training.train_supervised_full import COST_BPS  # noqa: E402
+
 VOL_WIN, K_BARRIER, T_VERTICAL = 42, 1.5, 24   # fixed a priori, not tuned
 THRESHOLDS = (0.45, 0.55)                      # 2 gate thresholds (counted)
 SEED = 7
@@ -104,7 +108,8 @@ def run_asset(asset):
         ret = np.zeros(n); ret[1:] = close[1:] / close[:-1] - 1.0
         strat = np.zeros(n); strat[1:] = pos[:-1] * ret[1:]
         cost = np.zeros(n)
-        cost[1:] = np.abs(np.diff(pos)) * COST_BPS[asset] / 1e4
+        # [P287] COST_BPS is ROUND-TRIP; each |dpos| unit is one LEG.
+        cost[1:] = np.abs(np.diff(pos)) * (COST_BPS[asset] / 2.0) / 1e4
         cy = np.zeros(n); cy[1:] = -pos[:-1] * carry[1:]
         return (strat - cost + cy)[idx_lo:idx_hi]
 

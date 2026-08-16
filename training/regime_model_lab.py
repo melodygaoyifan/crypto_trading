@@ -268,9 +268,11 @@ CELL_CANDIDATES = {
 }
 REGIME_ID = {"peace": 0, "bull": 1, "bear": 2}
 
-# Instrument economics. Spot = Kraken maker-first + slippage (per side,
+# Instrument economics. Spot = Kraken maker-first + slippage (PER SIDE,
 # bps); no shorts; no funding carry. Perp = Coinbase CDE taker + slip,
-# carry credited/charged. Break-even edge per round trip = 2x these.
+# carry credited/charged; perp cost comes from _COST, which is ROUND-TRIP
+# (P281 convention) and is halved per leg at the charge site ([P287]).
+# Break-even edge per round trip = 2x the spot values / 1x the perp values.
 INSTRUMENTS = {
     "perp": {"cost_bps": None, "long_only": False, "carry": True},   # per-asset _COST
     "spot": {"cost_bps": {"BTC": 20.0, "ETH": 22.0, "SOL": 26.0},
@@ -547,10 +549,15 @@ def cell_series(kind, params, ctx, regime, s, e, cost_mult=1.0, fit_lt=None,
     close = ctx["close"]
     ret = np.zeros(ctx["n"]); ret[1:] = close[1:] / close[:-1] - 1.0
     strat = np.zeros(ctx["n"]); strat[1:] = pos[:-1] * ret[1:]
-    cost_bps = (_COST[ctx["asset"]] if inst["cost_bps"] is None
-                else inst["cost_bps"][ctx["asset"]])
+    # [P287] Normalize both instrument tables to a PER-LEG charge. _COST is
+    # ROUND-TRIP (the P281 rename-in-meaning; charging it full per leg was
+    # the 2x overcharge P279 measured, surviving here after P281 fixed the
+    # supervised zoo). The spot table is already per SIDE, so it passes
+    # through unchanged.
+    cost_leg_bps = (_COST[ctx["asset"]] / 2.0 if inst["cost_bps"] is None
+                    else inst["cost_bps"][ctx["asset"]])
     cost = np.zeros(ctx["n"])
-    cost[1:] = np.abs(np.diff(pos)) * cost_bps * cost_mult / 1e4
+    cost[1:] = np.abs(np.diff(pos)) * cost_leg_bps * cost_mult / 1e4
     # [P245] perp funding carry: shorts COLLECT when funding is positive.
     carry = np.zeros(ctx["n"])
     if inst["carry"]:

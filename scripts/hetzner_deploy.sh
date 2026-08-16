@@ -57,6 +57,21 @@ if [ "${DEPLOY_SHA}" != "${LOCAL_SHA}" ]; then
     echo "  The server deploys ORIGIN/MAIN. Unpushed local commits will NOT deploy."
 fi
 
+# [P287] Resolve the python interpreter ONCE, loudly. `command -v python`
+# alone silently skipped the whole local scanner gate on python3-only
+# machines (the P159 shape: a check that cannot run reading as a check
+# that passed), and the CI-verdict parser below needs an interpreter too.
+if command -v python &>/dev/null; then
+    PY_BIN=python
+elif command -v python3 &>/dev/null; then
+    PY_BIN=python3
+else
+    echo "ERROR: neither 'python' nor 'python3' is on PATH — the CI-verdict"
+    echo "  parser and the local scanner gate cannot run. Refusing to deploy"
+    echo "  with unverifiable gates (P159/P287)."
+    exit 1
+fi
+
 if [ "${HMATS_DEPLOY_SKIP_CI_CHECK:-0}" = "1" ]; then
     echo "  !! CI-green check SKIPPED by HMATS_DEPLOY_SKIP_CI_CHECK=1 —"
     echo "  !! deploying ${DEPLOY_SHA:0:9} with UNVERIFIED CI status."
@@ -67,7 +82,7 @@ else
     CI_JSON="$(curl -sf --max-time 30 \
         "https://api.github.com/repos/${REPO_SLUG}/actions/runs?head_sha=${DEPLOY_SHA}" \
         || echo "")"
-    CI_VERDICT="$(printf '%s' "${CI_JSON}" | python -X utf8 -c "
+    CI_VERDICT="$(printf '%s' "${CI_JSON}" | "${PY_BIN}" -X utf8 -c "
 import json, sys
 try:
     runs = json.load(sys.stdin).get('workflow_runs', [])
@@ -77,7 +92,11 @@ need = {'codebase-invariants', 'test-suite'}
 got = {}
 for r in runs:
     n = r.get('name')
-    if n in need:
+    # [P287] The API returns runs NEWEST-FIRST; keep only the FIRST match
+    # per workflow. The old unconditional overwrite meant the OLDEST run
+    # won — a sha whose first run was green and whose re-run went red read
+    # as GREEN and deployed (backwards fail direction on a safety gate).
+    if n in need and n not in got:
         got[n] = (r.get('status'), r.get('conclusion'))
 missing = need - set(got)
 if missing:
@@ -99,17 +118,15 @@ else:
     echo "  CI: GREEN (codebase-invariants + test-suite) for ${DEPLOY_SHA:0:9}"
 fi
 
-if command -v python &>/dev/null; then
-    echo "  Running local env-independent scanners (--skip-mypy)..."
-    if ! python -X utf8 tools/ci_check_invariants.py --skip-mypy; then
-        echo "ERROR: Local scanner gate FAILED (types are adjudicated by the"
-        echo "  CI check above; this failure is a stdlib scanner regression)."
-        echo "  Fix the findings, or rebaseline if intentional."
-        echo "Refusing to deploy."
-        exit 1
-    fi
-    echo "  Local scanners: PASS"
+echo "  Running local env-independent scanners (--skip-mypy)..."
+if ! "${PY_BIN}" -X utf8 tools/ci_check_invariants.py --skip-mypy; then
+    echo "ERROR: Local scanner gate FAILED (types are adjudicated by the"
+    echo "  CI check above; this failure is a stdlib scanner regression)."
+    echo "  Fix the findings, or rebaseline if intentional."
+    echo "Refusing to deploy."
+    exit 1
 fi
+echo "  Local scanners: PASS"
 
 # --- Step 1: Pull latest code ---
 echo "[1/5] Pulling latest code..."

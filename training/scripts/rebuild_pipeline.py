@@ -329,9 +329,17 @@ def merge_external_data(df_4h: pd.DataFrame, asset: str) -> pd.DataFrame:
                     f"({asset}), filled with zeros")
         return df
 
-    # merge_asof: for each 4H bar, use most recent daily data <= that timestamp
+    # merge_asof: for each 4H bar, use most recent daily data <= that timestamp.
+    # [P287] tolerance bounds staleness at 3 days (mirroring the live P265g
+    # funding bound): before this, direction="backward" with NO tolerance
+    # meant a bar could match a daily row from ARBITRARILY far back — a
+    # September rebuild against 1d archives frozen in August would stamp
+    # weeks of bars with the frozen values AND flag them has_external_data.
+    # Within contiguous daily coverage (rows <=1d apart) the tolerance never
+    # binds, so in-coverage content is byte-identical to the old merge.
     df = pd.merge_asof(df, daily[["timestamp"] + ext_cols],
-                       on="timestamp", direction="backward")
+                       on="timestamp", direction="backward",
+                       tolerance=pd.Timedelta(days=3))
 
     # has_external_data flag: 1 where ANY external feature is non-NaN
     df["has_external_data"] = (~df[ext_cols].isna().all(axis=1)).astype(float)
@@ -745,11 +753,16 @@ def load_existing_gmm_per_asset(asset: str):
         model_path = asset_dir / "gmm_model.pkl"
         scaler_path = asset_dir / "scaler.pkl"
     else:
-        # Legacy: shared GMM
-        config_path = PROD_GMM_DIR / "gmm_config.json"
-        model_path = PROD_GMM_DIR / "gmm_model.pkl"
-        scaler_path = PROD_GMM_DIR / "scaler.pkl"
-        logger.warning(f"  Per-asset GMM not found for {asset}, using shared model")
+        # [P287] The old fallback silently used the LEGACY SHARED GMM — a
+        # per-asset parquet built from the global legacy fit is the P4
+        # mixed-artifact shape (features paired with a model that did not
+        # produce them), and the legacy fit is pre-P200 full-sample = leaky
+        # by construction (P159). REFUSE instead of degrading.
+        raise FileNotFoundError(
+            f"[P287] No per-asset GMM for {asset} at {asset_dir} — refusing "
+            f"the legacy shared-GMM fallback (P4 mixed-artifact / P159 leaky "
+            f"fit). Fix: run a split-aware per-asset fit (rebuild_pipeline "
+            f"without --skip-gmm) or copy the P221 artifacts into place.")
 
     with open(config_path) as f:
         config = json.load(f)
@@ -1218,8 +1231,28 @@ def main():
                         f"regimes: {df['regime'].value_counts().to_dict()}")
 
     if all_ok:
-        # Deploy per-asset GMM models to production path
-        if not args.skip_gmm:
+        # Deploy per-asset GMM models to production path.
+        # [P287] Two guards: (a) a --gmm-no-split fit is LEAKY (full-sample)
+        # and must NEVER reach models/regime_classifier — the P267 invariant
+        # (deploy-side fit_policy must be split_aware) previously had no
+        # enforcement at this, the only deploy site; (b) even a clean refit
+        # overwrites the runtime artifacts beneath whatever checkpoints are
+        # deployed — {GMM, parquets, checkpoints} move as ONE versioned set
+        # (P215/P253b), so the swap is announced loudly.
+        if not args.skip_gmm and args.gmm_no_split:
+            logger.error(
+                "  [P287] REFUSING GMM deploy: --gmm-no-split produced a "
+                "full-sample (LEAKY) fit. It must never reach "
+                f"{PROD_GMM_DIR} (P267: deploy-side fit_policy must be "
+                "split_aware). Build-dir artifacts kept for visualization "
+                "only.")
+        elif not args.skip_gmm:
+            logger.warning(
+                "  [P287] Overwriting the RUNTIME GMM artifacts in "
+                f"{PROD_GMM_DIR} — {{GMM, parquets, checkpoints}} move as "
+                "ONE versioned set (P215/P253b); if live checkpoints are "
+                "paired with the current fit, record this swap as a "
+                "deliberate decision.")
             for asset in ASSETS:
                 src_dir = GMM_BUILD_DIR / asset
                 dst_dir = PROD_GMM_DIR / asset

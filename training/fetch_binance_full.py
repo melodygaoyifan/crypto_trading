@@ -9,6 +9,7 @@ Unlike get_data.py, this:
 from __future__ import annotations
 
 import logging
+import os
 import time
 import zipfile
 from datetime import datetime
@@ -120,7 +121,12 @@ def fetch_asset(asset: str, start: datetime, end: datetime) -> pd.DataFrame:
     # [P200-FEATURES]: existing parquets predating the flow columns carry NaN
     # there, and keep='first' would pin those NaNs forever.
     merged = merged.drop_duplicates("timestamp", keep="last").sort_values("timestamp").reset_index(drop=True)
-    merged.to_parquet(existing_path)
+    # [P287] atomic write (tmp + os.replace): this is the canonical 6-year
+    # raw parquet — a crash mid-write used to truncate the merge target the
+    # newer fetchers already protect.
+    _tmp = existing_path.with_suffix(".parquet.tmp")
+    merged.to_parquet(_tmp)
+    os.replace(_tmp, existing_path)
     logger.info(f"{asset}: saved {len(merged)} rows to {existing_path}  "
                 f"(hits={hit}, misses={miss})")
     return merged

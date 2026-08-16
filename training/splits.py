@@ -71,6 +71,16 @@ def _load_ledger():
     return {"records": []}
 
 
+def _is_validation_purpose(purpose) -> bool:
+    """[P287] A validation read is any purpose that STARTS WITH 'validation'
+    (case-insensitive). The old exact-match ``purpose == 'validation'`` let
+    free-text purposes ('validation read #1 for this candidate ...' — the
+    recorded P259b spends) silently bypass the multiplicity counter, so
+    deliberately-ledgered reads were invisible to the discount every later
+    caller is told about."""
+    return str(purpose).strip().lower().startswith("validation")
+
+
 def record_window_usage(experiment, asset, start, end, purpose):
     """Append one usage record. purpose in {'design','validation','probe'}.
     Returns the number of PRIOR validation reads of an overlapping window —
@@ -78,10 +88,19 @@ def record_window_usage(experiment, asset, start, end, purpose):
     that has been read k times supports selection over ~k hypotheses and
     its p-values must be discounted accordingly."""
     ledger = _load_ledger()
+    # [P287] normalize at write time: a purpose that mentions validation but
+    # does not lead with it would still dodge the prefix counter — warn so
+    # the author fixes the string instead of the ledger quietly under-counting.
+    _pl = str(purpose).strip().lower()
+    if "validation" in _pl and not _is_validation_purpose(purpose):
+        print(f"[WINDOW-LEDGER] WARNING: purpose {purpose!r} mentions "
+              f"'validation' but does not start with it — it will NOT be "
+              f"counted as a validation read. Prefix it with 'validation' "
+              f"if that is what this is.")
     prior = sum(
         1 for r in ledger["records"]
-        if r["asset"] == asset and r["purpose"] == "validation"
-        and purpose == "validation"
+        if r["asset"] == asset and _is_validation_purpose(r["purpose"])
+        and _is_validation_purpose(purpose)
         and not (end <= r["start"] or start >= r["end"])
         and r["experiment"] != experiment
     )
@@ -99,7 +118,8 @@ def validation_spend(asset):
     """How many distinct experiments have read validation windows per asset."""
     ledger = _load_ledger()
     return sorted({r["experiment"] for r in ledger["records"]
-                   if r["asset"] == asset and r["purpose"] == "validation"})
+                   if r["asset"] == asset
+                   and _is_validation_purpose(r["purpose"])})
 
 
 def assert_clean_gmm(asset: str) -> dict:
@@ -140,4 +160,29 @@ def assert_clean_gmm(asset: str) -> dict:
             f"P164/P200 leak — every regime feature in the parquet saw "
             f"the future. Rebuild with rebuild_pipeline.py (never "
             f"--gmm-no-split for training) and retry.")
+    # [P287] Build-vs-prod identity. A --skip-gmm rebuild generates regime
+    # features from models/regime_classifier (the PROD dir), while this gate
+    # certifies the BUILD dir — nothing pinned the two dirs' identity, so
+    # the "split_aware — verified" line could describe a different fit than
+    # the one whose posteriors are in the parquet. When the prod config
+    # exists, it must be split_aware AND the same fit (k + component means).
+    prod_path = (REPO / "models" / "regime_classifier" / asset
+                 / "gmm_config.json")
+    if prod_path.exists():
+        prod = json.loads(prod_path.read_text(encoding="utf-8"))
+        if prod.get("fit_policy") != "split_aware":
+            raise SystemExit(
+                f"[CLEAN-GMM] REFUSING: prod-side {prod_path} fit_policy="
+                f"{prod.get('fit_policy')!r}, need 'split_aware' — a leaky "
+                f"fit is deployed at the dir --skip-gmm rebuilds read from "
+                f"(P267 invariant). Redeploy the clean fit.")
+        if (prod.get("n_components") != cfg.get("n_components")
+                or prod.get("means") != cfg.get("means")):
+            raise SystemExit(
+                f"[CLEAN-GMM] REFUSING: build-dir ({cfg_path}) and prod-dir "
+                f"({prod_path}) GMMs are DIFFERENT fits (k or means "
+                f"mismatch). A --skip-gmm rebuild reads the prod dir, so "
+                f"the parquet's regime features may not come from the fit "
+                f"this gate just certified (P215 one-versioned-set). Align "
+                f"the two dirs before training.")
     return cfg

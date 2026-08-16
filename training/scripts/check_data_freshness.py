@@ -30,6 +30,16 @@ CHECKS = [
      "CoinGlass API depth is ~180d; beyond 150d since last fetch you are "
      "approaching PERMANENT history loss — run "
      "scripts/fetch_coinglass_history.py (it merges, P266)"),
+    # [P287] The 1d oi/liquidation archives are what rebuild_pipeline
+    # actually READS (_load_coinglass_daily); the 4h files above feed
+    # nothing on the training path. Before P287 no command could even
+    # refresh these — watch them with the same permanent-loss urgency.
+    ("coinglass_history/*_liquidation_1d.parquet", 150,
+     "the archives rebuild_pipeline CONSUMES; CoinGlass depth ~180d — run "
+     "scripts/fetch_coinglass_history.py --interval 1d (merges, P287)"),
+    ("coinglass_history/*_oi_1d.parquet", 150,
+     "the archives rebuild_pipeline CONSUMES; CoinGlass depth ~180d — run "
+     "scripts/fetch_coinglass_history.py --interval 1d (merges, P287)"),
     ("coinglass_history/*_funding_1d.parquet", 60,
      "Binance funding via vision archives — re-run "
      "scripts/fetch_binance_funding.py with the monthly refresh"),

@@ -66,24 +66,43 @@ def live_expression(pos: np.ndarray) -> np.ndarray:
     return out
 
 
-def dsr(pooled_sharpe: float, n_obs: int, n_trials: int) -> float:
-    """Deflated Sharpe (Bailey-LdP, simplified normal form): probability
-    the observed pooled Sharpe exceeds the expected max of n_trials
-    zero-skill trials."""
+def dsr(pooled_sharpe: float, n_obs: int, n_trials: int,
+        seg: "np.ndarray | None" = None) -> float:
+    """Deflated Sharpe (Bailey-LdP): probability the observed pooled Sharpe
+    exceeds the expected max of n_trials zero-skill trials.
+
+    [P287] The original implementation carried a dead ``sr0`` variable and a
+    denominator ``sqrt(max(1e-12, 1 - 0*sr_bar))`` — always 1 — so the
+    skew/kurtosis variance-inflation term of the Bailey-LdP statistic was
+    dropped entirely. The P283b/P286 RECORDED DSRs (mlp_small 0.90, BTC
+    tcn32 0.66) were computed under that pre-fix normal-form denominator and
+    are therefore MILDLY OPTIMISTIC for fat-tailed/skewed return series; the
+    pass/fail verdicts did not key on DSR (CI-excludes-zero decides), so no
+    verdict changes. Pass ``seg`` (the per-bar net return series the Sharpe
+    was computed from) to charge the real moments; omitted, the normal
+    assumption (skew 0, kurtosis 3) reproduces the old arithmetic exactly.
+    """
     if n_obs < 10:
         return 0.0
-    e = 0.5772156649
     z = math.sqrt(2 * math.log(n_trials)) if n_trials > 1 else 0.0
     exp_max = z - (math.log(math.log(n_trials)) + math.log(4 * math.pi)) \
         / (2 * z) if n_trials > 2 else 0.0
-    sr0 = exp_max / math.sqrt(T.BARS_PER_YEAR) * math.sqrt(
-        T.BARS_PER_YEAR)  # annualized expected-max under null ~ exp_max*sqrt(ann)/sqrt(n)... keep per-obs form below
     # per-observation form: SR_ann = sr_bar * sqrt(BARS_PER_YEAR)
     sr_bar = pooled_sharpe / math.sqrt(T.BARS_PER_YEAR)
     sr0_bar = exp_max / math.sqrt(n_obs - 1)
+    g3, g4 = 0.0, 3.0  # normal-form fallback
+    if seg is not None:
+        x = np.asarray(seg, dtype=float)
+        x = x[np.isfinite(x)]
+        if len(x) > 3:
+            m, s = float(np.mean(x)), float(np.std(x))
+            if s > 0:
+                g3 = float(np.mean((x - m) ** 3) / s ** 3)
+                g4 = float(np.mean((x - m) ** 4) / s ** 4)
     from math import erf
-    stat = (sr_bar - sr0_bar) * math.sqrt(n_obs - 1) / math.sqrt(
-        max(1e-12, 1 - 0 * sr_bar))
+    denom = math.sqrt(max(1e-12,
+                          1.0 - g3 * sr_bar + (g4 - 1.0) / 4.0 * sr_bar ** 2))
+    stat = (sr_bar - sr0_bar) * math.sqrt(n_obs - 1) / denom
     return 0.5 * (1 + erf(stat / math.sqrt(2)))
 
 
@@ -146,7 +165,8 @@ def main() -> int:
                     "sharpe": round(sh, 3),
                     "ci": [None if lo is None else round(lo, 3),
                            None if hi is None else round(hi, 3)],
-                    "dsr": round(dsr(sh, int(mask.sum()), N_TRIALS), 3),
+                    "dsr": round(dsr(sh, int(mask.sum()), N_TRIALS,
+                                     seg=seg), 3),
                 }
         decisive = res["LIVE_sign_expression.with_carry"]
         passes = (decisive["ci"][0] is not None
