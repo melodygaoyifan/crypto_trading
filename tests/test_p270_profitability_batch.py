@@ -316,16 +316,22 @@ class TestMakerConfigPlumbing:
             "flag declared+parsed but never passed to the CoinbaseSleeve "
             "ctor — the P16/P201 dead-flag shape")
 
-    def test_default_off_and_absent_from_live_profile(self):
+    def test_default_off_and_decided_value_in_live_profile(self):
+        # The dataclass/ctor default stays False (absent key = off in every
+        # other profile). The LIVE profile pins the DECIDED value — enabled
+        # 2026-08-16 by explicit operator instruction (P270 activation) — so
+        # a silent revert AND a silent widening both fail loudly (the P237
+        # pin-the-decision pattern).
         import inspect
         sig = inspect.signature(CoinbaseSleeve.__init__)
         assert sig.parameters["maker_first"].default is False
         live = json.loads((REPO / "configs" / "live_high_risk.json")
                           .read_text(encoding="utf-8"))
-        assert "coinbase_maker_first" not in live, (
-            "enabling maker-first in the live profile is an operator "
-            "decision with its own P-entry (P141) — it must not ride in "
-            "as a default")
+        assert live.get("coinbase_maker_first") is True, (
+            "coinbase_maker_first was flipped off/removed from the live "
+            "profile — if that is a deliberate revert, update this pin and "
+            "the P270 activation note in the same commit")
+        assert live.get("coinbase_maker_wait_sec") == 45.0
 
     def test_emergency_call_sites_pass_urgent(self):
         src = read_source(MAIN)
