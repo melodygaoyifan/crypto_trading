@@ -185,6 +185,11 @@ class RuntimeObsBuilder:
                            f"this tick — obs NOT built, model must skip")
             return None
         features_122 = np.zeros(len(self._all_features), dtype=np.float32)
+        # [P284] Presence tracking for downstream named-feature consumers
+        # (the mlp_shadow harness): which slots were genuinely COMPUTED vs
+        # defaulted to 0.0. A consumer that cannot tell the two apart
+        # inherits the P2 absence-reads-as-zero trap through this vector.
+        _presence = {name: False for name in self._all_features}
 
         # 1. Base features (102) via FeatureEngineer
         if self._feature_engineer is not None and ohlcv_df is not None and len(ohlcv_df) > 0:
@@ -194,7 +199,9 @@ class RuntimeObsBuilder:
                 for i, feat_name in enumerate(self._base_features):
                     if feat_name in last_row.index:
                         val = last_row[feat_name]
-                        features_122[i] = float(val) if pd.notna(val) else 0.0
+                        if pd.notna(val):
+                            features_122[i] = float(val)
+                            _presence[feat_name] = True
             except Exception as e:
                 logger.debug(f"[ObsBuilder] {asset}: FeatureEngineer failed: {e}")
 
@@ -202,15 +209,19 @@ class RuntimeObsBuilder:
         base_count = len(self._base_features)
         for j, feat_name in enumerate(self._denoised_features):
             idx = base_count + j
-            val = market_data.get(feat_name, 0.0)
-            features_122[idx] = float(val) if val is not None else 0.0
+            val = market_data.get(feat_name)
+            if val is not None:
+                features_122[idx] = float(val)
+                _presence[feat_name] = True
 
         # 3. External features (7) - derived upstream from live feeds/trade activity
         ext_offset = base_count + len(self._denoised_features)
         for j, feat_name in enumerate(self._external_features):
             idx = ext_offset + j
-            val = market_data.get(feat_name, 0.0)
-            features_122[idx] = float(val) if val is not None else 0.0
+            val = market_data.get(feat_name)
+            if val is not None:
+                features_122[idx] = float(val)
+                _presence[feat_name] = True
 
         # 3b. [P1b] fv2 flow features (13) — from the BinanceFlowFeed
         fv2_offset = ext_offset + len(self._external_features)
@@ -224,6 +235,18 @@ class RuntimeObsBuilder:
             idx = regime_offset + j
             if j < len(gmm_probs):
                 features_122[idx] = float(gmm_probs[j])
+
+        # [P284] Stash the RAW pre-scaling named features + presence for the
+        # mlp_shadow harness (which carries its OWN certified scaler — the
+        # DRL fold scaler below must never touch its inputs). Single-source:
+        # the harness reads THIS computation, never re-derives (P172).
+        if not hasattr(self, "last_raw_features"):
+            self.last_raw_features = {}
+            self.last_raw_presence = {}
+        self.last_raw_features[asset] = {
+            name: float(features_122[i])
+            for i, name in enumerate(self._all_features)}
+        self.last_raw_presence[asset] = _presence
 
         # 5. Scale features
         features_122 = self._scale_features(asset, features_122)

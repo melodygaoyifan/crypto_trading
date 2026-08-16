@@ -1,7 +1,8 @@
 {
  "dictget_count": 42,
  "flags_count": 0,
- "tryexcept_count": 676,
+ "tryexcept_count": 678,
+ "_p284_note": "676 -> 678: the mlp_shadow per-asset tick guard (summary line shows the miss; a shadow fault must never reach the loop) and main.py's fv2-fetch guard (noqa'd: fv2 absence records as a NAMED coverage gap inside the harness, never a fabricated zero — the P248 rule). Hand-bumped, never --update (P171).",
  "_p282_note": "672 -> 676: four fail-soft guards from P281/P282 — calbasis state restore + persist (enhancement_shadows, both log via warning/transition), the CDE funding-history accrual append (main.py, noqa'd: an archive write must never touch the tick; gaps are visible in the file itself), and ds_model_pipeline's window-ledger record guard (prints its failure). Bumped by hand with attribution, never --update (P171).",
  "_p277_note": "671 -> 672: the _enh_oi_stash guard in the per-asset tick (main.py, P277). A stash miss means one flat oidiv ledger row, never a tick fault; noqa'd; counter not noqa-aware; bumped by hand, never --update (P171).",
  "_p273_note": "670 -> 671: the per-symbol fetch_ticker guard inside _unmanaged_holdings_text (main.py, P273). An unlisted pair or dust symbol is an EXPECTED data shape, not an error — it renders as '(unpriced)' in the display-only heartbeat line, never as $0 (absence is not zero, P2). noqa'd; counter is not noqa-aware; bumped by hand, never --update (P171).",

@@ -5591,6 +5591,18 @@ class HMATSProductionRunner:
             logger.warning(f"  [P277] EnhancementShadows init failed: "
                            f"{type(_enh_err).__name__}: {_enh_err}")
 
+        # [P284] The pooled-certified BTC mlp_small Rung-3 shadow
+        # (observation-only; its 30d P166 clock starts at first deploy).
+        self._mlp_shadow = None
+        try:
+            from defense.mlp_shadow import MlpShadow
+            self._mlp_shadow = MlpShadow(data_dir="data")
+            logger.info("  [P284] MlpShadow: ACTIVE (observation-only; "
+                        "P283b pooled-certified candidate)")
+        except Exception as _mls_err:
+            logger.warning(f"  [P284] MlpShadow init failed: "
+                           f"{type(_mls_err).__name__}: {_mls_err}")
+
         # =====================================================================
         # [v5.1 Phase 6] ML factor fusion agent shadow harness (SHADOW)
         # MLFactorDispatcher per-asset routes to MLFactorFusionAgent (BTC/ETH/SOL).
@@ -21270,6 +21282,35 @@ class HMATSProductionRunner:
                     except Exception as _enh_e:  # noqa: silent-swallow
                         logger.warning(f"[ENH-SHADOWS] tick failed: "
                                        f"{type(_enh_e).__name__} — ledgers "
+                                       f"stale this cycle")
+
+                # [P284] mlp_small Rung-3 shadow tick: 22/24 features from
+                # the obs builder's raw stash (single-source, P172), the 2
+                # fv2 members from the live BinanceFlowFeed. Coverage gaps
+                # record flat-with-names inside the harness.
+                if getattr(self, "_mlp_shadow", None) is not None:
+                    try:
+                        _ob = getattr(self, "_obs_builder", None)
+                        _mls_feats = dict(getattr(
+                            _ob, "last_raw_features", {}) or {})
+                        _mls_pres = {a: dict(p) for a, p in (getattr(
+                            _ob, "last_raw_presence", {}) or {}).items()}
+                        try:
+                            from data_mgmt.feeds.binance_flow_feed import \
+                                get_flow_feed
+                            for _ms_a in list(_mls_feats):
+                                _fv = get_flow_feed().latest(_ms_a)
+                                if _fv:
+                                    _mls_feats[_ms_a].update(_fv)
+                                    for _k in _fv:
+                                        _mls_pres.setdefault(
+                                            _ms_a, {})[_k] = True
+                        except Exception:  # noqa: silent-swallow — fv2 absence records as a named coverage gap in the harness, never a fabricated zero
+                            pass
+                        self._mlp_shadow.tick(_mls_feats, _mls_pres)
+                    except Exception as _mls_e:  # noqa: silent-swallow
+                        logger.warning(f"[MLP-SHADOW] tick failed: "
+                                       f"{type(_mls_e).__name__} — ledger "
                                        f"stale this cycle")
 
                 _wait_secs_live = self._seconds_until_next_4h_candle(offset_seconds=90)
