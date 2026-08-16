@@ -1,7 +1,8 @@
 {
  "dictget_count": 42,
  "flags_count": 0,
- "tryexcept_count": 678,
+ "tryexcept_count": 679,
+ "_p285_note": "678 -> 679: the P285 mlp-seat block's fail-soft guard in main.py (a seat fault must never break the tick; it logs WARNING naming the consequence — incumbent signal stands). Default-off block. Hand-bumped, never --update (P171).",
  "_p284_note": "676 -> 678: the mlp_shadow per-asset tick guard (summary line shows the miss; a shadow fault must never reach the loop) and main.py's fv2-fetch guard (noqa'd: fv2 absence records as a NAMED coverage gap inside the harness, never a fabricated zero — the P248 rule). Hand-bumped, never --update (P171).",
  "_p282_note": "672 -> 676: four fail-soft guards from P281/P282 — calbasis state restore + persist (enhancement_shadows, both log via warning/transition), the CDE funding-history accrual append (main.py, noqa'd: an archive write must never touch the tick; gaps are visible in the file itself), and ds_model_pipeline's window-ledger record guard (prints its failure). Bumped by hand with attribution, never --update (P171).",
  "_p277_note": "671 -> 672: the _enh_oi_stash guard in the per-asset tick (main.py, P277). A stash miss means one flat oidiv ledger row, never a tick fault; noqa'd; counter not noqa-aware; bumped by hand, never --update (P171).",

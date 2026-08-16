@@ -21,6 +21,34 @@ mistake this project has paid for twice (P147, P198).
 
 ---
 
+## ~Aug 28 — the mlp early-seat criterion (P285, operator-adopted 2026-08-16)
+
+**The exception to the "nothing before September" rule, and why it is not a
+loosening:** the P283b-certified BTC `mlp_small` may take the BTC direction
+seat EARLY — at **unchanged** size, caps, stops, and gates — because the
+incumbent trend signal has measured-NEGATIVE live forward IC (P198) and is
+itself tripwire-bound above. The swap chooses which signal drives an
+already-trading, already-bounded ±1-contract book; it adds no risk
+parameter. Pre-committed BEFORE any shadow evidence existed.
+
+**Instrument:** `scripts/mlp_seat_check.py` (operator-local, after a
+`september_check.py` ledger pull). **Actuator:** `mlpshadow_mode:
+"enforce"` in the live profile (P284/P285 seat — absent by design until the
+criterion fires; adding it IS the firing action).
+
+| condition (ALL required) | value |
+|---|---|
+| date | ≥ 2026-08-28 |
+| mlpshadow_BTC ledger | ≥ 14 days span, ≥ 40 directional records |
+| 16h shadow IC | ≥ 0.0 — a **kill-screen**, deliberately weaker than P166 |
+| trend incumbent | still GATE-CLOSED on the latest weekly slope report |
+
+A negative 2-week trajectory kills the early swap (the model waits for its
+full ~09-15 P166 read like everyone else); missing data never counts as
+passing (P199). **The ~09-15 P166 read still governs anything beyond the
+current book** — the early seat changes the direction source only, never
+the alpha bar, the sizing, or the promotion standard.
+
 ## Sep 1 — the trend tripwire (P237)
 
 **Instrument:** `tripwire_check.py` on the weekly slope-calibrator reports

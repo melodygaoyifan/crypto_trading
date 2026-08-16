@@ -48,6 +48,10 @@ class MlpShadow:
         self._models: Dict[str, dict] = {}
         self._state: Dict[str, dict] = {}   # asset -> {cur, last_bin}
         self._warned: Dict[str, str] = {}
+        # [P285] seat feed: the last FULL-COVERAGE emit per asset. A
+        # coverage-gap tick must NEVER refresh this — the seat treating
+        # "cannot compute" as a fresh flat is the P2 absence!=flat trap.
+        self._last_records: Dict[str, dict] = {}
         cfg_dir = root / "configs" / "mlpshadow"
         if cfg_dir.exists():
             for p in cfg_dir.glob("*.json"):
@@ -126,12 +130,42 @@ class MlpShadow:
                 d = (1.0 if cont >= 0.15 else
                      (-1.0 if cont <= -0.15 else 0.0))
                 self._write(asset, d, z, cont=cont)
+                # [P285] seat feed — full-coverage emits only (the coverage
+                # branch above `continue`s past this line by construction)
+                if not hasattr(self, "_last_records"):
+                    self._last_records = {}
+                self._last_records[asset] = {
+                    "direction": d, "z": z, "ts": time.time()}
                 summary.append(f"{asset}={d:+.0f}(z={z:+.2f})")
             except Exception as e:  # noqa: silent-swallow — per-asset fail-soft; summary shows the miss
                 summary.append(f"{asset}=ERR({type(e).__name__})")
         if summary:
             logger.info("[MLP-SHADOW] " + " | ".join(summary))
         return summary
+
+    def last_direction(self, asset: str, max_age_s: float = 6 * 3600):
+        """[P285] The model's most recent FULL-COVERAGE emit, or None.
+
+        Returns ``(direction, z, age_s)`` when a full-coverage record exists
+        and is younger than ``max_age_s`` (6h = one 4H tick + slack, the
+        P156 staleness-bound rule). None means "no fresh opinion" — the
+        seat consumer must treat that as NO SEAT INPUT, never as flat (P2):
+        the model's deadband flat IS a position; the model being absent or
+        coverage-gapped is not. Between DI=4 decision bins the direction is
+        the HELD one — exactly what the certified expression trades.
+
+        One-tick lag by construction: tick() runs at loop level after
+        decide, so a seat consumer inside decide reads the previous loop's
+        emit — immaterial at the 16h decision horizon, but a fact.
+        """
+        rec = getattr(self, "_last_records", {}).get(asset)
+        if not rec:
+            return None
+        age = time.time() - float(rec.get("ts", 0.0) or 0.0)
+        if age > max_age_s:
+            return None
+        return (float(rec.get("direction", 0.0) or 0.0),
+                rec.get("z"), age)
 
     def _write(self, asset: str, direction: float, z, cont=None,
                coverage_note=None) -> dict:

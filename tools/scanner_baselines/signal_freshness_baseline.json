@@ -1,11 +1,12 @@
 {
  "blind_only_keys_count": 146,
  "by_category": {
-  "BLIND": 229,
+  "BLIND": 228,
   "EXEMPT_TICK_LOCAL": 36,
   "GUARDED": 7,
-  "TIMESTAMPED": 16
+  "TIMESTAMPED": 19
  },
- "total_writes": 288,
+ "total_writes": 290,
+ "_p285_note": "BLIND 229->228, TIMESTAMPED 16->19, total 288->290: the P285 mlp-seat block's agent_signals writes (quant_direction/quant_confidence/signal_edge_bps behind MlpShadow.last_direction's 6h staleness bound — the scanner classes the age-bearing block TIMESTAMPED, the guarded category growing IS the design; one neighboring write reclassified BLIND->TIMESTAMPED within the changed region). Block is default-OFF (mlpshadow_mode). Counters by hand, never --update (P171).",
  "_p265_note": "P265 batch net effect measured 2026-08-14: BLIND 228->229, TIMESTAMPED 13->16, total 284->288, blind-only keys 150->146. Deltas: +3 TIMESTAMPED (staleness-bounded writes: trend-layer stamp, funding-age, hb equity parts), +1 BLIND (the L2 sentiment_direction re-sync — same shape as the L3 FIX-SENT-SYNC write beside it), -2 dead _sentiment_l1/l3_agent_signal writes deleted. Counters by hand, never --update (P171).", "_p256_note": "BLIND 228 -> 231, total 284 -> 287: the three P256 regimebook-seat writes (agent_signals quant_direction/quant_confidence/signal_edge_bps). They are NOT actually blind \u2014 every write sits behind RegimeBookShadow.last_direction(max_age_s=6h), a P156-style staleness bound the P120 scanner cannot see syntactically (it looks for per-write guard patterns). The block is also default-OFF (regimebook_mode). Counters by hand, never --update (P171)."
 }

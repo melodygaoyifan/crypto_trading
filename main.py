@@ -1648,6 +1648,19 @@ class ProductionConfig:
     # the instrument in the same breath as the rule). Flipping to "enforce"
     # is an operator decision gated on that P166 read (P141).
     regimebook_mode: str = "off"
+    # [P285] The certified-candidate seat: in "enforce", the P283b-certified
+    # mlp_small direction (from the P284 shadow harness) takes the quant
+    # slot for the assets listed — same injection mechanism as the trend and
+    # regimebook seats, full chain stays binding. Default "off" = inert.
+    # Flipping is the P285 criterion's operator step: fire ONLY on
+    # scripts/mlp_seat_check.py exit 3 (>=2026-08-28, ledger >=14d, 16h IC
+    # not negative, trend still GATE-CLOSED). Absent from the live profile
+    # by design — adding it IS the firing action (P237 actuator pattern).
+    mlpshadow_mode: str = "off"
+    # [P285] Which assets the mlp seat may claim. Default BTC only — the one
+    # certified asset; the harness can only emit for exported models anyway
+    # (defense-in-depth, both ends gate the roster).
+    mlpshadow_seat_assets: List[str] = field(default_factory=lambda: ["BTC"])
     # [P206] Drive the Coinbase sleeve from the GATED intent instead of the
     # pre-gate `_last_quant_directions` snapshot. The sleeve is the only venue
     # that trades, and it currently reads a signal captured BEFORE the alpha
@@ -1981,6 +1994,11 @@ class ProductionConfig:
             # [P256] declared + parsed together (the P201 rule)
             regimebook_mode=str(
                 data.get("regimebook_mode", "off") or "off"),
+            # [P285] declared + parsed together (the P201 rule)
+            mlpshadow_mode=str(
+                data.get("mlpshadow_mode", "off") or "off"),
+            mlpshadow_seat_assets=list(
+                data.get("mlpshadow_seat_assets", ["BTC"]) or ["BTC"]),
             # [P206] see the dataclass comment — changes live order behaviour
             coinbase_use_gated_intent=bool(
                 data.get("coinbase_use_gated_intent", False)),
@@ -8910,6 +8928,67 @@ class HMATSProductionRunner:
                 logger.warning(
                     f"[REGIMEBOOK-SEAT] {asset}: seat skip on "
                     f"{type(_rb_e).__name__}: {_rb_e} — incumbent signal stands")
+
+        # [P285] MLP SEAT (default "off" — this block is inert). In
+        # "enforce", the P283b-certified mlp_small direction (P284 shadow
+        # harness, LIVE sign expression) takes the quant slot for the assets
+        # in mlpshadow_seat_assets — the SAME injection the trend/regimebook
+        # seats use, so the full chain (alpha gate, veto chain, P206 sleeve
+        # translation, caps, stops) stays binding. Design notes:
+        #   * Runs AFTER the regimebook seat: if both were ever enforced for
+        #     one asset, the certified model deterministically wins (pinned).
+        #   * A missing/stale/coverage-gapped harness emit takes NO seat —
+        #     the incumbent (trend today) stands. last_direction() only
+        #     serves FULL-COVERAGE emits (absence != flat, P2); the model's
+        #     own deadband flat IS a position and seats as dir=0.0.
+        #   * signal_edge_bps = 30.0 x |dir| — the SAME asserted constant
+        #     the trend and regimebook seats carry (P231/P256): the swap
+        #     changes the DIRECTION source, never the alpha bar.
+        #   * Both dicts + dq + the P149 sleeve bridge, like the seats above
+        #     (the P170 two-dict trap and P265 dq-guard gap, closed here from
+        #     birth instead of found later).
+        #   * Firing criterion + instrument: scripts/mlp_seat_check.py
+        #     (>=2026-08-28, ledger >=14d, 16h IC not negative, trend still
+        #     GATE-CLOSED). The checker never edits config (P141).
+        _ms_mode = str(getattr(self.config, "mlpshadow_mode", "off") or "off")
+        _ms_assets = getattr(self.config, "mlpshadow_seat_assets", None) or ["BTC"]
+        if (_ms_mode == "enforce" and asset in _ms_assets
+                and getattr(self, "_mlp_shadow", None) is not None):
+            try:
+                _ms = self._mlp_shadow.last_direction(asset)
+                if _ms is None:
+                    if not hasattr(self, "_ms_seat_stale_logged"):
+                        self._ms_seat_stale_logged = set()
+                    if asset not in self._ms_seat_stale_logged:
+                        self._ms_seat_stale_logged.add(asset)
+                        logger.warning(
+                            f"[MLP-SEAT] {asset}: enforce is ON but no fresh "
+                            f"full-coverage emit exists — seat NOT taken, the "
+                            f"incumbent signal stands (logged once per asset)")
+                else:
+                    _ms_dir, _ms_z, _ms_age = _ms
+                    self._ms_seat_stale_logged = getattr(
+                        self, "_ms_seat_stale_logged", set())
+                    self._ms_seat_stale_logged.discard(asset)
+                    _ms_edge = 30.0 * abs(_ms_dir)
+                    market_data["quant_direction"] = float(_ms_dir)
+                    market_data["quant_confidence"] = 0.9 if _ms_dir else 0.4
+                    market_data["signal_edge_bps"] = _ms_edge
+                    agent_signals["quant_direction"] = float(_ms_dir)
+                    agent_signals["quant_confidence"] = 0.9 if _ms_dir else 0.4
+                    agent_signals["signal_edge_bps"] = _ms_edge
+                    market_data["quant_data_quality"] = 1.0
+                    agent_signals["quant_data_quality"] = 1.0
+                    # [P149] sleeve bridge — same reason as the seats above
+                    self._last_quant_directions[asset] = float(_ms_dir)
+                    logger.info(
+                        f"[MLP-SEAT] {asset}: dir={_ms_dir:+.1f} "
+                        f"z={_ms_z} age={_ms_age/3600:.1f}h "
+                        f"edge={_ms_edge:.0f}bps — certified model holds the seat")
+            except Exception as _ms_e:
+                logger.warning(
+                    f"[MLP-SEAT] {asset}: seat skip on "
+                    f"{type(_ms_e).__name__}: {_ms_e} — incumbent signal stands")
 
         _gmm_probs = market_data.get("_gmm_probs", [])
         _regime_name = market_data.get("regime_state", "UNKNOWN")
