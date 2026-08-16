@@ -45,7 +45,7 @@ class MlpShadow:
         root = repo_root or Path(__file__).resolve().parent.parent
         self._dir = Path(data_dir) / "strategy_shadow"
         self._dir.mkdir(parents=True, exist_ok=True)
-        self._models: Dict[str, Optional[dict]] = {}
+        self._models: Dict[str, dict] = {}
         self._state: Dict[str, dict] = {}   # asset -> {cur, last_bin}
         self._warned: Dict[str, str] = {}
         cfg_dir = root / "configs" / "mlpshadow"
