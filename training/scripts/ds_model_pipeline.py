@@ -53,6 +53,14 @@ RNG = np.random.default_rng(SEED)
 
 manifest = json.loads((REPO / "configs" / "feature_manifest.json").read_text(encoding="utf-8"))
 
+# [P281] this script reads the parquets DIRECTLY (bypasses load_asset), so
+# the P280 clean-GMM gate must be called here too — a leaked regime fit
+# must never reach a lockbox shot
+sys.path.insert(0, str(REPO / "training"))
+from splits import assert_clean_gmm  # noqa: E402
+for _a in ASSETS:
+    assert_clean_gmm(_a)
+
 
 # ---------------------------------------------------------------- stage A
 def load_asset(asset):
@@ -122,9 +130,12 @@ def positions_from_z(z):
 
 
 def after_cost_sharpe(close, pos, fee, s, e):
+    """[P281] `fee` is ROUND-TRIP bps (the P166 convention); each unit
+    |Δpos| is one LEG, charged half — this line used to charge full RT per
+    leg (the P279-found 2x defect, third copy of it in the tree)."""
     ret = np.zeros(len(close)); ret[1:] = close[1:] / close[:-1] - 1.0
     strat = np.zeros(len(close)); strat[1:] = pos[:-1] * ret[1:]
-    cost = np.zeros(len(close)); cost[1:] = np.abs(np.diff(pos)) * fee / 1e4
+    cost = np.zeros(len(close)); cost[1:] = np.abs(np.diff(pos)) * (fee / 2.0) / 1e4
     seg = (strat - cost)[s:e]
     sd = float(np.nanstd(seg))
     return (float(np.nanmean(seg) / sd * math.sqrt(6 * 365)) if sd > 0 else 0.0,
@@ -314,6 +325,14 @@ def main():
         z = preds / sig
         pos_seg = positions_from_z(z[DEV_END:])
         full = np.zeros(n); full[DEV_END:] = pos_seg
+        # [P281] the lockbox read is a SPEND — ledger it (P244 discipline;
+        # this script predated the ledger and never recorded its shots)
+        try:
+            from splits import record_window_usage
+            record_window_usage("ds_pipeline:p281_honest", asset,
+                                DEV_END, n, "validation")
+        except Exception as _lw_e:
+            print(f"  (window-ledger record failed: {type(_lw_e).__name__})")
         sh, tot = after_cost_sharpe(close, full, FEE[asset], DEV_END, n)
         bh = (close[n - 1] / close[DEV_END] - 1) * 100
         print(f"  LOCKBOX {asset}: {label} sharpe={sh:+.2f} total={tot:+.0f}% "

@@ -1,0 +1,29 @@
+{
+ "generated": "2026-08-16T05:51:43.506803+00:00",
+ "candidate": "ridge_adaptive (the P241 ridge_a30 incumbent)",
+ "conditions": "clean parquets + real futures cols + honest RT cost (P281); pre-registered config, no search",
+ "assets": {
+  "BTC": {
+   "lockbox_pnl_pct": 15.36473217117926,
+   "sharpe": 0.27100507784640604,
+   "sharpe_ci": [
+    -1.154,
+    1.688
+   ],
+   "buy_and_hold_pct": 2.35,
+   "passes": false,
+   "incumbent_old_regime": 1.28
+  },
+  "ETH": {
+   "lockbox_pnl_pct": 9.407813386026643,
+   "sharpe": 0.10768218006042407,
+   "sharpe_ci": [
+    -1.387,
+    1.472
+   ],
+   "buy_and_hold_pct": -21.79,
+   "passes": false,
+   "incumbent_old_regime": 1.73
+  }
+ }
+}

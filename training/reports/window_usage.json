@@ -431,6 +431,38 @@
    "start": 9100,
    "end": 13034,
    "purpose": "validation"
+  },
+  {
+   "ts": "2026-08-16T05:33:51.243648+00:00",
+   "experiment": "ds_pipeline:p281_honest",
+   "asset": "BTC",
+   "start": 9100,
+   "end": 13095,
+   "purpose": "validation"
+  },
+  {
+   "ts": "2026-08-16T05:48:06.201778+00:00",
+   "experiment": "ds_pipeline:p281_honest",
+   "asset": "ETH",
+   "start": 9100,
+   "end": 13095,
+   "purpose": "validation"
+  },
+  {
+   "ts": "2026-08-16T05:51:43.576207+00:00",
+   "experiment": "ridge_a30_recert:p281",
+   "asset": "BTC",
+   "start": 9100,
+   "end": 13095,
+   "purpose": "validation"
+  },
+  {
+   "ts": "2026-08-16T05:51:58.862654+00:00",
+   "experiment": "ridge_a30_recert:p281",
+   "asset": "ETH",
+   "start": 9100,
+   "end": 13095,
+   "purpose": "validation"
   }
  ]
 }
