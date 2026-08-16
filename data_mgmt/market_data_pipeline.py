@@ -1637,8 +1637,15 @@ class MarketDataPipeline:
             # lines 1821-1822 for trade fields.
             current_price = self._safe_float(ticker.get("last"), 0.0)
             volume_24h = self._safe_float(ticker.get("quoteVolume"), 0.0)
-            bid = self._safe_float(ticker.get("bid"), current_price)
-            ask = self._safe_float(ticker.get("ask"), current_price)
+            # [P287] Keep the GENUINELY-QUOTED top-of-book separate from the
+            # defaulted values: bid/ask fall back to current_price for the
+            # spread arithmetic (unchanged), but only real quotes may be
+            # published into market_data — a fabricated bid==ask==last would
+            # claim a zero-spread book (P2: absence stays absent).
+            _bid_quoted = self._safe_float(ticker.get("bid"), 0.0)
+            _ask_quoted = self._safe_float(ticker.get("ask"), 0.0)
+            bid = _bid_quoted if _bid_quoted > 0 else current_price
+            ask = _ask_quoted if _ask_quoted > 0 else current_price
             spread_bps = ((ask - bid) / current_price * 10000) if current_price > 0 else 0.0
             exchange_ts = ticker.get("timestamp", None)
 
@@ -1769,8 +1776,19 @@ class MarketDataPipeline:
                     logger.debug(_ob_msg)
 
             # OFI z-score: rolling z-score of order_book_imbalance
+            # [P287] Only a FRESH orderbook reading may enter the rolling
+            # window or be scored. During an outage the local value is the
+            # frozen cached imbalance (repeated verbatim every tick) or the
+            # static-floor 0.0 — appending it collapses the rolling sigma,
+            # so the first REAL reading at recovery produced a spurious |z|
+            # spike straight into the |z|>3 SOL toxicity veto (P265e made
+            # that consumer reachable). The depth buffer above is gated on
+            # _depth_reliable, which accepts cached_depth — fine for a
+            # MEDIAN, poison for a z-score's sigma; this gate is therefore
+            # deliberately stricter (fresh-only). A stale tick reports the
+            # neutral 0.0, never a z computed from a fabricated reading.
             _ofi_zscore = 0.0
-            if asset in self._ofi_history:
+            if asset in self._ofi_history and not orderbook_stale:
                 self._ofi_history[asset].append(order_book_imbalance)
                 _ofi_buf = self._ofi_history[asset]
                 if len(_ofi_buf) >= 5:
@@ -1961,7 +1979,7 @@ class MarketDataPipeline:
             self._global_fetch_failure_count = 0
             self._global_fetch_success_count += 1
 
-            return {
+            _ret = {
                 "current_price": current_price,
                 "prices": prices, "volumes": volumes, "ohlcv_raw": ohlcv_raw,
                 "drl_ohlcv_raw": drl_ohlcv_raw,
@@ -2013,6 +2031,27 @@ class MarketDataPipeline:
                 "recent_sell_trade_volume_usd": _trade_sell_notional_usd,
                 "trade_metrics_source": _trade_metrics_source,
             }
+            # [P287] Publish the venue top-of-book. The pipeline computed
+            # bid/ask for spread_bps and then DISCARDED them, so
+            # market_data["bid"]/["ask"] had no producer anywhere — micro's
+            # follower (Kraken) ingest (agents/microstructure_agent.py
+            # _ingest_market_data reads exactly these keys) could never
+            # fire, which is why lead_lag_edge was a structural 0.0. Only
+            # genuinely-quoted values are published (absence stays absent,
+            # P2); sizes ride along when the ticker carries them. Written
+            # as LITERAL-key assignments, not a **splat — a splat registers
+            # as a dynamic write site in the P174 orphan scanner, whose
+            # dynamic_site_count is deliberately not re-baselineable.
+            if _bid_quoted > 0 and _ask_quoted > 0:
+                _ret["bid"] = _bid_quoted
+                _ret["ask"] = _ask_quoted
+                _bid_vol = self._safe_float(ticker.get("bidVolume"), 0.0)
+                _ask_vol = self._safe_float(ticker.get("askVolume"), 0.0)
+                if _bid_vol > 0:
+                    _ret["bid_size"] = _bid_vol
+                if _ask_vol > 0:
+                    _ret["ask_size"] = _ask_vol
+            return _ret
             # [P253] The [2026-04-10] "reset on success" lines that lived HERE
             # (after the return = dead code) moved ABOVE the return.
 

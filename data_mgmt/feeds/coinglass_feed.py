@@ -111,7 +111,14 @@ class CoinglassCrowdData:
     oi_trend: Dict[str, float] = field(default_factory=dict)  # [-1, 1]
     liquidation_imbalance: Dict[str, float] = field(default_factory=dict)  # [-1, 1]
     crowding_score: Dict[str, float] = field(default_factory=dict)  # [0, 1]
-    
+
+    # [P287] Age (seconds, at fetch time) of entries CARRIED FORWARD from the
+    # previous cache because their endpoint family failed this fetch. Keyed
+    # "family:SYMBOL" (e.g. "liquidations:BTC"). Absent key = fetched fresh.
+    # Consumers that care about staleness read this; the carried entries also
+    # keep their ORIGINAL per-entry timestamps.
+    family_age_sec: Dict[str, float] = field(default_factory=dict)
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
         return {
@@ -120,6 +127,7 @@ class CoinglassCrowdData:
             "oi_trend": self.oi_trend,
             "liquidation_imbalance": self.liquidation_imbalance,
             "crowding_score": self.crowding_score,
+            "family_age_sec": self.family_age_sec,
         }
     
     def get_crowd_context(self, symbol: str) -> Dict[str, float]:
@@ -272,6 +280,12 @@ class CoinglassFeed:
             "liquidation_imbalance": data.liquidation_imbalance.get(symbol, 0.0),
             "crowding_score": crowding,
             "extreme_crowding": extreme_crowding,
+            # [P287] Per-family carried-forward age (sec at fetch time);
+            # 0.0 = fetched fresh this cycle. Lets consumers distinguish a
+            # live reading from one surviving an endpoint-family outage.
+            "funding_age_sec": data.family_age_sec.get(f"funding:{symbol}", 0.0),
+            "oi_age_sec": data.family_age_sec.get(f"open_interest:{symbol}", 0.0),
+            "liquidation_age_sec": data.family_age_sec.get(f"liquidations:{symbol}", 0.0),
         }
     
     def _get_default_crowd_metrics(self) -> Dict[str, Any]:
@@ -381,8 +395,40 @@ class CoinglassFeed:
             self._dns_warning_shown = False
             logger.info("[COINGLASS] feed recovered — failure warnings re-armed")
 
+        # [P287] Per-FAMILY carry-forward. The P265 guard above covers only
+        # the nothing-at-all outage: a PARTIAL fetch (e.g. OI+funding OK,
+        # liquidation v3 down for every symbol) still fell through to
+        # _compute_metrics with the failed family EMPTY, which wrote 0.0
+        # into its derived metric and replaced the cache FRESH-stamped —
+        # "endpoint down" and "calm market" were byte-identical. Carry the
+        # previous cached entries forward WITH their original timestamps
+        # (age stays honest, exposed via family_age_sec) instead of
+        # fabricating neutral. Carried entries never re-enter the trend
+        # history deques (a repeated stale value each cycle would collapse
+        # the rolling stats — the same corruption one buffer over).
+        _carried: set = set()
+        if _prev is not None:
+            for _fam_name, _cur_map, _prev_map in (
+                    ("funding", data.funding, _prev.funding),
+                    ("open_interest", data.open_interest, _prev.open_interest),
+                    ("liquidations", data.liquidations, _prev.liquidations)):
+                for _sym in SUPPORTED_SYMBOLS:
+                    if _sym not in _cur_map and _sym in _prev_map:
+                        _cur_map[_sym] = _prev_map[_sym]
+                        _carried.add((_fam_name, _sym))
+                        _ts = getattr(_prev_map[_sym], "timestamp", None)
+                        data.family_age_sec[f"{_fam_name}:{_sym}"] = (
+                            max(0.0, (now - _ts).total_seconds())
+                            if isinstance(_ts, datetime) else -1.0)
+        if _carried:
+            logger.warning(
+                "[COINGLASS] partial fetch — carried previous data for "
+                + ", ".join(sorted(f"{f}:{s}" for f, s in _carried))
+                + " (original timestamps kept, ages in family_age_sec; "
+                  "NOT fresh-stamped)")
+
         # Compute derived metrics
-        self._compute_metrics(data)
+        self._compute_metrics(data, carried=_carried)
 
         self._last_data = data
         self._last_fetch_time = now
@@ -488,18 +534,27 @@ class CoinglassFeed:
             avg_fr = first.get("avgFundingRateBySymbol")
             if avg_fr is not None:
                 avg_fr_f = float(avg_fr)
-                # [FIX-38] Bounds check: funding rate must be within ±1% per 8h
-                if not np.isfinite(avg_fr_f) or abs(avg_fr_f) > 0.01:
-                    logger.warning(f"[COINGLASS] {symbol} funding rate out of bounds: {avg_fr_f}")
-                    avg_fr_f = 0.0
-                fr_data = FundingData(
-                    symbol=symbol,
-                    rate=avg_fr_f,
-                    predicted_rate=None,
-                    interval_hours=8,
-                    exchange="aggregate",
-                    timestamp=now,
-                )
+                # [P287] An extreme print is CLAMPED to the ±1%/8h bound,
+                # never zeroed: converting a squeeze-level funding rate to
+                # 0.0 read as "no crowding" exactly when the crowding
+                # detector matters most. kraken_futures_feed [FIX-39] clamps
+                # the same bound — the two feeds now agree on out-of-range
+                # semantics. Non-finite stays "no data" (fr_data None), not
+                # a fabricated neutral.
+                if not np.isfinite(avg_fr_f):
+                    logger.warning(f"[COINGLASS] {symbol} funding rate non-finite: {avg_fr!r} — no funding datum this fetch")
+                else:
+                    if abs(avg_fr_f) > 0.01:
+                        logger.warning(f"[COINGLASS] {symbol} funding rate {avg_fr_f:.6f} beyond ±1%/8h — clamping (extreme crowding print, NOT neutral)")
+                        avg_fr_f = max(-0.01, min(0.01, avg_fr_f))
+                    fr_data = FundingData(
+                        symbol=symbol,
+                        rate=avg_fr_f,
+                        predicted_rate=None,
+                        interval_hours=8,
+                        exchange="aggregate",
+                        timestamp=now,
+                    )
 
         return oi_data, fr_data
 
@@ -553,10 +608,13 @@ class CoinglassFeed:
                     if x.get("status") == 1 and x.get("rate") is not None
                 ]
 
-                # [FIX-38] Filter out non-finite or extreme rates
+                # [FIX-38] Filter out non-finite rates; [P287] extreme
+                # finite rates are CLAMPED to ±1%/8h, not dropped —
+                # silently dropping them removed exactly the exchanges
+                # showing squeeze-level crowding from the average.
                 active_rates = [
-                    r for r in active_rates
-                    if isinstance(r, (int, float)) and np.isfinite(r) and abs(r) <= 0.01
+                    max(-0.01, min(0.01, float(r))) for r in active_rates
+                    if isinstance(r, (int, float)) and np.isfinite(r)
                 ]
 
                 if active_rates:
@@ -656,17 +714,32 @@ class CoinglassFeed:
                 # log at WARNING. Liquidation imbalance feeds the crowding
                 # detector + position sizer; silent per-symbol miss leaks
                 # stale data downstream.
+                # [P287] Message states what actually happens: the symbol is
+                # simply ABSENT from this fetch; the P287 carry-forward in
+                # _fetch_real then keeps the previous cached row (if any)
+                # with its honest age. The old text claimed "using stale
+                # data" while the code fabricated a fresh zero.
                 logger.warning(
                     f"[COINGLASS] Liquidation v3 {symbol} FAILED "
-                    f"({type(e).__name__}: {e}); using stale data."
+                    f"({type(e).__name__}: {e}); no {symbol} liquidation row "
+                    f"this fetch — previous cached row (if any) carried "
+                    f"forward with honest age."
                 )
 
     # =========================================================================
     # METRICS COMPUTATION
     # =========================================================================
     
-    def _compute_metrics(self, data: CoinglassCrowdData):
-        """Compute derived crowding metrics."""
+    def _compute_metrics(self, data: CoinglassCrowdData, carried=None):
+        """Compute derived crowding metrics.
+
+        [P287] `carried` is the set of (family, symbol) pairs whose entries
+        were carried forward from the previous cache (endpoint family failed
+        this fetch). Their metrics are still computed from the carried data,
+        but they must NOT re-enter the trend history deques — appending the
+        same stale value each 5-min cycle would collapse the rolling stats.
+        """
+        carried = carried or set()
         for symbol in SUPPORTED_SYMBOLS:
             # Funding bias
             if symbol in data.funding:
@@ -674,20 +747,22 @@ class CoinglassFeed:
                 # Normalize: positive funding = longs pay shorts = crowded longs
                 funding_bias = np.clip(rate / FUNDING_NORM, -1.0, 1.0)
                 data.funding_bias[symbol] = funding_bias
-                
+
                 # Update history (deque maxlen auto-caps)
-                self._funding_history[symbol].append(rate)
+                if ("funding", symbol) not in carried:
+                    self._funding_history[symbol].append(rate)
             else:
                 data.funding_bias[symbol] = 0.0
-            
+
             # OI trend
             if symbol in data.open_interest:
                 oi_change = data.open_interest[symbol].change_24h_pct / 100
                 # Normalize: rising OI = more positions being opened
                 data.oi_trend[symbol] = np.clip(oi_change / 0.1, -1.0, 1.0)
-                
+
                 # Update history (deque maxlen auto-caps)
-                self._oi_history[symbol].append(data.open_interest[symbol].open_interest_usd)
+                if ("open_interest", symbol) not in carried:
+                    self._oi_history[symbol].append(data.open_interest[symbol].open_interest_usd)
             else:
                 data.oi_trend[symbol] = 0.0
             

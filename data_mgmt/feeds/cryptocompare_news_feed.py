@@ -146,18 +146,18 @@ class CCNewsFeed:
         if self._mock_mode:
             return []
 
-        # [P220] Reserve against the SHARED account budget before spending a
-        # call. One call now serves all tracked assets (P219), so this is 1.
-        from data_mgmt.feeds._cc_quota import get_cc_quota
-        if not get_cc_quota().try_consume(1, caller="cc_news"):
-            return cached[1] if cached else []
-
         # [P216] Honour an active 429 backoff. Without this the feed re-hit the
         # API on the very next asset, seconds after being told to slow down:
         # 3 assets x every tick, forever, which is what kept it rate-limited.
         # Serve the last good cache while backed off rather than [] — stale
         # headlines beat no headlines, and `[]` makes llm_sentiment fall back to
         # f&g, which main.py:8529 deliberately treats as untradeable.
+        # [P287] This gate runs BEFORE the quota reservation. It used to run
+        # after try_consume(), so every cache-miss during an active backoff
+        # reserved 1 call from the shared 90/month budget and then returned
+        # WITHOUT making the HTTP request — reserved, never spent,
+        # permanently counted against cc_news in the P220 ledger.
+        # Reserve-then-call means: reserve only when a call will be made.
         _left = self._backoff_until - now
         if _left > 0:
             if cached:
@@ -166,6 +166,12 @@ class CCNewsFeed:
                     f"serving cached ({len(cached[1])} items)")
                 return cached[1]
             return []
+
+        # [P220] Reserve against the SHARED account budget before spending a
+        # call. One call now serves all tracked assets (P219), so this is 1.
+        from data_mgmt.feeds._cc_quota import get_cc_quota
+        if not get_cc_quota().try_consume(1, caller="cc_news"):
+            return cached[1] if cached else []
 
         params = {
             "lang": "EN",

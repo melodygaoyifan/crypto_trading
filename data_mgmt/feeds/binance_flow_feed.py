@@ -44,7 +44,19 @@ class BinanceFlowFeed:
     def __init__(self, cache_ttl_sec: float = 3600.0):
         self._cache: Dict[str, tuple] = {}   # asset -> (ts, dict|None)
         self._cache_ttl = cache_ttl_sec
-        self._fail_logged = False
+        # [P287] Per-(key, cause) warn latch. The old single bool meant
+        # BTC's first failure consumed the one warning for ETH/SOL AND for
+        # every distinct cause (http vs exception vs warmup) — the exact
+        # single-latch shape P202/P229 replaced elsewhere. Keys are the
+        # symbol (fetch-level causes) or the asset (vector-level cause);
+        # a successful `latest(asset)` re-arms that asset's keys.
+        self._fail_logged: set = set()
+
+    def _warn_once(self, key: str, cause: str, msg: str) -> None:
+        if (key, cause) in self._fail_logged:
+            return
+        self._fail_logged.add((key, cause))
+        logger.warning(msg)
 
     def _fetch_1h(self, symbol: str) -> Optional[pd.DataFrame]:
         frames = []
@@ -56,13 +68,12 @@ class BinanceFlowFeed:
                     params["endTime"] = end_time
                 r = requests.get(_BASE, params=params, timeout=15)
                 if r.status_code != 200:
-                    if not self._fail_logged:
-                        logger.warning(
-                            f"[FLOW-FEED] klines HTTP {r.status_code} for "
-                            f"{symbol} — fv2 features UNAVAILABLE this tick "
-                            f"(451 = geo-block: expected off-server). A "
-                            f"139-obs model cannot run without them.")
-                        self._fail_logged = True
+                    self._warn_once(
+                        symbol, "http",
+                        f"[FLOW-FEED] klines HTTP {r.status_code} for "
+                        f"{symbol} — fv2 features UNAVAILABLE this tick "
+                        f"(451 = geo-block: expected off-server). A "
+                        f"139-obs model cannot run without them.")
                     return None
                 batch = r.json()
                 if not batch:
@@ -73,11 +84,11 @@ class BinanceFlowFeed:
                 if len(batch) < 1000:
                     break
                 time.sleep(0.1)
-        except Exception as e:
-            if not self._fail_logged:
-                logger.warning(f"[FLOW-FEED] fetch failed for {symbol}: "
-                               f"{type(e).__name__}: {e} — fv2 UNAVAILABLE")
-                self._fail_logged = True
+        except Exception as e:  # noqa: silent-swallow — logs via _warn_once (per-(key,cause) latch, P287); linter cannot see method-call logging (P252)
+            self._warn_once(
+                symbol, "exc",
+                f"[FLOW-FEED] fetch failed for {symbol}: "
+                f"{type(e).__name__}: {e} — fv2 UNAVAILABLE")
             return None
         if not frames:
             return None
@@ -111,12 +122,19 @@ class BinanceFlowFeed:
                 vec = latest_fv2_vector(raw_self, raw_ref, asset)
                 if vec is not None:
                     result = {k: float(v) for k, v in vec.items()}
-                    self._fail_logged = False
-        if result is None and not self._fail_logged:
-            logger.warning(f"[FLOW-FEED] {asset}: fv2 vector UNAVAILABLE "
-                           f"(insufficient data or warmup) — models needing "
-                           f"fv2 must skip this tick, not zero-fill")
-            self._fail_logged = True
+                    # [P287] Re-arm only THIS asset's latch keys (its own
+                    # symbol, its reference symbol, the asset itself) —
+                    # a BTC success must not silence a live SOL failure.
+                    self._fail_logged = {
+                        k for k in self._fail_logged
+                        if k[0] not in (asset, sym, ref)
+                    }
+        if result is None:
+            self._warn_once(
+                asset, "unavailable",
+                f"[FLOW-FEED] {asset}: fv2 vector UNAVAILABLE "
+                f"(insufficient data or warmup) — models needing "
+                f"fv2 must skip this tick, not zero-fill")
         self._cache[asset] = (now, result)
         return result
 

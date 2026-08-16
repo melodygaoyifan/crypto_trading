@@ -61,7 +61,14 @@ def _agg_4h(raw: pd.DataFrame) -> pd.DataFrame:
     agg = {"volume": "sum", "close": "last", "open": "first"}
     for c in FLOW_COLS:
         agg[c] = "sum"
-    out = (df.set_index("timestamp").resample("4h").agg(agg)).dropna(subset=["close"])
+    idx = df.set_index("timestamp")
+    out = idx.resample("4h").agg(agg)
+    # [P287] How many 1h rows landed in each 4H bucket — lets the runtime
+    # entry point reject a still-forming trailing bucket (see
+    # latest_fv2_vector). Diagnostic column only: flow_features_4h builds
+    # its output frame fresh, so this never becomes a feature.
+    out["bar_1h_count"] = idx["close"].resample("4h").count()
+    out = out.dropna(subset=["close"])
     return out.reset_index()
 
 
@@ -113,17 +120,40 @@ def cross_asset_features(asset: str, closes: dict) -> pd.DataFrame:
 
 def latest_fv2_vector(raw_1h_self: pd.DataFrame, raw_1h_ref: pd.DataFrame,
                       asset: str) -> "pd.Series | None":
-    """The runtime entry point: the CURRENT bar's 13 fv2 values from trailing
-    1H frames (self + reference asset). Returns None when warmup is not met —
-    absence must be explicit, never fabricated (P160/P170)."""
+    """The runtime entry point: the latest COMPLETE bar's 13 fv2 values from
+    trailing 1H frames (self + reference asset). Returns None when warmup is
+    not met — absence must be explicit, never fabricated (P160/P170).
+
+    [P287] "Complete" is load-bearing: the feed drops the in-progress 1h
+    bar, but on any call not aligned to a 4H boundary the TRAILING 4H
+    resample bucket sums only 1-3 completed hours presented as a full bar —
+    mis-scaled z-features (the P253c in-progress-bar class, one resample
+    level up). Training rows come exclusively from complete 4H buckets (the
+    parquet's own bars), so serving the last complete bucket is also the
+    parity-consistent semantics. Trailing rolling windows make the step-back
+    exact: row -2's statistics use rows <= -2 only, so the partial trailing
+    row never contaminates the served row.
+    """
     f = flow_features_4h(raw_1h_self)
     if f.empty:
         return None
-    g_self = _agg_4h(raw_1h_self)[["timestamp", "close"]]
+    g_full = _agg_4h(raw_1h_self)
+    g_self = g_full[["timestamp", "close"]]
     g_ref = _agg_4h(raw_1h_ref)[["timestamp", "close"]]
     ref_name = REF[asset]
     x = cross_asset_features(asset, {asset: g_self, ref_name: g_ref})
-    row = f.merge(x, on="timestamp", how="left").iloc[-1]
+    merged = f.merge(x, on="timestamp", how="left")
+    _last_partial = (
+        len(g_full) > 0
+        and "bar_1h_count" in g_full.columns
+        and float(g_full["bar_1h_count"].iloc[-1]) < 4.0
+    )
+    if _last_partial:
+        if len(merged) < 2:
+            return None
+        row = merged.iloc[-2]
+    else:
+        row = merged.iloc[-1]
     vec = row[FV2_COLUMNS]
     if vec.isna().any():
         return None

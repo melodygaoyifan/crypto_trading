@@ -464,17 +464,27 @@ class CryptoPanicFeed:
         
         _cp_rate_limited = False
         _cp_errors = 0
+        # [P287] Track WHICH currencies failed (transport error or non-200),
+        # so a partial outage can carry their cached items instead of
+        # zeroing them. A 200 with zero posts is genuine "no news", NOT a
+        # failure.
+        _cp_failed: set = set()
         async with create_session() as session:
             # Fetch posts for each currency
-            for currency in SUPPORTED_CURRENCIES:
+            for _cp_idx, currency in enumerate(SUPPORTED_CURRENCIES):
                 try:
                     news = await self._fetch_posts(session, currency)
                     data.recent_news.extend(news)
+                    if self._last_status_code is not None and self._last_status_code != 200:
+                        _cp_failed.add(currency)
                     if self._last_status_code == 429:
                         _cp_rate_limited = True
+                        # Currencies not yet attempted are failed too.
+                        _cp_failed.update(SUPPORTED_CURRENCIES[_cp_idx + 1:])
                         break
                 except Exception as e:
                     _cp_errors += 1
+                    _cp_failed.add(currency)
                     logger.warning(f"[CRYPTOPANIC] {currency}: {e}")
 
         # [P265] The tick that ARMS the backoff must not destroy the cache the
@@ -495,6 +505,31 @@ class CryptoPanicFeed:
             # Backoff state (set inside _fetch_posts) still persists.
             self._persist_state()
             return self._last_data
+
+        # [P287] Per-currency carry. The P265 guard above covers only the
+        # full-outage / rate-limited case; a PARTIAL failure (BTC ok, ETH
+        # timeout) still passed it and _compute_metrics then stamped the
+        # failed currencies' panic/velocity as 0.0/fresh, cached and
+        # PERSISTED it — the exact scenario the P265 comment names. Carry
+        # the previous corpus's items for the failed currencies into this
+        # fetch (dedup by id). The carried items keep their own
+        # published_at, so the failed currency's metrics age honestly out
+        # of the 4h windows instead of snapping to a fabricated zero.
+        if _cp_failed and self._last_data is not None:
+            _have_ids = {n.id for n in data.recent_news}
+            _carried_n = 0
+            for _old in self._last_data.recent_news:
+                if _old.id in _have_ids:
+                    continue
+                if any(c in _cp_failed for c in _old.currencies):
+                    data.recent_news.append(_old)
+                    _have_ids.add(_old.id)
+                    _carried_n += 1
+            logger.warning(
+                f"[CRYPTOPANIC] partial fetch — {sorted(_cp_failed)} failed; "
+                f"carried {_carried_n} cached items for them (items keep "
+                f"their own timestamps, metrics decay honestly — NOT "
+                f"re-stamped as fresh zeros)")
 
         # Compute metrics
         self._compute_metrics(data)
@@ -568,8 +603,20 @@ class CryptoPanicFeed:
                 pub_str = post.get("published_at", "")
                 try:
                     pub_date = datetime.fromisoformat(pub_str.replace("Z", "+00:00"))
-                except (ValueError, TypeError):
-                    pub_date = datetime.now(timezone.utc)
+                    if pub_date.tzinfo is None:
+                        pub_date = pub_date.replace(tzinfo=timezone.utc)
+                except (ValueError, TypeError, AttributeError):
+                    # [P287] An unparseable/absent timestamp must not read
+                    # as "just published" — stamping NOW put undated items
+                    # inside every recency window (panic score, velocity),
+                    # i.e. absence read as maximal freshness (the P100
+                    # timestamp-lies shape). Stamp epoch instead: the item
+                    # stays in the corpus but never enters a recency window.
+                    logger.debug(
+                        f"[CRYPTOPANIC] unparseable published_at="
+                        f"{pub_str!r} — stamped epoch (excluded from "
+                        f"recency windows)")
+                    pub_date = datetime(1970, 1, 1, tzinfo=timezone.utc)
                 
                 news_items.append(NewsItem(
                     id=str(post.get("id", "")),

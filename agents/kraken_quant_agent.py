@@ -60,6 +60,14 @@ EULER_GAMMA = 0.5772156649
 # ENUMS & DATA STRUCTURES
 # =============================================================================
 
+# [P287] The agent's real feed cadence: generate_signals runs once per 4H
+# tick, so every per-tick buffer (StrategyState.pnl_history, vol_buffer)
+# holds 4H-spaced samples — 6 per day. Both annualization sites below MUST
+# use this; sqrt(365*24)/sqrt(24) treated the samples as hourly and
+# overstated IR and daily vol by 2x each (arithmetic wearing the wrong
+# cadence, inside a DECIDE agent's weighting and sizing).
+BARS_PER_DAY_4H = 6
+
 class Regime(Enum):
     """Market regime classification."""
     BEAR = "bear"      # Crash & Decay
@@ -124,8 +132,14 @@ class StrategyState:
         pnl = np.array(self.pnl_history)
         mean_ret = np.mean(pnl)
         std_ret = np.std(pnl) + 1e-10
-        # Annualize (assuming hourly data)
-        return (mean_ret * np.sqrt(365 * 24)) / std_ret
+        # [P287] Annualize at the REAL feed cadence: pnl_history receives at
+        # most one sample per 4H tick (generate_signals runs once per tick),
+        # i.e. BARS_PER_DAY_4H = 6 bars/day — not hourly. The old
+        # sqrt(365*24) overstated every strategy's IR by sqrt(24/6) = 2x
+        # into the softmax weights; temperature-scaled softmax is NOT
+        # scale-invariant, so the inflation sharpened the weights as if the
+        # temperature were halved.
+        return (mean_ret * np.sqrt(365 * BARS_PER_DAY_4H)) / std_ret
 
 
 # =============================================================================
@@ -980,15 +994,19 @@ class VarianceRiskPremiumStrategy(BaseStrategy):
     def calculate_realized_volatility(self, prices: np.ndarray, period: int = 20) -> float:
         """
         Calculate realized volatility (annualized).
-        
-        RV = σ(log returns) × √(365 × 24)  # For hourly data
+
+        RV = σ(log returns) × √(365 × BARS_PER_DAY_4H)
+        [P287] The price buffers are fed once per 4H tick (see
+        BARS_PER_DAY_4H) — the old √(365×24) assumed hourly and overstated
+        RV 2x. The pseudo-IV leg below moves with it: RV and IV must share
+        one cadence or the VRP = RV − IV comparison mixes units.
         """
         if len(prices) < period:
             return 0.0
-        
+
         returns = np.diff(np.log(prices[-period:]))
-        rv = np.std(returns) * np.sqrt(365 * 24)  # Annualize
-        
+        rv = np.std(returns) * np.sqrt(365 * BARS_PER_DAY_4H)  # Annualize
+
         return rv
     
     def calculate_pseudo_implied_vol(
@@ -1009,8 +1027,10 @@ class VarianceRiskPremiumStrategy(BaseStrategy):
             return 0.0
         
         # Base: ATR-like volatility
+        # [P287] Same cadence as calculate_realized_volatility (4H bars, 6/day)
+        # — the two legs of VRP = RV − IV must annualize identically.
         high_low_range = np.max(prices[-self.atr_period:]) - np.min(prices[-self.atr_period:])
-        base_vol = (high_low_range / np.mean(prices[-self.atr_period:])) * np.sqrt(365 * 24 / self.atr_period)
+        base_vol = (high_low_range / np.mean(prices[-self.atr_period:])) * np.sqrt(365 * BARS_PER_DAY_4H / self.atr_period)
         
         # Fear multiplier from funding rate
         # Negative funding = bearish, implies puts are expensive
@@ -2146,7 +2166,10 @@ class DeltaNeutralFundingStrategy(BaseStrategy):
         # Calculate realized volatility
         sol_prices = np.array(self.price_buffer['SOL'])
         returns = np.diff(np.log(sol_prices[-30:]))
-        realized_vol = np.std(returns) * np.sqrt(24)  # Daily vol
+        # [P287] 4H samples -> daily vol = std * sqrt(6), not sqrt(24).
+        # (Strategy is P157-archived — dormant — but the constant must not
+        # survive as a copy source.)
+        realized_vol = np.std(returns) * np.sqrt(BARS_PER_DAY_4H)  # Daily vol
         
         self.volatility_buffer['SOL'].append(realized_vol)
         
@@ -2438,7 +2461,13 @@ class StrategyAllocator:
         
         if len(self.vol_buffer) > 20:
             returns = np.diff(np.log(np.array(self.vol_buffer)))
-            current_vol = np.std(returns) * np.sqrt(24)
+            # [P287] vol_buffer gains ONE price per 4H tick, so `returns`
+            # are 4H log returns; daily vol = std * sqrt(BARS_PER_DAY_4H=6).
+            # The old sqrt(24) treated them as hourly and overstated daily
+            # vol 2x against the 2%-daily normal_vol baseline, so the 0.5x
+            # vol reduction fired at HALF its declared 1.5x-of-normal
+            # threshold. This restores the declared design, not a retune.
+            current_vol = np.std(returns) * np.sqrt(BARS_PER_DAY_4H)
             vol_mult = self.calculate_vol_adjustment(current_vol)
         else:
             vol_mult = 1.0
