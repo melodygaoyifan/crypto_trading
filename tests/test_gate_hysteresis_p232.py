@@ -121,8 +121,14 @@ class TestGateHysteresis:
         assert 'market_data["sleeve_position_contracts"]' in MAIN
 
     def test_secondary_veto_respects_the_hold(self):
-        blk = MAIN[MAIN.find("FRICTION_EXCEEDS_EDGE") - 2500:
-                   MAIN.find("FRICTION_EXCEEDS_EDGE") + 200]
+        # [P276] anchor on the WRITE SITE (`veto_reason = "FRICTION..."`),
+        # not the first bare occurrence — the P276 flatten-intended roster
+        # now lists the string near the top of main.py, which silently
+        # moved this window onto the roster text (a fragile-anchor test
+        # failing on an unrelated insertion, not a real regression)
+        _anchor = MAIN.find('veto_reason = "FRICTION_EXCEEDS_EDGE"')
+        assert _anchor > 0, "the FRICTION_EXCEEDS_EDGE write site is gone"
+        blk = MAIN[_anchor - 2500:_anchor + 200]
         assert 'getattr(intent, "alpha_gate_hold", False)' in blk, (
             "P232 regression: the v9-PATCH-2 friction veto silently "
             "overrides the hold band again"

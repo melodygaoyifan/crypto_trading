@@ -1,0 +1,264 @@
+{
+ "generated": "2026-08-16T02:31:53.368816+00:00",
+ "design_era": [
+  3000,
+  9100
+ ],
+ "pre_design_era": [
+  800,
+  3000
+ ],
+ "note": "DESIGN-era selection + pre-design stability ONLY; no validation bar scored (chassis assert). Winners earn the single P259b validation read BEFORE any wiring. scaleout is ETH-only: the sole asset whose P274 sizing (3ct) makes 1/3 partials expressible.",
+ "trail": {
+  "BTC": {
+   "base": {
+    "design": {
+     "gross": 1.2002,
+     "cost": 0.1305,
+     "net": 1.0697,
+     "turnover_units": 435.0
+    },
+    "pre_design": {
+     "gross": 0.7119,
+     "cost": 0.0261,
+     "net": 0.6858,
+     "turnover_units": 87.0
+    }
+   },
+   "grid": {
+    "k2.0": {
+     "design": {
+      "gross": 0.2366,
+      "cost": 0.0948,
+      "net": 0.1418,
+      "turnover_units": 316.0
+     },
+     "pre_design": {
+      "gross": 0.2117,
+      "cost": 0.018,
+      "net": 0.1937,
+      "turnover_units": 60.0
+     }
+    },
+    "k3.0": {
+     "design": {
+      "gross": 0.2058,
+      "cost": 0.1002,
+      "net": 0.1056,
+      "turnover_units": 334.0
+     },
+     "pre_design": {
+      "gross": 0.1525,
+      "cost": 0.018,
+      "net": 0.1345,
+      "turnover_units": 60.0
+     }
+    },
+    "k4.0": {
+     "design": {
+      "gross": 0.0276,
+      "cost": 0.105,
+      "net": -0.0774,
+      "turnover_units": 350.0
+     },
+     "pre_design": {
+      "gross": 0.1635,
+      "cost": 0.018,
+      "net": 0.1455,
+      "turnover_units": 60.0
+     }
+    }
+   },
+   "selected_k": 2.0,
+   "verdict": "base stands"
+  },
+  "ETH": {
+   "base": {
+    "design": {
+     "gross": 0.144,
+     "cost": 0.056,
+     "net": 0.088,
+     "turnover_units": 140.0
+    },
+    "pre_design": {
+     "gross": 1.4956,
+     "cost": 0.0228,
+     "net": 1.4728,
+     "turnover_units": 57.0
+    }
+   },
+   "grid": {
+    "k2.0": {
+     "design": {
+      "gross": -0.0539,
+      "cost": 0.056,
+      "net": -0.1099,
+      "turnover_units": 140.0
+     },
+     "pre_design": {
+      "gross": -0.1262,
+      "cost": 0.0224,
+      "net": -0.1486,
+      "turnover_units": 56.0
+     }
+    },
+    "k3.0": {
+     "design": {
+      "gross": -0.0687,
+      "cost": 0.056,
+      "net": -0.1247,
+      "turnover_units": 140.0
+     },
+     "pre_design": {
+      "gross": -0.0088,
+      "cost": 0.0224,
+      "net": -0.0312,
+      "turnover_units": 56.0
+     }
+    },
+    "k4.0": {
+     "design": {
+      "gross": 0.2751,
+      "cost": 0.056,
+      "net": 0.2191,
+      "turnover_units": 140.0
+     },
+     "pre_design": {
+      "gross": 0.3131,
+      "cost": 0.0224,
+      "net": 0.2907,
+      "turnover_units": 56.0
+     }
+    }
+   },
+   "selected_k": 4.0,
+   "verdict": "ERA-FRAGILE"
+  },
+  "SOL": {
+   "base": {
+    "design": {
+     "gross": 1.3027,
+     "cost": 0.0923,
+     "net": 1.2104,
+     "turnover_units": 142.0
+    },
+    "pre_design": {
+     "gross": 3.3571,
+     "cost": 0.0546,
+     "net": 3.3025,
+     "turnover_units": 84.0
+    }
+   },
+   "grid": {
+    "k2.0": {
+     "design": {
+      "gross": 0.2943,
+      "cost": 0.0923,
+      "net": 0.202,
+      "turnover_units": 142.0
+     },
+     "pre_design": {
+      "gross": -0.3499,
+      "cost": 0.0546,
+      "net": -0.4045,
+      "turnover_units": 84.0
+     }
+    },
+    "k3.0": {
+     "design": {
+      "gross": 0.5959,
+      "cost": 0.0923,
+      "net": 0.5036,
+      "turnover_units": 142.0
+     },
+     "pre_design": {
+      "gross": -0.4004,
+      "cost": 0.0546,
+      "net": -0.455,
+      "turnover_units": 84.0
+     }
+    },
+    "k4.0": {
+     "design": {
+      "gross": 0.8919,
+      "cost": 0.0923,
+      "net": 0.7996,
+      "turnover_units": 142.0
+     },
+     "pre_design": {
+      "gross": -0.0449,
+      "cost": 0.0546,
+      "net": -0.0995,
+      "turnover_units": 84.0
+     }
+    }
+   },
+   "selected_k": 4.0,
+   "verdict": "base stands"
+  }
+ },
+ "scaleout": {
+  "ETH": {
+   "base": {
+    "design": {
+     "gross": 0.144,
+     "cost": 0.056,
+     "net": 0.088,
+     "turnover_units": 140.0
+    },
+    "pre_design": {
+     "gross": 1.4956,
+     "cost": 0.0228,
+     "net": 1.4728,
+     "turnover_units": 57.0
+    }
+   },
+   "grid": {
+    "k1.0": {
+     "design": {
+      "gross": 0.0814,
+      "cost": 0.056,
+      "net": 0.0254,
+      "turnover_units": 140.0
+     },
+     "pre_design": {
+      "gross": 0.9609,
+      "cost": 0.0227,
+      "net": 0.9383,
+      "turnover_units": 56.7
+     }
+    },
+    "k2.0": {
+     "design": {
+      "gross": 0.027,
+      "cost": 0.056,
+      "net": -0.029,
+      "turnover_units": 140.0
+     },
+     "pre_design": {
+      "gross": 0.9742,
+      "cost": 0.0227,
+      "net": 0.9515,
+      "turnover_units": 56.7
+     }
+    },
+    "k3.0": {
+     "design": {
+      "gross": -0.0039,
+      "cost": 0.056,
+      "net": -0.0599,
+      "turnover_units": 140.0
+     },
+     "pre_design": {
+      "gross": 0.9794,
+      "cost": 0.0227,
+      "net": 0.9568,
+      "turnover_units": 56.7
+     }
+    }
+   },
+   "selected_k": 1.0,
+   "verdict": "base stands"
+  }
+ }
+}

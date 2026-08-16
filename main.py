@@ -2119,7 +2119,16 @@ _SLEEVE_HOLD_VETOES = ("EXPOSURE_DELTA_BELOW_THRESHOLD", "FLIP_PERSIST_HOLD",
                        # [P265] A trade-gate CRASH is no information at all —
                        # C1's fail-closed veto is right, but flattening on it
                        # converts a code fault into a liquidation.
-                       "[TRADE_GATE_ERROR]")
+                       "[TRADE_GATE_ERROR]",
+                       # [P276] The SECOND Kraken-disconnect door: the
+                       # pre-execution abort at main.py:~14747 stamps this
+                       # when the KRAKEN execution manager loses connection
+                       # mid-tick — P253 #1 fixed the early-return door
+                       # (EXCHANGE_DISCONNECTED_HOLD) and this in-decide
+                       # writer was missed, so a Kraken API disconnect
+                       # still liquidated the Coinbase book. Found by the
+                       # P276 roster guard's first enumeration.
+                       "DISCONNECTED_MID_TICK")
 
 # [P265] NO_TRADE subtypes that are DATA-integrity conditions (state unknown ->
 # HOLD), as opposed to market-risk conditions (flash crash, extreme DVOL,
@@ -2140,6 +2149,42 @@ _SLEEVE_HOLD_NO_TRADE_TRIGGERS = ("DATA_INTEGRITY_FAIL", "STALE_DATA",
 # 2.0 in both dominant regimes. This is preventive, for EXTREME_VOLATILITY,
 # unmapped regimes, or the DD-adaptive reducer clamping to 1x.)
 _SLEEVE_VENUE_NA_VETOES = ("B1_SPOT_SHORT_BLOCK",)
+
+# [P276] TEST-ENFORCED ROSTER (no runtime consumer): every veto_reason write
+# site whose FLATTEN semantics on the sleeve are DELIBERATE. The translator's
+# default for an unclassified veto is veto_flat = liquidate every routed
+# asset — P275 recorded that every NEW veto writer silently inherits that
+# default (the P239 guard catches renames, not new writers). The P276 roster
+# guard (tests/test_sleeve_gated_intent_p206.py) extracts every veto_reason
+# literal from the write-site corpus and requires it to match _SLEEVE_HOLD_*,
+# _SLEEVE_VENUE_NA_*, or THIS tuple — a new writer goes RED until its author
+# CLASSIFIES it. Adding here means "yes, this condition should liquidate the
+# sleeve"; if the condition means state-unknown/wait/smaller, it belongs in
+# the HOLD sets instead (the P253/P265b test).
+_SLEEVE_FLATTEN_INTENDED_VETOES = (
+    # signal says no position (the sleeve exits on hold BY DESIGN)
+    "[BEST_OF_N_HOLD]", "[PRE_ALPHA_HOLD]", "[PRE_STRUCTURE_HOLD]",
+    "[CONFIDENCE_GATE]", "[v3.6.1] Alpha gate:", "FRICTION_EXCEEDS_EDGE",
+    # market-risk / safety responses where flat IS the intended posture
+    "[P0_SAFETY]", "[P0_SAFETY_EXCEPTION]", "[P0 FORCE FLAT]",
+    "[P0 SHORT BLOCK]", "[BLACK_SWAN_SENTINEL]", "[SOTA]", "[SOTA-ACT]",
+    "[PATCH-4]", "[GHOST-E]", "[SOL_TOXICITY]", "[STRATEGY_SUSPENDED]",
+    "[AUTO_RECOVERY_LATCH]", "NO_TRADE mode active", "[v3.6.1] NO_TRADE:",
+    # ^ NO_TRADE subtype split (data->HOLD) handled by
+    #   _SLEEVE_HOLD_NO_TRADE_TRIGGERS, enum-pinned; market-risk rest flatten
+    "[REGIME_POWER_NO_TRADE]", "Deadlock abort:", "[PROD] Tranche deadlock",
+    "[PROD] HARD VETO:", "[PROD] SOFT VETO", "[VETO]", "[TRADE_GATE]",
+    "[WEEKEND]", "[V10S] Weekend gross cap:", "[V6 SHORT FILTER]",
+    "[GAMBLER_GATE]", "[OP_BUDGET]", "[VC-5] Notional",
+    "[STRUCTURE] LONG blocked", "[STRUCTURE] SHORT blocked",
+    "[PATCH-5]", "[THESIS_BUDGET_ERROR]",
+    # review candidates, classified AS-CURRENT (flatten) deliberately —
+    # flipping semantics needs its own P-entry with the P253/P265b analysis:
+    "[PATCH-1] Schema fail:",   # constitution schema fail: data-shaped, but
+                                # P265b's door enumeration did not include it
+    "[BUGFIX M6] Stale signal", # measured vacuous (P265 records it) — the
+                                # in-tick latency check cannot fire at 6h bars
+)
 
 # Sentinel: "make no change to this asset this tick".
 SLEEVE_HOLD = object()
@@ -11954,6 +11999,14 @@ class HMATSProductionRunner:
                 "CRITICAL drawdown",            # agents/risk_agent.py:594 — drawdown veto
                 "HALT drawdown",                # agents/risk_agent.py:601 — drawdown veto
                 "Correlation crisis",           # agents/risk_agent.py:622 — correlation veto
+                # [P276] The ECONOMICS veto: short_control's override exists
+                # to clear SHORT-BLOCK-class vetoes, never to admit a trade
+                # whose edge failed the gate — and post-cutover this
+                # override binds on the SLEEVE (P275 finding #3: clearing a
+                # veto here converts a would-be flatten into an executed
+                # perp short). The alpha-gate string was the one major veto
+                # class absent from this safety net.
+                "Alpha gate",                   # defense/constitution.py — [v3.6.1] Alpha gate: ...
             }
             _sc_veto_reason = getattr(intent, 'veto_reason', '') or ''
             _sc_is_protected = any(pv in _sc_veto_reason for pv in _SC_PROTECTED_VETOES)

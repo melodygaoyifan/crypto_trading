@@ -1775,6 +1775,14 @@ class HMATSv36Engine:
         # Use tranche-aware resolution if deadlocked
         # [FIX-DEADLOCK-ENUM] Use .value string comparison — immune to enum identity mismatch
         if tranche_deadlock.resolution.value == "FORCE_AGGRESSIVE":
+            # [P275/P276] NO-OP on the only venue that trades: both fields
+            # written here are consumed exclusively by the KRAKEN execution
+            # body (past the P152 return) — the Coinbase sleeve translator
+            # reads neither force_execution nor execution_mode, so this
+            # branch changes nothing live. The P170 hazard (fabricated edge
+            # buying its way to taker execution) is MOOT post-cutover.
+            # Kept for a Kraken revival; ABORT+CLOSE below IS live (it
+            # zeroes target_exposure -> sleeve flattens).
             intent.force_execution = True
             intent.execution_mode = ExecutionMode.AGGRESSIVE
             intent.deadlock_resolution = f"FORCE_AGGRESSIVE (T{current_tranche} bias)"

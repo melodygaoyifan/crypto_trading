@@ -241,6 +241,110 @@ class TestFlipPersistHoldClassification:
         assert tgt == 0.0 and why.startswith("veto_flat")
 
 
+class TestVetoRosterCompleteness:
+    """[P276] Every veto_reason WRITE SITE must be explicitly classified.
+
+    The translator's default for an unclassified veto is veto_flat =
+    liquidate every routed asset. P275 recorded the standing hazard: a NEW
+    veto writer anywhere upstream silently inherits flatten semantics (the
+    P239 guard below catches RENAMES of classified strings, not new
+    writers). This guard closes that: extract every veto_reason string
+    literal from the write-site corpus and require each to match one of the
+    three classification tuples — a new writer goes RED here until its
+    author decides HOLD vs FLATTEN (the P253/P265b analysis).
+
+    Its very first enumeration found DISCONNECTED_MID_TICK: the second
+    Kraken-disconnect door (main.py:~14747), unclassified since the
+    cutover — a Kraken API disconnect liquidated the Coinbase book. Now in
+    _SLEEVE_HOLD_VETOES.
+
+    Known limitation (inherited from P265b): a veto composed ENTIRELY at
+    runtime (no string literal prefix) is invisible to this scan — the
+    NO_TRADE subtype family is the one known case and is enum-pinned
+    separately below.
+    """
+
+    def _extract_literals(self):
+        import re
+        from pathlib import Path
+        from tests._source_scan import code_only
+        repo = Path(__file__).resolve().parents[1]
+        src = code_only(repo / "main.py", strip_docstrings=True)
+        src += code_only(repo / "integration" / "integration_v36.py",
+                         strip_docstrings=True)
+        src += code_only(repo / "defense" / "trade_gate.py",
+                         strip_docstrings=True)
+        # excise the classification tuples themselves — a roster entry must
+        # be justified by a REAL write site, not by its own definition
+        src = re.sub(r"_SLEEVE_HOLD_VETOES\s*=\s*\([^)]*\)", "", src)
+        src = re.sub(r"_SLEEVE_VENUE_NA_VETOES\s*=\s*\([^)]*\)", "", src)
+        src = re.sub(r"_SLEEVE_FLATTEN_INTENDED_VETOES\s*=\s*\([^)]*\)", "",
+                     src)
+        lits = set()
+        for m in re.finditer(r'veto_reason\s*=\s*\(?\s*f?"([^"\n]{2,})"',
+                             src):
+            prefix = m.group(1).split("{")[0].strip()
+            if len(prefix) >= 4:
+                lits.add(prefix)
+        assert len(lits) > 30, (
+            f"only {len(lits)} veto literals extracted — the scan regex "
+            f"stopped matching the corpus (a guard that reads nothing "
+            f"passes on anything, P174)")
+        return lits
+
+    def test_every_veto_write_site_is_classified(self):
+        import main as m
+        rosters = (tuple(m._SLEEVE_HOLD_VETOES)
+                   + tuple(m._SLEEVE_VENUE_NA_VETOES)
+                   + tuple(m._SLEEVE_FLATTEN_INTENDED_VETOES))
+        unclassified = []
+        for lit in sorted(self._extract_literals()):
+            if not any(r in lit or lit in r for r in rosters):
+                unclassified.append(lit)
+        assert not unclassified, (
+            f"UNCLASSIFIED veto write site(s): {unclassified}. The sleeve "
+            f"translator will FLATTEN every routed asset on these by "
+            f"default. Decide per the P253/P265b test — does the veto mean "
+            f"'state unknown / wait / smaller' (add to _SLEEVE_HOLD_VETOES) "
+            f"or 'flat is the intended posture' (add to "
+            f"_SLEEVE_FLATTEN_INTENDED_VETOES with a category comment)?")
+
+    def test_flatten_roster_entries_have_live_write_sites(self):
+        # the anti-rot mirror: a roster entry with no writer is a stale
+        # classification that will silently absorb a future unrelated veto
+        import main as m
+        lits = self._extract_literals()
+        dead = [r for r in m._SLEEVE_FLATTEN_INTENDED_VETOES
+                if not any(r in lit or lit in r for lit in lits)]
+        assert not dead, (
+            f"flatten-roster entries with no live write site: {dead} — "
+            f"remove them or they mask the next new writer that happens "
+            f"to contain the stale string")
+
+    def test_disconnect_mid_tick_holds(self):
+        # the finding itself, pinned behaviorally: both Kraken-disconnect
+        # doors must classify as HOLD
+        import main as m
+        for door in ("EXCHANGE_DISCONNECTED_HOLD", "DISCONNECTED_MID_TICK"):
+            assert any(h in door or door in h
+                       for h in m._SLEEVE_HOLD_VETOES), (
+                f"{door} is not HOLD-classified — a KRAKEN API disconnect "
+                f"would liquidate the COINBASE book (the P253 #1 class)")
+
+    def test_short_control_protects_the_alpha_gate(self):
+        # [P276/P275 #3] the override must never clear the economics veto
+        from tests._source_scan import code_only
+        from pathlib import Path
+        import re
+        repo = Path(__file__).resolve().parents[1]
+        src = code_only(repo / "main.py", strip_docstrings=True)
+        m = re.search(r"_SC_PROTECTED_VETOES\s*=\s*\{(.*?)\}", src, re.S)
+        assert m and '"Alpha gate"' in m.group(1), (
+            "the alpha-gate veto string left _SC_PROTECTED_VETOES — "
+            "short_control's override could admit a short whose edge "
+            "failed the gate (P275 finding #3)")
+
+
 class TestVetoStringCouplingDriftGuard:
     """[P240] The translator classifies vetoes by SUBSTRING match against
     free-text veto_reason strings written at ~36 independent sites. The
