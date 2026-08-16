@@ -463,6 +463,30 @@
    "start": 9100,
    "end": 13095,
    "purpose": "validation"
+  },
+  {
+   "ts": "2026-08-16T06:22:24.709547+00:00",
+   "experiment": "pooled_cert:p283",
+   "asset": "BTC",
+   "start": 7203,
+   "end": 13095,
+   "purpose": "validation"
+  },
+  {
+   "ts": "2026-08-16T06:22:44.394703+00:00",
+   "experiment": "pooled_cert:p283",
+   "asset": "ETH",
+   "start": 7203,
+   "end": 13095,
+   "purpose": "validation"
+  },
+  {
+   "ts": "2026-08-16T06:22:49.603168+00:00",
+   "experiment": "pooled_cert:p283",
+   "asset": "SOL",
+   "start": 7169,
+   "end": 13034,
+   "purpose": "validation"
   }
  ]
 }

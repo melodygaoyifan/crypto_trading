@@ -1,0 +1,187 @@
+{
+ "generated": "2026-08-16T06:18:44.590109+00:00",
+ "criterion": "pooled/lockbox-length (operator-adopted 2026-08-16, the P242 disposition)",
+ "pass_bar": "pooled after-cost CI excludes zero under the LIVE expression, carry included",
+ "assets": {
+  "BTC": {
+   "candidate": "mlp_small",
+   "windows": [
+    [
+     11131,
+     13095
+    ],
+    [
+     9167,
+     11131
+    ],
+    [
+     7203,
+     9167
+    ]
+   ],
+   "results": {
+    "trained_continuous.no_carry": {
+     "pooled_bars": 5892,
+     "net_pct": 129.53,
+     "sharpe": 1.57,
+     "ci": [
+      0.419,
+      2.82
+     ],
+     "dsr": 0.909
+    },
+    "trained_continuous.with_carry": {
+     "pooled_bars": 5892,
+     "net_pct": 126.58,
+     "sharpe": 1.535,
+     "ci": [
+      0.388,
+      2.792
+     ],
+     "dsr": 0.899
+    },
+    "LIVE_sign_expression.no_carry": {
+     "pooled_bars": 5892,
+     "net_pct": 169.59,
+     "sharpe": 1.554,
+     "ci": [
+      0.373,
+      2.805
+     ],
+     "dsr": 0.905
+    },
+    "LIVE_sign_expression.with_carry": {
+     "pooled_bars": 5892,
+     "net_pct": 165.76,
+     "sharpe": 1.519,
+     "ci": [
+      0.327,
+      2.766
+     ],
+     "dsr": 0.895
+    }
+   },
+   "passes": true
+  },
+  "ETH": {
+   "candidate": "composite_bull_ridge",
+   "windows": [
+    [
+     11131,
+     13095
+    ],
+    [
+     9167,
+     11131
+    ],
+    [
+     7203,
+     9167
+    ]
+   ],
+   "results": {
+    "trained_continuous.no_carry": {
+     "pooled_bars": 5892,
+     "net_pct": 72.44,
+     "sharpe": 0.491,
+     "ci": [
+      -0.692,
+      1.626
+     ],
+     "dsr": 0.332
+    },
+    "trained_continuous.with_carry": {
+     "pooled_bars": 5892,
+     "net_pct": 59.26,
+     "sharpe": 0.402,
+     "ci": [
+      -0.788,
+      1.538
+     ],
+     "dsr": 0.281
+    },
+    "LIVE_sign_expression.no_carry": {
+     "pooled_bars": 5892,
+     "net_pct": 75.65,
+     "sharpe": 0.461,
+     "ci": [
+      -0.722,
+      1.573
+     ],
+     "dsr": 0.314
+    },
+    "LIVE_sign_expression.with_carry": {
+     "pooled_bars": 5892,
+     "net_pct": 62.57,
+     "sharpe": 0.381,
+     "ci": [
+      -0.803,
+      1.474
+     ],
+     "dsr": 0.27
+    }
+   },
+   "passes": false
+  },
+  "SOL": {
+   "candidate": "hgb_small",
+   "windows": [
+    [
+     11079,
+     13034
+    ],
+    [
+     9124,
+     11079
+    ],
+    [
+     7169,
+     9124
+    ]
+   ],
+   "results": {
+    "trained_continuous.no_carry": {
+     "pooled_bars": 5865,
+     "net_pct": 1.42,
+     "sharpe": 0.018,
+     "ci": [
+      -0.936,
+      0.956
+     ],
+     "dsr": 0.113
+    },
+    "trained_continuous.with_carry": {
+     "pooled_bars": 5865,
+     "net_pct": -1.58,
+     "sharpe": -0.021,
+     "ci": [
+      -0.974,
+      0.928
+     ],
+     "dsr": 0.102
+    },
+    "LIVE_sign_expression.no_carry": {
+     "pooled_bars": 5865,
+     "net_pct": 19.12,
+     "sharpe": 0.149,
+     "ci": [
+      -0.923,
+      1.173
+     ],
+     "dsr": 0.16
+    },
+    "LIVE_sign_expression.with_carry": {
+     "pooled_bars": 5865,
+     "net_pct": 13.91,
+     "sharpe": 0.108,
+     "ci": [
+      -0.957,
+      1.125
+     ],
+     "dsr": 0.144
+    }
+   },
+   "passes": false
+  }
+ }
+}
