@@ -1630,6 +1630,11 @@ class ProductionConfig:
     # cap everywhere, byte-identical to today). Raising values is the
     # September sizing activation — own P-entry + operator flip.
     coinbase_max_contracts_by_asset: Dict[str, int] = field(default_factory=dict)
+    # [P274] Equity-scaled target fractions (of SLEEVE equity, per asset;
+    # clamped to <=0.25 in the sleeve). Empty = fixed-contract sizing. With
+    # fractions set, a capital deposit deploys itself under the standing
+    # caps with no config change.
+    coinbase_target_fraction_by_asset: Dict[str, float] = field(default_factory=dict)
     # [P272] Passive-holdings advisory: assets the OPERATOR holds outside
     # the system whose certified book label appears in the 4H heartbeat
     # (informational only; trades nothing). Empty = no advisory line.
@@ -1969,6 +1974,8 @@ class ProductionConfig:
             # [P272] declared + parsed together (the P201 rule)
             coinbase_max_contracts_by_asset=dict(
                 data.get("coinbase_max_contracts_by_asset", {}) or {}),
+            coinbase_target_fraction_by_asset=dict(
+                data.get("coinbase_target_fraction_by_asset", {}) or {}),
             passive_advisory_assets=list(
                 data.get("passive_advisory_assets", []) or []),
             # [P256] declared + parsed together (the P201 rule)
@@ -19792,6 +19799,10 @@ class HMATSProductionRunner:
                 # [P272] per-asset caps (empty dict = scalar fallback)
                 max_contracts_by_asset=dict(getattr(
                     self.config, "coinbase_max_contracts_by_asset", {}) or {}),
+                # [P274] equity-scaled sizing (empty = fixed contracts)
+                target_fraction_by_asset=dict(getattr(
+                    self.config, "coinbase_target_fraction_by_asset",
+                    {}) or {}),
             )
             return self._coinbase_sleeve
         except Exception as _e:

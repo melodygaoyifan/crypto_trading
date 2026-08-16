@@ -70,7 +70,8 @@ class CoinbaseSleeve:
                  max_asset_exposure: Optional[Dict[str, float]] = None,
                  maker_first: bool = False,
                  maker_wait_sec: float = 45.0,
-                 max_contracts_by_asset: Optional[Dict[str, int]] = None) -> None:
+                 max_contracts_by_asset: Optional[Dict[str, int]] = None,
+                 target_fraction_by_asset: Optional[Dict[str, float]] = None) -> None:
         self._adapter = adapter
         # [P270] Maker-first execution. CDE charges 0bps maker vs 3bps taker
         # (probed 2026-08-15: post_only is genuinely ENFORCED — a crossing
@@ -93,6 +94,13 @@ class CoinbaseSleeve:
         # alone change nothing until that activation also sizes targets.
         self._max_contracts_by_asset: Dict[str, int] = {
             k: int(v) for k, v in (max_contracts_by_asset or {}).items()}
+        # [P274] equity-scaled target fractions (of sleeve equity, per
+        # asset). Empty = fixed-contract sizing only. Values are clamped to
+        # [0, 0.25] — a fat-fingered 1.5 must not size a 10x book; 0.25 is
+        # the largest per-asset gross cap in the standing policy (P210).
+        self._target_fraction_by_asset: Dict[str, float] = {
+            k: min(0.25, max(0.0, float(v)))
+            for k, v in (target_fraction_by_asset or {}).items()}
         # [P210] Per-asset gross cap as a fraction of SLEEVE equity. Wired from
         # config post_leverage_caps — the same policy the Kraken path applies,
         # against the equity that actually backs these positions. See can_trade
@@ -526,8 +534,18 @@ class CoinbaseSleeve:
         # [P272] per-asset cap wins when configured; scalar is the fallback.
         # getattr-defended: this is the live order path (P85) — pre-P272
         # pickles/fixtures without the dict must not refuse every order.
-        _cap = int(getattr(self, "_max_contracts_by_asset", {}).get(
-            asset, self._max_contracts_per_asset))
+        # [P274] a fraction-sized asset's cap IS its equity-scaled size
+        # (cap == target at any equity) — without this, the fixed {1,3,1}
+        # caps would block the scaled targets the moment capital arrives.
+        # An unpriceable tick returns None here and the FIXED cap binds
+        # (staleness resolves toward the smaller, known-safe book).
+        try:
+            _sized_cap = self._sized_contracts(asset)
+        except Exception:
+            _sized_cap = None
+        _cap = _sized_cap if _sized_cap is not None else int(
+            getattr(self, "_max_contracts_by_asset", {}).get(
+                asset, self._max_contracts_per_asset))
         if resulting > _cap and resulting > abs(cur):
             return False, (f"coinbase_contract_cap: {resulting:.0f} > "
                            f"{_cap} for {asset}")
@@ -749,9 +767,48 @@ class CoinbaseSleeve:
         gross caps all still gate every order independently. getattr-
         defended: live order path (P85)."""
         sign = self.target_for_signal(direction, threshold)
-        size = int(getattr(self, "_max_contracts_by_asset", {}).get(
+        if sign == 0:
+            return 0
+        # [P274] EQUITY-SCALED sizing (operator-instructed: deploy the idle
+        # capital). When a target fraction is configured for the asset, the
+        # size is floor(fraction x sleeve equity / 1-contract notional) —
+        # so a deposit deploys itself under the standing caps with no
+        # config change, instead of a fixed contract count leaving new
+        # capital idle (the exact under-utilization P273 fixed at ONE
+        # equity level). At the 2026-08-16 equity ($3,775) the live
+        # fractions (0.15 each) reproduce the P273 book {BTC:1, ETH:3,
+        # SOL:1} EXACTLY — behavior-identical until capital moves.
+        # Fail-safe: unpriced contract or unreadable equity falls back to
+        # the FIXED size — sizing must never be fabricated from missing
+        # data (P2/P208), and the fixed path is the known-safe book.
+        # Sub-1-contract budgets floor to 1 (the historical minimum);
+        # can_trade's fraction caps still gate the order independently.
+        sized = self._sized_contracts(asset)
+        if sized is not None:
+            return sign * sized
+        fixed = int(getattr(self, "_max_contracts_by_asset", {}).get(
             asset, 1) or 1)
-        return sign * max(1, size)
+        return sign * max(1, fixed)
+
+    def _sized_contracts(self, asset: str):
+        """[P274] Equity-scaled contract count for `asset`, or None when no
+        fraction is configured / the price or equity is unreadable (callers
+        fall back to the FIXED size — sizing must never be fabricated from
+        missing data, P2/P208). This one function is BOTH the target and
+        the per-asset contract cap (cap == target, the P273 design, now at
+        any equity) — two implementations would drift (P172)."""
+        fr = float(getattr(self, "_target_fraction_by_asset", {}).get(
+            asset, 0.0) or 0.0)
+        if fr <= 0:
+            return None
+        try:
+            eq = float(self.sleeve_equity_usd() or 0.0)
+            one_ct = abs(self._notional_usd(asset, 1))
+            if eq > 0 and one_ct > 0:
+                return max(1, int(fr * eq / one_ct))
+        except Exception:  # noqa: silent-swallow — pricing helpers log their own failures; None = fall back to the fixed known-safe size
+            pass
+        return None
 
     async def manage_to_signal(self, asset: str, direction: float,
                                threshold: float = 0.15) -> Dict[str, Any]:

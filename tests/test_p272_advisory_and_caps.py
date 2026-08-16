@@ -182,6 +182,58 @@ class TestPerAssetContractCaps:
             "trades (P2 reader/writer class)")
         assert "_sl.target_for_signal(" not in src_main
 
+    def _fraction_sleeve(self, equity, prices, fractions,
+                         fixed=None, cur=0.0):
+        s = _sleeve(cur, scalar_cap=1, by_asset=fixed or {})
+        s._target_fraction_by_asset = dict(fractions)
+        s.sleeve_equity_usd = lambda: equity  # type: ignore[assignment]
+        s._notional_usd = (  # type: ignore[assignment]
+            lambda asset, n: prices.get(asset, 0.0) * n)
+        return s
+
+    def test_fractions_reproduce_the_p273_book_at_activation_equity(self):
+        # [P274] the identity that makes this a safe activation: at the
+        # 2026-08-16 equity, 0.15 fractions == the fixed {1,3,1} book
+        # exactly — behavior changes ONLY when capital actually moves
+        prices = {"BTC": 630.0, "ETH": 188.0, "SOL": 377.0}
+        s = self._fraction_sleeve(3775.0, prices,
+                                  {"BTC": .15, "ETH": .15, "SOL": .15})
+        assert s.target_for("BTC", 0.9) == 1
+        assert s.target_for("ETH", 0.9) == 3
+        assert s.target_for("SOL", -0.9) == -1
+
+    def test_a_deposit_deploys_itself(self):
+        prices = {"BTC": 630.0, "ETH": 188.0, "SOL": 377.0}
+        s = self._fraction_sleeve(10900.0, prices,
+                                  {"BTC": .15, "ETH": .15, "SOL": .15})
+        assert s.target_for("BTC", 0.9) == 2
+        assert s.target_for("ETH", 0.9) == 8
+        assert s.target_for("SOL", 0.9) == 4
+        # and the per-asset contract cap FOLLOWS the size (cap == target)
+        # or can_trade would block the scaled book the fixed caps predate
+        allowed, _ = s.can_trade("ETH", 8)
+        assert allowed, ("the fixed contract cap blocked the equity-scaled "
+                         "target — cap must derive from the same sizing "
+                         "arithmetic (P274)")
+
+    def test_unpriceable_falls_back_to_the_fixed_book_never_fabricates(self):
+        # P2/P208: sizing from missing data is fabrication — an unreadable
+        # price or equity must fall back to the known-safe FIXED size
+        s = self._fraction_sleeve(0.0, {}, {"ETH": .15}, fixed={"ETH": 3})
+        assert s.target_for("ETH", 0.9) == 3
+        s2 = self._fraction_sleeve(10900.0, {}, {"ETH": .15},
+                                   fixed={"ETH": 3})
+        assert s2.target_for("ETH", 0.9) == 3
+
+    def test_fraction_clamp_defuses_fat_fingers(self):
+        from exchange.coinbase_sleeve import CoinbaseSleeve as _CS
+        import inspect
+        # ctor clamps to <=0.25 (the largest standing per-asset gross cap)
+        src = inspect.getsource(_CS.__init__)
+        assert "min(0.25, max(0.0" in src, (
+            "the fraction clamp is gone — a fat-fingered 1.5 would size a "
+            "10x book through the target path")
+
     def test_config_trio_and_decided_live_values(self):
         src = read_source(MAIN)
         assert "coinbase_max_contracts_by_asset: Dict[str, int]" in src
@@ -202,3 +254,8 @@ class TestPerAssetContractCaps:
             "live per-asset sizes changed — if deliberate, update this pin "
             "+ the sizing note + re-check the net-cap arithmetic in the "
             "same commit")
+        # [P274] equity-scaled fractions: 0.15 each — reproduces the fixed
+        # book at activation equity, deploys deposits automatically; max
+        # all-same-direction ~0.45x net vs the 0.50 cap
+        assert live.get("coinbase_target_fraction_by_asset") == {
+            "BTC": 0.15, "ETH": 0.15, "SOL": 0.15}
