@@ -254,9 +254,18 @@ def _load_futures_daily(asset: str) -> pd.DataFrame:
     """Load and derive features from futures daily data."""
     fpath = FUTURES_DIR / f"{asset}_futures_daily.parquet"
     if not fpath.exists():
-        return pd.DataFrame(columns=[
-            "timestamp", "taker_ratio_zscore", "tradecount_zscore", "taker_vol_momentum"
-        ])
+        # [P281] REFUSE — never silently backfill zeros again. This exact
+        # branch fed three all-zero columns to every model ever trained
+        # (P279: training_data/futures/ never existed and nothing said so).
+        # The fetcher now exists and is in the refresh-data chain; a missing
+        # file is a broken chain, not a neutral default (P2/P199).
+        raise SystemExit(
+            f"[P281] REFUSING: {fpath} missing — taker_ratio_zscore/"
+            f"tradecount_zscore/taker_vol_momentum would be silently ZERO "
+            f"in the parquet (the P279 dead-columns defect). Run:\n"
+            f"  python -X utf8 training/scripts/"
+            f"fetch_binance_futures_daily.py --assets {asset}\n"
+            f"then re-run the rebuild.")
 
     df = pd.read_parquet(fpath)
 

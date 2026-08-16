@@ -22,7 +22,11 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(message)s")
 logger = logging.getLogger("fetch_binance_full")
 
 BASE_URL = "https://data.binance.vision/data/spot/monthly/klines"
-SYMBOLS = {"BTC": "BTCUSDT", "ETH": "ETHUSDT", "SOL": "SOLUSDT"}
+SYMBOLS = {"BTC": "BTCUSDT", "ETH": "ETHUSDT", "SOL": "SOLUSDT",
+           # [P281] the P262-certified breadth set — spot closes back the
+           # xsmom/breadth training series (the one backfillable new family)
+           "XRP": "XRPUSDT", "ADA": "ADAUSDT", "LTC": "LTCUSDT",
+           "DOGE": "DOGEUSDT", "BNB": "BNBUSDT"}
 # [P200] __file__-anchored, NOT cwd-relative. The old Path("training/...")
 # silently created a nested training/training/training_data/raw/ when run
 # from the training/ directory, so the fetch "succeeded" while the pipeline
@@ -136,6 +140,9 @@ def main() -> None:
     ap.add_argument("--years", type=int, default=6,
                     help="Years of 1H history to fetch (default 6; "
                          "minimum ~5 for the 3-fold DRL walk-forward)")
+    ap.add_argument("--assets", default="BTC,ETH,SOL",
+                    help="[P281] comma list; breadth set = "
+                         "XRP,ADA,LTC,DOGE,BNB")
     args = ap.parse_args()
     end = datetime.now()
     start = datetime(end.year - args.years, end.month, 1)
@@ -145,7 +152,10 @@ def main() -> None:
             f"--years {args.years} yields ~{n_4h_est} 4H bars < ~9,200 — "
             f"folds 2/3 of the DRL walk-forward will be SKIPPED on this data.")
     logger.info(f"Fetching 1H OHLCV: {start:%Y-%m} -> {end:%Y-%m}")
-    for asset in ("BTC", "ETH", "SOL"):
+    for asset in [a.strip().upper() for a in args.assets.split(",") if a]:
+        if asset not in SYMBOLS:
+            logger.warning(f"{asset}: no symbol mapped — skipped")
+            continue
         logger.info(f"\n===== {asset} =====")
         fetch_asset(asset, start, end)
     logger.info("\nAll done.")

@@ -64,8 +64,15 @@ DI = 4               # act every 4 bars (deployment contract)
 DEADBAND = 0.25
 REFIT_EVERY = 42     # weekly
 SEED = 7
-# per-side cost bps = venue taker fee + slippage (coinbase nano sleeve)
-COST_BPS = {"BTC": 6.0, "ETH": 8.0, "SOL": 13.0}
+# [P281] ROUND-TRIP cost bps (venue taker fee + slippage, both legs) — the
+# P166 gate's convention. The P279 audit found the two labs reading this
+# ONE constant under OPPOSITE conventions: this file charged it PER SIDE
+# (=12bps RT for BTC, DOUBLE the gate) while mechanism_lab charged it as
+# round-trip (6bps, matching P166) — so the 0/18 supervised kills were
+# priced at 2x the honest cost, biased AGAINST models (they trade more
+# than hold baselines). The name now says what it is; this file charges
+# half per side; mechanism_lab's reading was already correct.
+COST_BPS = {"BTC": 6.0, "ETH": 8.0, "SOL": 13.0}  # ROUND-TRIP (P166 convention)
 BARS_PER_YEAR = 6 * 365
 
 
@@ -278,9 +285,12 @@ def bull_flag(close):
 
 
 def evaluate_segment(close, pos_full, cost_bps, s, e):
+    """cost_bps is ROUND-TRIP (P166 convention); each unit |Δpos| is one
+    LEG, charged half the RT — the P281 correction of the P279-found 2x
+    overcharge (this line used to charge full RT per leg)."""
     ret = np.zeros(len(close)); ret[1:] = close[1:] / close[:-1] - 1.0
     strat = np.zeros(len(close)); strat[1:] = pos_full[:-1] * ret[1:]
-    cost = np.zeros(len(close)); cost[1:] = np.abs(np.diff(pos_full)) * cost_bps / 1e4
+    cost = np.zeros(len(close)); cost[1:] = np.abs(np.diff(pos_full)) * (cost_bps / 2.0) / 1e4
     seg = (strat - cost)[s:e]
     sd = float(np.nanstd(seg))
     sharpe = float(np.nanmean(seg) / sd * math.sqrt(BARS_PER_YEAR)) if sd > 0 else 0.0
@@ -329,7 +339,7 @@ def run_asset(asset, tag, diag):
     results = {"asset": asset, "tag": tag,
                "generated_at": datetime.now(timezone.utc).isoformat(),
                "position_contract": {"deadband": DEADBAND, "decision_interval": DI,
-                                     "cost_bps_per_side": COST_BPS[asset],
+                                     "cost_bps_round_trip": COST_BPS[asset],  # [P281] convention corrected
                                      "refit_every_bars": REFIT_EVERY},
                "folds": {}}
 

@@ -118,6 +118,30 @@ class EnhancementShadows:
         self._stable_cache: Optional[tuple] = None   # (fetched_at, rows)
         self._basis_hist: Dict[str, list] = {}       # asset -> slope readings
         self._warned: Dict[str, str] = {}
+        # [P281] calbasis slope history PERSISTED (P154 class): this is the
+        # only CDE-native signal anywhere and its z needs 20+ readings —
+        # RAM-only meant every deploy restarted the ~3.3-day warmup, and
+        # deploy-heavy weeks would keep it permanently flat. Fail-soft.
+        self._basis_path = Path(data_dir) / "calbasis_state.json"
+        try:
+            if self._basis_path.exists():
+                d = json.loads(self._basis_path.read_text(encoding="utf-8"))
+                self._basis_hist = {k: list(v)[-60:]
+                                    for k, v in (d or {}).items()
+                                    if isinstance(v, list)}
+        except Exception as e:  # noqa: silent-swallow — a corrupt state file must not break init; warmup restarts (the pre-P281 behavior)
+            logger.warning("[ENH] calbasis state restore failed "
+                           "(%s) — warmup restarts", type(e).__name__)
+
+    def _persist_basis(self) -> None:
+        try:
+            tmp = self._basis_path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(self._basis_hist), encoding="utf-8")
+            tmp.replace(self._basis_path)
+        except Exception as e:  # noqa: silent-swallow — persistence is a warmup optimization; failure only re-lengthens warmup (logged)
+            self._transition_log("basis_persist",
+                                 f"[ENH] calbasis persist failed "
+                                 f"({type(e).__name__})")
 
     # ---------------- shared ----------------
     def _write(self, strategy: str, asset: str, direction: float,
@@ -215,6 +239,7 @@ class EnhancementShadows:
         hist = self._basis_hist.setdefault(asset, [])
         hist.append(slope)
         del hist[:-60]
+        self._persist_basis()   # [P281] survive deploys (P154 class)
         if len(hist) < 20:
             return 0.0, slope, "warmup"
         w = hist[:-1]
