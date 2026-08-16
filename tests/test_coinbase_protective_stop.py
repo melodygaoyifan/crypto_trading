@@ -337,11 +337,21 @@ class TestSleeveStopReconcile:
         assert "X" in res["reason"]
 
     def test_it_never_raises_into_the_tick(self):
-        class _Boom(_FakeAdapter):
-            async def fetch_open_orders(self, symbol=None):
-                raise RuntimeError("venue down")
-        res = _run(_sleeve(_Boom(), signed=1))
-        assert res["status"] == "ERROR"
+        # [P287] rewritten to the new invariant (P165 rule): a listing
+        # failure is now an EXPLICIT refusal, not a generic ERROR — and the
+        # load-bearing half is that nothing is placed or cancelled against a
+        # book we could not read (clear-and-place on an unreadable book is
+        # the double-stop door).
+        boom = type("_Boom", (_FakeAdapter,), {})()
+        async def _raise(symbol=None):
+            raise RuntimeError("venue down")
+        boom.fetch_open_orders = _raise
+        res = _run(_sleeve(boom, signed=1))
+        assert res["status"] == "ORDERS_UNREADABLE"
+        assert boom.placed == [], (
+            "a stop was placed against an unreadable book — that is the "
+            "second stop beside the invisible real one (P287)")
+        assert boom.cancelled == []
 
 
 class _SdkOrderConfiguration:

@@ -320,12 +320,43 @@ class CoinbaseAdapter(ExchangeAdapter):
             for r in results:
                 if str(_attr(r, "order_id")) == str(order_id):
                     return bool(_attr(r, "success", False))
-            return bool(results)
+            # [P287] UNCONFIRMED = FAILED. The old fallback `return
+            # bool(results)` reported success whenever the batch response
+            # carried ANY row — including a row for a different order, a row
+            # whose order_id key was absent/renamed by an SDK bump, or a row
+            # that explicitly said success: False. Every P265 failed-cancel
+            # refusal (stop replacement, the maker CANCEL_FAILED no-cross
+            # guard, the flat-path orphan cancel) keys off this boolean, so a
+            # false True converted each refusal into the exact double-stop /
+            # double-order it exists to prevent. Only an explicitly matched
+            # row may certify the cancel.
+            logger.warning(
+                f"[COINBASE] cancel_order {order_id}: response carried no "
+                f"matching result row ({len(results)} row(s)) — treating the "
+                f"cancel as FAILED (unconfirmed != cancelled, P287). "
+                f"rows={results!r}"[:500])
+            return False
         except Exception as e:
             logger.warning(f"[COINBASE] cancel_order failed: {type(e).__name__}: {e}")
             return False
 
     async def fetch_open_orders(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
+        """List OPEN orders. RAISES on any listing failure (P287).
+
+        [P287] This used to swallow every error into `[]`, which made "could
+        not read the book" byte-identical to "the book is clean" (the
+        P159/P171 shape, on the live order path). Four sleeve guards fail-OPEN
+        on that conflation: `ensure_protective_stop` sees `resting=[]` and
+        places a SECOND stop beside the invisible real one (two plain stops on
+        a no-reduce_only venue — the second OPENS the opposite side when
+        touched); the maker poll reads `still_open=False` and logs "filled at
+        0bps" for an order that is still resting; and both stale-order sweeps
+        report a clean book they never saw. The sleeve's callers were all
+        written expecting a raise (their try/excepts were dead code against
+        the swallowing version). NOT-CONFIGURED still returns [] — no
+        credentials means nothing of ours can be resting, and is_ready() gates
+        every sleeve path before this call anyway.
+        """
         if not self._ensure_client():
             return []
         try:
@@ -344,7 +375,7 @@ class CoinbaseAdapter(ExchangeAdapter):
             return [_plain(o) for o in orders]
         except Exception as e:
             logger.warning(f"[COINBASE] fetch_open_orders failed: {type(e).__name__}: {e}")
-            return []
+            raise
 
     # ----- account / positions --------------------------------------------
 

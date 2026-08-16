@@ -155,6 +155,17 @@ class CoinbaseSleeve:
         self._last_positions: Dict[str, Dict[str, Any]] = {}
         self._last_buying_power_usd: float = 0.0
         self._last_equity_usd: float = 0.0
+        # [P287] When the TRUE (portfolio) equity was last actually read from
+        # the venue. `_last_equity_usd` serves last-known-forever on a
+        # portfolio-endpoint outage, and before this timestamp existed no
+        # consumer could tell fresh from days-stale: update_risk computed a
+        # live-looking drawdown from a frozen number (the 15% halt could not
+        # fire on a real drawdown), and _sized_contracts sized real orders
+        # off stale equity. The P156 rule — every stored reference needs a
+        # staleness bound — applied to equity. None = never read this
+        # process (in production that coexists with equity 0.0, which every
+        # consumer already treats as unknown).
+        self._last_equity_ts: Optional[float] = None
         self._cb_portfolio_uuid: Optional[str] = None  # [P153] cached Default portfolio uuid
         # True only after a SUCCESSFUL venue reconcile this call. Autonomous
         # management refuses to act when this is False (don't trade on a stale
@@ -353,6 +364,7 @@ class CoinbaseSleeve:
                 tb = _f(_g(_g(pb, "total_balance") or {}, "value"), 0.0)
                 if tb > 0:
                     self._last_equity_usd = tb
+                    self._last_equity_ts = time.time()  # [P287] fresh TRUE read
                     return tb
                 else:
                     logger.warning(
@@ -394,6 +406,30 @@ class CoinbaseSleeve:
             logger.warning(f"[COINBASE_SLEEVE] equity fallback failed: {type(e).__name__}: {e}")
             return self._last_equity_usd
 
+    # [P287] Staleness bound on the stored equity (P156 rule). 2x the 4H tick,
+    # matching the FastRiskTick anchor bound's reasoning: one late refresh is
+    # tolerated, two consecutive misses are not.
+    _EQUITY_MAX_AGE_SEC = 8 * 3600.0
+
+    def sleeve_equity_age_sec(self) -> Optional[float]:
+        """Seconds since the last SUCCESSFUL true-equity read, or None if no
+        fresh read has been stamped this process (in production that state
+        coexists with equity 0.0 = unknown; tests that monkeypatch
+        sleeve_equity_usd legitimately never stamp it). Exposed via snapshot()
+        so main.py's fuse feed can bound its delta on the same clock."""
+        ts = getattr(self, "_last_equity_ts", None)
+        return (time.time() - ts) if ts else None
+
+    def _equity_is_stale(self) -> bool:
+        """True only when a stamp EXISTS and is over the bound. A missing
+        stamp is deliberately NOT stale: in production it always accompanies
+        equity<=0 (already refused everywhere), and treating it as stale
+        would flip every monkeypatched-equity test fixture — and any future
+        caller that fakes equity without faking the clock — into the
+        degraded path."""
+        age = self.sleeve_equity_age_sec()
+        return age is not None and age > self._EQUITY_MAX_AGE_SEC
+
     # ----- isolated sleeve risk guard -------------------------------------
 
     def update_risk(self) -> Dict[str, Any]:
@@ -415,7 +451,29 @@ class CoinbaseSleeve:
             return {"equity_usd": eq,
                     "drawdown_pct": self._last_dd_pct,
                     "halted": self._halted, "halt_reason": self._halt_reason,
-                    "degraded": True}
+                    "degraded": True,
+                    "equity_age_sec": self.sleeve_equity_age_sec()}
+        # [P287] Stale is not fresh. sleeve_equity_usd() above serves the
+        # LAST-KNOWN value on a portfolio-endpoint outage, so `eq > 0` alone
+        # proved nothing about freshness — a multi-day outage froze the
+        # drawdown at its pre-outage value while positions bled (the halt
+        # could not fire), and would also have anchored a first-call baseline
+        # to a stale number. HOLD the last real drawdown; never recompute
+        # from stale equity, never set the baseline from it, and (as with
+        # eq<=0) never touch the halt state — a tripped halt stays tripped.
+        if self._equity_is_stale():
+            _age = self.sleeve_equity_age_sec() or 0.0
+            logger.warning(
+                f"[COINBASE_SLEEVE] update_risk: equity is STALE "
+                f"({_age/3600.0:.1f}h old > "
+                f"{self._EQUITY_MAX_AGE_SEC/3600.0:.0f}h bound) — holding the "
+                f"last drawdown reading; the 15% halt cannot be evaluated on "
+                f"a frozen number (P287/P156)")
+            return {"equity_usd": eq,
+                    "drawdown_pct": self._last_dd_pct,
+                    "halted": self._halted, "halt_reason": self._halt_reason,
+                    "degraded": True,
+                    "equity_age_sec": _age}
         if self._sleeve_start_equity is None:
             self._sleeve_start_equity = eq
             logger.info(f"[COINBASE_SLEEVE] risk baseline set: ${eq:,.2f}")
@@ -424,6 +482,14 @@ class CoinbaseSleeve:
         if self._sleeve_start_equity and self._sleeve_start_equity > 0:
             dd = (self._sleeve_start_equity - eq) / self._sleeve_start_equity
         self._last_dd_pct = dd
+        # [P287] WITHDRAWAL direction, recorded (P274 documented deposits
+        # only): a capital withdrawal from the perp portfolio lowers eq
+        # against the inception anchor and reads as drawdown here — a >15%
+        # withdrawal trips the sticky, persisted halt with one bank transfer.
+        # That is deliberately NOT auto-corrected (the halt must stay
+        # conservative; distinguishing a withdrawal from a loss needs venue
+        # transfer records this code does not read). Operator procedure after
+        # any withdrawal: reset_halt() + a recorded re-anchor decision.
         if dd >= self._max_sleeve_drawdown_pct and not self._halted:
             self._halted = True
             self._halt_reason = (f"sleeve drawdown {dd:.1%} >= "
@@ -431,7 +497,8 @@ class CoinbaseSleeve:
             logger.error(f"[COINBASE_SLEEVE] HALTED: {self._halt_reason}")
             self._persist_state()  # [P150] sticky halt survives restart
         return {"equity_usd": eq, "drawdown_pct": dd,
-                "halted": self._halted, "halt_reason": self._halt_reason}
+                "halted": self._halted, "halt_reason": self._halt_reason,
+                "equity_age_sec": self.sleeve_equity_age_sec()}
 
     def _notional_usd(self, asset: str, signed_contracts: float) -> float:
         """Signed USD notional of a contract count for `asset`.
@@ -469,6 +536,21 @@ class CoinbaseSleeve:
         price lookup failed) while still refusing to certify an increase.
         """
         eq = float(self._last_equity_usd or 0.0)
+        # [P287] The exposure fractions keep their fail-OPEN convention on a
+        # stale denominator (a risk control that fires on missing data is a
+        # data outage that stops trading — P208), but staleness is no longer
+        # silent: warn once per staleness episode with the age.
+        if self._equity_is_stale():
+            if not getattr(self, "_exposure_stale_warned", False):
+                self._exposure_stale_warned = True
+                _age = self.sleeve_equity_age_sec() or 0.0
+                logger.warning(
+                    f"[COINBASE_SLEEVE] sleeve_exposure: equity denominator is "
+                    f"STALE ({_age/3600.0:.1f}h old) — exposure fractions are "
+                    f"computed against a frozen ${eq:,.2f} (fail-open kept, "
+                    f"P287)")
+        else:
+            self._exposure_stale_warned = False
         book = {a: float((p or {}).get("signed_contracts") or 0.0)
                 for a, p in self._last_positions.items()}
         _ov: Dict[str, float] = dict(overrides or {})
@@ -488,6 +570,7 @@ class CoinbaseSleeve:
             "net_pct": (net / eq) if eq > 0 else 0.0,
             "gross_pct": (gross / eq) if eq > 0 else 0.0,
             "priced_ok": priced_ok and eq > 0,
+            "equity_age_sec": self.sleeve_equity_age_sec(),  # [P287]
         }
 
     def can_trade(self, asset: str, intended_signed_contracts: float) -> tuple:
@@ -783,32 +866,112 @@ class CoinbaseSleeve:
         # data (P2/P208), and the fixed path is the known-safe book.
         # Sub-1-contract budgets floor to 1 (the historical minimum);
         # can_trade's fraction caps still gate the order independently.
-        sized = self._sized_contracts(asset)
-        if sized is not None:
-            return sign * sized
+        si = self._sizing_inputs(asset)
+        if si is not None:
+            fr, eq, one_ct = si
+            sized = max(1, int(fr * eq / one_ct))
+            # [P287] Boundary hysteresis — see _dampen_boundary_step. The
+            # damping lives HERE (not in _sized_contracts) so every
+            # target_for caller — the driver AND main.py's three
+            # driver-adjacent reads — sees the same dampened book (P2), while
+            # can_trade's cap keeps the raw sized count (cap >= target holds
+            # in every branch of the damping truth table).
+            try:
+                _cur = float(self.signed_contracts(asset) or 0.0)
+            except Exception:  # noqa: silent-swallow — an unreadable current position just skips damping; the raw sized target is the pre-P287 behavior
+                _cur = 0.0
+            return self._dampen_boundary_step(_cur, sign * sized, fr, eq,
+                                              one_ct)
         fixed = int(getattr(self, "_max_contracts_by_asset", {}).get(
             asset, 1) or 1)
         return sign * max(1, fixed)
 
-    def _sized_contracts(self, asset: str):
-        """[P274] Equity-scaled contract count for `asset`, or None when no
-        fraction is configured / the price or equity is unreadable (callers
-        fall back to the FIXED size — sizing must never be fabricated from
-        missing data, P2/P208). This one function is BOTH the target and
-        the per-asset contract cap (cap == target, the P273 design, now at
-        any equity) — two implementations would drift (P172)."""
+    @staticmethod
+    def _dampen_boundary_step(cur: float, proposed: int, fr: float,
+                              eq: float, one_ct: float) -> int:
+        """[P287] Hysteresis at the floor() contract boundary.
+
+        floor(fraction x equity / notional) is discontinuous while equity
+        (incl. uPnL) and the contract price move every tick — equity hovering
+        at a boundary emits a same-direction 1-contract add/reduce round trip
+        each 4H tick, uncontrolled churn of the P142/P198 family that
+        flip-persistence deliberately never defers (it only defers FLIPS).
+
+        Rule: a same-direction +1 ADD must also hold under equity x 0.97 (a
+        3% buffer) before it is emitted, else the current size is held — so
+        re-adding after a boundary reduce needs a real >3% equity move, not
+        noise. Everything else passes untouched, each for a doctrinal reason:
+        entries from flat and flattens are signal changes, not sizing noise;
+        flips belong to flip-persistence; REDUCES are de-risking and must
+        always be free (P195 — damping a reduce would hold a LARGER position
+        than target); and a >=2-contract change is a real equity move by
+        construction (a 1-ct boundary wobble cannot produce it).
+        Pure function; truth-tabled in tests/test_p287_exchange.py.
+        """
+        cur_i = int(round(float(cur or 0.0)))
+        p = int(proposed)
+        if p == 0 or cur_i == 0:
+            return p
+        if (p > 0) != (cur_i > 0):
+            return p
+        if abs(p) - abs(cur_i) != 1:
+            return p
+        if max(1, int(fr * eq * 0.97 / one_ct)) >= abs(p):
+            return p
+        return cur_i
+
+    def _sizing_inputs(self, asset: str):
+        """[P287] The (fraction, equity, one-contract-notional) triple behind
+        equity-scaled sizing, or None when sizing must fall back to the FIXED
+        book: no fraction configured, price/equity unreadable, or — new —
+        equity STALE (>8h since the last true read). Sizing real orders off a
+        frozen equity is fabrication-from-missing-data one step removed
+        (P2/P208); the fixed book is the smaller, known-safe fallback (P274's
+        own fail direction). Single source for both _sized_contracts and
+        target_for's damping so the cap and the target cannot drift (P172)."""
         fr = float(getattr(self, "_target_fraction_by_asset", {}).get(
             asset, 0.0) or 0.0)
         if fr <= 0:
             return None
         try:
             eq = float(self.sleeve_equity_usd() or 0.0)
+            if self._equity_is_stale():
+                warned = getattr(self, "_sizing_stale_warned", None)
+                if warned is None:
+                    warned = set()
+                    self._sizing_stale_warned = warned
+                if asset not in warned:
+                    warned.add(asset)
+                    _age = self.sleeve_equity_age_sec() or 0.0
+                    logger.warning(
+                        f"[COINBASE_SLEEVE] {asset}: equity STALE "
+                        f"({_age/3600.0:.1f}h) — equity-scaled sizing falls "
+                        f"back to the FIXED contract book (the smaller "
+                        f"known-safe size, P287)")
+                return None
+            getattr(self, "_sizing_stale_warned", set()).discard(asset)
             one_ct = abs(self._notional_usd(asset, 1))
             if eq > 0 and one_ct > 0:
-                return max(1, int(fr * eq / one_ct))
+                return (fr, eq, one_ct)
         except Exception:  # noqa: silent-swallow — pricing helpers log their own failures; None = fall back to the fixed known-safe size
             pass
         return None
+
+    def _sized_contracts(self, asset: str):
+        """[P274] Equity-scaled contract count for `asset`, or None when no
+        fraction is configured / the price or equity is unreadable or stale
+        (callers fall back to the FIXED size — sizing must never be
+        fabricated from missing data, P2/P208). This one function is BOTH the
+        target and the per-asset contract cap (cap == target, the P273
+        design, now at any equity) — two implementations would drift (P172).
+        [P287] Inputs come from _sizing_inputs (shared with target_for's
+        boundary damping); this returns the RAW (undampened) count, which is
+        what the cap must be: raw >= dampened target in every damping branch."""
+        si = self._sizing_inputs(asset)
+        if si is None:
+            return None
+        fr, eq, one_ct = si
+        return max(1, int(fr * eq / one_ct))
 
     async def manage_to_signal(self, asset: str, direction: float,
                                threshold: float = 0.15) -> Dict[str, Any]:
@@ -868,17 +1031,25 @@ class CoinbaseSleeve:
         the sleeve a risk-ADDER on process death rather than merely unprotected.
         It also let orders stack across ticks.
 
-        Fail-soft by design: a cancel failure must never raise into the tick, and
-        must not stop the new order (the venue-authoritative reconcile on the next
-        pass is the backstop). Returns the number cancelled.
+        Never raises into the tick. [P287] Returns the number cancelled, or
+        **None when the book of resting orders could not be VERIFIED clear**
+        (listing failed, or any cancel was unconfirmed) — the caller must then
+        REFUSE to place the new order this tick. The old contract ("warn and
+        proceed") fail-OPENED the P265 double-order class: an order we cannot
+        see, or could not kill, plus a new one is two live orders for one
+        delta. The next tick's reconcile + sweep is the retry path.
         """
         cancelled = 0
+        failed = 0
         try:
             open_orders = await self._adapter.fetch_open_orders(pid)
         except Exception as e:
-            logger.warning(f"[COINBASE_SLEEVE] {asset}: could not list resting "
-                           f"orders ({type(e).__name__}: {e}); proceeding")
-            return 0
+            logger.warning(
+                f"[COINBASE_SLEEVE] {asset}: could not list resting orders "
+                f"({type(e).__name__}: {e}) — REFUSING to place a new order "
+                f"beside a book we cannot see (P287; 'could not read the "
+                f"book' must never read as 'book is clean')")
+            return None
         for o in open_orders or []:
             oid = _g(o, "order_id") or _g(o, "id")
             if not oid:
@@ -886,9 +1057,20 @@ class CoinbaseSleeve:
             try:
                 if await self._adapter.cancel_order(str(oid), pid):
                     cancelled += 1
+                else:
+                    failed += 1
+                    logger.warning(f"[COINBASE_SLEEVE] {asset}: cancel {oid} "
+                                   f"unconfirmed")
             except Exception as e:
+                failed += 1
                 logger.warning(f"[COINBASE_SLEEVE] {asset}: cancel {oid} failed "
-                               f"({type(e).__name__}: {e}); proceeding")
+                               f"({type(e).__name__}: {e})")
+        if failed:
+            logger.warning(
+                f"[COINBASE_SLEEVE] {asset}: {failed} resting-order cancel(s) "
+                f"unconfirmed — refusing to place a new order this tick "
+                f"(double-order class, P265/P287); next tick retries")
+            return None
         if cancelled:
             logger.info(f"[COINBASE_SLEEVE] {asset}: cancelled {cancelled} stale "
                         f"resting order(s) before new target")
@@ -910,15 +1092,19 @@ class CoinbaseSleeve:
         one resting order that SHOULD survive a hold tick, and cancelling it
         every NOOP would churn the venue and reset the anchor (the exact churn
         `ensure_protective_stop`'s match-and-leave logic exists to avoid).
-        Fail-soft; a cancel is always de-risking. Returns the number cancelled.
+        Fail-soft; a cancel is always de-risking. Returns the number
+        cancelled, or None when the book could not be listed at all ([P287]:
+        "could not read" must stay distinguishable from "clean"; the sweep's
+        callers place nothing either way, so None only carries honesty here).
         """
         cancelled = 0
         try:
             open_orders = await self._adapter.fetch_open_orders(pid)
         except Exception as e:
             logger.warning(f"[COINBASE_SLEEVE] {asset}: could not list resting "
-                           f"orders on hold tick ({type(e).__name__}: {e})")
-            return 0
+                           f"orders on hold tick ({type(e).__name__}: {e}) — "
+                           f"sweep result UNKNOWN, not clean (P287)")
+            return None
         for o in open_orders or []:
             if self._is_stop_order(o):
                 continue
@@ -991,19 +1177,60 @@ class CoinbaseSleeve:
         mark would silently make it a trailing stop that ratchets on every tick
         and re-places orders forever. Falls back to the mark only when the venue
         gives us no entry_vwap.
+
+        [P287] The mark fallback itself needed the same hysteresis: the P265
+        price-match tolerance is 0.5%, and a LIVE mark drifts past that in
+        ordinary hours — so a mark-anchored stop failed the match every tick,
+        cancel+replaced forever, each replacement a brief unprotected window
+        through the cancel-confirmation path. The mark anchor is now STORED
+        per asset and reused while the mark stays within 2% of it; only a
+        real >2% move (or a side change) re-anchors. Entry-anchored behavior
+        is untouched. The anchor BASIS is recorded so the PLACED log stops
+        claiming "from entry" for a mark-anchored stop.
         """
         pos = self._last_positions.get(asset) or {}
         cur = float(pos.get("signed_contracts") or 0.0)
+        # getattr-defended lazy stores: this runs on the live order path and
+        # test fixtures build sleeves via object.__new__ (P85).
+        anchors = getattr(self, "_stop_mark_anchor", None)
+        if anchors is None:
+            anchors = {}
+            self._stop_mark_anchor = anchors
+        bases = getattr(self, "_stop_anchor_basis", None)
+        if bases is None:
+            bases = {}
+            self._stop_anchor_basis = bases
         if cur == 0:
+            anchors.pop(asset, None)
+            bases.pop(asset, None)
             return None
         anchor = pos.get("entry_vwap")
+        basis = "entry"
         if not anchor:
+            basis = "mark"
             try:
                 pid = self._adapter.to_venue_symbol(asset, "perp")
                 prod = self._adapter._client.get_product(product_id=pid)
-                anchor = _f(_g(prod, "mid_market_price") or _g(prod, "price"))
+                mark = _f(_g(prod, "mid_market_price") or _g(prod, "price"))
             except Exception:
                 return None
+            if not mark:
+                return None
+            side_sign = 1 if cur > 0 else -1
+            prev = anchors.get(asset)
+            if (prev and prev[1] == side_sign and prev[0] > 0
+                    and abs(mark - prev[0]) / prev[0] <= 0.02):
+                anchor = prev[0]  # [P287] reuse: <2% drift is not a re-anchor
+            else:
+                anchor = mark
+                anchors[asset] = (float(mark), side_sign)
+                logger.info(
+                    f"[COINBASE_STOP] {asset}: stop anchored to MARK "
+                    f"{float(mark):.4f} (no entry_vwap from the venue; "
+                    f"re-anchors only on a >2% mark move, P287)")
+        else:
+            anchors.pop(asset, None)  # entry is back: mark anchor obsolete
+        bases[asset] = basis
         if not anchor:
             return None
         pct = self._protective_stop_pct
@@ -1069,17 +1296,54 @@ class CoinbaseSleeve:
                     f"the final position (P265)")
                 return {"status": "FLIP_IN_TRANSITION", "asset": asset,
                         "snapshot": cur, "intended": float(intended_target)}
-            resting = [o for o in (await self._adapter.fetch_open_orders(pid) or [])
-                       if self._is_stop_order(o)]
+            # [P287] Listing failure is handled HERE, explicitly, not by the
+            # generic ERROR catch below: with the adapter's old swallow this
+            # read `resting=[]` on a venue error and fell into clear-and-place
+            # — a SECOND stop beside the invisible real one (two plain stops
+            # on a no-reduce_only venue: the first closes the position, the
+            # second OPENS the opposite side when touched). Refuse for the
+            # tick, keep the last resting state, retry next tick.
+            try:
+                _orders = await self._adapter.fetch_open_orders(pid) or []
+            except Exception as e:
+                logger.warning(
+                    f"[COINBASE_STOP] {asset}: cannot list resting orders "
+                    f"({type(e).__name__}: {e}) — refusing to reconcile the "
+                    f"stop this tick (clear-and-place on an unreadable book "
+                    f"is the double-stop door, P287)")
+                return {"status": "ORDERS_UNREADABLE", "asset": asset}
+            resting = [o for o in _orders if self._is_stop_order(o)]
 
             # FLAT: any surviving stop is an ORPHAN that could open a position.
             # Cancelling it is the single most important thing in this method.
             if cur == 0:
+                # [P287] a flat asset's stored mark anchor is obsolete (the
+                # early-return above skips desired_stop_price's own cleanup).
+                getattr(self, "_stop_mark_anchor", {}).pop(asset, None)
                 n = 0
+                _flat_failed = []
                 for o in resting:
                     oid = _g(o, "order_id") or _g(o, "id")
-                    if oid and await self._adapter.cancel_order(str(oid), pid):
+                    if not oid:
+                        continue
+                    if await self._adapter.cancel_order(str(oid), pid):
                         n += 1
+                    else:
+                        _flat_failed.append(str(oid))
+                if _flat_failed:
+                    # [P287] The old loop counted successes only: a failed
+                    # cancel produced no log and returned FLAT_NONE —
+                    # byte-identical to "no orphans existed", while a plain
+                    # stop that OPENS a position when touched stayed live.
+                    logger.warning(
+                        f"[COINBASE_STOP] {asset}: {len(_flat_failed)} "
+                        f"orphan-stop cancel(s) FAILED "
+                        f"({', '.join(_flat_failed)}) — a live stop on a "
+                        f"flat asset OPENS a position when touched (no "
+                        f"reduce_only on CDE); retrying next tick (P287)")
+                    return {"status": "FLAT_CANCEL_FAILED", "asset": asset,
+                            "cancelled": n,
+                            "failed_cancels": len(_flat_failed)}
                 if n:
                     logger.info(f"[COINBASE_STOP] {asset}: flat -> cancelled {n} "
                                 f"orphan stop(s) (no reduce_only on CDE, so a live "
@@ -1158,9 +1422,13 @@ class CoinbaseSleeve:
                                post_only=False)
             res = await self._adapter.place_order(req)
             if res.success:
+                # [P287] say which anchor actually priced this stop — the old
+                # literal "from entry" was a lie for a mark-anchored fallback
+                _basis = getattr(self, "_stop_anchor_basis", {}).get(
+                    asset, "entry")
                 logger.info(f"[COINBASE_STOP] {asset}: placed protective "
                             f"{want_side} stop @ {stop_px:.4f} for {cur:+.0f}ct "
-                            f"({self._protective_stop_pct:.1%} from entry)")
+                            f"({self._protective_stop_pct:.1%} from {_basis})")
                 return {"status": "PLACED", "asset": asset, "side": want_side,
                         "stop_price": stop_px, "contracts": cur}
             logger.warning(f"[COINBASE_STOP] {asset}: stop placement FAILED: "
@@ -1177,16 +1445,22 @@ class CoinbaseSleeve:
                                    base_size: float) -> str:
         """[P270] One post-only attempt joining the touch, resolved INSIDE
         this call. Returns:
-          "DONE"          — order left the book (filled or gone); caller
-                            recomputes the remaining delta from reconcile
-          "FALLBACK"      — no maker fill possible (no bid/ask, placement
-                            rejected, e.g. price crossed between quote and
-                            place); caller proceeds straight to the cross
-          "CANCEL_FAILED" — timeout AND the cancel failed: the maker order
-                            may still be live, so the caller must NOT place
-                            the cross (two live orders for one delta = the
-                            P265 double-order class). Next tick's stale-entry
-                            sweep retries.
+          "DONE"           — order left the book (filled or gone); caller
+                             recomputes the remaining delta from reconcile
+          "DONE_UNTRACKED" — [P287] order ACCEPTED but the venue returned no
+                             order_id, so it can be neither polled nor
+                             cancelled by id; the caller must SWEEP resting
+                             orders and verify the book is clear before any
+                             cross (a cross beside the untracked resting
+                             post-only is the P265 double-order class)
+          "FALLBACK"       — no maker fill possible (no bid/ask, placement
+                             rejected, e.g. price crossed between quote and
+                             place); caller proceeds straight to the cross
+          "CANCEL_FAILED"  — timeout AND the cancel failed: the maker order
+                             may still be live, so the caller must NOT place
+                             the cross (two live orders for one delta = the
+                             P265 double-order class). Next tick's stale-entry
+                             sweep retries.
         Never raises."""
         try:
             from exchange.adapter import OrderRequest
@@ -1221,20 +1495,30 @@ class CoinbaseSleeve:
                 return "FALLBACK"
             oid = str(res.order_id or "")
             if not oid:
-                # accepted but no id to poll/cancel by: treat as DONE and let
-                # the caller's reconcile+remainder logic settle the truth —
-                # never place a blind second order beside an untracked one.
+                # [P287] accepted but no id to poll/cancel by. The old "DONE"
+                # here contradicted its own comment: the caller's DONE
+                # handling reconciles, sees the unfilled delta, and CROSSES —
+                # a blind second order beside the untracked resting post-only
+                # (which can then fill and overshoot the target). Return a
+                # DISTINCT verdict so the caller sweeps + verifies the book
+                # is clear of the untracked order before any cross.
                 logger.warning(f"[COINBASE-MAKER] {asset}: accepted post-only "
-                               f"carried no order_id — resolving via "
-                               f"reconcile only")
-                return "DONE"
+                               f"carried no order_id — caller must sweep the "
+                               f"book before crossing (P287)")
+                return "DONE_UNTRACKED"
             deadline = time.monotonic() + self._maker_wait_sec
             while time.monotonic() < deadline:
                 await asyncio.sleep(5.0)
                 try:
                     open_orders = await self._adapter.fetch_open_orders(pid)
                 except Exception:
-                    continue  # transient list failure — keep waiting
+                    # [P287] transient list failure = order state UNKNOWN,
+                    # never "left the book": keep waiting; the timeout+cancel
+                    # path below settles it. (This branch was dead code while
+                    # the adapter swallowed errors into [] — an outage then
+                    # read as "filled at 0bps maker" and the caller crossed
+                    # the full remainder beside a still-resting post-only.)
+                    continue
                 still_open = any(
                     str(_g(o, "order_id") or _g(o, "id") or "") == oid
                     for o in (open_orders or []))
@@ -1320,7 +1604,15 @@ class CoinbaseSleeve:
         n_contracts = abs(delta)
         try:
             pid = self._adapter.to_venue_symbol(asset, "perp")
-            await self._cancel_resting_orders(pid, asset)
+            # [P287] the sweep now returns None when the book of resting
+            # orders could not be verified clear (listing failed / a cancel
+            # unconfirmed). Placing a new order beside an order we cannot see
+            # or could not kill is the P265 double-order class — refuse this
+            # tick; the venue stop keeps protecting and the next tick retries.
+            _swept = await self._cancel_resting_orders(pid, asset)
+            if _swept is None:
+                return {"status": "SKIPPED_STALE", "asset": asset,
+                        "reason": "resting_orders_unverifiable"}
             # [P265] REFUSE on an unknown contract size — never `or 1.0`.
             # The fallback fabricated a UNIT: base_size became a contract
             # count wearing base-unit clothes, and if the adapter's own
@@ -1363,6 +1655,34 @@ class CoinbaseSleeve:
                 if _mk == "CANCEL_FAILED":
                     return {"status": "FAILED", "asset": asset, "side": side,
                             "reason": "maker_cancel_failed_no_cross"}
+                if _mk == "DONE_UNTRACKED":
+                    # [P287] The accepted post-only has no id: before any
+                    # cross, sweep the book and VERIFY no non-stop order
+                    # still rests. If the sweep cannot certify a clear book,
+                    # refuse the cross outright (same class as
+                    # maker_cancel_failed_no_cross) — crossing beside the
+                    # untracked resting post-only overshoots the target the
+                    # moment it fills.
+                    _usw = await self._cancel_resting_orders(pid, asset)
+                    _residual = None
+                    if _usw is not None:
+                        try:
+                            _residual = [
+                                o for o in
+                                (await self._adapter.fetch_open_orders(pid)
+                                 or [])
+                                if not self._is_stop_order(o)]
+                        except Exception:  # noqa: silent-swallow — verification failure = refuse below; the refusal itself is logged
+                            _residual = None
+                    if _usw is None or _residual is None or _residual:
+                        logger.warning(
+                            f"[COINBASE-MAKER] {asset}: could not verify the "
+                            f"untracked post-only is gone — refusing the "
+                            f"cross (P287; double-order class)")
+                        return {"status": "FAILED", "asset": asset,
+                                "side": side,
+                                "reason": "maker_untracked_no_cross"}
+                    _mk = "DONE"
                 if _mk == "DONE":
                     self.reconcile_positions()
                     if not self._reconcile_ok:
@@ -1419,4 +1739,9 @@ class CoinbaseSleeve:
             "positions": positions,
             "buying_power_usd": self.buying_power_usd(),
             "risk": self.update_risk(),
+            # [P287] freshness of the TRUE-equity read, for consumers whose
+            # own guards need it (the P209 fuse feed gates on _reconcile_ok,
+            # which certifies POSITIONS, not equity — a partial outage keeps
+            # it True while equity freezes; main.py can bound on this age).
+            "equity_age_sec": self.sleeve_equity_age_sec(),
         }

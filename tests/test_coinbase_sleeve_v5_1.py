@@ -51,6 +51,16 @@ class FakeAdapterFull:
     def is_connected(self):
         return True
 
+    # [P287] The real adapter has this; before P287 its ABSENCE here was
+    # invisible because the sweep swallowed the AttributeError and
+    # "proceeded" — the exact fail-open contract P287 retired. An empty
+    # book is the honest fixture state.
+    async def fetch_open_orders(self, symbol=None):
+        return []
+
+    async def cancel_order(self, order_id, symbol):
+        return True
+
     def to_venue_symbol(self, asset, market="perp"):
         from exchange.symbol_mapping import to_venue_symbol
         return to_venue_symbol(asset, "coinbase", market)
