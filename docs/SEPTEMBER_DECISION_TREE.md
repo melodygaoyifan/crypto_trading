@@ -62,6 +62,16 @@ the alpha bar, the sizing, or the promotion standard.
 > dead as a candidate (pre-committed in `mlp_ensemble_cert.py`), the
 > early seat is withdrawn outright, and the shadow ledger keeps accruing
 > as free evidence only.
+>
+> **WITHDRAWN same day (P285c):** the ensemble certification FAILED —
+> mlp_ens10 pooled Sharpe +0.49, CI[−0.72, +1.65] includes zero, DSR 0.29.
+> The pre-committed disposition executed: **mlp_small is dead as a
+> candidate; this early-seat section is void.** The seed-7 shadow ledger
+> keeps accruing as free evidence (its ~09-15 P166 read would now be a
+> surprise, not a confirmation); the seat actuator stays wired but the
+> checker refuses permanently under FRAGILE + ensemble-FAIL. The trained-
+> model verdict on the current data basis is restored to the P281 arc's
+> conclusion: dead at every rung under fully honest conditions.
 
 ## Sep 1 — the trend tripwire (P237)
 

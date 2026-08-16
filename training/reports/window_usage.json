@@ -543,6 +543,14 @@
    "start": 7203,
    "end": 13095,
    "purpose": "validation"
+  },
+  {
+   "ts": "2026-08-16T08:16:07.796135+00:00",
+   "experiment": "mlp_ens:p285c",
+   "asset": "BTC",
+   "start": 7203,
+   "end": 13095,
+   "purpose": "validation"
   }
  ]
 }

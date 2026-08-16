@@ -1,0 +1,16 @@
+{
+ "generated": "2026-08-16T08:16:07.854414+00:00",
+ "asset": "BTC",
+ "candidate": "mlp_ens10 (seeds 1..10 averaged)",
+ "cell": "LIVE_sign_expression.with_carry",
+ "pooled_bars": 5892,
+ "net_pct": 51.57,
+ "sharpe": 0.488,
+ "ci": [
+  -0.715,
+  1.653
+ ],
+ "dsr": 0.287,
+ "passes": false,
+ "disposition": "PASS -> ensemble becomes the shadow candidate (re-export, clocks restart); FAIL -> mlp_small is dead as a candidate, P285 early seat WITHDRAWN \u2014 pre-committed in the docstring"
+}
