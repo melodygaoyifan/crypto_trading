@@ -607,14 +607,20 @@ async def execute_intent_v2(
     if current_price <= 0:
         return {"status": "REJECTED", "reason": "Invalid price"}
 
-    # [Coinbase Phase 2 — TWO-SLEEVE] Kraken is the SPOT sleeve and trades ALL
-    # assets here normally (B1-protected: longs ok, spot-shorts blocked). The
-    # Coinbase DERIVATIVES sleeve runs IN PARALLEL via the per-tick management
-    # step (main.py heartbeat -> sleeve.manage_to_signal) on its own perp book.
-    # The two sleeves are independent (a spot AND a perp position can coexist
-    # per asset -> enables basis/carry). So there is NO venue fork here anymore;
-    # Coinbase-membership only governs whether the parallel derivatives sleeve
-    # manages that asset. See docs/COINBASE_ENGINE_INTEGRATION_PLAN.md.
+    # [P275 CORRECTED — the old "TWO-SLEEVE / Kraken trades ALL assets here
+    # normally / NO venue fork" comment was FALSIFIED by P152 (2026-06-14),
+    # twenty lines above the very skip that falsifies it, and stood for two
+    # months (the P155/P239 header-honesty class, in a code comment).]
+    # Reality since the 2026-06-13 cutover: the P152 guard below SKIPS every
+    # new Kraken entry for a Coinbase-routed asset that is flat — with all 3
+    # assets routed and the June flatten done, Kraken is STRUCTURALLY FLAT
+    # and this body only ever unwinds legacy spot (of which there is none).
+    # Everything past the P152 return — anti-churn AC-*, thesis budget,
+    # tranche fills, AuthorityChain, LeverageGuard, the sizing stack — is
+    # DORMANT for routed assets (P201/P231; sleeve-native equivalents where
+    # they matter: P197 stops, P198 flip-persist, P208 net cap, P232
+    # cooldown, P270 maker ladder). The Coinbase sleeve is driven from
+    # main.py run_live via the P206 gated intent, not from here.
 
     _existing_position = ctx.paper_positions.get(asset, {})
     _has_active_position = ctx.fn_is_active_paper_position(_existing_position)
