@@ -49,6 +49,20 @@ passing (P199). **The ~09-15 P166 read still governs anything beyond the
 current book** — the early seat changes the direction source only, never
 the alpha bar, the sizing, or the promotion standard.
 
+> **SUSPENDED same day (P285b, 2026-08-16):** the 10-seed robustness probe
+> returned **FRAGILE** — median decisive Sharpe −0.09 across seeds 1..10,
+> the certified seed 7 the second-best draw. The certified pooled pass is
+> substantially seed luck, which removes the criterion's premise (that the
+> candidate's history certification outranks the incumbent's). The
+> suspension is MECHANICAL: `mlp_seat_check.py` refuses (exit 2) while the
+> FRAGILE report stands un-answered. Re-arming requires the **P285c
+> 10-seed ensemble certification to PASS** (CI excludes zero on the same
+> decisive cell), followed by a recorded export-swap P-entry that restarts
+> the shadow clocks for the ensemble. If the ensemble FAILS, mlp_small is
+> dead as a candidate (pre-committed in `mlp_ensemble_cert.py`), the
+> early seat is withdrawn outright, and the shadow ledger keeps accruing
+> as free evidence only.
+
 ## Sep 1 — the trend tripwire (P237)
 
 **Instrument:** `tripwire_check.py` on the weekly slope-calibrator reports

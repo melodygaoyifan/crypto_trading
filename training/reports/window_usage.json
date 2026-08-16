@@ -487,6 +487,62 @@
    "start": 7169,
    "end": 13034,
    "purpose": "validation"
+  },
+  {
+   "ts": "2026-08-16T07:10:38.648854+00:00",
+   "experiment": "deep_seq:p286:gru32",
+   "asset": "BTC",
+   "start": 7203,
+   "end": 13095,
+   "purpose": "validation"
+  },
+  {
+   "ts": "2026-08-16T07:14:04.046598+00:00",
+   "experiment": "deep_seq:p286:tcn32",
+   "asset": "BTC",
+   "start": 7203,
+   "end": 13095,
+   "purpose": "validation"
+  },
+  {
+   "ts": "2026-08-16T07:17:00.745049+00:00",
+   "experiment": "deep_seq:p286:gru32",
+   "asset": "ETH",
+   "start": 7203,
+   "end": 13095,
+   "purpose": "validation"
+  },
+  {
+   "ts": "2026-08-16T07:20:21.186040+00:00",
+   "experiment": "deep_seq:p286:tcn32",
+   "asset": "ETH",
+   "start": 7203,
+   "end": 13095,
+   "purpose": "validation"
+  },
+  {
+   "ts": "2026-08-16T07:23:16.226056+00:00",
+   "experiment": "deep_seq:p286:gru32",
+   "asset": "SOL",
+   "start": 7169,
+   "end": 13034,
+   "purpose": "validation"
+  },
+  {
+   "ts": "2026-08-16T07:26:37.617488+00:00",
+   "experiment": "deep_seq:p286:tcn32",
+   "asset": "SOL",
+   "start": 7169,
+   "end": 13034,
+   "purpose": "validation"
+  },
+  {
+   "ts": "2026-08-16T07:37:16.979723+00:00",
+   "experiment": "seed_probe:p285b",
+   "asset": "BTC",
+   "start": 7203,
+   "end": 13095,
+   "purpose": "validation"
   }
  ]
 }

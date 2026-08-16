@@ -227,6 +227,32 @@ class TestCriterion:
                 f"criterion fired with unevaluated inputs ic={ic} "
                 f"trend_closed={tc} — missing data read as passing")
 
+    def test_fragile_probe_suspends_the_checker_mechanically(self, tmp_path):
+        # [P285b] With the committed FRAGILE probe report standing and no
+        # passing ensemble certification, the checker must REFUSE (exit 2)
+        # regardless of every other condition — the suspension is a
+        # mechanism, not a memory (P280). This test reads the REAL repo
+        # reports: it pins today's state (FRAGILE, no ensemble pass). If
+        # the ensemble later passes, the P-entry recording the export swap
+        # updates this test in the same commit.
+        probe = REPO / "training" / "reports" / "mlp_seed_probe_p285b.json"
+        assert probe.exists(), "the P285b probe report is missing from the repo"
+        verdict = json.loads(probe.read_text(encoding="utf-8"))["verdict"]
+        ens = REPO / "training" / "reports" / "mlp_ensemble_cert_p285c.json"
+        ens_ok = (ens.exists() and
+                  json.loads(ens.read_text(encoding="utf-8")).get("passes"))
+        if verdict != "FRAGILE" or ens_ok:
+            pytest.skip("suspension premise no longer holds — the re-arm "
+                        "P-entry owns this state now")
+        r = subprocess.run(
+            [sys.executable, "-X", "utf8",
+             str(REPO / "scripts" / "mlp_seat_check.py"),
+             "--today", "2026-09-01"],
+            capture_output=True, text=True, cwd=str(REPO))
+        assert r.returncode == 2 and "SUSPENDED" in r.stderr, (
+            f"FRAGILE probe did not suspend the checker: rc={r.returncode} "
+            f"{r.stdout} {r.stderr}")
+
     def test_missing_ledger_is_a_refusal_not_a_verdict(self, tmp_path):
         r = subprocess.run(
             [sys.executable, "-X", "utf8",

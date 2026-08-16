@@ -1,0 +1,63 @@
+{
+ "generated": "2026-08-16T07:37:16.980977+00:00",
+ "asset": "BTC",
+ "cell": "LIVE_sign_expression.with_carry",
+ "cert_sharpe_seed7": 1.52,
+ "reproduction_seed7": 1.519,
+ "results": [
+  {
+   "seed": 1,
+   "sharpe": 0.03,
+   "net_pct": 3.4
+  },
+  {
+   "seed": 2,
+   "sharpe": 0.518,
+   "net_pct": 56.23
+  },
+  {
+   "seed": 3,
+   "sharpe": -0.29,
+   "net_pct": -31.37
+  },
+  {
+   "seed": 4,
+   "sharpe": -0.207,
+   "net_pct": -22.41
+  },
+  {
+   "seed": 5,
+   "sharpe": -0.528,
+   "net_pct": -57.23
+  },
+  {
+   "seed": 6,
+   "sharpe": -0.698,
+   "net_pct": -74.48
+  },
+  {
+   "seed": 7,
+   "sharpe": 1.519,
+   "net_pct": 165.76
+  },
+  {
+   "seed": 8,
+   "sharpe": 1.34,
+   "net_pct": 148.47
+  },
+  {
+   "seed": 9,
+   "sharpe": 0.652,
+   "net_pct": 70.6
+  },
+  {
+   "seed": 10,
+   "sharpe": -0.922,
+   "net_pct": -99.01
+  }
+ ],
+ "median": -0.088,
+ "n_nonpositive": 5,
+ "verdict": "FRAGILE",
+ "note": "falsification probe, not selection \u2014 the deployed export stays seed-7 regardless; the forward ledger remains the exam"
+}

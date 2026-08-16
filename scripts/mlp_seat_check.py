@@ -35,6 +35,7 @@ pulls fresh ledgers first; run that before trusting this.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from datetime import date, datetime
 from pathlib import Path
@@ -108,6 +109,40 @@ def main() -> int:
     args = ap.parse_args()
     today = (datetime.strptime(args.today, "%Y-%m-%d").date()
              if args.today else date.today())
+
+    # [P285b] SUSPENSION GATE — mechanical, not a memory. The 2026-08-16
+    # seed probe returned FRAGILE (median decisive Sharpe -0.09 across
+    # seeds 1..10; the certified seed 7 was the second-best draw), which
+    # undermines the criterion's premise that the candidate's history
+    # certification outranks the incumbent's. The criterion CANNOT fire
+    # until the P285c 10-seed ensemble re-certifies (CI excludes zero) —
+    # and on that pass the export swap + clock restart get their own
+    # recorded P-entry before this gate re-opens.
+    probe_p = REPO / "training" / "reports" / "mlp_seed_probe_p285b.json"
+    ens_p = REPO / "training" / "reports" / "mlp_ensemble_cert_p285c.json"
+    if probe_p.exists():
+        try:
+            _pv = json.loads(probe_p.read_text(encoding="utf-8")
+                             ).get("verdict")
+        except Exception:
+            _pv = "UNREADABLE"
+        if _pv == "FRAGILE":
+            _ens_ok = False
+            if ens_p.exists():
+                try:
+                    _ens_ok = bool(json.loads(
+                        ens_p.read_text(encoding="utf-8")).get("passes"))
+                except Exception:
+                    _ens_ok = False
+            if not _ens_ok:
+                print("P285 SUSPENDED (cannot fire): the P285b seed probe "
+                      "returned FRAGILE — the certified pooled pass is "
+                      "substantially seed luck. The criterion re-arms only "
+                      "after the P285c ensemble certification PASSES and "
+                      "the export swap is recorded in its own P-entry. "
+                      "This is a refusal, not a 'not yet'.",
+                      file=sys.stderr)
+                return 2
 
     ledger = Path(args.ledger_dir) / f"mlpshadow_{ASSET}.jsonl"
     if not ledger.exists():

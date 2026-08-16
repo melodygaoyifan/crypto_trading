@@ -1,0 +1,97 @@
+{
+ "generated": "2026-08-16T07:07:37.238586+00:00",
+ "device": "cuda",
+ "preregistered": {
+  "families": [
+   "gru32",
+   "tcn32"
+  ],
+  "seq_len": 8,
+  "seeds": [
+   1,
+   2,
+   3
+  ],
+  "refit": 180,
+  "epochs": 40,
+  "lr": 0.001,
+  "fset": "top24",
+  "target": "ret",
+  "n_trials_dsr": 10
+ },
+ "pass_bar": "pooled after-cost CI excludes zero under the LIVE expression, carry included (the P283b bar); a PASS earns a Rung-3 shadow slot, nothing deploys",
+ "assets": {
+  "BTC": {
+   "gru32": {
+    "pooled_bars": 5892,
+    "net_pct": 4.21,
+    "sharpe": 0.039,
+    "ci": [
+     -1.058,
+     1.352
+    ],
+    "dsr": 0.097,
+    "passes": false
+   },
+   "tcn32": {
+    "pooled_bars": 5892,
+    "net_pct": 101.09,
+    "sharpe": 1.074,
+    "ci": [
+     -0.253,
+     2.309
+    ],
+    "dsr": 0.656,
+    "passes": false
+   }
+  },
+  "ETH": {
+   "gru32": {
+    "pooled_bars": 5892,
+    "net_pct": 79.03,
+    "sharpe": 0.544,
+    "ci": [
+     -0.674,
+     1.568
+    ],
+    "dsr": 0.319,
+    "passes": false
+   },
+   "tcn32": {
+    "pooled_bars": 5892,
+    "net_pct": 39.35,
+    "sharpe": 0.318,
+    "ci": [
+     -1.054,
+     1.665
+    ],
+    "dsr": 0.201,
+    "passes": false
+   }
+  },
+  "SOL": {
+   "gru32": {
+    "pooled_bars": 5865,
+    "net_pct": -197.65,
+    "sharpe": -1.119,
+    "ci": [
+     -2.168,
+     -0.101
+    ],
+    "dsr": 0.001,
+    "passes": false
+   },
+   "tcn32": {
+    "pooled_bars": 5865,
+    "net_pct": -0.3,
+    "sharpe": -0.002,
+    "ci": [
+     -1.102,
+     0.992
+    ],
+    "dsr": 0.086,
+    "passes": false
+   }
+  }
+ }
+}
