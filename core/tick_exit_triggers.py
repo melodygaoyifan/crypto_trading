@@ -334,8 +334,14 @@ def evaluate_exit_triggers(
 
     # =================================================================
     # EXIT ALPHA: Phase-aware scale-out + runner management
+    # [P287] `not force_execution` guard, like the T3/T16/T17/T1 siblings:
+    # if a stop-class trigger already fired this tick (target=0,
+    # force_execution=True), this block used to OVERWRITE it — clearing
+    # force_execution and turning the full exit into a 25-50% scale-out.
+    # A stop that fired must never be downgraded to a partial.
     # =================================================================
-    if exit_alpha and position_state.get("has_position"):
+    if (exit_alpha and position_state.get("has_position")
+            and not getattr(intent, 'force_execution', False)):
         try:
             from execution.exit_alpha import RunnerAction
             _pos = paper_positions.get(asset, {})

@@ -9,6 +9,15 @@ B) Systemic Risk (DVOL, correlation, liquidity, flash crash)
 C) Data/Signal Integrity (stale, feed disagreement, execution blocked)
 
 All conditions have explicit return-to-trading rules.
+
+[P287] PARALLEL IMPLEMENTATION — NOT the live decide path. The live 4H tick
+uses defense/constitution.py's NoTradeTriggerChecker (via integration_v36's
+compute_no_trade_triggers); this module even carries a SECOND
+NoTradeTriggerType enum (the FIX-DEADLOCK-ENUM shape one module over). Live
+consumption of this file is limited to orchestration/sota_integration.py /
+alpha_signal_integrator.py. Editing thresholds HERE does NOT change live
+gating — threshold drift between the twins is silent. Change constitution's
+copies for live behavior.
 """
 
 from dataclasses import dataclass, field

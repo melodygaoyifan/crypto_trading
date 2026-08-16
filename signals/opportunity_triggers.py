@@ -11,6 +11,12 @@ D) Sentiment Shock (≥2σ)
 E) SOL-Native Flow (DEX/on-chain)
 
 All thresholds are explicit and testable.
+
+[P287] PARALLEL IMPLEMENTATION — NOT the live decide path (constitution's
+checkers are). Live consumption of this file is one class constant
+(main.py reads OpportunityTriggerChecker.CRACK_EXIT_URGENCY) plus
+orchestration/. Editing thresholds HERE does NOT change live opportunity
+gating — threshold drift between the twins is silent.
 """
 
 from dataclasses import dataclass, field

@@ -329,6 +329,11 @@ class NoTradeTriggerChecker:
     # === CATEGORY C: Data Integrity Thresholds ===
     STALE_DATA_SECONDS = 60.0  # [T4] was 2.0; REST latency 4-5s, 4H tick cycle
     FEED_DISAGREEMENT_PCT = 0.01  # 1%
+    # [P287] DELIBERATELY UNUSED (with `_feed_disagreement_start` below):
+    # disagreement fires INSTANTLY, which is the fail-safe direction — a
+    # duration debounce would let a 1% feed split trade for 30s. Kept only as
+    # documentation of the considered-and-rejected debounce; do not wire it
+    # in without its own P-entry.
     FEED_DISAGREEMENT_DURATION = 30  # seconds
     
     # === CATEGORY A: Signal Conflict ===
@@ -336,6 +341,7 @@ class NoTradeTriggerChecker:
     
     def __init__(self):
         self._price_history: Dict[str, List[Tuple[datetime, float]]] = {}  # per-asset
+        # [P287] deliberately unused — see FEED_DISAGREEMENT_DURATION note.
         self._feed_disagreement_start: Optional[datetime] = None
     
     def compute_triggers(
@@ -474,7 +480,21 @@ class NoTradeTriggerChecker:
 
         P1: 急跌缩量=洗盘 - if volume is below average during crash,
         reduce score (sharp drop + low volume = shakeout, not real crash).
+
+        [P287] EXPLICITLY DISABLED (the P265 empty-interval pattern): this
+        checker is STRUCTURALLY UNREACHABLE at the live cadence and has never
+        fired. It keeps a 300-second window (FLASH_CRASH_WINDOW_SECONDS) but
+        its only caller is compute_no_trade_triggers, once per 4H tick per
+        asset — each sample evicts the previous one (4h > 300s), so
+        len(history) < 2 always and the score was 0.0 forever. The 3-tier
+        volume/washout logic below is KEPT for a future re-derivation (a
+        faster caller would need a re-derived window, P141 — not a silent
+        re-arm), but the honest state is a hard 0.0 return, not a check that
+        reads as protection. REAL flash protection is the pipeline's
+        bar-over-bar `flash_crash_active` (market_data_pipeline) feeding the
+        early hard veto in integration_v36 — that path is live and pinned.
         """
+        return 0.0  # [P287] see docstring — unreachable-by-cadence, disabled
 
         if current_price <= 0:
             return 0.0

@@ -667,7 +667,16 @@ async def execute_intent_v2(
     # T19: Pre-execution safety gate (stale data, DVOL, SOL risk, DRL constraint)
     if ctx.execution_guard:
         try:
-            _side_str = "long" if intent.direction > 0 else "short"
+            # [P287] side from the CORRECTED direction, and a close is labeled
+            # "exit", never "short"/"long". The old `intent.direction > 0`
+            # labeled every zero-direction full exit "short", and a nonzero
+            # close of a short (direction=+1) read as "long" — which fed the
+            # SOL long-override branch and could block a buy-to-close. A
+            # close must never wear an entry's side label.
+            if _is_full_exit_request:
+                _side_str = "exit"
+            else:
+                _side_str = "long" if _execution_direction > 0 else "short"
             # [P173] Was `market_data.get("drl_confidence", 0.5)`. Nothing ever
             # writes drl_confidence into market_data — the producer is
             # `agent_signals['drl_confidence']` (main.py:7817), which THIS
@@ -692,8 +701,29 @@ async def execute_intent_v2(
             )
             if not _guard_ok:
                 _block_reasons = ctx.execution_guard.block_reasons
-                logger.warning(f"[EXEC_GUARD] {asset} BLOCKED: {_block_reasons}")
-                return {"status": "REJECTED", "reason": f"ExecutionGuard: {_block_reasons}"}
+                # [P287] FLAT_ONLY means "only position-closing allowed" — the
+                # guard returns it for stale data / DVOL override precisely so
+                # exits stay possible. Treating it as a total REJECT blocked
+                # the close each tick until data recovered (the P195/P265h
+                # shape at a second door). A close/reduce of a REAL position
+                # passes through; entries and adds stay blocked.
+                _guard_flat_only = (
+                    GuardMode is not None
+                    and _guard_mode == getattr(GuardMode, "FLAT_ONLY", None)
+                )
+                _is_reduce_request = (
+                    _has_active_position
+                    and abs(getattr(intent, "target_exposure", 0.0) or 0.0)
+                    < abs(_existing_position.get("exposure", 0.0) or 0.0)
+                )
+                if _guard_flat_only and (_is_full_exit_request or _is_reduce_request):
+                    logger.warning(
+                        f"[EXEC_GUARD] {asset}: FLAT_ONLY ({_block_reasons}) — "
+                        f"close/reduce ALLOWED through (P287; entries stay blocked)"
+                    )
+                else:
+                    logger.warning(f"[EXEC_GUARD] {asset} BLOCKED: {_block_reasons}")
+                    return {"status": "REJECTED", "reason": f"ExecutionGuard: {_block_reasons}"}
             elif _guard_mode != GuardMode.NORMAL:
                 logger.info(f"[EXEC_GUARD] {asset}: mode={_guard_mode.name} (non-blocking)")
         except Exception as e:
@@ -1244,7 +1274,16 @@ async def execute_intent_v2(
     if ctx.anti_churn._fills_date != _ac5_today:
         ctx.anti_churn._fills_today = 0
         ctx.anti_churn._fills_date = _ac5_today
-    if ctx.anti_churn._fills_today >= ctx.AC5_MAX_FILLS_PER_DAY:
+    # [P287] The budget gates ENTRIES and ADDS only. It used to be
+    # unconditional — after 8 fills in a UTC day, a T10 soft-stop / TIME_STOP
+    # forced close returned AC5_BUDGET_EXHAUSTED and the losing position was
+    # held to the next day. AC-1 exempts safety exits and AC-2 gates on
+    # is_new_entry; AC-5 was the one anti-churn gate that could trap you in
+    # the position (the P195 doctrine: a cap must never block the exit that
+    # realises it). Exits/reduces still COUNT against the budget at
+    # record_fill — they just can never be blocked by it.
+    if ((is_new_entry or is_adding)
+            and ctx.anti_churn._fills_today >= ctx.AC5_MAX_FILLS_PER_DAY):
         logger.warning(
             f"[AC-5] {asset}: FILL BUDGET EXHAUSTED -"
             f"{ctx.anti_churn._fills_today}/{ctx.AC5_MAX_FILLS_PER_DAY} today"
@@ -2211,7 +2250,12 @@ async def execute_intent_v2(
         try:
             _exec_symbol = _canonical_spot_symbol(asset)
             _quote = _exec_symbol.split('/')[1]
-            _bal = ctx.execution_manager.exchange.fetch_balance()
+            # [P287] fetch_balance is a blocking ccxt call — run it off the
+            # event loop (the account_sync pattern); inline it blocked every
+            # live BUY for up to the ccxt timeout.
+            import asyncio as _pg_asyncio
+            _bal = await _pg_asyncio.to_thread(
+                ctx.execution_manager.exchange.fetch_balance)
             _free_quote = float(((_bal or {}).get('free') or {}).get(_quote, 0.0) or 0.0)
             _required_usd = base_quantity * float(execution_price or 0.0)
             # 0.5% buffer for fees/slippage; only block when truly unfundable
@@ -2804,15 +2848,28 @@ async def execute_intent_v2(
                     ctx.risk_manager.record_realized_pnl(_net_pnl_usd)
                 if ctx.existence_fuse:
                     ctx.existence_fuse.on_trade_close(_net_pnl_usd)
-                    # [FIX-P0-3] Feed real PnL into fuse rolling window
-                    _fuse_equity = ctx.config.initial_capital
-                    if ctx.account_sync:
-                        _fuse_equity = ctx.account_sync.get_equity()
-                    ctx.existence_fuse.record_pnl(
-                        realized_pnl=_net_pnl_usd,
-                        current_equity=_fuse_equity,
-                        trade_count=1,
-                    )
+                    # [FIX-P0-3] Feed real PnL into fuse rolling window.
+                    # [P287] get_equity() RAISES when equity is >120s stale —
+                    # easily true by this point (slice loops + backoffs). An
+                    # unguarded raise here aborted execute_intent_v2 AFTER a
+                    # real venue fill, skipping cooldown/ledger/attribution.
+                    # Guarded like the :4233 sibling: log ERROR, skip the
+                    # fuse record for this fill, never abort post-fill.
+                    try:
+                        _fuse_equity = ctx.config.initial_capital
+                        if ctx.account_sync:
+                            _fuse_equity = ctx.account_sync.get_equity()
+                        ctx.existence_fuse.record_pnl(
+                            realized_pnl=_net_pnl_usd,
+                            current_equity=_fuse_equity,
+                            trade_count=1,
+                        )
+                    except Exception as _fuse_eq_err:
+                        logger.error(
+                            f"[P287-FUSE] {asset}: equity unavailable post-fill "
+                            f"({_fuse_eq_err}) — fuse record SKIPPED for this "
+                            f"close (pnl={_net_pnl_usd:+.2f} not in window)"
+                        )
                 # [EXIT-DRL] Close the per-trade outcome ledger record so the
                 # promotion gate can count this exit event. Best-effort —
                 # ledger errors must never block the close path.
@@ -3137,25 +3194,25 @@ async def execute_intent_v2(
                         )
                         _c11_signal = ctx.pnl_attribution.get_promotion_signal()
                         if _c11_signal.ready_for_promotion:
-                            logger.info(
-                                f"[PNL_PROMO] DRL ready for authority upgrade: "
+                            # [P287] RETIRED: this used to call
+                            # promotion_gate.promote("ACTIVE"/"EXIT_ONLY") +
+                            # fn_sync_drl_authority right here — a LIVE
+                            # auto-promotion actuator with no operator step,
+                            # directly bypassing Non-Negotiable Rule 4's
+                            # re-promotion bar (clean retrain + P182 baselines
+                            # + P166 forward gate) and the P198/P241 demotion.
+                            # The P227b treatment applied to its sibling (the
+                            # gate's self-reversing demotion): the SIGNAL is
+                            # still computed and logged as evidence; the
+                            # authority change is an operator decision, never
+                            # a side effect of one good close.
+                            logger.warning(
+                                f"[PNL_PROMO] promotion signal ready — NOT "
+                                f"auto-promoting (Rule 4; P287): "
                                 f"type={_c11_signal.promotion_type} "
                                 f"conf={_c11_signal.confidence:.2f} "
                                 f"evidence={_c11_signal.supporting_evidence}"
                             )
-                            if ctx.promotion_gate and ctx.drl_models_ready > 0:
-                                try:
-                                    _promo_target = "EXIT_ONLY" if _c11_signal.promotion_type == "SHADOW_TO_EXIT" else "ACTIVE"
-                                    if ctx.drl_authority_level in ("DISABLED", "SHADOW"):
-                                        ctx.promotion_gate.promote(_promo_target)
-                                        ctx.drl_authority_level = ctx.promotion_gate.get_authority_level()
-                                        ctx.fn_sync_drl_authority(ctx.drl_authority_level)
-                                        logger.warning(
-                                            f"[PNL_PROMO] DRL promoted to {ctx.drl_authority_level} "
-                                            f"from attribution signal"
-                                        )
-                                except Exception as _promo_err:
-                                    logger.debug(f"[PNL_PROMO] promotion apply failed: {_promo_err}")
                         elif _c11_signal.blocking_factors:
                             logger.debug(
                                 f"[PNL_PROMO] Not ready: {_c11_signal.blocking_factors[0]}"
@@ -3344,15 +3401,23 @@ async def execute_intent_v2(
                 ctx.risk_manager.record_realized_pnl(_partial_net_pnl_usd)
             if ctx.existence_fuse:
                 ctx.existence_fuse.on_trade_close(_partial_net_pnl_usd)
-                # [FIX-P0-3] Feed real PnL into fuse rolling window
-                _fuse_equity = ctx.config.initial_capital
-                if ctx.account_sync:
-                    _fuse_equity = ctx.account_sync.get_equity()
-                ctx.existence_fuse.record_pnl(
-                    realized_pnl=_partial_net_pnl_usd,
-                    current_equity=_fuse_equity,
-                    trade_count=1,
-                )
+                # [FIX-P0-3] Feed real PnL into fuse rolling window.
+                # [P287] guarded — see the full-exit sibling above.
+                try:
+                    _fuse_equity = ctx.config.initial_capital
+                    if ctx.account_sync:
+                        _fuse_equity = ctx.account_sync.get_equity()
+                    ctx.existence_fuse.record_pnl(
+                        realized_pnl=_partial_net_pnl_usd,
+                        current_equity=_fuse_equity,
+                        trade_count=1,
+                    )
+                except Exception as _fuse_eq_err:
+                    logger.error(
+                        f"[P287-FUSE] {asset}: equity unavailable post-fill "
+                        f"({_fuse_eq_err}) — fuse record SKIPPED for this "
+                        f"partial (pnl={_partial_net_pnl_usd:+.2f} not in window)"
+                    )
             _tilt_key = asset.upper().replace("/USD", "").replace("USD", "")
             if _tilt_key in ctx.asset_trade_pnls:
                 ctx.asset_trade_pnls[_tilt_key].append(_partial_net_pnl_usd)
@@ -3609,15 +3674,24 @@ async def execute_intent_v2(
                         ctx.risk_manager.record_realized_pnl(_flip_net_pnl_usd)
                     if ctx.existence_fuse:
                         ctx.existence_fuse.on_trade_close(_flip_net_pnl_usd)
-                        # [FIX-P0-3] Feed real PnL into fuse rolling window
-                        _fuse_equity = ctx.config.initial_capital
-                        if ctx.account_sync:
-                            _fuse_equity = ctx.account_sync.get_equity()
-                        ctx.existence_fuse.record_pnl(
-                            realized_pnl=_flip_net_pnl_usd,
-                            current_equity=_fuse_equity,
-                            trade_count=1,
-                        )
+                        # [FIX-P0-3] Feed real PnL into fuse rolling window.
+                        # [P287] guarded — see the full-exit sibling above.
+                        try:
+                            _fuse_equity = ctx.config.initial_capital
+                            if ctx.account_sync:
+                                _fuse_equity = ctx.account_sync.get_equity()
+                            ctx.existence_fuse.record_pnl(
+                                realized_pnl=_flip_net_pnl_usd,
+                                current_equity=_fuse_equity,
+                                trade_count=1,
+                            )
+                        except Exception as _fuse_eq_err:
+                            logger.error(
+                                f"[P287-FUSE] {asset}: equity unavailable "
+                                f"post-fill ({_fuse_eq_err}) — fuse record "
+                                f"SKIPPED for this flip close "
+                                f"(pnl={_flip_net_pnl_usd:+.2f} not in window)"
+                            )
                     # [EXIT-DRL] Close the outgoing trade's ledger record on
                     # FLIP. The new opposite-direction position will lazy-open
                     # a fresh ledger record on the next predict() tick.
@@ -4171,7 +4245,15 @@ async def execute_intent_v2(
     # =====================================================================
     # Phase 1.10: Record position entry time for max hold enforcement
     # =====================================================================
-    if intent.target_exposure != 0 and asset not in ctx.position_entry_times:
+    # [P287] The close definition here must match the branch tree's
+    # (`target_exposure == 0 OR direction == 0`). It used to be
+    # target_exposure-only: a close expressed as direction==0 with
+    # target_exposure>0 took BRANCH A (position popped) but never cleared
+    # position_entry_times, and the next entry did not refresh it — so
+    # MAX_HOLD measured the NEW position against the OLD entry time and
+    # could force-exit it prematurely.
+    _mh_is_close = (intent.target_exposure == 0 or intent.direction == 0)
+    if not _mh_is_close and asset not in ctx.position_entry_times:
         # New position entry -record time and mode
         mode = market_data.get("volatility_regime", "NORMAL").upper()
         if mode not in ("NORMAL", "OPPORTUNITY"):
@@ -4184,7 +4266,7 @@ async def execute_intent_v2(
         logger.info(
             f"[MAX_HOLD] {asset} position opened -mode={mode}, max_hold={max_h}h"
         )
-    elif intent.target_exposure == 0 and asset in ctx.position_entry_times:
+    elif _mh_is_close and asset in ctx.position_entry_times:
         # Position closed -clear entry time
         entry_info = ctx.position_entry_times.pop(asset)
         held_hours = (datetime.now(timezone.utc) - entry_info["entry_time"]).total_seconds() / 3600

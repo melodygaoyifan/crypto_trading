@@ -188,8 +188,16 @@ class TrendDecisionLayer:
         try:
             market_data["quant_direction"] = sig
             market_data["quant_confidence"] = abs(sig)
-            market_data["signal_edge_bps"] = max(
-                float(market_data.get("signal_edge_bps", 0.0) or 0.0), edge)
+            # [P287] The edge claim is the TREND's own edge, full stop. This
+            # used to be max(engine_edge, trend_edge): whenever the pipeline's
+            # 65*|quant_dir| exceeded 40*|trend_sig| (e.g. engine dir +/-0.9 vs
+            # trend +/-0.30), the alpha gate was judged on an edge computed for
+            # a signal this inject just THREW AWAY — the engine's direction may
+            # even be opposite. That both loosened the live gate and broke the
+            # recorded calibration (P231/P237: live alpha = 40x|trend|x0.75)
+            # that the September tripwire arithmetic keys on. Replacing the
+            # signal replaces its edge claim — this is a live TIGHTENING.
+            market_data["signal_edge_bps"] = edge
             market_data["quant_data_quality"] = 1.0
             market_data["primary_strategy"] = "trend_following"
             agent_signals["quant_direction"] = sig

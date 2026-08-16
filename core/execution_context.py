@@ -70,7 +70,12 @@ class ExecutionContext:
 
     # ── Risk / Exit Components ──
     adaptive_stop: Any = None           # AdaptiveStopManager
-    adaptive_stop_regime_mult: float = 1.0
+    # [P287] This is a DICT keyed by regime name (main.py:~4529 supplies one;
+    # consumers do `.get(regime, 1.0)` on it). The old `float = 1.0` default
+    # meant a missing runner attribute yielded a float whose `.get` raised
+    # AttributeError — debug-swallowed, silently skipping adaptive-stop
+    # registration. dict default_factory keeps `.get` valid on the fallback.
+    adaptive_stop_regime_mult: Dict[str, float] = field(default_factory=dict)
     exit_alpha: Any = None              # ExitAlphaManager
     gambler_exit: Any = None            # GamblerExitChecker
     stop_authority: Any = None          # StopLossAuthorityManager
@@ -223,7 +228,9 @@ class ExecutionContext:
 
         # Risk / Exit components
         ctx.adaptive_stop = getattr(runner, '_adaptive_stop', None)
-        ctx.adaptive_stop_regime_mult = getattr(runner, '_adaptive_stop_regime_mult', 1.0)
+        # [P287] getattr fallback is a DICT, not the old float 1.0 — a float
+        # here made every consumer's `.get(...)` raise (debug-swallowed).
+        ctx.adaptive_stop_regime_mult = getattr(runner, '_adaptive_stop_regime_mult', None) or {}
         ctx.exit_alpha = getattr(runner, 'exit_alpha', None)
         ctx.gambler_exit = getattr(runner, 'gambler_exit', None)
         ctx.stop_authority = getattr(runner, 'stop_authority', None)

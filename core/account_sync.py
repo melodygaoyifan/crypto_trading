@@ -62,7 +62,11 @@ class AccountState:
     """Current account state from exchange."""
     equity: float = 0.0
     available_balance: float = 0.0
-    used_margin: float = 0.0
+    # [P287] Renamed from `used_margin`. On a spot account
+    # `equity - available` is the market value of non-quote holdings, not
+    # margin — the old name was a wrong number wearing a right name. Zero
+    # consumers existed at rename time; if you consume this, know what it is.
+    non_quote_holdings_value: float = 0.0
     unrealized_pnl: float = 0.0
     
     # Metadata
@@ -187,7 +191,7 @@ class AccountSyncManager:
         self._state = AccountState(
             equity=self._dry_run_equity + self._dry_run_pnl,
             available_balance=self._dry_run_equity + self._dry_run_pnl,
-            used_margin=0.0,
+            non_quote_holdings_value=0.0,  # [P287] renamed, see AccountState
             unrealized_pnl=self._dry_run_pnl,
             timestamp=time.time(),
             exchange=self.exchange_name,
@@ -397,7 +401,13 @@ class AccountSyncManager:
             self._state = AccountState(
                 equity=equity,
                 available_balance=available,
-                used_margin=equity - available,
+                # [P287] renamed from `used_margin` — `equity - available` is
+                # NOT used margin: equity includes crypto-holdings value while
+                # `available` is free quote only, so this equals the value of
+                # non-quote holdings (+ any real margin). No consumer existed;
+                # renamed so no future reader inherits a wrong number wearing
+                # a right name.
+                non_quote_holdings_value=equity - available,
                 unrealized_pnl=unrealized_pnl,
                 timestamp=time.time(),
                 exchange=self.exchange_name,

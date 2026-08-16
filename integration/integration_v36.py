@@ -868,6 +868,7 @@ class HMATSv36Engine:
         # Fusion signal state (initialized here to avoid AttributeError)
         self._last_sentiment_active: bool = False
         self._last_macro_active: bool = False
+        self._last_dvol_real: bool = False  # [P287] proof-log dvol stash
         
         # Proof logging (Patch 3) - capped to prevent memory leak in 24h+ runs
         self._proof_logs: deque = deque(maxlen=1000)
@@ -1095,6 +1096,12 @@ class HMATSv36Engine:
         )
         _early_mcc = agent_signals.get("macro_crowd_context")
         self._last_macro_active = _early_mcc.get("available", False) if isinstance(_early_mcc, dict) else bool(_early_mcc)
+        # [P287] Stash whether the DVOL feed actually served a value this
+        # tick, for the proof log. The old proof-log expression tested
+        # `hasattr(intent, 'dvol_zscore')` — a field nothing ever assigns —
+        # so dvol_real was the constant False. The _last_sentiment_active
+        # pattern, applied to dvol.
+        self._last_dvol_real = market_data.get("dvol_zscore") is not None
         try:
             intent.opportunity_actionable_direction_threshold_short = float(
                 market_data.get(
@@ -2021,7 +2028,20 @@ class HMATSv36Engine:
             # IMMEDIATE exit overrides normal decision
             if sol_exit_signal.urgency == ExitUrgency.IMMEDIATE:
                 intent.force_execution = True
-                intent.execution_mode = sol_exit_signal.execution_mode
+                # [P287] the signal carries a bare STRING ("AGGRESSIVE") from
+                # production_reliability, not an ExecutionMode member. Coerce
+                # defensively; an unknown string leaves the intent's mode
+                # unchanged rather than planting a non-enum into a typed field
+                # (latent — a strict consumer on a Kraken revival would
+                # compare enum-to-str).
+                try:
+                    intent.execution_mode = ExecutionMode(
+                        getattr(sol_exit_signal.execution_mode, "value",
+                                sol_exit_signal.execution_mode))
+                except (ValueError, TypeError):
+                    logger.warning(
+                        f"[P287] SOL forced-exit: unknown execution_mode "
+                        f"{sol_exit_signal.execution_mode!r} — intent mode unchanged")
                 intent.target_exposure = sol_exit_signal.target_exposure
                 intent.direction = -1.0 if current_exposure > 0 else 1.0  # Flatten
                 intent.urgency = 1.0
@@ -2845,9 +2865,15 @@ class HMATSv36Engine:
         structured_log = create_proof_log(
             # Component statuses
             data_real=True,  # Data is always validated
-            quant_real=not isinstance(self.fusion_engine, type(StubFusionEngine)),
+            # [P287] Was `isinstance(self.fusion_engine, type(StubFusionEngine))`
+            # — type(X) of a class is its METACLASS, and an engine INSTANCE is
+            # never a class, so quant_real was the constant True even fully
+            # stubbed (the exact degraded state the field exists to expose).
+            quant_real=not isinstance(self.fusion_engine, StubFusionEngine),
             drl_enabled=self.drl_gate.has_exit_authority() if hasattr(self.drl_gate, 'has_exit_authority') else False,
-            dvol_real=hasattr(intent, 'dvol_zscore'),  # True when DVOL feed provides real data
+            # [P287] Was `hasattr(intent, 'dvol_zscore')` — no writer exists,
+            # constant False. Now the per-tick stash from decide().
+            dvol_real=getattr(self, '_last_dvol_real', False),
             sentiment_real=getattr(self, '_last_sentiment_active', False),  # True when F&G feed provides live data
             macro_real=getattr(self, '_last_macro_active', False),  # True when macro data is available
             

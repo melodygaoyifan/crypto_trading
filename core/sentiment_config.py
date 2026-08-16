@@ -73,13 +73,18 @@ class SentimentConfig:
     """
 
     ENABLE_SENTIMENT: bool = True
-    IS_MOCK: bool = False
+    # [P287] Default is None-resolve-at-construction, NOT False. The old
+    # `IS_MOCK: bool = False` made the __post_init__ resolution unreachable,
+    # so a bare SentimentConfig() claimed REAL regardless of the API key —
+    # the unsafe direction (mock must never look real; REAL-looking mock
+    # could trigger OPPORTUNITY). An explicitly-passed IS_MOCK still wins.
+    IS_MOCK: Optional[bool] = None
     DISABLE_OPPORTUNITY_TRIGGER_IN_MOCK: bool = True
 
     def __post_init__(self) -> None:
         # Resolved at construction, not at import, so tests and callers can
         # set the environment first. An explicitly-passed IS_MOCK still wins.
-        if self.IS_MOCK is None:  # pragma: no cover - defensive
+        if self.IS_MOCK is None:
             self.IS_MOCK = not _live_backend_available()
 
     def can_trigger_opportunity(self) -> bool:

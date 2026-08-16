@@ -260,8 +260,9 @@ class SmartBetaController:
 
             # Liquidity risk from OI spike + F&G extreme
             oi_risk = min(max(oi_chg - 3, 0) / 10, 1.0)
-            fg_risk = max(0, (80 - fg) / 80) if fg > 70 else max(0, (fg - 20) / -20) if fg < 30 else 0
-            # Correct: extreme fear OR greed = risk
+            # [P287] a dead first fg_risk assignment (immediately overwritten)
+            # was deleted here. The formula below is the RECORDED P265
+            # decision (inverted, write-only) — left as recorded.
             fg_risk = 1.0 - min(abs(fg - 50) / 50, 1.0) if abs(fg - 50) > 25 else 0.0
             state.liquidity_risk = min(oi_risk * 0.5 + abs(state.funding_heat) * 0.3 + fg_risk * 0.2, 1.0)
 
