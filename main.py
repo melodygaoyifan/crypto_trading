@@ -5578,6 +5578,19 @@ class HMATSProductionRunner:
             logger.warning(f"  [P270] EtfFlowShadow init failed: "
                            f"{type(_efs_err).__name__}: {_efs_err}")
 
+        # [P277] Enhancement shadow families (stablecoinflow / oidiv twins /
+        # calbasis / xsmom / eventfilter) — observation-only, Iron Law 7;
+        # their 30d P166 clocks start at the first deploy that runs them.
+        self._enhancement_shadows = None
+        try:
+            from defense.enhancement_shadows import EnhancementShadows
+            self._enhancement_shadows = EnhancementShadows(data_dir="data")
+            logger.info("  [P277] EnhancementShadows: ACTIVE (observation-"
+                        "only; 5 families, all forward-ledgered)")
+        except Exception as _enh_err:
+            logger.warning(f"  [P277] EnhancementShadows init failed: "
+                           f"{type(_enh_err).__name__}: {_enh_err}")
+
         # =====================================================================
         # [v5.1 Phase 6] ML factor fusion agent shadow harness (SHADOW)
         # MLFactorDispatcher per-asset routes to MLFactorFusionAgent (BTC/ETH/SOL).
@@ -10617,6 +10630,15 @@ class HMATSProductionRunner:
                     f"[REGIMEBOOK] {asset}: observe_features failed "
                     f"({type(_rbs_err).__name__}: {_rbs_err}) — the SOL "
                     f"parity stash is starving")
+        # [P277] per-asset OI stash for the oidiv enhancement shadow (the
+        # loop-level tick runs after all assets; market_data is per-asset
+        # here). Absent key stays absent — oidiv writes flat on None (P2).
+        try:
+            if not hasattr(self, "_enh_oi_stash"):
+                self._enh_oi_stash = {}
+            self._enh_oi_stash[asset] = market_data.get("oi_change_24h_pct")
+        except Exception:  # noqa: silent-swallow — a stash miss means one flat oidiv row, never a tick fault
+            pass
 
         # [S11] Inject HTF trend direction for authority fusion
         if "htf_trend_direction" not in agent_signals:
@@ -19745,6 +19767,60 @@ class HMATSProductionRunner:
         logger.info(f"[BACKTEST] Completed: {results}")
         return results
     
+    def _cde_quote_map(self) -> dict:
+        """[P277] {asset: {near_px, near_days, far_px, far_days}} from one
+        get_products call — the calbasis shadow's input. Nearest DATED
+        contract >=10 days out vs the 20DEC30 perp-style. Fail-soft to {}
+        (calbasis writes flat-with-reason on missing quotes)."""
+        ad = getattr(self, "_coinbase_adapter", None)
+        if ad is None or getattr(ad, "_client", None) is None:
+            return {}
+        try:
+            prods = ad._client.get_products(product_type="FUTURE")
+            rows = (prods.get("products") if isinstance(prods, dict)
+                    else getattr(prods, "products", None)) or []
+            now = datetime.now(timezone.utc)
+            base_map = {"BI": "BTC", "ET": "ETH", "SO": "SOL", "SL": "SOL"}
+            out: dict = {}
+            for p in rows:
+                pid = (p.get("product_id") if isinstance(p, dict)
+                       else getattr(p, "product_id", "")) or ""
+                if not pid.endswith("-CDE"):
+                    continue
+                px_raw = (p.get("price") if isinstance(p, dict)
+                          else getattr(p, "price", None))
+                try:
+                    px = float(px_raw)
+                except (TypeError, ValueError):  # noqa: silent-swallow — an unquoted contract (e.g. the empty 30OCT26 rows) is expected shape; it is simply not a basis leg
+                    continue
+                if px <= 0:
+                    continue
+                asset = base_map.get(pid[:2])
+                if asset is None:
+                    continue
+                fpd = (p.get("future_product_details") if isinstance(p, dict)
+                       else getattr(p, "future_product_details", None))
+                exp = (fpd.get("contract_expiry") if isinstance(fpd, dict)
+                       else getattr(fpd, "contract_expiry", None)) if fpd else None
+                try:
+                    exp_dt = datetime.fromisoformat(
+                        str(exp).replace("Z", "+00:00"))
+                    days = (exp_dt - now).total_seconds() / 86400.0
+                except Exception:  # noqa: silent-swallow — a missing/odd expiry just excludes that contract from the basis pair; calbasis records flat-with-reason on an incomplete pair
+                    continue
+                slot = out.setdefault(asset, {})
+                if days > 1000:          # the 20DEC30 perp-style = the FAR leg
+                    if "far_days" not in slot or days < slot["far_days"]:
+                        slot["far_px"], slot["far_days"] = px, days
+                elif days >= 10:         # nearest dated with >=10d to expiry
+                    if "near_days" not in slot or days < slot["near_days"]:
+                        slot["near_px"], slot["near_days"] = px, days
+            return {a: s for a, s in out.items()
+                    if "near_px" in s and "far_px" in s}
+        except Exception as e:  # noqa: silent-swallow — quotes are a shadow input; calbasis records flat on absence
+            logger.debug(f"[P277] cde quote map failed: {type(e).__name__}")
+            return {}
+
     async def _unmanaged_holdings_text(self) -> Optional[str]:
         """[P273] Value the Kraken holdings the system deliberately does NOT
         manage or count (operator decision 2026-08-16: the XRP bag + BTC are
@@ -20881,6 +20957,11 @@ class HMATSProductionRunner:
                                                     _m_a, intended_target=0)
                                                 _cb_stop_summary[_m_a] = _st_res.get("status")
                                                 continue
+                                        # [P277] stash the FINAL gated dir
+                                        # for the eventfilter shadow's claim
+                                        if not hasattr(self, "_enh_gated_dirs"):
+                                            self._enh_gated_dirs = {}
+                                        self._enh_gated_dirs[_m_a] = _m_dir
                                         _m_res = await _sl.manage_to_signal(_m_a, _m_dir)
                                         _m_st = _m_res.get("status")
                                         # [P232] record flattens for the cooldown.
@@ -21136,6 +21217,38 @@ class HMATSProductionRunner:
                     except Exception as _efs_e:  # noqa: silent-swallow
                         logger.warning(f"[ETFFLOW] tick failed: "
                                        f"{type(_efs_e).__name__} — ledger "
+                                       f"stale this cycle")
+
+                # [P277] Enhancement shadow tick — inputs assembled from
+                # what this tick already holds; every family fail-soft.
+                if getattr(self, "_enhancement_shadows", None) is not None:
+                    try:
+                        _enh_closes = dict(getattr(
+                            getattr(self, "_regime_book_shadow", None),
+                            "_last_closes", None) or {})
+                        _enh_oi_raw = dict(
+                            getattr(self, "_enh_oi_stash", None) or {})
+                        _enh_oi = {}
+                        for _e_a, _e_closes in _enh_closes.items():
+                            if _e_a not in self.config.assets:
+                                continue
+                            _e_pchg = None
+                            if _e_closes and len(_e_closes) > 7 and \
+                                    _e_closes[-7] > 0:
+                                _e_pchg = (_e_closes[-1] / _e_closes[-7]
+                                           - 1.0) * 100.0
+                            _enh_oi[_e_a] = {
+                                "price_chg_24h": _e_pchg,
+                                "oi_chg_24h_pct": _enh_oi_raw.get(_e_a)}
+                        self._enhancement_shadows.tick(
+                            oi_by_asset=_enh_oi,
+                            gated_dir_by_asset=dict(getattr(
+                                self, "_enh_gated_dirs", None) or {}),
+                            cde_quotes=self._cde_quote_map(),
+                            closes_by_asset=_enh_closes)
+                    except Exception as _enh_e:  # noqa: silent-swallow
+                        logger.warning(f"[ENH-SHADOWS] tick failed: "
+                                       f"{type(_enh_e).__name__} — ledgers "
                                        f"stale this cycle")
 
                 _wait_secs_live = self._seconds_until_next_4h_candle(offset_seconds=90)

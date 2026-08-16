@@ -1,7 +1,8 @@
 {
  "dictget_count": 42,
  "flags_count": 0,
- "tryexcept_count": 671,
+ "tryexcept_count": 672,
+ "_p277_note": "671 -> 672: the _enh_oi_stash guard in the per-asset tick (main.py, P277). A stash miss means one flat oidiv ledger row, never a tick fault; noqa'd; counter not noqa-aware; bumped by hand, never --update (P171).",
  "_p273_note": "670 -> 671: the per-symbol fetch_ticker guard inside _unmanaged_holdings_text (main.py, P273). An unlisted pair or dust symbol is an EXPECTED data shape, not an error — it renders as '(unpriced)' in the display-only heartbeat line, never as $0 (absence is not zero, P2). noqa'd; counter is not noqa-aware; bumped by hand, never --update (P171).",
  "_p272_note": "669 -> 670: the passive-holdings advisory guard in run_live's heartbeat block (main.py, P272). Deliberate fail-soft: the advisory is heartbeat TEXT about assets the operator holds outside the system — a fault in it must never break the heartbeat, and the harness's own logs carry any real failure. Carries noqa: silent-swallow; this counter comes from silent_failure_audit which is not noqa-aware. Bumped by hand, never via --update (P171).",
  "_p226_note": "Counts ROSE because these scanners started SEEING main.py, NOT because defects were added. Every read used encoding=\"utf-8\" while main.py carries a UTF-8 BOM, so ast.parse raised SyntaxError on U+FEFF and the largest file in the repo was silently skipped for as long as these audits have existed. Attributed BEFORE re-baselining (P175): all 308 new silent_failure entries are main.py symbols (ExecutionContext.build_from_runner, MahalanobisOODDetector.load, *Config.from_dict ...), and both counts are now identical with and without the BOM. Same defect as P171 in lint_orphan_signal_reads.py, never applied here.",

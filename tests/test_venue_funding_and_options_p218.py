@@ -136,11 +136,19 @@ class TestVenueAwareFunding:
         d = {f.name: f.default for f in dataclasses.fields(ProductionConfig)}
         assert d["coinbase_venue_aware_funding"] is False
 
-    def test_live_profile_has_not_enabled_it(self):
+    def test_live_profile_pins_the_decided_value(self):
+        # [P277] The P141 operator decision HAPPENED ("full enhancement",
+        # 2026-08-16): the flag is deliberately ON — with it OFF, the alpha
+        # gate's hold-cost (FrictionComponents.update_funding_rate ->
+        # _margin_cost_bps) priced the sleeve's positions on KRAKEN's
+        # funding. The pin flips to the decided value (P237 pattern) so a
+        # silent revert fails loudly.
         cfg = json.loads((_REPO / "configs" / "live_high_risk.json").read_text(
             encoding="utf-8"))
-        assert not cfg.get("coinbase_venue_aware_funding", False), (
-            "changing a live data input is an operator decision (P141)"
+        assert cfg.get("coinbase_venue_aware_funding") is True, (
+            "coinbase_venue_aware_funding reverted — if deliberate, update "
+            "this pin + the config note in the same commit; the sleeve's "
+            "gate hold-cost goes back to Kraken's funding rate"
         )
 
     def test_it_only_applies_to_routed_assets(self):

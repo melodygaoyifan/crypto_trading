@@ -322,6 +322,7 @@ class RegimeBookShadow:
             a: self._load_banded(a, repo_root) for a in ("BTC", "ETH", "SOL")}
         self._banded_state: Dict[str, dict] = {}
         self._volskip_state: Dict[str, dict] = {}  # [P270] asset -> {"cur"}
+        self._last_closes: Dict[str, list] = {}    # [P277] asset -> closes (enh consumers)
         self._sol_model = self._load_sol_model(repo_root)
         self._warned: set = set()
         self._funding_stale: Dict[str, bool] = {}  # [P265] per-asset stale-z latch (re-armable)
@@ -814,6 +815,9 @@ class RegimeBookShadow:
                 # harness whose job is parity. Drop it: the label and price
                 # come from the last completed bar, matching the lab.
                 closes = closes[:-1]
+                # [P277] stash for the enhancement shadows (xsmom + 24h
+                # price change) — written only from COMPLETED bars
+                self._last_closes[asset] = closes
                 rec = self.record_tick(asset, closes, price=closes[-1])
                 summary.append(
                     f"{asset}={rec['regime']}/{rec['leg']}/{rec['direction']:+.1f}"
