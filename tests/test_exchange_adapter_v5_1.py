@@ -80,8 +80,30 @@ def test_from_venue_symbol_unknown_raises():
 
 
 def test_supported_assets():
-    assert set(supported_assets("kraken", "perp")) == {"BTC", "ETH", "SOL"}
-    assert set(supported_assets("coinbase", "perp")) == {"BTC", "ETH", "SOL"}
+    # [P292] Rewritten from a literal to the INVARIANT. The coinbase perp map
+    # legitimately widened to carry the five P262 breadth assets (readiness:
+    # a September PASS becomes a config flip, not a code change). Re-pinning a
+    # fresh literal here would just fail again on the next legitimate widening
+    # and train the reader to edit tests without reading them (P165).
+    #
+    # `supported_assets` has NO production consumer (verified by grep — it is
+    # a test/diagnostic helper over SYMBOL_MAP), so map width is not itself a
+    # trading gate; the locks that keep breadth assets inert are config.assets,
+    # the per-asset sizing entries, and routing state (pinned in
+    # tests/test_p292_xrp_readiness.py).
+    _ROUTED_MAJORS = {"BTC", "ETH", "SOL"}
+    _P262_BREADTH = {"XRP", "ADA", "LTC", "DOGE", "BNB"}
+
+    assert set(supported_assets("kraken", "perp")) == _ROUTED_MAJORS
+    cb = set(supported_assets("coinbase", "perp"))
+    # The routed majors must ALWAYS be expressible — losing one silently
+    # un-routes a live asset.
+    assert _ROUTED_MAJORS <= cb
+    # ...and anything beyond them must be a probe-verified P262 breadth asset.
+    # An unverified symbol appearing here is the P265h fabricated-unit hazard
+    # (a pid whose contract size nobody measured), so this fails loudly.
+    assert cb - _ROUTED_MAJORS <= _P262_BREADTH, (
+        f"unverified coinbase perp symbols: {sorted(cb - _ROUTED_MAJORS - _P262_BREADTH)}")
     assert supported_assets("unknown", "perp") == []
 
 
