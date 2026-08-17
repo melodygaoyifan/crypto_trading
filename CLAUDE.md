@@ -1,6 +1,6 @@
 # HMATS — Project Status & Development Guidelines
 
-**Last updated:** 2026-08-16 (P289 venue-true spreads + challenger ledgers)
+**Last updated:** 2026-08-17 (P290 sleeve fill-quality instrument)
 **Version:** HMATS v6.8.0
 **Live mode:** Coinbase US perp sleeve (sole directional venue since 2026-06-13; Kraken = data + structurally flat, P152), Hetzner CPX21, `configs/live_high_risk.json`
 
@@ -338,6 +338,14 @@ makes the sleeve inert; `coinbase_use_gated_intent: false` restores the pre-gate
 driver. Neither needs a code change.
 
 ### Recent pitfalls (last ~30 days)
+
+### P290. [BUILT 2026-08-17, operator: "fix it"] Sleeve fill-quality logging — the realized-cost instrument the CDE order path never had, so the P289 spread table can eventually be re-derived from fills instead of book probes
+P289 recorded that NO realized-fill cost measurement exists for CDE (`fill_quality.jsonl` empty; P169's `[FILL_VS_MID]` sits on the dormant Kraken path). Built observation-only on the single live order path; tests `tests/test_p290_fill_quality.py` (12; sign-convention and Iron-Law-7 probes red-then-restored with anchor uniqueness).
+- **Adapter**: read-only `get_order(order_id)` (`_plain`-converted; ANY failure → None + warning — deliberately the OPPOSITE fail semantics of `fetch_open_orders`' post-P287 raise, documented at the site: that raise protects order-path guards; this feeds only a ledger and must never ripple into the path).
+- **Sleeve**: `_record_fill_quality` appends `data/fill_quality.jsonl` + one `[FILL-QUALITY]` INFO line per record: decision mid + one decision-time `get_product_book` read (bid/ask/spread context, fail-soft → None — never a fabricated book), fill_avg_price, **signed `realized_slippage_bps` (positive always = paid worse than mid, both sides — a maker BUY at the bid reads NEGATIVE = earned)**, `liquidity` ∈ {maker, taker_cross, direct}, urgent, fees when the payload carries them, `filled_size` verbatim (P219 no-unit-conversion). Hooks: maker fill-truth via one get_order at the left-the-book branch; cancelled-post-only PARTIAL maker fills recorded only when the payload shows filled_size>0; the cross/direct record after placement with ONE immediate get_order — not-filled/unreadable → `status: unresolved` with the order_id and NO fill/slippage fields (absence never reads as a measurement, P2). No polling loops added; every hook try-wrapped and behaviorally pinned (a raising recorder cannot change `execute_target`'s return).
+- **Reader** `scripts/fill_quality_review.py` (stdlib-only; added to the image allowlist BOTH halves — Dockerfile COPY + .dockerignore negation, P192): refuses (exit 2) on missing ledger or <20 filled records (P199: no data ≠ verdict); per-asset n / maker share / median+mean slippage by liquidity class / median spread, compared against the CDE table — restated locally with a drift-guard test pinning it equal to `FrictionComponents().CDE_SPREAD_BPS`. **Pre-committed re-derivation rule printed in its own output: the spread constants may only be LOWERED on ≥20 filled legs per asset AND a new P-entry — never automatically.**
+- Zero scanner-baseline movement (measured, not estimated — the fork ran the gate). The ledger accrues from the next deploy; fills are rare (BTC-only at full conviction, P289), so the ≥20-leg bar is weeks-to-months out by design — the instrument exists so the evidence accumulates without anyone re-grepping by hand (P230).
+- **Mitigation pattern:** when a constant is certified by a PROBE (order-book snapshots), build the realized-measurement instrument in the same breath — a probe is a hypothesis about what fills will cost; only fills settle it, and the fail-semantics of the new read must be chosen per CONSUMER (guard-feeding reads raise; ledger-feeding reads return None), not copied from the nearest sibling.
 
 ### P289. [MEASURED + BUILT 2026-08-16, operator-instructed] The few-trades mechanism traced to one comparison, the spread constants re-priced from a live CDE probe (honest in both directions — and it does NOT re-open ETH/SOL), and the P288 challengers wired as forward ledgers
 Operator asked why there are so few trades, then instructed the measurement lever + the challenger ledgers. Tests `tests/test_p289_venue_spreads.py` (22) + `tests/test_p289_trend_rule_shadow.py` (14); all falsification probes red-then-restored with anchor-uniqueness (P238).

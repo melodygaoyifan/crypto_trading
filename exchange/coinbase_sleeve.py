@@ -30,6 +30,7 @@ import logging
 import math
 import os
 import time
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from exchange.symbol_mapping import from_venue_symbol, to_venue_symbol
@@ -737,6 +738,110 @@ class CoinbaseSleeve:
     def _pnl_path(self) -> str:
         return os.path.join(self._data_dir(), "coinbase_sleeve_pnl.jsonl")
 
+    def _fill_quality_path(self) -> str:
+        return os.path.join(self._data_dir(), "fill_quality.jsonl")
+
+    def _record_fill_quality(self, asset: str, order_id: Optional[str],
+                             side: str, contracts: Optional[int],
+                             liquidity: str, urgent: bool,
+                             decision_mid: Optional[float] = None,
+                             decision_bid: Optional[float] = None,
+                             decision_ask: Optional[float] = None,
+                             order_payload: Optional[Dict[str, Any]] = None,
+                             ) -> None:
+        """[P290] Append one realized-fill record to data/fill_quality.jsonl.
+
+        The instrument P289 found missing: no realized-fill cost measurement
+        existed for CDE (the P169 [FILL_VS_MID] line lives on the dormant
+        Kraken path), so the CDE spread table is certified by order-book
+        probes only. Every field is measurement-or-absent (P2): a fill whose
+        order payload cannot be read records status="unresolved" with NO
+        fill/slippage fields — absence must never read as a measurement.
+        Sign convention: realized_slippage_bps is positive when the fill was
+        WORSE than the decision mid for our side (BUY above mid / SELL below
+        mid both read positive = paid).
+
+        Observation-only (Iron Law 7): this method never raises — a ledger
+        failure logs a WARNING and the order path continues byte-identically.
+        """
+        try:
+            now = time.time()
+            rec: Dict[str, Any] = {
+                "ts": now,
+                "iso": datetime.now(timezone.utc).isoformat(),
+                "asset": asset,
+                "order_id": order_id,
+                "side": side,
+                "contracts": contracts,
+                "liquidity": liquidity,
+                "urgent": bool(urgent),
+                "decision_mid": decision_mid,
+                "decision_bid": decision_bid,
+                "decision_ask": decision_ask,
+                "decision_spread_bps": None,
+                "status": "unresolved",
+                "fill_avg_price": None,
+                "realized_slippage_bps": None,
+                "fees_usd": None,
+                "filled_size_raw": None,
+            }
+            try:
+                if (decision_bid and decision_ask and decision_bid > 0
+                        and decision_ask >= decision_bid):
+                    _m = (decision_bid + decision_ask) / 2.0
+                    rec["decision_spread_bps"] = round(
+                        (decision_ask - decision_bid) / _m * 1e4, 3)
+            except Exception:  # noqa: silent-swallow — spread context is optional; the record stays honest without it
+                pass
+            op = order_payload or {}
+            _status = str(op.get("status") or "").upper()
+            _fill = None
+            for k in ("average_filled_price", "avg_price",
+                      "average_fill_price"):
+                v = op.get(k)
+                try:
+                    if v is not None and float(v) > 0:
+                        _fill = float(v)
+                        break
+                except (TypeError, ValueError):
+                    continue
+            # filled_size recorded VERBATIM — no unit guess (P219: silent
+            # unit calibration is how mislabels survive; the reader sees raw).
+            rec["filled_size_raw"] = op.get("filled_size")
+            for k in ("total_fees", "fee", "total_fees_usd"):
+                v = op.get(k)
+                try:
+                    if v is not None:
+                        rec["fees_usd"] = float(v)
+                        break
+                except (TypeError, ValueError):
+                    continue
+            _has_fill_size = False
+            try:
+                _has_fill_size = float(op.get("filled_size") or 0) > 0
+            except (TypeError, ValueError):
+                _has_fill_size = False
+            if _fill is not None and (_status == "FILLED" or _has_fill_size):
+                rec["status"] = "filled"
+                rec["fill_avg_price"] = _fill
+                if decision_mid and decision_mid > 0:
+                    _dir = 1.0 if side == "BUY" else -1.0
+                    rec["realized_slippage_bps"] = round(
+                        (_fill - decision_mid) / decision_mid * 1e4 * _dir, 3)
+            path = self._fill_quality_path()
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(rec) + "\n")
+            logger.info(
+                f"[FILL-QUALITY] {asset} {side} {liquidity} "
+                f"status={rec['status']} fill={rec['fill_avg_price']} "
+                f"mid={decision_mid} slip={rec['realized_slippage_bps']}bps "
+                f"spread={rec['decision_spread_bps']}bps oid={order_id}")
+        except Exception as e:  # noqa: silent-swallow — logs; an observation ledger must never touch the order path (Iron Law 7)
+            logger.warning(f"[FILL-QUALITY] {asset}: record failed "
+                           f"({type(e).__name__}: {e}) — order path "
+                           f"unaffected")
+
     def _restore_state(self) -> None:
         """Restore the risk baseline + sticky halt from disk so the drawdown cap
         is anchored to inception, not to post-restart equity. Best-effort."""
@@ -1442,7 +1547,9 @@ class CoinbaseSleeve:
             return {"status": "ERROR", "asset": asset, "reason": str(e)}
 
     async def _maker_first_attempt(self, pid: str, asset: str, side: str,
-                                   base_size: float) -> str:
+                                   base_size: float,
+                                   intended_contracts: Optional[int] = None,
+                                   ) -> str:
         """[P270] One post-only attempt joining the touch, resolved INSIDE
         this call. Returns:
           "DONE"           — order left the book (filled or gone); caller
@@ -1526,11 +1633,51 @@ class CoinbaseSleeve:
                     logger.info(f"[COINBASE-MAKER] {asset}: post-only left "
                                 f"the book within the window (filled at "
                                 f"0bps maker)")
+                    # [P290] "left the book" is resolved to fill-truth by ONE
+                    # get_order read; unreadable -> unresolved record, never
+                    # a fabricated fill. Fully fail-soft: the ladder's return
+                    # value is decided above this and cannot change.
+                    try:
+                        _op = await self._adapter.get_order(oid)
+                        self._record_fill_quality(
+                            asset=asset, order_id=oid, side=side,
+                            contracts=intended_contracts, liquidity="maker",
+                            urgent=False,
+                            decision_mid=((best_bid + best_ask) / 2.0
+                                          if best_bid and best_ask else None),
+                            decision_bid=best_bid or None,
+                            decision_ask=best_ask or None,
+                            order_payload=_op)
+                    except Exception as e:  # noqa: silent-swallow — logs; the observation must never affect the ladder (Iron Law 7)
+                        logger.warning(f"[FILL-QUALITY] {asset}: maker-fill "
+                                       f"record failed ({type(e).__name__})")
                     return "DONE"
             if await self._adapter.cancel_order(oid, pid):
                 logger.info(f"[COINBASE-MAKER] {asset}: unfilled after "
                             f"{self._maker_wait_sec:.0f}s — cancelled, "
                             f"crossing the remainder")
+                # [P290] A cancelled post-only can still carry a PARTIAL
+                # maker fill; record it only when the payload shows one.
+                try:
+                    _op = await self._adapter.get_order(oid)
+                    _pf = 0.0
+                    try:
+                        _pf = float((_op or {}).get("filled_size") or 0)
+                    except (TypeError, ValueError):
+                        _pf = 0.0
+                    if _pf > 0:
+                        self._record_fill_quality(
+                            asset=asset, order_id=oid, side=side,
+                            contracts=intended_contracts, liquidity="maker",
+                            urgent=False,
+                            decision_mid=((best_bid + best_ask) / 2.0
+                                          if best_bid and best_ask else None),
+                            decision_bid=best_bid or None,
+                            decision_ask=best_ask or None,
+                            order_payload=_op)
+                except Exception as e:  # noqa: silent-swallow — logs; same Iron Law 7 rule as the fill branch
+                    logger.warning(f"[FILL-QUALITY] {asset}: partial-maker "
+                                   f"record failed ({type(e).__name__})")
                 return "DONE"
             logger.warning(f"[COINBASE-MAKER] {asset}: timeout AND cancel "
                            f"FAILED — order {oid} may be live; refusing to "
@@ -1642,6 +1789,24 @@ class CoinbaseSleeve:
                              f"refusing to place a priceless order")
                 return {"status": "ERROR", "asset": asset,
                         "reason": f"no_price:mid={mid!r}"}
+            # [P290] ONE decision-time book read for the fill-quality ledger
+            # (spread context). Fail-soft to None fields — never a fabricated
+            # book, and never a second attempt: this is observation, not a
+            # guard.
+            _fq_bid = _fq_ask = None
+            try:
+                _fq_bk = self._adapter._client.get_product_book(
+                    product_id=pid, limit=1)
+                _fq_pb = _g(_fq_bk, "pricebook") or _fq_bk
+                _fq_bids = _g(_fq_pb, "bids") or []
+                _fq_asks = _g(_fq_pb, "asks") or []
+                if _fq_bids and _fq_asks:
+                    _b = _f(_g(_fq_bids[0], "price"))
+                    _a = _f(_g(_fq_asks[0], "price"))
+                    if _b > 0 and _a >= _b:
+                        _fq_bid, _fq_ask = _b, _a
+            except Exception:  # noqa: silent-swallow — spread context is optional; the ledger records None (absence stays absent, P2)
+                pass
             # [P270] Maker-first ladder: post-only at the touch (0bps) ->
             # poll inside this call -> cancel -> cross whatever remains at
             # taker (3bps). Skipped when urgent (FORCE_FLAT and the fast-risk
@@ -1649,9 +1814,12 @@ class CoinbaseSleeve:
             # callers. Resolved remainder from a fresh reconcile so a partial
             # maker fill is crossed exactly once, never double-ordered.
             maker_note = None
-            if self._maker_first and not urgent and order_type == "LIMIT":
-                _mk = await self._maker_first_attempt(pid, asset, side,
-                                                      base_size)
+            _maker_ran = bool(self._maker_first and not urgent
+                              and order_type == "LIMIT")
+            if _maker_ran:
+                _mk = await self._maker_first_attempt(
+                    pid, asset, side, base_size,
+                    intended_contracts=n_contracts)
                 if _mk == "CANCEL_FAILED":
                     return {"status": "FAILED", "asset": asset, "side": side,
                             "reason": "maker_cancel_failed_no_cross"}
@@ -1718,6 +1886,26 @@ class CoinbaseSleeve:
                                order_type=order_type, price=px, post_only=False)
             res = await self._adapter.place_order(req)
             self.reconcile_positions()
+            # [P290] Realized-fill record for the cross/direct leg: ONE
+            # immediate get_order (no polling); an unfilled/unreadable order
+            # records status="unresolved" with no fill fields. Fully
+            # fail-soft — the return value below is composed from `res` and
+            # the reconcile exactly as before.
+            if res.success:
+                try:
+                    _fq_oid = str(res.order_id or "") or None
+                    _fq_op = (await self._adapter.get_order(_fq_oid)
+                              if _fq_oid else None)
+                    self._record_fill_quality(
+                        asset=asset, order_id=_fq_oid, side=side,
+                        contracts=n_contracts,
+                        liquidity="taker_cross" if _maker_ran else "direct",
+                        urgent=urgent, decision_mid=mid,
+                        decision_bid=_fq_bid, decision_ask=_fq_ask,
+                        order_payload=_fq_op)
+                except Exception as e:  # noqa: silent-swallow — logs; observation must never affect the order path (Iron Law 7)
+                    logger.warning(f"[FILL-QUALITY] {asset}: cross-fill "
+                                   f"record failed ({type(e).__name__})")
             logger.info(f"[COINBASE_SLEEVE] execute_target {asset} {side} "
                         f"{n_contracts}ct -> success={res.success} "
                         f"now={self.signed_contracts(asset)}ct"

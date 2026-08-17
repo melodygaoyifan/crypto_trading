@@ -340,6 +340,31 @@ class CoinbaseAdapter(ExchangeAdapter):
             logger.warning(f"[COINBASE] cancel_order failed: {type(e).__name__}: {e}")
             return False
 
+    async def get_order(self, order_id: str) -> Optional[Dict[str, Any]]:
+        """[P290] Read-only single-order lookup for the fill-quality ledger.
+
+        Returns the order as a plain dict, or None on ANY failure with a
+        warning. Deliberately the OPPOSITE fail semantics of
+        fetch_open_orders' post-P287 raise: that one protects order-path
+        GUARDS (an unreadable book must refuse actions); this one feeds only
+        an observation ledger, and a read failure must never ripple into the
+        order path — the recorder writes status="unresolved" instead
+        (absence stays absent, P2; never a fabricated fill).
+        """
+        client = self._client if self._ensure_client() else None
+        if client is None:
+            return None
+        try:
+            resp = client.get_order(order_id=order_id)
+            order = _attr(resp, "order") or resp
+            plain = _plain(order)
+            return plain if isinstance(plain, dict) else None
+        except Exception as e:
+            logger.warning(f"[COINBASE] get_order {order_id} failed: "
+                           f"{type(e).__name__}: {e} — fill quality will "
+                           f"record UNRESOLVED")
+            return None
+
     async def fetch_open_orders(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
         """List OPEN orders. RAISES on any listing failure (P287).
 
