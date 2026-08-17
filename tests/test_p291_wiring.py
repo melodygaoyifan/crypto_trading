@@ -55,17 +55,20 @@ class TestLiveProfileDecidedValues:
         assert prof.get("coinbase_maker_reprice") is True
         assert "_coinbase_maker_reprice_note" in prof
 
-    def test_venue_true_hold_is_off_in_the_live_profile(self):
-        # [P141] Arming this OPENS ETH and SOL to live trading (their gate
-        # thresholds cross below the 30bps asserted-alpha ceiling). It is
-        # built, tested and deliberately unarmed. Flipping it needs its own
-        # recorded P-entry — not a silent config edit.
+    def test_venue_true_hold_is_the_decided_value(self):
+        # [P237 pattern] This pin started as "must be OFF" and became the
+        # DECIDED value when the operator armed it 2026-08-17 (P291b) after
+        # being shown the asset-opening consequence verbatim. It now fails on
+        # a silent revert as well as a silent re-flip — either direction is a
+        # live-money change that must travel with a recorded decision.
         prof = _live_profile()
-        assert prof.get("coinbase_venue_true_hold") is False, (
-            "coinbase_venue_true_hold was turned ON. That is an ACTIVATION "
-            "(it opens ETH+SOL at full conviction on a signal whose measured "
-            "alpha slope is ~0). If deliberate, record the P-entry and update "
-            "this pin to the decided value, per the P237 pattern.")
+        assert prof.get("coinbase_venue_true_hold") is True, (
+            "coinbase_venue_true_hold was turned OFF. That reverts the P291b "
+            "operator decision (ETH/SOL close again, BTC's threshold returns "
+            "to 26.4bps). If deliberate, record it and update this pin.")
+        assert "_coinbase_venue_true_hold_armed_note" in prof, (
+            "the ARMED note carrying the decision + consequences must travel "
+            "with the flag — a bare `true` loses why it was armed")
         assert "_coinbase_venue_true_hold_note" in prof, (
             "the note carrying the arming arithmetic must travel with the flag")
 
