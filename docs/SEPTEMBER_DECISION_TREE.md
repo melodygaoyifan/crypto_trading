@@ -124,6 +124,86 @@ Twin ledgers, exact negations — at most one can pass.
 | etfflow PASSES | new P-entry: candidate for a BTC/ETH entry tilt (daily cadence). Its design-era backtest stays labeled hypothesis (reporting-lag caveat) regardless — only this forward read counts. |
 | breadth books (XRP/ADA/LTC/DOGE/BNB) PASS collectively (majority positive, none catastrophic) | operator widening decision: extend sleeve assets + routing + per-asset caps + stops (P141 activation, one asset first per the P197 rollout pattern). Volumes are thin — check depth before sizing even ±1ct. |
 
+## ~Sep 16 — the trend-rule challengers (P288 lab, P289 ledgers, P291 criteria)
+
+**What is new here.** P288 ran the one design axis SMA200 had never faced —
+its own rule family — and produced the campaign's first dethroning:
+DONCHIAN-100 and EMA-ENSEMBLE beat the incumbent at ~1/4 its turnover,
+era-stable on BOTH lab windows, where no fitted model ever was. P289 wired
+their forward ledgers (first live 2026-08-17 → 30d read ~2026-09-16).
+
+**Instrument:** `scripts/challenger_seat_check.py` (operator-local, after a
+`september_check.py` pull). Pre-committed 2026-08-17, before any forward
+evidence existed.
+
+| condition (ALL required, per `(strategy, asset)` CELL) | value |
+|---|---|
+| date | ≥ 2026-09-16 |
+| **lab precondition** | the cell must be one P288 actually dethroned |
+| ledger | ≥ 30 days span, ≥ 20 directional (non-flat) records |
+| forward bar | the scorer's own verdict is `PROMOTE` — consumed, never re-derived |
+| beats the incumbent | the cell's **minimum-horizon** IC > `regimebook_{ASSET}`'s minimum-horizon IC on the same window |
+
+**The lab precondition is the sharpest edge, and "ETH+SOL" is not precise
+enough to state it.** Per cell, the dethroned set is exactly
+`donchian/ETH`, `donchian/SOL`, `emaens/SOL` — **`emaens/ETH` is NOT eligible**
+(design −0.231 against the incumbent's +0.088), and **no BTC cell is**
+(SMA200 stood: donchian +0.582, emaens +0.467 vs +0.594). A non-dethroned cell
+may PASS its forward bar and still have no seat claim; promoting it would be
+selection on one forward window against design-era evidence that already
+rejected it.
+
+**Why "beats the incumbent" is a separate condition from the P166 bar:** the
+P166 gate certifies a signal against *costs*. A seat swap is *comparative* —
+it must also beat the signal already in the seat, on the same bars. For ETH
+and SOL the `regimebook` ledger IS the SMA200 trend/hold book (P250), so the
+comparison is like-for-like; BTC's carries funding legs and is not, which
+costs nothing because no BTC cell is eligible anyway.
+
+| outcome | action |
+|---|---|
+| a cell clears all five | **exit 3 = ELIGIBLE, not "fire".** A seat swap is an operator **risk-preference** decision with its own P-entry: the challenger replaces the SMA200 labeler for that asset in the regimebook seat path, at unchanged size, caps, stops and gates. |
+| no cell clears | ledgers keep accruing; re-read at 60d only if a trajectory is monotone. |
+
+> **The pre-committed caveat that makes this a preference and not a
+> threshold (P288 virgin-era probe = PARTIAL for both challengers):** they
+> pass the breadth leg 5/5 and beat SMA200 on every out-of-selection TOTAL,
+> but they FAIL the property the incumbent's certification is built on and
+> the live book is deployed FOR — the BTC-2018 crash-dodge (DONCHIAN −0.60,
+> EMA-ENSEMBLE −0.51 vs the incumbent's −0.28, bar −0.35). Their hysteresis
+> exits trends later: **more upside captured, ~2× deeper bear-year
+> drawdown.** No instrument can settle a preference, so the checker names the
+> trade-off and stops.
+
+## The sizing ladder (P291, pre-committed 2026-08-17)
+
+> **Governing sentence: size follows certification, never precedes it.**
+
+What happens to `coinbase_target_fraction_by_asset` on each September
+outcome, fixed in advance so it is not improvised on the day. Constraints:
+live fractions **0.15 / 0.15 / 0.15**; `post_leverage_caps` BTC 0.25, ETH
+0.25, SOL 0.20; the P208 sleeve net cap **0.50** (gate is strict `>`, so 0.50
+is *not* blocked but leaves zero headroom); P274 clamps any fraction to
+≤ 0.25 in the ctor. Nominal max net = the sum of fractions when all live
+assets point the same way.
+
+**Today: 0.15 × 3 = 0.45 nominal max net** — that already consumes the whole
+prudent budget under the 0.50 cap.
+
+| September outcome | pre-committed fractions | arithmetic |
+|---|---|---|
+| nothing certifies | **unchanged** 0.15/0.15/0.15 | 0.45 ≤ 0.50 ✓ |
+| one asset certifies, **all three still live** | **unchanged** | 0.20+0.15+0.15 = **0.50 — exactly at the cap, zero headroom**. Funding a step-up by trimming the two uncertified assets is a *second* decision about assets whose own evidence did not change; it is not pre-approved here. |
+| tripwire removes **one** asset (it goes flat) | the two survivors may step 0.15 → **0.20** | 0.20+0.20 = 0.40 ≤ 0.45 ✓; SOL's own 0.20 cap is exactly binding, BTC/ETH sit under 0.25 |
+| tripwire removes **two** assets | the survivor may step 0.15 → its per-asset cap (BTC/ETH **0.25**, SOL **0.20**) | max net = that fraction ✓, and ≤ the P274 ctor clamp |
+| tripwire fires on all three / everything fails | **unchanged** | a flat book's size is moot; the seat question dominates |
+
+Every step-up is its own recorded P-entry (P141) and may never exceed the
+asset's `post_leverage_caps` value or the 0.25 ctor clamp. **A fraction is
+never raised to make something trade** — only after that asset's signal has
+certified, which is the same rule that governs every other lever in this
+document.
+
 ## What does NOT happen in September
 
 - No TQC/supervised retrain on the price-feature basis (settled: 0/39 folds

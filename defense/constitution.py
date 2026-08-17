@@ -970,6 +970,29 @@ class FrictionComponents:
     margin_opening_fee_bps: float = 0.0
     margin_rollover_bps_per_4h: float = 0.0
     expected_hold_periods_4h: float = 6.0  # Default 24h = 6 x 4h ticks
+    # [P291] Venue-true HOLD cost. The three fields below exist because the
+    # funding reading is DESTROYED by update_funding_rate's max() the moment
+    # the Kraken margin rollover is larger (it always is at live funding
+    # levels), so venue-true mode cannot recover it from
+    # margin_rollover_bps_per_4h. `_funding_bps_per_4h = None` is the
+    # NEVER-READ sentinel and is deliberately distinct from a real 0.0
+    # reading: unknown funding must fall back to the Kraken charge, never
+    # to a free hold (P2 absence-is-not-zero, P167 fail-expensive).
+    # `_funding_asset` guards the cross-asset leak — FRICTION is ONE shared
+    # object walked per asset each tick, so asset B must never be charged
+    # asset A's funding (the P225 class).
+    _funding_bps_per_4h: Optional[float] = None
+    _funding_asset: Optional[str] = None
+    _venue_true_hold_asset: Optional[str] = None
+    # [P291] INDEPENDENT gate, default OFF. The venue memory this reuses is
+    # shared with P289's spread pricing, which is already LIVE — but the
+    # hold correction has a materially different consequence (it moves ETH
+    # and SOL BELOW the 30bps asserted-alpha ceiling, i.e. it OPENS two
+    # assets that are arithmetically locked out today), so it must not ride
+    # the spread flag. Enabling is an operator decision (P141) with the
+    # P237 tripwire question attached; until then this stays False and the
+    # Kraken arithmetic is byte-identical to today.
+    venue_true_hold_enabled: bool = False
 
     # Kraken fee schedule - [FIX-33] sourced from canonical_config
     KRAKEN_FREE_TIER_USD: float = _CC_FREE_TIER
@@ -1023,8 +1046,14 @@ class FrictionComponents:
         if self._spread_venue_by_asset.get(asset_key) == "coinbase":
             self.slippage_bps = self.CDE_SPREAD_BPS.get(
                 asset_key, self.ASSET_SPREAD_BPS.get(asset_key, 5.0))
+            # [P291] The SAME venue memory governs the hold term. Recording
+            # which asset is being priced right now is what lets
+            # _margin_cost_bps refuse a funding reading taken for a
+            # different asset.
+            self._venue_true_hold_asset = asset_key
         else:
             self.slippage_bps = self.ASSET_SPREAD_BPS.get(asset_key, 5.0)
+            self._venue_true_hold_asset = None
 
     def update_for_volume(self, monthly_volume_usd: float):
         """Update fee components based on current monthly volume.
@@ -1062,18 +1091,35 @@ class FrictionComponents:
             self.margin_opening_fee_bps = 0.0
             self.margin_rollover_bps_per_4h = 0.0
 
-    def update_funding_rate(self, funding_rate_8h: float):
+    def update_funding_rate(self, funding_rate_8h: float,
+                            asset: Optional[str] = None):
         """Ingest live perpetual funding rate as holding cost.
 
-        funding_rate_8h is the per-8h rate from Kraken Futures.
+        funding_rate_8h is the per-8h rate for the venue that will hold the
+        position (P277 routes routed assets' own venue rate here).
         Converts to bps and adds to rollover cost so the alpha gate
         accounts for real funding drag on leveraged/perpetual positions.
         Consumed by cost model via _margin_cost_bps -> taker_friction_bps.
+
+        [P291] `asset` is OPTIONAL and additive: passing it is what arms
+        venue-true hold pricing for that asset (see _margin_cost_bps). A
+        caller that omits it keeps today's behavior exactly — the
+        venue-true path then cannot confirm which asset the reading belongs
+        to and falls back to the Kraken charge, so forgetting to wire it
+        OVERCHARGES rather than undercharges (P167).
         """
         # funding_rate_8h is a ratio (e.g. 0.0001 = 1bps per 8h)
         # Convert to bps: 0.0001 * 10000 = 1.0 bps
         # A 4H position pays ~half an 8H funding period
         funding_bps_per_4h = abs(funding_rate_8h) * 10000.0 * 0.5
+        # [P291] abs() is kept deliberately: NEGATIVE funding means the book
+        # would RECEIVE carry, and crediting that here would turn the hold
+        # term into a gate subsidy. Charging |funding| is the conservative
+        # reading of an uncertain future carry.
+        self._funding_bps_per_4h = funding_bps_per_4h
+        self._funding_asset = (
+            asset.upper().replace("/USD", "").replace("USD", "")
+            if asset else None)
         self.margin_rollover_bps_per_4h = max(
             self.margin_rollover_bps_per_4h,
             funding_bps_per_4h,
@@ -1081,7 +1127,42 @@ class FrictionComponents:
 
     @property
     def _margin_cost_bps(self) -> float:
-        """Total margin cost: opening fee + expected rollover fees."""
+        """Total holding cost: opening fee + expected rollover fees.
+
+        [P291] VENUE-TRUE branch. The Kraken terms above are a SPOT-MARGIN
+        BORROW schedule (an opening fee plus a per-4h rollover on borrowed
+        funds). CDE perpetual-style futures do not levy either: margin
+        there is posted COLLATERAL (P275 probed
+        INTRADAY_MARGIN_SETTING_STANDARD), and the venue's actual carry is
+        FUNDING — already fed here by P277.
+
+        Measured before this branch existed: with the live profile's
+        `regime_leverage` overlay putting the two dominant regimes
+        (WEAK_CONSOLIDATION / QUIET_ACCUMULATION, ~93% of ticks) at 2.0x,
+        update_for_leverage took its leverage>1 branch and produced
+        BTC 1.0 + 1.0x6 = 7.0bps and ETH/SOL 2.0 + 2.0x6 = 14.0bps — an
+        exact match to the live gate lines' "margin=7" / "14.0bps hold".
+        The funding P277 wired was simultaneously INERT on this path,
+        because max() picks the Kraken rollover (1.0-2.0) over live funding
+        (~0.04-1.9 bps/4h) every time. So routed assets were charged a fee
+        the venue never levies, while the fee it does levy was masked.
+
+        Conditions for the venue-true branch (ALL must hold, else the
+        Kraken arithmetic stands unchanged — every fallback overcharges):
+          * update_for_asset resolved this asset to the coinbase venue, AND
+          * a funding reading exists (None = never read, NOT zero), AND
+          * that reading was tagged with THIS asset (no cross-asset leak).
+        """
+        _vt_asset = self._venue_true_hold_asset
+        if (self.venue_true_hold_enabled
+                and _vt_asset is not None
+                and self._funding_bps_per_4h is not None
+                and self._funding_asset == _vt_asset):
+            # Clamp at zero: funding is stored as |rate| above, but a
+            # negative hold cost would be a gate SUBSIDY, so the floor is
+            # asserted here too rather than relying on the caller.
+            return max(0.0, float(self._funding_bps_per_4h)
+                       * self.expected_hold_periods_4h)
         return self.margin_opening_fee_bps + (
             self.margin_rollover_bps_per_4h * self.expected_hold_periods_4h
         )

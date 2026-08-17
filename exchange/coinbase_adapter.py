@@ -101,16 +101,42 @@ class CoinbaseAdapter(ExchangeAdapter):
         self._price_increment_cache: Dict[str, float] = {}
 
     # CDE nano contract sizes (probe 2026-06-13); fallback if get_product fails.
+    # [P291] The five P262 breadth assets added from a read-only live probe
+    # 2026-08-17 (get_products FUTURE + per-product get_product). The SAME
+    # probe re-read the three incumbents and reproduced these tables exactly
+    # (BTC 0.01/5, ETH 0.1/0.5, SOL 5/0.01) — that agreement is the control
+    # proving the probe reads the fields these tables encode. Every value
+    # below is venue-reported, never inferred: an asset whose contract size
+    # could not be verified is ABSENT here, and absence still routes to the
+    # P265h refusal (a fabricated unit is a 10-100x order).
+    # BREADTH ENTRIES ARE INERT until an asset is BOTH in SYMBOL_MAP and in
+    # the routing state — these tables are keyed by product_id and are only
+    # consulted for a product the sleeve was already asked to trade.
     _CONTRACT_SIZE_FALLBACK = {
         "BIP-20DEC30-CDE": 0.01,   # BTC
         "ETP-20DEC30-CDE": 0.1,    # ETH
         "SLP-20DEC30-CDE": 5.0,    # SOL
+        # [P291] breadth (P262-certified transfer assets), probe 2026-08-17
+        "XPP-20DEC30-CDE": 500.0,    # XRP
+        "ADP-20DEC30-CDE": 1000.0,   # ADA
+        "LCP-20DEC30-CDE": 5.0,      # LTC
+        "DOP-20DEC30-CDE": 5000.0,   # DOGE
+        "BNB-20DEC30-CDE": 1.0,      # BNB
     }
     # CDE price tick size (probe 2026-06-13); limit prices must be a multiple.
     _PRICE_INCREMENT_FALLBACK = {
         "BIP-20DEC30-CDE": 5.0,    # BTC
         "ETP-20DEC30-CDE": 0.5,    # ETH
         "SLP-20DEC30-CDE": 0.01,   # SOL
+        # [P291] breadth, probe 2026-08-17. Note the sub-cent ticks: DOGE
+        # 0.00001 and XRP/ADA 0.0001 — _round_to_tick's round(...,8) keeps
+        # these exact, but any future tick smaller than 1e-8 would be
+        # silently truncated (guarded by test, not by comment).
+        "XPP-20DEC30-CDE": 0.0001,   # XRP
+        "ADP-20DEC30-CDE": 0.0001,   # ADA
+        "LCP-20DEC30-CDE": 0.01,     # LTC
+        "DOP-20DEC30-CDE": 0.00001,  # DOGE
+        "BNB-20DEC30-CDE": 0.05,     # BNB
     }
 
     def _price_increment(self, product_id: str) -> Optional[float]:

@@ -71,6 +71,7 @@ class CoinbaseSleeve:
                  max_asset_exposure: Optional[Dict[str, float]] = None,
                  maker_first: bool = False,
                  maker_wait_sec: float = 45.0,
+                 maker_reprice: bool = False,
                  max_contracts_by_asset: Optional[Dict[str, int]] = None,
                  target_fraction_by_asset: Optional[Dict[str, float]] = None) -> None:
         self._adapter = adapter
@@ -85,6 +86,18 @@ class CoinbaseSleeve:
         # places differently-shaped real orders (P141, operator-watched).
         self._maker_first = bool(maker_first)
         self._maker_wait_sec = max(5.0, float(maker_wait_sec or 45.0))
+        # [P291] ONE reprice step at the half-way mark of an unfilled maker
+        # window. Both live orders on 2026-08-16 posted at the touch, sat the
+        # full 45s and crossed as taker: a passive order that is no longer at
+        # the FRONT of the book will not fill, and waiting the window out buys
+        # nothing but staleness. When on, the window is SPLIT (never extended
+        # — a longer wait is a staler signal, the P265 dead-signal-fill
+        # class): poll to wait/2, and if the touch has moved past our resting
+        # price, cancel and re-post ONCE at the new touch. A FAILED cancel
+        # refuses BOTH the re-post and the cross (P287 double-order rule), so
+        # at most one post-only is ever live at a time. Default OFF: flag-off
+        # is byte-identical to the P270 single-post ladder.
+        self._maker_reprice = bool(maker_reprice)
         # [P272] Per-asset contract caps — the vol-parity PREP (flat +/-1 is
         # accidentally ~2.4x more BTC dollar-risk than ETH per contract; the
         # 2025-26 vol-targeting evidence says size inversely to vol). An
@@ -1546,6 +1559,134 @@ class CoinbaseSleeve:
                            f"({type(e).__name__}: {e}); position may be unprotected")
             return {"status": "ERROR", "asset": asset, "reason": str(e)}
 
+    async def _maker_reprice_step(self, pid: str, asset: str, side: str,
+                                  base_size: float, oid: str, px: float,
+                                  best_bid: float, best_ask: float,
+                                  intended_contracts: Optional[int] = None,
+                                  ) -> Dict[str, Any]:
+        """[P291] The ONE reprice decision, taken at the half-way mark of an
+        unfilled maker window. Never raises. Returns either a state update the
+        caller applies and keeps polling, or a verdict it returns verbatim:
+
+          {"used": False}                 — the book could not be read; the
+                                            opportunity is NOT consumed (a
+                                            read failure is not information),
+                                            the original post keeps working
+          {"used": True}                  — still at the front of the book:
+                                            NO reprice (a reprice that fires
+                                            when the touch has not moved is
+                                            pure churn — two venue calls
+                                            buying nothing)
+          {"used": True, "verdict": ...}  — terminal; see below
+          {"used": True, "oid": ..., ...} — repriced; poll the new order
+
+        Verdicts: CANCEL_FAILED (cancel unconfirmed — the order may be live,
+        so refuse BOTH the re-post and the cross, P287/P265); DONE (the
+        cancelled order's fill state is unreadable or shows a PARTIAL — hand
+        back so the caller's venue reconcile sizes the remainder, anti-P139;
+        filled_size is deliberately never arithmetic'd here, P219);
+        REPRICE_UNKNOWN (the re-post raised — an order MAY rest, so the cross
+        is refused, same class as CANCEL_FAILED); FALLBACK (re-post rejected
+        with the cancel CONFIRMED, so nothing rests and the caller crosses,
+        exactly as it would have at the window's end); DONE_UNTRACKED
+        (re-post accepted with no order_id — caller sweeps first, P287).
+
+        The move test is "are we still at the FRONT of the queue": our resting
+        BUY *is* the best bid unless someone outbid us, so a new best bid
+        ABOVE our price means we are behind the queue and will not fill.
+        """
+        try:
+            bb = self._adapter._client.get_best_bid_ask(product_ids=[pid])
+            books = _g(bb, "pricebooks") or []
+            book = books[0] if books else None
+            bids = _g(book, "bids") or []
+            asks = _g(book, "asks") or []
+            new_bid = _f(_g(bids[0], "price")) if bids else 0.0
+            new_ask = _f(_g(asks[0], "price")) if asks else 0.0
+        except Exception as e:
+            self._maker_log_once(asset, f"reprice book read failed "
+                                 f"({type(e).__name__}) — holding the post")
+            return {"used": False}
+        new_px = new_bid if side == "BUY" else new_ask
+        if not (new_px and math.isfinite(new_px) and new_px > 0):
+            return {"used": False}
+        moved = (new_px > px) if side == "BUY" else (new_px < px)
+        if not moved:
+            logger.info(f"[COINBASE-MAKER] {asset}: still at the front of the "
+                        f"book at {px} — no reprice")
+            return {"used": True}
+        # One at a time: the cancel must be CONFIRMED before anything new is
+        # placed, or a re-post beside a live post-only doubles the order.
+        if not await self._adapter.cancel_order(oid, pid):
+            logger.warning(f"[COINBASE-MAKER] {asset}: reprice cancel FAILED "
+                           f"— order {oid} may be live; refusing both the "
+                           f"re-post and the cross (P265 double-order class). "
+                           f"Next tick's stale-entry sweep retries.")
+            return {"used": True, "verdict": "CANCEL_FAILED"}
+        _op = None
+        try:
+            _op = await self._adapter.get_order(oid)
+        except Exception:  # noqa: silent-swallow — unknown fill state is handled as the DONE hand-back below, which is logged
+            _op = None
+        if _op is None:
+            # [P2] absence is not zero: we cannot certify the cancelled order
+            # was unfilled, and re-posting full size beside an unknown partial
+            # would overshoot the target.
+            logger.info(f"[COINBASE-MAKER] {asset}: reprice cancelled {oid} "
+                        f"but its fill state is unreadable — handing back so "
+                        f"the caller reconciles and crosses the remainder")
+            return {"used": True, "verdict": "DONE"}
+        try:
+            _filled = float((_op or {}).get("filled_size") or 0)
+        except (TypeError, ValueError, AttributeError):
+            logger.info(f"[COINBASE-MAKER] {asset}: reprice could not parse "
+                        f"the cancelled order's fill state — handing back")
+            return {"used": True, "verdict": "DONE"}
+        if _filled > 0:
+            try:
+                self._record_fill_quality(
+                    asset=asset, order_id=oid, side=side,
+                    contracts=intended_contracts, liquidity="maker",
+                    urgent=False,
+                    decision_mid=((best_bid + best_ask) / 2.0
+                                  if best_bid and best_ask else None),
+                    decision_bid=best_bid or None,
+                    decision_ask=best_ask or None,
+                    order_payload=_op)
+            except Exception as e:  # noqa: silent-swallow — logs; observation must never affect the ladder (Iron Law 7)
+                logger.warning(f"[FILL-QUALITY] {asset}: reprice partial "
+                               f"record failed ({type(e).__name__})")
+            logger.info(f"[COINBASE-MAKER] {asset}: reprice found a PARTIAL "
+                        f"maker fill — handing back rather than re-posting "
+                        f"full size (overshoot class)")
+            return {"used": True, "verdict": "DONE"}
+        from exchange.adapter import OrderRequest
+        req = OrderRequest(symbol=pid, side=side, size=base_size,
+                           order_type="LIMIT", price=new_px, post_only=True)
+        try:
+            res = await self._adapter.place_order(req)
+        except Exception as e:
+            logger.warning(f"[COINBASE-MAKER] {asset}: reprice placement "
+                           f"raised ({type(e).__name__}: {e}) — an order MAY "
+                           f"rest; refusing the cross (P265 double-order "
+                           f"class). Next tick's sweep retries.")
+            return {"used": True, "verdict": "REPRICE_UNKNOWN"}
+        if not res.success:
+            logger.info(f"[COINBASE-MAKER] {asset}: reprice post-only "
+                        f"rejected ({res.error_code}) — taker fallback")
+            return {"used": True, "verdict": "FALLBACK"}
+        new_oid = str(res.order_id or "")
+        if not new_oid:
+            logger.warning(f"[COINBASE-MAKER] {asset}: repriced post-only "
+                           f"carried no order_id — caller must sweep the book "
+                           f"before crossing (P287)")
+            return {"used": True, "verdict": "DONE_UNTRACKED"}
+        logger.info(f"[COINBASE-MAKER] {asset}: touch moved {px} -> {new_px} "
+                    f"(no longer at the front) — repriced once, order "
+                    f"{new_oid}")
+        return {"used": True, "oid": new_oid, "px": new_px,
+                "best_bid": new_bid, "best_ask": new_ask}
+
     async def _maker_first_attempt(self, pid: str, asset: str, side: str,
                                    base_size: float,
                                    intended_contracts: Optional[int] = None,
@@ -1568,6 +1709,10 @@ class CoinbaseSleeve:
                              the cross (two live orders for one delta = the
                              P265 double-order class). Next tick's stale-entry
                              sweep retries.
+          "REPRICE_UNKNOWN" — [P291] the reprice re-post raised, so an order
+                             MAY rest and its id is unknown; the caller must
+                             NOT cross (same class as CANCEL_FAILED). Only
+                             reachable with maker_reprice on.
         Never raises."""
         try:
             from exchange.adapter import OrderRequest
@@ -1613,7 +1758,22 @@ class CoinbaseSleeve:
                                f"carried no order_id — caller must sweep the "
                                f"book before crossing (P287)")
                 return "DONE_UNTRACKED"
+            # [P291] The window is SPLIT, never extended: the deadline below
+            # is computed once and never reassigned, so the reprice buys a
+            # second queue position out of the SAME budget (a longer wait
+            # means a staler signal — P265 dead-signal-fill class).
             deadline = time.monotonic() + self._maker_wait_sec
+            # [P85] getattr-defended: this read sits on the LIVE order path
+            # and the ctor is not the only way a sleeve exists (operator
+            # scripts and every test fixture build one via object.__new__).
+            # An undefended read raises AttributeError, which the outer
+            # handler swallows into "FALLBACK" — silently crossing at taker
+            # for every such instance. Missing attribute = OFF = the P270
+            # single-post ladder, the conservative direction.
+            _reprice_at = (deadline - self._maker_wait_sec / 2.0
+                           if getattr(self, "_maker_reprice", False)
+                           else None)
+            _reprice_used = False
             while time.monotonic() < deadline:
                 await asyncio.sleep(5.0)
                 try:
@@ -1652,6 +1812,26 @@ class CoinbaseSleeve:
                         logger.warning(f"[FILL-QUALITY] {asset}: maker-fill "
                                        f"record failed ({type(e).__name__})")
                     return "DONE"
+                # [P291] Half-way mark: the post is still resting. If the
+                # touch has moved past it we are behind the queue and will
+                # not fill — cancel and take a fresh queue position ONCE.
+                # Evaluated at most once per call; a book-read failure does
+                # not consume the opportunity.
+                if (_reprice_at is not None and not _reprice_used
+                        and time.monotonic() >= _reprice_at):
+                    _rp = await self._maker_reprice_step(
+                        pid, asset, side, base_size, oid, px,
+                        best_bid, best_ask,
+                        intended_contracts=intended_contracts)
+                    _reprice_used = bool(_rp.get("used", True))
+                    _verdict = _rp.get("verdict")
+                    if _verdict:
+                        return str(_verdict)
+                    if _rp.get("oid"):
+                        oid = str(_rp["oid"])
+                        px = float(_rp["px"])
+                        best_bid = float(_rp.get("best_bid") or 0.0)
+                        best_ask = float(_rp.get("best_ask") or 0.0)
             if await self._adapter.cancel_order(oid, pid):
                 logger.info(f"[COINBASE-MAKER] {asset}: unfilled after "
                             f"{self._maker_wait_sec:.0f}s — cancelled, "
@@ -1823,6 +2003,13 @@ class CoinbaseSleeve:
                 if _mk == "CANCEL_FAILED":
                     return {"status": "FAILED", "asset": asset, "side": side,
                             "reason": "maker_cancel_failed_no_cross"}
+                if _mk == "REPRICE_UNKNOWN":
+                    # [P291] The reprice placement raised: an order may rest
+                    # under an id we never learned. Same refusal as an
+                    # unconfirmed cancel — crossing beside it is the P265
+                    # double-order class; the next tick's sweep resolves it.
+                    return {"status": "FAILED", "asset": asset, "side": side,
+                            "reason": "maker_reprice_unknown_no_cross"}
                 if _mk == "DONE_UNTRACKED":
                     # [P287] The accepted post-only has no id: before any
                     # cross, sweep the book and VERIFY no non-stop order

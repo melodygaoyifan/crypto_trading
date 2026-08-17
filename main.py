@@ -1630,6 +1630,16 @@ class ProductionConfig:
     # the live profile until deliberately enabled (P141).
     coinbase_maker_first: bool = False
     coinbase_maker_wait_sec: float = 45.0
+    # [P291] One reprice inside the SAME maker wait budget (execution cost
+    # only — it cannot change WHAT trades, and its worst case equals today's
+    # cross-at-timeout). Live profile enables it.
+    coinbase_maker_reprice: bool = False
+    # [P291] Venue-true HOLD cost (CDE charges funding, not Kraken's
+    # spot-margin borrow). DEFAULT OFF and OFF in the live profile: unlike
+    # the P289 spread fix, this one crosses ETH/SOL below the asserted-alpha
+    # ceiling, i.e. it OPENS two assets — a P141 operator decision, and one
+    # the 09-01 tripwire may moot entirely.
+    coinbase_venue_true_hold: bool = False
     # [P272] Per-asset contract caps (vol-parity PREP; empty = the scalar
     # cap everywhere, byte-identical to today). Raising values is the
     # September sizing activation — own P-entry + operator flip.
@@ -1999,6 +2009,11 @@ class ProductionConfig:
                 data.get("coinbase_maker_first", False)),
             coinbase_maker_wait_sec=float(
                 data.get("coinbase_maker_wait_sec", 45.0) or 45.0),
+            # [P291] declared + parsed together (the P201 rule)
+            coinbase_maker_reprice=bool(
+                data.get("coinbase_maker_reprice", False)),
+            coinbase_venue_true_hold=bool(
+                data.get("coinbase_venue_true_hold", False)),
             # [P272] declared + parsed together (the P201 rule)
             coinbase_max_contracts_by_asset=dict(
                 data.get("coinbase_max_contracts_by_asset", {}) or {}),
@@ -10277,6 +10292,20 @@ class HMATSProductionRunner:
                         f"[VENUE-SPREAD] {asset}: spread-venue update failed "
                         f"({type(_vs_err).__name__}: {_vs_err}) — Kraken "
                         f"spread table stands (conservative)")
+                # [P291] The venue-true HOLD gate is INDEPENDENT of the spread
+                # flag on purpose: spreads are live (P289) and did NOT re-open
+                # ETH/SOL, while venue-true hold DOES (thresholds cross the
+                # 30bps asserted-alpha ceiling) — riding one flag would have
+                # opened two assets as a side effect of a cost correction.
+                # Arming it is a P141 operator decision with its own note.
+                try:
+                    self.engine.guarantees.alpha_calculator.FRICTION.venue_true_hold_enabled = bool(
+                        getattr(self.config, "coinbase_venue_true_hold", False))
+                except Exception as _vh_err:  # noqa: silent-swallow — logs; hold falls back to the Kraken schedule (overcharge, safe)
+                    logger.warning(
+                        f"[VENUE-HOLD] {asset}: hold-gate update failed "
+                        f"({type(_vh_err).__name__}: {_vh_err}) — Kraken "
+                        f"margin schedule stands (conservative)")
                 self.engine.guarantees.alpha_calculator.FRICTION.update_for_volume(monthly_vol)
                 self.engine.guarantees.alpha_calculator.FRICTION.update_fee_bps(
                     maker_fee_bps=maker_fee_bps,
@@ -11171,7 +11200,12 @@ class HMATSProductionRunner:
                 # Wire live funding_rate into cost model
                 _t2_funding = float(market_data.get("funding_rate", 0.0) or 0.0)
                 if abs(_t2_funding) > 1e-8:
-                    self.engine.guarantees.alpha_calculator.FRICTION.update_funding_rate(_t2_funding)
+                    # [P291] asset= tags the reading so the venue-true hold
+                    # branch can use it. WITHOUT the tag the feature is inert
+                    # by design (untagged funding -> Kraken schedule), never
+                    # wrong — an untagged rate could belong to another asset.
+                    self.engine.guarantees.alpha_calculator.FRICTION.update_funding_rate(
+                        _t2_funding, asset=asset)
             except Exception:
                 pass
 
@@ -20523,6 +20557,9 @@ class HMATSProductionRunner:
                 # [P198] sleeve-side flip persistence
                 flip_persist_ticks=int(getattr(
                     self.config, "coinbase_flip_persist_ticks", 2) or 0),
+                # [P291] one-reprice maker ladder (inside the SAME wait budget)
+                maker_reprice=bool(getattr(
+                    self.config, "coinbase_maker_reprice", False)),
                 # [P208] net-exposure budget on the venue-read book
                 max_net_exposure=getattr(
                     self.config, "max_net_exposure", None),
