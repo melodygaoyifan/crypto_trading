@@ -1,6 +1,6 @@
 # HMATS — Project Status & Development Guidelines
 
-**Last updated:** 2026-08-17 (P291 profit-lever batch)
+**Last updated:** 2026-08-17 (P292 XRP routing prerequisites)
 **Version:** HMATS v6.8.0
 **Live mode:** Coinbase US perp sleeve (sole directional venue since 2026-06-13; Kraken = data + structurally flat, P152), Hetzner CPX21, `configs/live_high_risk.json`
 
@@ -338,6 +338,13 @@ makes the sleeve inert; `coinbase_use_gated_intent: false` restores the pre-gate
 driver. Neither needs a code change.
 
 ### Recent pitfalls (last ~30 days)
+
+### P292. [BUILT 2026-08-17] XRP routing prerequisites completed — the September flip is now a config change with no code change, and the proposed sizing was wrong by an amount the net cap would have silently enforced
+Completing what P291-C left: `exchange/symbol_mapping.py` gained the five breadth `coinbase/perp` entries matching the probed pids exactly (XRP→`XPP-20DEC30-CDE`, ADA→`ADP`, LTC→`LCP`, DOGE→`DOP`, BNB→`BNB-20DEC30-CDE`). P265h verified rather than assumed: its guard is `perp_pids - set(fallback_tables)`, one-directional, so P291-C's fallback-tables-first ordering makes this edit satisfy it (the reverse order breaks it). Spot maps deliberately untouched — no probe covered spot, and an unverified entry is the P265h fabricated-unit hazard; the P133/P135/P137 SOL/USDT asymmetry stays pinned.
+- **The sizing correction (the finding worth keeping):** P291-C proposed XRP at fraction 0.10 (2ct). With the majors at 0.15 each the theoretical max net is 45%, so XRP at 0.10 → **54.2% against the P208 cap of 50%**. In fraction space the constraint is exact: **0.45 + f ≤ 0.50 → f ≤ 0.05** (1 contract, 49.6% max net, and self-consistent as equity grows since fractions are equity-scaled by P274). **Why 0.10 would be wrong even though the cap BLOCKS the breach rather than allowing it:** XRP would become the asset systematically refused on a one-directional book, so its live behavior would diverge from its forward ledger — silently corrupting the evidence read it exists to earn. Per the P291-D ladder, 0.10/2ct only becomes the right value if the 09-01 tripwire first removes a major (then 39.2% max net).
+- **Framing correction:** routing state is NOT the primary lock — the sleeve driver iterates `config.assets` (`['SOL','BTC','ETH']`) and `_pid_to_asset` is built from the assets the sleeve is constructed with, so `config.assets` is the gate a breadth asset hits first. All three locks (config.assets, sizing entries, routing state) are now pinned, each sufficient alone.
+- **Honest test-suite accounting:** two inertness assertions were REMOVED (they pinned SYMBOL_MAP absence, which this change deliberately ends) and replaced with stronger ones — the risk shifts from "does an entry exist" to "is it the RIGHT pid" (a wrong pid routes one asset's orders onto another's contract; probe: XRP→SOL's pid → 5 red). Net safety assertions rose, not fell: 2 removed, 2 + 14 added. The config-lock probe wired a fully-armed XRP into a COPIED profile (never the live one) → 6/6 red.
+- XRP remains **INERT**; widening still requires moving `config.assets` AND sizing together plus the operator's routing command — a config flip, no code change, which was the point.
 
 ### P291. [BUILT 2026-08-17, operator: "can you do all five"] The profit-lever batch — the hold cost was Kraken's BORROW schedule on a venue that posts collateral (and it masked P277's funding), the maker ladder gets one reprice, breadth routing becomes a config flip, and September's criteria + sizing ladder are pre-committed
 Operator asked what would boost profit, then instructed all five ranked levers. Four parallel forks (disjoint file ownership; the parent owned main.py + configs/). Tests: `tests/test_p291_{hold_cost,maker_ladder,breadth_readiness,september_criteria,wiring}.py` (107 total); ~20 falsification probes red-then-restored with anchor-uniqueness. Full suite green, gate clean, zero baseline movement.

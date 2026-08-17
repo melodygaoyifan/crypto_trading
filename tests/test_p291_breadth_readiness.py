@@ -132,25 +132,54 @@ class TestContractTablesMatchTheProbe:
 
 
 class TestBreadthIsInertWithoutRoutingAndMapping:
-    def test_breadth_assets_are_absent_from_symbol_map(self):
-        # THE inertness property. SYMBOL_MAP is the resolver the sleeve uses
-        # to turn an asset into a product id; until an entry exists there,
-        # a breadth asset cannot be routed no matter what the routing state
-        # or the config says. Adding those entries is a separate, recorded
-        # decision (it is not in this change's ownership).
-        from exchange.symbol_mapping import SYMBOL_MAP
-        perp = SYMBOL_MAP["coinbase"]["perp"]
-        for asset in PROBED:
-            assert asset not in perp, (
-                f"{asset} gained a SYMBOL_MAP perp entry — breadth routing is "
-                f"no longer inert. That is a widening decision and needs its "
-                f"own P-entry plus per-asset caps/fractions in the live config")
+    # [P292] LOCK #1 WAS DELIBERATELY REMOVED HERE.
+    #
+    # This class used to own two assertions that the breadth assets had NO
+    # SYMBOL_MAP perp entry (`test_breadth_assets_are_absent_from_symbol_map`
+    # and `test_to_venue_symbol_refuses_breadth_today`). P292 added those
+    # entries on purpose, so that a September breadth PASS is a config flip
+    # rather than a code change. Both are replaced below by pins on what is
+    # now actually load-bearing — and the replacement is STRICTLY STRONGER,
+    # because a symbol-map entry was never the property that kept XRP from
+    # trading. The runtime hits these three in order, and any ONE of them
+    # holding is sufficient for inertness:
+    #
+    #   1. `config.assets` — the sleeve driver loops exactly this list and
+    #      the sleeve's `_pid_to_asset` is built from it. An absent asset is
+    #      never considered, whatever the map says. (THE primary lock.)
+    #   2. no fraction/cap entry -> `_sized_contracts` cannot size it.
+    #   3. routing state -> `_coinbase_routed()` False.
+    #
+    # `test_live_profile_carries_no_breadth_sizing` below is lock #2 and is
+    # unchanged. Locks #1 and #3 are pinned in tests/test_p292_xrp_readiness.py
+    # together with the round-trip correctness of the new entries.
 
-    def test_to_venue_symbol_refuses_breadth_today(self):
-        from exchange.symbol_mapping import to_venue_symbol
+    def test_symbol_map_entries_exist_and_match_the_probe(self):
+        # The replacement for the two removed assertions: the entries are now
+        # PRESENT by decision, so the risk shifts from "does it exist" to
+        # "is it the right product id". A wrong pid here routes orders for one
+        # asset onto another asset's contract.
+        from exchange.symbol_mapping import SYMBOL_MAP, to_venue_symbol
+        perp = SYMBOL_MAP["coinbase"]["perp"]
+        for asset, row in PROBED.items():
+            assert perp.get(asset) == row["pid"], (
+                f"{asset}: SYMBOL_MAP says {perp.get(asset)}, the venue probe "
+                f"measured {row['pid']} — a mismatched product id sends this "
+                f"asset's orders to a different contract")
+            assert to_venue_symbol(asset, "coinbase", "perp") == row["pid"]
+
+    def test_breadth_cannot_reach_the_sleeve_driver(self):
+        # Lock #1, the one that actually keeps XRP flat today: the driver
+        # iterates config.assets. If a breadth asset appears there without the
+        # recorded September decision, it becomes tradeable.
+        prof = json.loads((REPO / "configs" / "live_high_risk.json")
+                          .read_text(encoding="utf-8-sig"))
+        live_assets = set(prof.get("assets") or [])
         for asset in PROBED:
-            with pytest.raises((KeyError, ValueError)):
-                to_venue_symbol(asset, "coinbase", "perp")
+            assert asset not in live_assets, (
+                f"{asset} is in the live profile's `assets` — the sleeve "
+                f"driver would manage it every tick. Widening needs the "
+                f"~2026-09-15 breadth read plus per-asset fractions/caps")
 
     def test_live_profile_carries_no_breadth_sizing(self):
         # The third prerequisite. Even with a map entry and routing state, a

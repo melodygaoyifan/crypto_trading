@@ -55,7 +55,38 @@ SYMBOL_MAP: Dict[str, Dict[str, Dict[str, str]]] = {
             "BTC": "BIP-20DEC30-CDE",
             "ETH": "ETP-20DEC30-CDE",
             "SOL": "SLP-20DEC30-CDE",
+            # [P292] The five P262-certified breadth assets. Product ids and
+            # contract specs were read from the venue by the P291-C read-only
+            # probe (2026-08-17) and already sit in the adapter's fallback
+            # tables; the probe re-read BTC/ETH/SOL in the same pass and
+            # reproduced the three rows above exactly, which is the control
+            # that makes these five trustworthy. Full raw output lives in
+            # tests/test_p291_breadth_readiness.py's module docstring.
+            #
+            # ADDING THESE CHANGES NOTHING LIVE. A perp entry only lets an
+            # asset be RESOLVED to a product id; it cannot make one trade.
+            # Three independent locks still stand, in the order the runtime
+            # hits them (all pinned in tests/test_p292_xrp_readiness.py):
+            #   1. `config.assets` — the sleeve driver loops over exactly this
+            #      list (main.py) and the sleeve's `_pid_to_asset` is built
+            #      from it, so an absent asset is never even considered;
+            #   2. no `coinbase_target_fraction_by_asset` /
+            #      `coinbase_max_contracts_by_asset` entry -> unsizable;
+            #   3. `data/coinbase_routing_state.json` `coinbase_assets`
+            #      -> `_coinbase_routed()` is False.
+            # Widening is a config flip (+ the P197 one-asset-first rule) on a
+            # PASS of the ~2026-09-15 breadth forward read — not a code change,
+            # which is the whole point of landing this now.
+            "XRP": "XPP-20DEC30-CDE",
+            "ADA": "ADP-20DEC30-CDE",
+            "LTC": "LCP-20DEC30-CDE",
+            "DOGE": "DOP-20DEC30-CDE",
+            "BNB": "BNB-20DEC30-CDE",
         },
+        # [P292] Deliberately NOT extended: the breadth widening is a PERP
+        # decision on the CDE sleeve. Spot symbols for these assets are
+        # unverified (no probe covered them) and unused — an unverified entry
+        # is exactly the fabricated-unit hazard P265h exists to prevent.
         "spot": {
             "BTC": "BTC-USD",
             "ETH": "ETH-USD",
