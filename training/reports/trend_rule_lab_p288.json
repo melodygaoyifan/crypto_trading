@@ -1,0 +1,380 @@
+{
+ "generated_at": "2026-08-17T03:38:06.646348+00:00",
+ "design_era": [
+  3000,
+  9100
+ ],
+ "pre_design_era": [
+  800,
+  3000
+ ],
+ "verdict_rule": "DETHRONES iff deciding-form net > SMA200 in design AND pre-design >= sma_pre - 0.05*|sma_pre|; >25% extra turnover = FLAGGED-not-crowned; else SMA200 STANDS. Virgin-era transfer NOT re-tested here \u2014 incumbent keeps that edge.",
+ "assets": {
+  "BTC": {
+   "incumbent": {
+    "design": {
+     "gross": 0.637,
+     "cost": 0.0429,
+     "net": 0.5941,
+     "turnover_units": 143.0,
+     "sharpe": 0.762,
+     "n_flips": 143
+    },
+    "pre_design": {
+     "gross": 0.5658,
+     "cost": 0.0171,
+     "net": 0.5487,
+     "turnover_units": 57.0,
+     "sharpe": 0.914,
+     "n_flips": 57
+    }
+   },
+   "sigma_star": 0.008956,
+   "challengers": [
+    {
+     "challenger": "EMA-ENSEMBLE",
+     "design": {
+      "gross": 0.477,
+      "cost": 0.0105,
+      "net": 0.4665,
+      "turnover_units": 35.0,
+      "sharpe": 0.515,
+      "n_flips": 35
+     },
+     "pre_design": {
+      "gross": 1.2534,
+      "cost": 0.0027,
+      "net": 1.2507,
+      "turnover_units": 9.0,
+      "sharpe": 1.829,
+      "n_flips": 9
+     },
+     "dethrones": false,
+     "flagged_turnover": false
+    },
+    {
+     "challenger": "DONCHIAN-100",
+     "design": {
+      "gross": 0.5926,
+      "cost": 0.0111,
+      "net": 0.5815,
+      "turnover_units": 37.0,
+      "sharpe": 0.593,
+      "n_flips": 37
+     },
+     "pre_design": {
+      "gross": 0.5308,
+      "cost": 0.0045,
+      "net": 0.5263,
+      "turnover_units": 15.0,
+      "sharpe": 0.857,
+      "n_flips": 15
+     },
+     "dethrones": false,
+     "flagged_turnover": false
+    },
+    {
+     "challenger": "ADAPTIVE-SMA",
+     "design": {
+      "gross": 0.5869,
+      "cost": 0.0741,
+      "net": 0.5128,
+      "turnover_units": 247.0,
+      "sharpe": 0.548,
+      "n_flips": 247
+     },
+     "pre_design": {
+      "gross": 1.166,
+      "cost": 0.021,
+      "net": 1.145,
+      "turnover_units": 70.0,
+      "sharpe": 1.73,
+      "n_flips": 70
+     },
+     "dethrones": false,
+     "flagged_turnover": false
+    },
+    {
+     "challenger": "VOLMGD-SMA200",
+     "design": {
+      "gross": 0.4429,
+      "cost": 0.0432,
+      "net": 0.3997,
+      "turnover_units": 144.0,
+      "sharpe": 0.562,
+      "n_flips": 162
+     },
+     "pre_design": {
+      "gross": 0.2786,
+      "cost": 0.0129,
+      "net": 0.2657,
+      "turnover_units": 43.0,
+      "sharpe": 0.682,
+      "n_flips": 71
+     },
+     "continuous_design": {
+      "gross": 0.5204,
+      "cost": 0.0701,
+      "net": 0.4503,
+      "turnover_units": 233.6,
+      "sharpe": 0.522
+     },
+     "continuous_pre": {
+      "gross": 0.3706,
+      "cost": 0.0129,
+      "net": 0.3577,
+      "turnover_units": 43.1,
+      "sharpe": 0.979
+     },
+     "dethrones": false,
+     "flagged_turnover": false
+    }
+   ],
+   "verdict": "SMA200 STANDS"
+  },
+  "ETH": {
+   "incumbent": {
+    "design": {
+     "gross": 0.144,
+     "cost": 0.056,
+     "net": 0.088,
+     "turnover_units": 140.0,
+     "sharpe": 0.105,
+     "n_flips": 140
+    },
+    "pre_design": {
+     "gross": 1.4956,
+     "cost": 0.0228,
+     "net": 1.4728,
+     "turnover_units": 57.0,
+     "sharpe": 1.82,
+     "n_flips": 57
+    }
+   },
+   "sigma_star": 0.010914,
+   "challengers": [
+    {
+     "challenger": "EMA-ENSEMBLE",
+     "design": {
+      "gross": -0.216,
+      "cost": 0.0152,
+      "net": -0.2312,
+      "turnover_units": 38.0,
+      "sharpe": -0.204,
+      "n_flips": 38
+     },
+     "pre_design": {
+      "gross": 1.7219,
+      "cost": 0.0052,
+      "net": 1.7167,
+      "turnover_units": 13.0,
+      "sharpe": 1.877,
+      "n_flips": 13
+     },
+     "dethrones": false,
+     "flagged_turnover": false
+    },
+    {
+     "challenger": "DONCHIAN-100",
+     "design": {
+      "gross": 0.1924,
+      "cost": 0.0156,
+      "net": 0.1768,
+      "turnover_units": 39.0,
+      "sharpe": 0.157,
+      "n_flips": 39
+     },
+     "pre_design": {
+      "gross": 1.5125,
+      "cost": 0.0052,
+      "net": 1.5073,
+      "turnover_units": 13.0,
+      "sharpe": 1.768,
+      "n_flips": 13
+     },
+     "dethrones": true,
+     "flagged_turnover": false
+    },
+    {
+     "challenger": "ADAPTIVE-SMA",
+     "design": {
+      "gross": 0.8074,
+      "cost": 0.1048,
+      "net": 0.7026,
+      "turnover_units": 262.0,
+      "sharpe": 0.629,
+      "n_flips": 262
+     },
+     "pre_design": {
+      "gross": 1.0883,
+      "cost": 0.0396,
+      "net": 1.0487,
+      "turnover_units": 99.0,
+      "sharpe": 1.229,
+      "n_flips": 99
+     },
+     "dethrones": false,
+     "flagged_turnover": false
+    },
+    {
+     "challenger": "VOLMGD-SMA200",
+     "design": {
+      "gross": -0.0542,
+      "cost": 0.089,
+      "net": -0.1432,
+      "turnover_units": 222.5,
+      "sharpe": -0.146,
+      "n_flips": 243
+     },
+     "pre_design": {
+      "gross": 0.8833,
+      "cost": 0.0199,
+      "net": 0.8634,
+      "turnover_units": 49.8,
+      "sharpe": 1.729,
+      "n_flips": 102
+     },
+     "continuous_design": {
+      "gross": -0.051,
+      "cost": 0.0887,
+      "net": -0.1398,
+      "turnover_units": 221.8,
+      "sharpe": -0.142
+     },
+     "continuous_pre": {
+      "gross": 0.8973,
+      "cost": 0.0202,
+      "net": 0.8771,
+      "turnover_units": 50.4,
+      "sharpe": 1.743
+     },
+     "dethrones": false,
+     "flagged_turnover": false
+    }
+   ],
+   "verdict": "DETHRONED by DONCHIAN-100"
+  },
+  "SOL": {
+   "incumbent": {
+    "design": {
+     "gross": 1.3027,
+     "cost": 0.0923,
+     "net": 1.2104,
+     "turnover_units": 142.0,
+     "sharpe": 0.813,
+     "n_flips": 142
+    },
+    "pre_design": {
+     "gross": 3.3571,
+     "cost": 0.0546,
+     "net": 3.3025,
+     "turnover_units": 84.0,
+     "sharpe": 2.37,
+     "n_flips": 84
+    }
+   },
+   "sigma_star": 0.017245,
+   "challengers": [
+    {
+     "challenger": "EMA-ENSEMBLE",
+     "design": {
+      "gross": 1.2555,
+      "cost": 0.0215,
+      "net": 1.2341,
+      "turnover_units": 33.0,
+      "sharpe": 0.659,
+      "n_flips": 33
+     },
+     "pre_design": {
+      "gross": 4.9905,
+      "cost": 0.0052,
+      "net": 4.9853,
+      "turnover_units": 8.0,
+      "sharpe": 3.201,
+      "n_flips": 8
+     },
+     "dethrones": true,
+     "flagged_turnover": false
+    },
+    {
+     "challenger": "DONCHIAN-100",
+     "design": {
+      "gross": 1.96,
+      "cost": 0.0221,
+      "net": 1.9379,
+      "turnover_units": 34.0,
+      "sharpe": 1.012,
+      "n_flips": 34
+     },
+     "pre_design": {
+      "gross": 4.1992,
+      "cost": 0.0111,
+      "net": 4.1882,
+      "turnover_units": 17.0,
+      "sharpe": 2.819,
+      "n_flips": 17
+     },
+     "dethrones": true,
+     "flagged_turnover": false
+    },
+    {
+     "challenger": "ADAPTIVE-SMA",
+     "design": {
+      "gross": 2.4404,
+      "cost": 0.1475,
+      "net": 2.2928,
+      "turnover_units": 227.0,
+      "sharpe": 1.213,
+      "n_flips": 227
+     },
+     "pre_design": {
+      "gross": 4.4552,
+      "cost": 0.0572,
+      "net": 4.398,
+      "turnover_units": 88.0,
+      "sharpe": 3.036,
+      "n_flips": 88
+     },
+     "dethrones": false,
+     "flagged_turnover": true
+    },
+    {
+     "challenger": "VOLMGD-SMA200",
+     "design": {
+      "gross": 1.2853,
+      "cost": 0.1427,
+      "net": 1.1427,
+      "turnover_units": 219.5,
+      "sharpe": 0.749,
+      "n_flips": 247
+     },
+     "pre_design": {
+      "gross": 2.1602,
+      "cost": 0.0494,
+      "net": 2.1108,
+      "turnover_units": 76.0,
+      "sharpe": 2.573,
+      "n_flips": 125
+     },
+     "continuous_design": {
+      "gross": 1.1521,
+      "cost": 0.1416,
+      "net": 1.0105,
+      "turnover_units": 217.8,
+      "sharpe": 0.681
+     },
+     "continuous_pre": {
+      "gross": 2.0131,
+      "cost": 0.0483,
+      "net": 1.9648,
+      "turnover_units": 74.3,
+      "sharpe": 2.45
+     },
+     "dethrones": false,
+     "flagged_turnover": false
+    }
+   ],
+   "verdict": "DETHRONED by EMA-ENSEMBLE, DONCHIAN-100"
+  }
+ }
+}

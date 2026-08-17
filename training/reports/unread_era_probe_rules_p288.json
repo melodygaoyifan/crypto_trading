@@ -1,0 +1,211 @@
+{
+ "generated": "2026-08-17T03:43:58.758755+00:00",
+ "guard": "Part A scores NO bar on/after 2020-08-09",
+ "verdict_rule": "MATCHES iff virgin-era net>0 both assets w/ 2018 crash-dodge (net>=-0.35 AND >= bh+0.20) AND breadth beats-flat 5/5; PARTIAL if one leg; head-to-head vs SMA200 reported, not deciding",
+ "A_virgin_era": {
+  "BTC": {
+   "span": [
+    "2017-11-25",
+    "2020-08-08"
+   ],
+   "bars": 5909,
+   "buy_hold": 0.3969,
+   "cost_rt_bps": 6.0,
+   "cells": {
+    "SMA200": {
+     "net": 0.9115,
+     "by_year": {
+      "2017": {
+       "net": 0.3169,
+       "bh": 0.6291
+      },
+      "2018": {
+       "net": -0.2798,
+       "bh": -0.7239
+      },
+      "2019": {
+       "net": 0.7856,
+       "bh": 0.9483
+      },
+      "2020": {
+       "net": 0.0889,
+       "bh": 0.6279
+      }
+     }
+    },
+    "DONCHIAN-100": {
+     "net": 1.5748,
+     "by_year": {
+      "2017": {
+       "net": 0.5194,
+       "bh": 0.6291
+      },
+      "2018": {
+       "net": -0.6024,
+       "bh": -0.7239
+      },
+      "2019": {
+       "net": 0.8035,
+       "bh": 0.9483
+      },
+      "2020": {
+       "net": 0.8528,
+       "bh": 0.6279
+      }
+     }
+    },
+    "EMA-ENSEMBLE": {
+     "net": 1.6618,
+     "by_year": {
+      "2017": {
+       "net": 0.6558,
+       "bh": 0.6291
+      },
+      "2018": {
+       "net": -0.5091,
+       "bh": -0.7239
+      },
+      "2019": {
+       "net": 0.9692,
+       "bh": 0.9483
+      },
+      "2020": {
+       "net": 0.5683,
+       "bh": 0.6279
+      }
+     }
+    }
+   },
+   "control_reproduced": true
+  },
+  "ETH": {
+   "span": [
+    "2017-11-25",
+    "2020-08-08"
+   ],
+   "bars": 5909,
+   "buy_hold": -0.1459,
+   "cost_rt_bps": 8.0,
+   "cells": {
+    "SMA200": {
+     "net": 1.8603,
+     "by_year": {
+      "2017": {
+       "net": 0.6064,
+       "bh": 0.5789
+      },
+      "2018": {
+       "net": 0.203,
+       "bh": -0.821
+      },
+      "2019": {
+       "net": 0.5251,
+       "bh": -0.0164
+      },
+      "2020": {
+       "net": 0.5252,
+       "bh": 2.0494
+      }
+     }
+    },
+    "DONCHIAN-100": {
+     "net": 2.6923,
+     "by_year": {
+      "2017": {
+       "net": 0.6064,
+       "bh": 0.5789
+      },
+      "2018": {
+       "net": 0.5309,
+       "bh": -0.821
+      },
+      "2019": {
+       "net": 0.2571,
+       "bh": -0.0164
+      },
+      "2020": {
+       "net": 1.2982,
+       "bh": 2.0494
+      }
+     }
+    },
+    "EMA-ENSEMBLE": {
+     "net": 2.594,
+     "by_year": {
+      "2017": {
+       "net": 0.6064,
+       "bh": 0.5789
+      },
+      "2018": {
+       "net": 0.2237,
+       "bh": -0.821
+      },
+      "2019": {
+       "net": 0.4937,
+       "bh": -0.0164
+      },
+      "2020": {
+       "net": 1.2706,
+       "bh": 2.0494
+      }
+     }
+    }
+   },
+   "control_reproduced": true
+  }
+ },
+ "B_never_fitted_assets": {
+  "BNBUSDT": {
+   "bars": 13823,
+   "buy_hold": 41.0865,
+   "SMA200": 4.0608,
+   "DONCHIAN-100": 4.4873,
+   "EMA-ENSEMBLE": 5.5318
+  },
+  "XRPUSDT": {
+   "bars": 13823,
+   "buy_hold": 4.5632,
+   "SMA200": 2.7613,
+   "DONCHIAN-100": 4.768,
+   "EMA-ENSEMBLE": 2.8469
+  },
+  "LTCUSDT": {
+   "bars": 13823,
+   "buy_hold": 0.0367,
+   "SMA200": 0.6755,
+   "DONCHIAN-100": 0.6234,
+   "EMA-ENSEMBLE": 1.2507
+  },
+  "DOGEUSDT": {
+   "bars": 13823,
+   "buy_hold": 35.2415,
+   "SMA200": 6.7165,
+   "DONCHIAN-100": 7.5753,
+   "EMA-ENSEMBLE": 8.7642
+  },
+  "ADAUSDT": {
+   "bars": 13823,
+   "buy_hold": 4.0435,
+   "SMA200": 3.905,
+   "DONCHIAN-100": 4.1007,
+   "EMA-ENSEMBLE": 5.1032
+  },
+  "_beats_flat": {
+   "SMA200": "5/5",
+   "DONCHIAN-100": "5/5",
+   "EMA-ENSEMBLE": "5/5"
+  }
+ },
+ "verdicts": {
+  "DONCHIAN-100": "PARTIAL",
+  "DONCHIAN-100_legs": {
+   "virgin_era": false,
+   "breadth_5of5": true
+  },
+  "EMA-ENSEMBLE": "PARTIAL",
+  "EMA-ENSEMBLE_legs": {
+   "virgin_era": false,
+   "breadth_5of5": true
+  }
+ }
+}
