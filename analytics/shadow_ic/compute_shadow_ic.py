@@ -214,6 +214,8 @@ def load_shadow_ledgers(
                                 "stablecoinflow", "oidiv", "calbasis",
                                 "xsmom", "eventfilter",
                                 "mlpshadow",  # [P284]
+                                # [P289] P288 trend-rule challengers
+                                "donchian", "emaens",
                                 "ma_filter"),
     since: Optional[datetime] = None,
 ) -> List[Dict[str, Any]]:
@@ -764,7 +766,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--horizons", default="4,12,24",
                    help="forward-return horizons in 4H bars, comma-separated")
     p.add_argument("--prefixes",
-                   default="microstructure,cascade,funding,ml_factor,derivflow,regimebook,etfflow,stablecoinflow,oidiv,calbasis,xsmom,eventfilter,mlpshadow,ma_filter",  # [P199,P219,P236,P248,P270,P277,P284]
+                   default="microstructure,cascade,funding,ml_factor,derivflow,regimebook,etfflow,stablecoinflow,oidiv,calbasis,xsmom,eventfilter,mlpshadow,donchian,emaens,ma_filter",  # [P199,P219,P236,P248,P270,P277,P284,P289]
                    help="ledger file prefixes")
     p.add_argument("--output", default=None,
                    help="optional JSON output path; defaults to analytics/shadow_ic/reports/")

@@ -960,6 +960,12 @@ class FrictionComponents:
     # [FIX-SPREAD] Per-asset spread based on observed market microstructure
     # BTC: deep book, 3bps typical. ETH: 5bps. SOL: thin book, 10bps.
     ASSET_SPREAD_BPS: dict = None  # Set in __post_init__
+    # [P289] CDE (Coinbase derivatives) spread table + per-asset venue memory;
+    # table populated in __post_init__ (default_factory, not the legacy
+    # `dict = None` shape — that pattern is a standing mypy finding).
+    # See the provenance comment in __post_init__.
+    CDE_SPREAD_BPS: dict = field(default_factory=dict)
+    _spread_venue_by_asset: dict = field(default_factory=dict)
     # [T2] Kraken margin fees (dynamic - set when leveraged)
     margin_opening_fee_bps: float = 0.0
     margin_rollover_bps_per_4h: float = 0.0
@@ -978,11 +984,47 @@ class FrictionComponents:
             self.MARGIN_FEE_BPS = {"BTC": 1.0, "ETH": 2.0, "SOL": 2.0}
         if self.ASSET_SPREAD_BPS is None:
             self.ASSET_SPREAD_BPS = {"BTC": 3.0, "ETH": 5.0, "SOL": 10.0}
+        # [P289] Venue-true spreads for Coinbase-routed assets. The Kraken-era
+        # ASSET_SPREAD_BPS above was applied to CDE nano contracts for the
+        # sleeve's whole life; a live read-only order-book probe (2026-08-16,
+        # WEEKEND book = worst-case liquidity, 6 samples/contract) measured
+        # median FULL spreads BTC 1.58 / ETH 5.26 / SOL 2.65 bps. The true
+        # taker cost per leg is the HALF-spread; this table charges the FULL
+        # spread rounded conservatively (a ~2x buffer, P167: overcharging is
+        # the safe direction). Note ETH ROSE 5.0 -> 5.5 — the measurement is
+        # honest in both directions, not a loosening-by-fiat. Consequence at
+        # current constants: BTC threshold ~29 -> ~26bps (the 1-2bp epsilon
+        # pass becomes robust); SOL ~55 -> ~40bps and ETH ~43bps — BOTH STILL
+        # ABOVE the 30bps asserted-alpha ceiling, so this re-pricing does NOT
+        # re-open ETH/SOL; only the P237 tripwire question can.
+        if not self.CDE_SPREAD_BPS:
+            self.CDE_SPREAD_BPS = {"BTC": 2.0, "ETH": 5.5, "SOL": 4.0}
+
+    def set_spread_venue(self, asset: str, venue: Optional[str]):
+        """[P289] Remember which venue's book prices this asset's slippage.
+
+        Called from the per-tick [VENUE-FEE] block (flag-gated in main.py).
+        Absent/unknown venue -> Kraken table (the more expensive one — a
+        lookup failure must overcharge, never undercharge, P167/P172).
+        """
+        asset_key = asset.upper().replace("/USD", "").replace("USD", "")
+        v = (venue or "").strip().lower()
+        if v == "coinbase":
+            self._spread_venue_by_asset[asset_key] = "coinbase"
+        else:
+            self._spread_venue_by_asset.pop(asset_key, None)
 
     def update_for_asset(self, asset: str):
-        """[FIX-SPREAD] Set slippage_bps to per-asset spread from market microstructure."""
+        """[FIX-SPREAD] Set slippage_bps to per-asset spread from market
+        microstructure. [P289] Venue-aware: assets whose spread venue was set
+        to coinbase (via set_spread_venue) price the CDE book instead of the
+        Kraken-era constants; everything else keeps the Kraken table."""
         asset_key = asset.upper().replace("/USD", "").replace("USD", "")
-        self.slippage_bps = self.ASSET_SPREAD_BPS.get(asset_key, 5.0)
+        if self._spread_venue_by_asset.get(asset_key) == "coinbase":
+            self.slippage_bps = self.CDE_SPREAD_BPS.get(
+                asset_key, self.ASSET_SPREAD_BPS.get(asset_key, 5.0))
+        else:
+            self.slippage_bps = self.ASSET_SPREAD_BPS.get(asset_key, 5.0)
 
     def update_for_volume(self, monthly_volume_usd: float):
         """Update fee components based on current monthly volume.

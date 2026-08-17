@@ -1580,6 +1580,10 @@ class ProductionConfig:
     # Default OFF because enabling it LOOSENS a risk gate. Confirm the blocker
     # with scripts/why_no_trade.py first, then set true in the live JSON.
     coinbase_venue_aware_fees: bool = False
+    # [P289] Venue-true spread constants for Coinbase-routed assets (the CDE
+    # table in FrictionComponents, probe-measured 2026-08-16). Default OFF;
+    # the live profile enables it by the recorded operator instruction.
+    coinbase_venue_aware_spreads: bool = False
     # [P197] Server-side protective stop on the Coinbase perp sleeve. Until this,
     # the sleeve had NO venue-resting protection: every exit was a client-side
     # call on the 4H tick, so a dead process left the perp positions with nothing
@@ -1970,6 +1974,8 @@ class ProductionConfig:
             coinbase_routing_enabled=data.get("coinbase_routing_enabled", False),
             # [P155e] venue-aware alpha-gate friction (default OFF — loosens the gate)
             coinbase_venue_aware_fees=data.get("coinbase_venue_aware_fees", False),
+            coinbase_venue_aware_spreads=data.get(
+                "coinbase_venue_aware_spreads", False),
             # [P197] Coinbase server-side protective stop (default OFF — places
             # REAL resting orders on a live account; see the dataclass comment)
             coinbase_protective_stop_pct=float(
@@ -5852,6 +5858,20 @@ class HMATSProductionRunner:
         except Exception as _enh_err:
             logger.warning(f"  [P277] EnhancementShadows init failed: "
                            f"{type(_enh_err).__name__}: {_enh_err}")
+
+        # [P289] The two P288 dethroning trend-rule challengers (DONCHIAN-100
+        # + EMA-ENSEMBLE) — observation-only forward ledgers, Iron Law 7;
+        # PARTIAL-certified (transfer-validated, BTC-2018 crash-dodge miss
+        # recorded). Their 30d P166 clocks start at the first deploy.
+        self._trend_rule_shadow = None
+        try:
+            from defense.trend_rule_shadow import TrendRuleShadow
+            self._trend_rule_shadow = TrendRuleShadow(data_dir="data")
+            logger.info("  [P289] TrendRuleShadow: ACTIVE (observation-only; "
+                        "donchian+emaens challenger ledgers)")
+        except Exception as _trs_err:
+            logger.warning(f"  [P289] TrendRuleShadow init failed: "
+                           f"{type(_trs_err).__name__}: {_trs_err}")
 
         # [P284] The pooled-certified BTC mlp_small Rung-3 shadow
         # (observation-only; its 30d P166 clock starts at first deploy).
@@ -10236,6 +10256,27 @@ class HMATSProductionRunner:
                         f"COINBASE (taker={taker_fee_bps:.1f}bps "
                         f"maker={maker_fee_bps:.1f}bps), not Kraken"
                     )
+                # [P289] Venue-true SPREADS ride the same resolution: when the
+                # flag is on and this asset resolved to Coinbase, the gate's
+                # slippage constant comes from the CDE table (probe-measured
+                # 2026-08-16) instead of the Kraken-era ASSET_SPREAD_BPS.
+                # Any failure or a non-coinbase venue clears the memory ->
+                # Kraken table (overcharge, safe — P167). The memory is read
+                # by FRICTION.update_for_asset inside check_alpha_gate.
+                try:
+                    if bool(getattr(self.config,
+                                    "coinbase_venue_aware_spreads", False)):
+                        self.engine.guarantees.alpha_calculator.FRICTION.set_spread_venue(
+                            asset,
+                            _vf_venue if _venue_fee_applied else None)
+                    else:
+                        self.engine.guarantees.alpha_calculator.FRICTION.set_spread_venue(
+                            asset, None)
+                except Exception as _vs_err:  # noqa: silent-swallow — logs; spread memory falls back to Kraken table (overcharge, safe)
+                    logger.warning(
+                        f"[VENUE-SPREAD] {asset}: spread-venue update failed "
+                        f"({type(_vs_err).__name__}: {_vs_err}) — Kraken "
+                        f"spread table stands (conservative)")
                 self.engine.guarantees.alpha_calculator.FRICTION.update_for_volume(monthly_vol)
                 self.engine.guarantees.alpha_calculator.FRICTION.update_fee_bps(
                     maker_fee_bps=maker_fee_bps,
@@ -21923,6 +21964,17 @@ class HMATSProductionRunner:
                     except Exception as _rbs_e:  # noqa: silent-swallow
                         logger.warning(f"[REGIMEBOOK] tick failed: "
                                        f"{type(_rbs_e).__name__} — ledger "
+                                       f"stale this cycle")
+
+                # [P289] Trend-rule challenger shadow tick (donchian +
+                # emaens) — same self-contained loop-level pattern; its own
+                # closes fetch, its own ledgers, observation-only.
+                if getattr(self, "_trend_rule_shadow", None) is not None:
+                    try:
+                        self._trend_rule_shadow.tick()
+                    except Exception as _trs_e:  # noqa: silent-swallow
+                        logger.warning(f"[TRENDRULE-SHADOW] tick failed: "
+                                       f"{type(_trs_e).__name__} — ledgers "
                                        f"stale this cycle")
 
                 # [P270] ETF-flow shadow tick — same loop-level placement so

@@ -74,6 +74,11 @@ CANDIDATES = {
     # [P284/P285c] the trained-model Rung-3 shadow; seat WITHDRAWN (P285c),
     # ledger accrues as free evidence toward the ~09-15 read
     "mlpshadow":      ("mlpshadow",      "2026-08-16", "P285c-withdrawn; read is informational"),
+    # [P289] P288 trend-rule challengers — PARTIAL-certified (transfer-
+    # validated on virgin era + 5 never-fitted assets; BTC-2018 crash-dodge
+    # miss recorded). First-live at the next deploy after 2026-08-16.
+    "donchian":       ("donchian",       "2026-08-17", "challenger seat/widening -> own P-entry (P288 PARTIAL)"),
+    "emaens":         ("emaens",         "2026-08-17", "challenger seat/widening -> own P-entry (P288 PARTIAL)"),
 }
 
 KRAKEN_PAIRS_BREADTH = {"XRP": "XRPUSD", "ADA": "ADAUSD", "LTC": "LTCUSD",

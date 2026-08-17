@@ -18,7 +18,8 @@
  "_p284_note": "676 -> 678: the mlp_shadow per-asset tick guard (summary line shows the miss; a shadow fault must never reach the loop) and main.py's fv2-fetch guard (noqa'd: fv2 absence records as a NAMED coverage gap inside the harness, never a fabricated zero \u2014 the P248 rule). Hand-bumped, never --update (P171).",
  "_p285_note": "678 -> 679: the P285 mlp-seat block's fail-soft guard in main.py (a seat fault must never break the tick; it logs WARNING naming the consequence \u2014 incumbent signal stands). Default-off block. Hand-bumped, never --update (P171).",
  "_p287_note": "679->680 (2026-08-16, P287 fix campaign): one scanner-visible guard among the main.py hardening (fuse-feed freshness / governor-restore wraps \u2014 all log, none silent). The campaign's other new try/excepts (core [P287-FUSE] x3, exchange sleeve x3, defense mlp_shadow persistence x2) fall outside this counter's shape.",
+ "_p289_note": "680->682 (2026-08-16, P289): the [VENUE-SPREAD] fail-soft guard in main.py's VENUE-FEE block (logs, Kraken table stands on failure) and the trend_rule_shadow harness guard (logs; Iron Law 7 fail-soft). Both log; neither silent.",
  "dictget_count": 42,
  "flags_count": 0,
- "tryexcept_count": 680
+ "tryexcept_count": 682
 }
