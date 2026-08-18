@@ -165,3 +165,62 @@ class TestSeatPrecedence:
         assert reset < book < whale, (
             "order must be reset -> book claims -> whale defers"
         )
+
+
+class TestFredNaiveAwareBug:
+    """[P299] Enabling macro_gci_live surfaced that P293's headline fix never
+    actually delivered data.
+
+    P293's finding was "FRED has a valid key and mock=False but NO CALLER" and
+    it wired fetch_if_stale() into the tick. The producer then existed and
+    THREW on every call: FRED dates parse NAIVE
+    (`datetime.fromisoformat("2026-08-18")`) and `_compute_event_window`
+    subtracts them from an AWARE `datetime.now(timezone.utc)` ->
+    "can't subtract offset-naive and offset-aware datetimes". fetch()'s
+    handler caught it, so the macro context stayed on neutral defaults - the
+    SAME observable state as having no producer at all.
+
+    Measured live 2026-08-18 08:33:55 on the first tick after the flip.
+    """
+
+    def test_bare_dates_are_made_utc_aware_at_the_parse_boundary(self):
+        from datetime import datetime, timezone
+        from data_mgmt.feeds.fred_feed import _aware_utc
+        naive = datetime.fromisoformat("2026-08-18")
+        assert naive.tzinfo is None, "premise: FRED dates parse naive"
+        assert _aware_utc(naive).tzinfo is timezone.utc
+        # and it must not re-stamp something already aware
+        aware = datetime.now(timezone.utc)
+        assert _aware_utc(aware) is aware
+
+    def test_the_subtraction_that_killed_the_fetch_now_works(self):
+        from datetime import datetime, timezone
+        from data_mgmt.feeds.fred_feed import _aware_utc
+        release = datetime.fromisoformat("2026-08-18")
+        now = datetime.now(timezone.utc)
+        # pre-fix this raised TypeError and took the whole fetch with it
+        (_aware_utc(release) - _aware_utc(now)).total_seconds()
+
+    def test_every_fred_date_parse_goes_through_the_helper(self):
+        """A single unwrapped fromisoformat re-arms the same failure."""
+        import re
+        import sys
+        sys.path.insert(0, str(REPO / "tests"))
+        # [P177/P184] Strip DOCSTRINGS as well as comments: the helper's own
+        # docstring quotes `datetime.fromisoformat("2026-08-18")` to explain
+        # the bug, and a comments-only scan matched that prose - a scanner
+        # firing on its own explanation. The repo already has the right tool.
+        from _source_scan import code_only
+        code = code_only(REPO / "data_mgmt" / "feeds" / "fred_feed.py",
+                         strip_docstrings=True)
+        # The lookbehind already EXCLUDES wrapped calls, so this counts the
+        # unwrapped ones and must be zero. (The first cut asserted
+        # len(bare) == len(wrapped), which is 0 == 4 - a test that fails on
+        # correct code and would have "passed" only while the bug existed.)
+        unwrapped = re.findall(r"(?<!_aware_utc\()datetime\.fromisoformat\(", code)
+        wrapped = re.findall(r"_aware_utc\(datetime\.fromisoformat\(", code)
+        assert wrapped, "premise: fred_feed parses dates with fromisoformat"
+        assert not unwrapped, (
+            f"{len(unwrapped)} fromisoformat call(s) are not wrapped in "
+            f"_aware_utc - a naive date will reach the comparison again"
+        )

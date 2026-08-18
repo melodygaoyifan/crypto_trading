@@ -83,6 +83,25 @@ IMPORTANCE_MAP = {
 # DATA STRUCTURES
 # =============================================================================
 
+
+def _aware_utc(dt: datetime) -> datetime:
+    """[P299] FRED dates parse NAIVE and are then compared against an AWARE
+    `datetime.now(timezone.utc)`.
+
+    `datetime.fromisoformat("2026-08-18")` yields a naive datetime, and
+    `_compute_event_window` does `release.release_date - now`, which raises
+    `TypeError: can't subtract offset-naive and offset-aware datetimes`. That
+    exception is caught by `fetch()`'s handler, so the whole FRED fetch
+    returned None and the macro context stayed on its neutral defaults -
+    i.e. P293's headline fix (FRED had no producer) shipped a producer that
+    THREW on every call, which looks identical from the consumer side.
+    Surfaced the moment `macro_gci_live` started driving it.
+
+    The P40/P97 rule, applied at the parse boundary: a bare date is UTC
+    midnight, never a local-time guess.
+    """
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+
 @dataclass
 class FREDObservation:
     """Single FRED data observation."""
@@ -414,9 +433,9 @@ class FREDFeed:
                 return FREDObservation(
                     series_id=series_id,
                     value=float(value_str),
-                    date=datetime.fromisoformat(obs["date"]),
-                    realtime_start=datetime.fromisoformat(obs["realtime_start"]),
-                    realtime_end=datetime.fromisoformat(obs["realtime_end"]),
+                    date=_aware_utc(datetime.fromisoformat(obs["date"])),
+                    realtime_start=_aware_utc(datetime.fromisoformat(obs["realtime_start"])),
+                    realtime_end=_aware_utc(datetime.fromisoformat(obs["realtime_end"])),
                 )
 
         except asyncio.TimeoutError:
@@ -464,7 +483,7 @@ class FREDFeed:
                     releases.append(FREDRelease(
                         release_id=rd.get("release_id", 0),
                         name=release_name,
-                        release_date=datetime.fromisoformat(rd["date"]),
+                        release_date=_aware_utc(datetime.fromisoformat(rd["date"])),
                         importance=importance,
                     ))
 
@@ -491,7 +510,10 @@ class FREDFeed:
         window_minutes = self._event_window_minutes
         
         for release in releases:
-            delta = (release.release_date - now).total_seconds() / 60
+            # [P299] belt-and-braces: the parse boundary above makes these
+            # aware, and this keeps ONE malformed row from killing the fetch.
+            delta = (_aware_utc(release.release_date)
+                     - _aware_utc(now)).total_seconds() / 60
             
             # Check if within window
             if -window_minutes <= delta <= window_minutes:
