@@ -265,8 +265,17 @@ class MacroDataFetcher:
     def _fetch_ticker_sync(self, ticker: str, yf_symbol: str) -> Optional[MacroIndicator]:
         """Synchronous fetch for a single ticker."""
         if not YFINANCE_AVAILABLE:
+            # [P293] yfinance is NOT in the engine image, so this branch has
+            # been the ONLY branch in production and every macro indicator
+            # came from _generate_mock_indicator. FRED serves the same
+            # quantities on a key we already hold; try it before falling back
+            # to the mock, so the macro regime can be computed from a real
+            # observation for the first time.
+            _fred_ind = self._fetch_ticker_fred(ticker)
+            if _fred_ind is not None:
+                return _fred_ind
             return self._generate_mock_indicator(ticker)
-        
+
         try:
             # Check cache
             with self._lock:
@@ -318,6 +327,67 @@ class MacroDataFetcher:
             logger.error(f"Error fetching {ticker}: {e}")
             return self._generate_mock_indicator(ticker)
     
+    def _fetch_ticker_fred(self, ticker: str) -> Optional[MacroIndicator]:
+        """[P293] Build one indicator from FRED daily observations.
+
+        Returns None — never a placeholder — when the series is unmapped
+        (GOLD), the key is missing, or the fetch fails, so the caller can
+        fall back explicitly instead of consuming a fabricated level.
+
+        Runs inside the existing ThreadPoolExecutor, so a blocking stdlib
+        request is correct here and never touches the event loop (P253c).
+        """
+        try:
+            from data_mgmt.feeds.fred_macro_series import fetch_daily_closes, is_proxy
+        except Exception:  # noqa: silent-swallow
+            return None
+
+        try:
+            with self._lock:
+                cached = self._cache.get(ticker)
+            if cached is not None:
+                data, cached_at = cached
+                if time.time() - cached_at < self.cache_ttl:
+                    return data
+
+            rows = fetch_daily_closes(ticker, lookback_days=60)
+            if len(rows) < 2:
+                return None
+
+            closes = [v for _, v in rows]
+            current = closes[-1]
+            prev = closes[-2]
+            change_pct = ((current - prev) / prev * 100) if prev else 0.0
+
+            window = closes[-CORRELATION_LOOKBACK_DAYS:]
+            if len(window) >= CORRELATION_LOOKBACK_DAYS:
+                mean_30d = float(np.mean(window))
+                std_30d = float(np.std(window))
+                # A degenerate window has no scale — 0.0 here means "no
+                # z-score", and the breakout tests correctly stay False.
+                zscore = ((current - mean_30d) / std_30d) if std_30d > 1e-9 else 0.0
+            else:
+                zscore = 0.0
+
+            indicator = MacroIndicator(
+                ticker=ticker,
+                name=f"FRED:{ticker}" + ("(proxy)" if is_proxy(ticker) else ""),
+                value=float(current),
+                prev_value=float(prev),
+                change_pct=float(change_pct),
+                zscore_30d=float(zscore),
+                timestamp=time.time(),
+            )
+
+            with self._lock:
+                self._history[ticker].append(current)
+                self._cache[ticker] = (indicator, time.time())
+
+            return indicator
+        except Exception as e:
+            logger.warning(f"[P293][GCI] FRED fetch failed for {ticker}: {e}")
+            return None
+
     def _generate_mock_indicator(self, ticker: str) -> MacroIndicator:
         """
         Generate conservative mock data when yfinance unavailable.
@@ -428,8 +498,23 @@ class ETFFlowTracker:
     def _fetch_etf_data_sync(self, ticker: str, asset: str) -> Optional[ETFFlowData]:
         """Fetch ETF flow data synchronously."""
         if not YFINANCE_AVAILABLE:
-            return self._generate_mock_flow(ticker, asset)
-        
+            # [P293] REFUSE rather than fabricate. yfinance is absent from
+            # the engine image, so this branch is the only one that runs;
+            # returning a mock flow would feed invented ETF numbers into
+            # macro_regime the moment the GCI updater is driven. There is no
+            # FRED substitute for fund flows — the real ETF data lives in
+            # the P270 EtfFlowShadow (CoinGlass v4), which is a separate,
+            # observation-only stream. Absence must stay absence (P2).
+            _now = time.time()
+            if _now - getattr(self, "_etf_refuse_warn_time", 0.0) > 3600:
+                logger.warning(
+                    "[P293][GCI] yfinance unavailable -> NO ETF flow reading "
+                    "for %s. Flows are absent, NOT zero. Real ETF flow data "
+                    "is in the P270 EtfFlowShadow stream.", asset
+                )
+                self._etf_refuse_warn_time = _now
+            return None
+
         try:
             yf_ticker = yf.Ticker(ticker)
             info = yf_ticker.info
@@ -500,8 +585,21 @@ class ETFFlowTracker:
     def _calculate_streak(self, ticker: str, flow: float) -> int:
         """Calculate consecutive days of same-direction flow."""
         # Simplified streak tracking
+        # [P293b] NOTE the else-branch: any ticker NOT in the BTC list is
+        # treated as ETH. That is fine for the per-fund tickers this was
+        # written for, and WRONG for anything else — so asset-keyed callers
+        # must use _calculate_streak_for_asset below rather than inventing a
+        # synthetic ticker and landing in the ETH bucket by default.
         asset = 'BTC' if ticker in SPOT_ETF_TICKERS.get('BTC', []) else 'ETH'
-        
+        return self._calculate_streak_for_asset(asset, flow)
+
+    def _calculate_streak_for_asset(self, asset: str, flow: float) -> int:
+        """[P293b] Streak keyed by ASSET, not by ticker.
+
+        Same state and same rules as _calculate_streak — extracted so the
+        CoinGlass aggregate path cannot be mis-bucketed by the ticker
+        heuristic above (P172: one implementation, two entry points).
+        """
         with self._lock:
             current_streak = self._streak_tracker.get(asset, 0)
             
@@ -518,13 +616,86 @@ class ETFFlowTracker:
             
             return self._streak_tracker[asset]
     
+    def _fetch_aggregate_flow_coinglass(self, asset: str) -> Optional[ETFFlowData]:
+        """[P293b] ONE aggregate ETF flow record per asset, from CoinGlass.
+
+        yfinance is absent from the engine image, so the per-ticker path is
+        unavailable and previously fell back to a MOCK flow — which would
+        have injected invented fund flows into macro_regime the moment the
+        GCI updater was driven. Real daily ETF flows already arrive through
+        the P270 EtfFlowShadow (CoinGlass v4), so this REUSES that reader
+        rather than adding a second implementation of the same endpoint
+        (P172 single-source) — including its in-progress-day guard, which
+        only serves the newest COMPLETED UTC day (P253c).
+
+        Returns ONE record for the whole asset, deliberately: the caller
+        sums the list, so emitting one aggregate per *ticker* would multiply
+        the real flow by the number of tickers.
+
+        Returns None — never a placeholder — when the flow is unavailable or
+        stale, so absence stays absence (P2).
+        """
+        try:
+            from defense.etf_flow_shadow import EtfFlowShadow
+        except Exception:  # noqa: silent-swallow
+            return None
+
+        try:
+            if getattr(self, "_cg_etf_reader", None) is None:
+                self._cg_etf_reader = EtfFlowShadow(
+                    data_dir=os.environ.get("HMATS_DATA_DIR", "data"))
+            flow_usd, age_days, day_iso = \
+                self._cg_etf_reader.latest_completed_flow(asset)
+            if flow_usd is None:
+                return None
+            # A flow older than ~4 days is a reporting gap or an outage, not
+            # a reading about today (weekends legitimately reach ~3 days).
+            if age_days is not None and age_days > 4.0:
+                logger.warning(
+                    "[P293b][GCI] %s ETF flow is %.1f days old (%s) — treating "
+                    "as ABSENT rather than current", asset, age_days, day_iso)
+                return None
+            return ETFFlowData(
+                ticker=f"{asset}_AGGREGATE_COINGLASS",
+                asset=asset,
+                aum=0.0,          # not published by this endpoint; 0 = unknown
+                daily_flow=float(flow_usd),
+                flow_7d_ma=0.0,   # not computed here; the tracker owns streaks
+                flow_streak=0,
+                timestamp=time.time(),
+            )
+        except Exception as e:
+            logger.warning(
+                "[P293b][GCI] CoinGlass ETF aggregate failed for %s: %s: %s",
+                asset, type(e).__name__, e)
+            return None
+
     async def fetch_all_flows_async(self) -> Tuple[List[ETFFlowData], List[ETFFlowData]]:
         """Fetch all ETF flows asynchronously."""
         loop = asyncio.get_event_loop()
-        
-        btc_flows = []
-        eth_flows = []
-        
+
+        btc_flows: List[ETFFlowData] = []
+        eth_flows: List[ETFFlowData] = []
+
+        # [P293b] Without yfinance the per-ticker loop below can only refuse,
+        # so take the real aggregate from CoinGlass instead. Kept as an
+        # early return so the per-ticker path is untouched wherever yfinance
+        # IS available.
+        if not YFINANCE_AVAILABLE:
+            for _asset, _bucket in (("BTC", btc_flows), ("ETH", eth_flows)):
+                _agg = await loop.run_in_executor(
+                    None, self._fetch_aggregate_flow_coinglass, _asset)
+                if _agg is not None:
+                    _bucket.append(_agg)
+                    self._calculate_streak_for_asset(_asset, _agg.daily_flow)
+            logger.info(
+                "[P293b][GCI] ETF flows via CoinGlass aggregate: "
+                "BTC=%s ETH=%s",
+                f"{btc_flows[0].daily_flow:+,.0f}" if btc_flows else "absent",
+                f"{eth_flows[0].daily_flow:+,.0f}" if eth_flows else "absent",
+            )
+            return btc_flows, eth_flows
+
         # BTC ETFs
         for ticker in SPOT_ETF_TICKERS['BTC']:
             try:
@@ -708,6 +879,29 @@ class GlobalContextInformer:
             except Exception as e:
                 logger.error(f"Callback error: {e}")
     
+    async def update_if_stale(self) -> Optional[GlobalContextState]:
+        """[P293] Update only when the state is older than update_interval.
+
+        `update_async()` has NO caller anywhere in the non-test tree — the
+        live log has never once emitted "GlobalContext updated" — so every
+        consumer of `get_macro_signal()` has read the initial default state
+        for the life of the system. This is the throttled entry point a
+        caller can safely put on a per-asset tick.
+
+        Never raises: a macro refresh failing must not disturb a tick.
+        """
+        try:
+            _last = float(getattr(self._state, "last_update", 0.0) or 0.0)
+            _interval = float(getattr(self, "update_interval", 3600.0) or 3600.0)
+            if _last > 0.0 and (time.time() - _last) < _interval:
+                return self._state
+            return await self.update_async()
+        except Exception as e:
+            logger.warning(
+                f"[P293][GCI] update_if_stale failed: {type(e).__name__}: {e}"
+            )
+            return None
+
     async def update_async(self) -> GlobalContextState:
         """Perform full async update of global context."""
         start_time = time.perf_counter()

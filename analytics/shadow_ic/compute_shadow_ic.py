@@ -115,6 +115,12 @@ DEFAULT_MIN_IC_T_STAT = 2.0
 # requirement and promote on a statistically real but economically empty edge.
 DEFAULT_IC_FLOOR = 0.05
 
+# [P293g] Bars per day on the 4H cadence every ledger here is written at.
+# Used ONLY to express the sample requirement in days — the same value
+# `agents/kraken_quant_agent.BARS_PER_DAY_4H` uses, restated rather than
+# imported so this analytics tool keeps no dependency on an agent module.
+BARS_PER_DAY_4H = 6
+
 # E|z| for a standard normal: converts "correlation" into "expected return when
 # you take a full-size position on the sign of the signal".
 _SIGN_EDGE_FACTOR = math.sqrt(2.0 / math.pi)  # ~0.7979
@@ -216,7 +222,9 @@ def load_shadow_ledgers(
                                 "mlpshadow",  # [P284]
                                 # [P289] P288 trend-rule challengers
                                 "donchian", "emaens",
-                                "ma_filter"),
+                                "ma_filter",
+                                "whale_filter",  # [P293d option A]
+                                "sentvariant"),  # [P293e] 3 F&G readings
     since: Optional[datetime] = None,
 ) -> List[Dict[str, Any]]:
     """Read all matching JSONL files and return parsed records.
@@ -592,11 +600,28 @@ def assess_promotion(
             _n_req = int(math.ceil(
                 max(int(h), 1)
                 * ((min_ic_t_stat / max(abs(ic_h), 1e-9)) ** 2 + 1)))
+            # [P293g] Say it in DAYS as well as samples. The sample figure was
+            # already computed and nobody converted it, which is how ~14
+            # candidates came to sit on 30-DAY clocks against requirements
+            # that are often a YEAR at this horizon:
+            #   n_eff = n/h, t = IC*sqrt(n_eff-1), 6 bars/day at 4H
+            #   => an IC that only just meets the ECONOMIC bar (0.085 at 16h)
+            #      needs ~370 days; a 30-day window can only certify IC>=0.30.
+            # That makes the statistical bar ~3.6x stricter than the economic
+            # one at 16h, so a 30-day clock on a 16h claim is a check that
+            # cannot pass — the inverse of P174's check that cannot fail, and
+            # a defect by the same reasoning. Stating the requirement in the
+            # gate's own output is what stops the next clock being set blind.
+            _days_req = _n_req / float(BARS_PER_DAY_4H)
+            _days_have = n_h / float(BARS_PER_DAY_4H)
             blockers.append(
                 f"h={h}: IC {ic_h:+.4f} is {t_stat:.2f} SE from zero "
                 f"(need |t| >= {min_ic_t_stat}; n={n_h}, n_eff={n_eff} "
-                f"overlap-corrected, n_required~={_n_req})"
+                f"overlap-corrected, n_required~={_n_req} "
+                f"= ~{_days_req:,.0f}d of 4H bars vs ~{_days_have:,.0f}d held)"
             )
+            detail["days_required"] = round(_days_req, 1)
+            detail["days_held"] = round(_days_have, 1)
 
         # (1) Costs. Absent vol => FAIL CLOSED. A cost check that could not run
         # is not a cost check that passed (P159, P164).
@@ -766,7 +791,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--horizons", default="4,12,24",
                    help="forward-return horizons in 4H bars, comma-separated")
     p.add_argument("--prefixes",
-                   default="microstructure,cascade,funding,ml_factor,derivflow,regimebook,etfflow,stablecoinflow,oidiv,calbasis,xsmom,eventfilter,mlpshadow,donchian,emaens,ma_filter",  # [P199,P219,P236,P248,P270,P277,P284,P289]
+                   default="microstructure,cascade,funding,ml_factor,derivflow,regimebook,etfflow,stablecoinflow,oidiv,calbasis,xsmom,eventfilter,mlpshadow,donchian,emaens,whale_filter,sentvariant,ma_filter",  # [P199,P219,P236,P248,P270,P277,P284,P289,P293d]
                    help="ledger file prefixes")
     p.add_argument("--output", default=None,
                    help="optional JSON output path; defaults to analytics/shadow_ic/reports/")

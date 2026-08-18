@@ -199,6 +199,77 @@ class OptionsSentimentAgent:
         self._last_fetch_time = time.time()
         return result
 
+    def apply_external_pcr(
+        self,
+        asset: str,
+        pcr_oi: float,
+        pcr_vol: Optional[float] = None,
+        current_price: float = 0.0,
+    ) -> Optional[Dict[str, Any]]:
+        """[P293] Build a signal from an externally-sourced put/call ratio.
+
+        The CoinGlass v3 option paths this agent was written against all
+        return 404 (P218), so its own fetch can only ever produce the
+        neutral `put_call_ratio=1.0`. Deribit — where the crypto options
+        open interest actually sits — publishes the book for free, so the
+        ratio is available; only the SOURCE is different.
+
+        The conversion (z-score, thresholds, composite) deliberately lives
+        HERE and is reused verbatim rather than reimplemented at the call
+        site, so an external PCR and a native one can never be scored by
+        two different rules (P172 single-source).
+
+        Returns None — never a neutral dict — when the input is unusable,
+        so the caller can leave the previous reading alone instead of
+        overwriting it with a fabricated balance.
+
+        NOTE max_pain is genuinely unavailable (no working endpoint), so
+        mp_distance stays 0.0 and contributes nothing. That is an honest
+        absence, and `confidence` reflects it by counting fewer inputs.
+        """
+        asset = (asset or "").upper()
+        if asset not in self.SUPPORTED_ASSETS:
+            return None
+        try:
+            pcr = float(pcr_oi)
+        except (TypeError, ValueError):  # noqa: silent-swallow
+            # [P293] A non-numeric PCR is not a measurement; None lets the
+            # caller keep the previous reading instead of overwriting it.
+            return None
+        if not (pcr > 0.0) or pcr != pcr:
+            return None
+
+        try:
+            pvol = float(pcr_vol) if pcr_vol is not None else 1.0
+            if not (pvol > 0.0) or pvol != pvol:
+                pvol = 1.0
+        except (TypeError, ValueError):
+            pvol = 1.0
+
+        self._pcr_history[asset].append(pcr)
+        pcr_z = self._compute_zscore(pcr, self._pcr_history[asset])
+
+        # No max-pain source exists; 0.0 means "this leg contributed nothing".
+        mp_distance = 0.0
+        short_conf = self._compute_short_confirmation(pcr, pcr_z, mp_distance, pvol)
+
+        data_points = sum([pcr != 1.0, pvol != 1.0])
+        confidence = min(0.8, data_points * 0.25)
+
+        result = {
+            "put_call_ratio": round(pcr, 3),
+            "put_call_zscore": round(pcr_z, 3),
+            "max_pain_price": 0.0,
+            "max_pain_distance_pct": 0.0,
+            "options_futures_oi_ratio": 0.0,
+            "volume_put_call_ratio": round(pvol, 3),
+            "short_confirmation": round(short_conf, 3),
+            "confidence": round(confidence, 3),
+            "source": "options_sentiment_deribit",
+        }
+        self._last_result[asset] = result
+        return result
+
     def _compute_short_confirmation(
         self, pcr_oi: float, pcr_zscore: float, mp_distance: float, pcr_vol: float,
     ) -> float:

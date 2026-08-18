@@ -259,7 +259,38 @@ class FREDFeed:
     def get_latest(self) -> Optional[FREDMacroData]:
         """Get cached data."""
         return self._last_data
-    
+
+    def cache_age_sec(self) -> Optional[float]:
+        """Seconds since the last successful fetch, or None if never fetched.
+
+        [P293] None is deliberately distinct from a large number: "never
+        fetched" and "fetched a long time ago" have different fixes, and
+        collapsing them is how this feed's emptiness stayed invisible.
+        """
+        if self._last_fetch_time is None:
+            return None
+        _t = self._last_fetch_time
+        # [P40/P97] _last_fetch_time is aware on every current write path;
+        # defend anyway — a naive value here would raise inside whatever
+        # try block the caller happens to be in.
+        if _t.tzinfo is None:
+            _t = _t.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - _t).total_seconds()
+
+    async def fetch_if_stale(self) -> Optional[FREDMacroData]:
+        """Fetch only when the cache is older than poll_interval_sec.
+
+        [P293] The 4H tick loop runs this once per asset, so an unthrottled
+        fetch would spend 3x the requests per cycle for data that updates
+        daily. Throttling lives HERE rather than at the call site so a
+        second caller cannot drift from the first (P172 single-source).
+        """
+        _age = self.cache_age_sec()
+        if _age is not None and _age < self.poll_interval_sec:
+            return self._last_data
+        return await self.fetch()
+
+
     def get_macro_context(self) -> Dict[str, Any]:
         """
         Get macro context in the required v6.5 format.

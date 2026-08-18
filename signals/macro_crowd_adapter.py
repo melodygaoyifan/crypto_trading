@@ -219,6 +219,37 @@ class MacroCrowdAdapter:
             logger.warning(f"[MACRO_CROWD_ADAPTER] compute failed: {e}, using safe defaults")
             return MacroCrowdOutput().to_dict()
     
+    def feed_provenance(self) -> Dict[str, bool]:
+        """Which upstream feeds actually hold data RIGHT NOW.
+
+        [P293] compute() ALWAYS returns a fully-populated dict — the neutral
+        defaults (macro_risk=0.5, attention_pressure=0.5, panic=0.0) are
+        indistinguishable BY SHAPE from real readings. So the caller's
+        `if adapter_context.get("macro")` test is True unconditionally, and
+        the source_status="available" it sets is a constant wearing a
+        measurement's name (the P2/P174 missing-vs-neutral collapse).
+
+        This reports the only thing that separates the two cases: whether
+        the underlying feed has ever successfully cached anything. It reads
+        state, never fetches — safe to call on the hot path.
+        """
+        def _has(feed: Any) -> bool:
+            if feed is None:
+                return False
+            try:
+                return feed.get_latest() is not None
+            except Exception:  # noqa: silent-swallow
+                # A feed whose accessor raises cannot be certified as
+                # holding data; absence is the safe reading (P2).
+                return False
+
+        return {
+            "fred": _has(self._fred_feed),
+            "coinglass": _has(self._coinglass_feed),
+            "lunarcrush": _has(self._lunarcrush_feed),
+            "cryptopanic": _has(self._cryptopanic_feed),
+        }
+
     def inject_into_context(
         self,
         context: Dict[str, Any],

@@ -37,6 +37,41 @@ from collections import deque
 logger = logging.getLogger(__name__)
 
 
+# [P293b] Pure helpers for the monthly-quota case — unit-testable without a
+# live session, so the distinction between "rate limited for a moment" and
+# "out of budget until the month rolls" can be pinned by test.
+
+_MONTHLY_QUOTA_MARKERS = (
+    "monthly quota",
+    "monthly limit",
+    "quota exceeded",
+)
+
+
+def _is_monthly_quota_error(body: str) -> bool:
+    """True when a 429 body says the MONTHLY allowance is spent.
+
+    Deliberately conservative: an unrecognised 429 falls through to the
+    ordinary short backoff, because mistaking a transient rate limit for a
+    month-long outage would silence the feed for weeks. The failure
+    direction is "retry sooner than necessary", never "go dark by mistake".
+    """
+    if not body:
+        return False
+    low = body.lower()
+    return any(m in low for m in _MONTHLY_QUOTA_MARKERS)
+
+
+def _next_month_start_utc(now: datetime) -> datetime:
+    """00:00 UTC on the 1st of the following month."""
+    year, month = now.year, now.month
+    if month == 12:
+        year, month = year + 1, 1
+    else:
+        month += 1
+    return datetime(year, month, 1, tzinfo=timezone.utc)
+
+
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
@@ -568,6 +603,51 @@ class CryptoPanicFeed:
                             retry_after_sec = max(int(float(retry_after)), 60)
                         except (TypeError, ValueError):
                             retry_after_sec = 900
+
+                    # [P293b] A MONTHLY QUOTA is not a rate limit, and
+                    # treating it as one is why this looked like a recurring
+                    # incident. CryptoPanic returns 429 with NO Retry-After
+                    # and a body reading "API monthly quota exceeded", so the
+                    # 900s default above had the engine re-asking every 15
+                    # minutes for the REST OF THE MONTH — ~2,900 pointless
+                    # requests, each logging a warning that reads like a
+                    # transient fault (the P202 alert-fatigue shape).
+                    #
+                    # Quota exhaustion resolves on the calendar, not on a
+                    # timer: back off to the 1st of next month UTC, and say
+                    # once, plainly, that this is a BUDGET state requiring a
+                    # plan decision — the same language the P220 CryptoCompare
+                    # guard uses, for the same reason.
+                    _quota_exhausted = False
+                    try:
+                        _body = (await resp.text())[:400]
+                    except Exception:  # noqa: silent-swallow
+                        _body = ""
+                    if _body and _is_monthly_quota_error(_body):
+                        _quota_exhausted = True
+                        _now = datetime.now(timezone.utc)
+                        self._backoff_until = _next_month_start_utc(_now)
+                        self._persist_state()
+                        if not getattr(self, "_quota_warned_month", None) == (
+                            _now.year, _now.month
+                        ):
+                            self._quota_warned_month = (_now.year, _now.month)
+                            logger.error(
+                                "[CRYPTOPANIC] MONTHLY QUOTA EXHAUSTED for "
+                                "%04d-%02d — the API says: %s. Backing off "
+                                "until %s (quota resets on the calendar, not "
+                                "on a timer). This is a BUDGET/PLAN decision, "
+                                "NOT a market condition and NOT a transient "
+                                "fault: llm_sentiment will report "
+                                "headlines=0 until the month rolls or the "
+                                "plan is upgraded. Serving the cached corpus "
+                                "meanwhile.",
+                                _now.year, _now.month,
+                                _body.strip()[:160],
+                                self._backoff_until.isoformat(),
+                            )
+                        return []
+
                     self._backoff_until = datetime.now(timezone.utc) + timedelta(seconds=retry_after_sec)
                     # [P154] Persist the backoff IMMEDIATELY. _fetch_real's
                     # checkpoint is not enough: if the process dies between the

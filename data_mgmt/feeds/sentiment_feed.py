@@ -214,10 +214,29 @@ class SentimentFeed:
         self._running = False
         logger.info("SentimentFeed stopped")
     
+    async def fetch_if_stale(self) -> Optional[SentimentTick]:
+        """[P293f] Fetch only when the cache is older than poll_interval_sec.
+
+        The Fear & Greed index updates ONCE PER DAY, and the tick loop calls
+        this once per ASSET — so a value that changes daily was being
+        re-requested ~18 times a day. alternative.me exposes no ETag or
+        Last-Modified (probed 2026-08-17), so a conditional GET is not
+        available and client-side TTL is the correct instrument.
+
+        Deliberately does NOT change the caller's semantics: a stale cache
+        still returns the last tick, so a throttled call is indistinguishable
+        downstream from a fetched one except in request count.
+        """
+        from data_mgmt.feeds._http import cache_age_seconds
+        _age = cache_age_seconds(self._last_fetch_time)
+        if _age is not None and _age < float(self.poll_interval_sec or 0):
+            return self._last_tick
+        return await self.fetch()
+
     async def fetch(self) -> Optional[SentimentTick]:
         """
         获取最新舆情数据
-        
+
         Returns:
             SentimentTick: 标准化舆情数据
         """

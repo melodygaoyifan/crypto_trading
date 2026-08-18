@@ -1429,6 +1429,67 @@ async def fetch_headlines_with_meta(
         except Exception as _cc_err:
             meta["cc_news_error"] = str(_cc_err)[:100]
 
+        # [P293c][RSS_BLEND] Third source: public RSS. Free, keyless and
+        # unquota'd, which matters because BOTH paid sources are currently
+        # dark — CryptoPanic on a monthly-quota 429 until the month rolls,
+        # CryptoCompare at 90/90 on an account cap that cannot be raised —
+        # and `headline_count == 0` is what makes llm_sentiment untradeable
+        # (main.py's _c3_live gate).
+        #
+        # Deliberately LAST and additive: it can only add headlines the two
+        # curated sources did not supply, never displace them. Same dedup
+        # and the SAME time window as the other two (P265) — an RSS item
+        # older than the window is aged out exactly like a CC News one, so
+        # this cannot satisfy the starvation gate with stale copy.
+        try:
+            from data_mgmt.feeds.rss_news_feed import get_rss_news_feed
+            _rss = get_rss_news_feed()
+            await _rss.fetch_if_stale()
+            _rss_added = 0
+            _rss_aged_out = 0
+            _rss_undated = 0
+            for ri in _rss.get_items(asset):
+                tl = (ri.title or "").strip().lower()
+                if not tl or tl in seen_titles:
+                    continue
+                if ri.published_at is None:
+                    # Unknown age: keep (a headline with no date still beats
+                    # no coverage) but count it separately so a feed that
+                    # stops dating its items cannot silently pass as fresh.
+                    _rss_undated += 1
+                    meta["window_unknown"] = True
+                elif ri.published_at < cutoff:
+                    _rss_aged_out += 1
+                    continue
+                else:
+                    age_s = (now - ri.published_at).total_seconds()
+                    if newest_age is None or age_s < newest_age:
+                        newest_age = age_s
+                seen_titles.add(tl)
+                headlines.append(ri.title)
+                _rss_added += 1
+            meta["rss_added"] = _rss_added
+            meta["rss_aged_out"] = _rss_aged_out
+            meta["rss_undated"] = _rss_undated
+            meta["headlines"] = headlines[:50]
+            if newest_age is not None:
+                meta["newest_headline_age_s"] = round(newest_age, 1)
+            if _rss_added:
+                logger.info(
+                    "[RSS_BLEND] %s: +%d headline(s) from public RSS "
+                    "(aged_out=%d undated=%d, total=%d)",
+                    asset, _rss_added, _rss_aged_out, _rss_undated,
+                    len(meta["headlines"]),
+                )
+        except Exception as _rss_err:
+            meta["rss_error"] = str(_rss_err)[:100]
+
+        # The blend may have supplied what the primary could not — clear a
+        # stale "empty" verdict so the caller does not read starvation off a
+        # now-populated list.
+        if meta.get("headlines") and meta.get("error") == "empty_cache":
+            meta["error"] = ""
+
         return meta
     except Exception as e:
         meta["error"] = str(e)[:100]

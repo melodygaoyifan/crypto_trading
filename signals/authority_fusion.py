@@ -106,6 +106,23 @@ class FusionResult:
 
     # [FIX-4] Fusion confidence - independent of caps/vetoes
     confidence: float = 0.5
+
+    # [P293d option C] The CONVICTION RATIO: final base_exposure divided by
+    # the pre-modulation baseline, i.e. everything the CONFIRM / HTF /
+    # PARTIAL-CONSENSUS / ADVISE / CAP layers did, expressed as one number
+    # in [0, 1+]. 1.0 = untouched.
+    #
+    # Why it exists: those layers are the ONLY channel 22 of the 26 agents
+    # have (LAYER 3 sets direction from DECIDE agents alone), and their work
+    # is discarded twice downstream — the tranche overwrites
+    # intent.target_exposure at integration_v36.py:1678, and the sleeve
+    # sizes by SIGN. Carrying the ratio separately lets a consumer opt into
+    # that information WITHOUT reverting Bug #44, which was itself a real
+    # fix (it stopped an unchecked 80% fusion exposure reaching the risk
+    # governor).
+    #
+    # Recording it is free and changes nothing on its own.
+    fusion_conviction: float = 1.0
     
     # Authority tracking
     decider_agent: str = ""
@@ -701,6 +718,9 @@ class AuthorityFusionEngine:
         # [FIX-L1] Base exposure from confidence, with configurable scale factor
         _conf_to_exp_factor = getattr(self, 'confidence_to_exposure_factor', 1.0)
         base_exposure = decider_signal.confidence * _conf_to_exp_factor
+        # [P293d option C] Baseline for the conviction ratio, captured BEFORE
+        # any CONFIRM / HTF / consensus / ADVISE / CAP modulation.
+        _p293_exposure_baseline = float(base_exposure)
 
         # --- [v9-PATCH-6] Reliability-based authority downgrade ---
         _PATCH_6_ACTIVE = True  # [FIX-L1-03] Activated: confidence-based authority adjustment
@@ -1063,6 +1083,19 @@ class AuthorityFusionEngine:
         
         result.caps_applied = caps_applied
         result.target_exposure = base_exposure
+        # [P293d option C] Everything layers 4-6 did, as one ratio. A zero or
+        # non-finite baseline yields 1.0 ("no information"), never a divide
+        # blow-up and never a fabricated 0.0 — a conviction of 0 would read
+        # as "every advisor said flat", which is a very different claim from
+        # "the baseline was unusable" (P2).
+        try:
+            if _p293_exposure_baseline > 1e-9:
+                _p293_conv = float(base_exposure) / _p293_exposure_baseline
+                if _p293_conv == _p293_conv and _p293_conv not in (
+                        float("inf"), float("-inf")):
+                    result.fusion_conviction = max(0.0, min(2.0, _p293_conv))
+        except (TypeError, ValueError, ZeroDivisionError):  # noqa: silent-swallow
+            pass  # keep the 1.0 default: "no modulation information"
 
         # [FIX-4] Compute fusion confidence: decider conf × confirm penalty
         _fusion_conf = decider_signal.confidence

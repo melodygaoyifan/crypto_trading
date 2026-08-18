@@ -14,11 +14,60 @@ from aiohttp.resolver import ThreadedResolver
 logger = logging.getLogger(__name__)
 
 
+# [P293b] Cloudflare-fronted vendors (CryptoPanic among them) reject clients
+# by signature. Probed live from the server: a request with the default
+# stdlib/urllib User-Agent returns HTTP 403 "error code: 1010" — Cloudflare's
+# banned-client-signature code — while the SAME url with any ordinary UA
+# reaches the API. That 403 is a different failure from a rate limit and
+# would keep a feed dark even with quota available, so every session this
+# factory builds now identifies itself.
+DEFAULT_USER_AGENT = "hmats/6.8 (automated trading system; contact: operator)"
+
+
 def create_session(**kwargs) -> aiohttp.ClientSession:
     """Create aiohttp.ClientSession with ThreadedResolver for Windows DNS fix."""
     connector = aiohttp.TCPConnector(resolver=ThreadedResolver())
     kwargs.setdefault("timeout", aiohttp.ClientTimeout(total=10))
-    return aiohttp.ClientSession(connector=connector, **kwargs)
+    # [P293b] Caller-supplied headers win; only fill the UA if absent.
+    _headers = dict(kwargs.pop("headers", None) or {})
+    if not any(k.lower() == "user-agent" for k in _headers):
+        _headers["User-Agent"] = DEFAULT_USER_AGENT
+    return aiohttp.ClientSession(connector=connector, headers=_headers, **kwargs)
+
+
+def cache_age_seconds(last_fetch, now=None):
+    """[P293f] Age of a cache stamp in seconds, or None if never fetched.
+
+    Shared so the fetch-throttle pattern has ONE definition instead of the
+    sixth hand-rolled copy (P172). Accepts a datetime (aware or naive) or a
+    float epoch, because the feeds in this package use both.
+
+    None means "never fetched" and is deliberately distinct from a large
+    number: those have different causes and different fixes, and collapsing
+    them is how several feeds' permanently-empty caches stayed invisible.
+    """
+    import datetime as _dt
+    if last_fetch is None:
+        return None
+    try:
+        if isinstance(last_fetch, (int, float)):
+            if last_fetch <= 0:
+                return None
+            base = _dt.datetime.fromtimestamp(last_fetch, tz=_dt.timezone.utc)
+        else:
+            base = last_fetch
+            if base.tzinfo is None:   # [P40/P97] naive/aware defence
+                base = base.replace(tzinfo=_dt.timezone.utc)
+        ref = now or _dt.datetime.now(_dt.timezone.utc)
+        if ref.tzinfo is None:
+            ref = ref.replace(tzinfo=_dt.timezone.utc)
+        return (ref - base).total_seconds()
+    except (TypeError, ValueError, OverflowError, OSError):  # noqa: silent-swallow
+        # [P293f] An unreadable stamp is "age unknown" -> None, which every
+        # caller treats as "never fetched" and therefore FETCHES. The fail
+        # direction is deliberately toward doing the work, never toward
+        # silently serving a stale cache forever.
+        return None
 
 
 def strip_tz(dt):

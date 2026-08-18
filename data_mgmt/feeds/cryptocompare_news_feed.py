@@ -112,6 +112,51 @@ class CCNewsFeed:
                 logger.warning(
                     f"[CC_NEWS] restored 429 backoff: {_left / 60.0:.1f} min "
                     f"remaining — not calling the API until it expires")
+
+            # [P293b] Restore the CACHE (timestamp + items), not just the
+            # backoff. The 12h throttle is `now - cached[0] < MIN_FETCH_
+            # INTERVAL`, and `self._cache` was RAM-only — so every process
+            # start missed the cache and spent a call against an account
+            # capped at 100/MONTH. Measured: 14 process starts across the
+            # retained logs, and the shared budget was exhausted by Aug 10,
+            # nine days into the month. Restoring the timestamp alone would
+            # leave `cached` falsy and the throttle unable to bind, so the
+            # items come back too.
+            _cache = st.get("cache") or {}
+            if isinstance(_cache, dict):
+                for _cat, _entry in _cache.items():
+                    try:
+                        _ts = float(_entry.get("ts") or 0.0)
+                        if _ts <= 0.0:
+                            continue
+                        _items = []
+                        for _r in (_entry.get("items") or []):
+                            _pub = _r.get("published_at")
+                            _dt = (datetime.fromisoformat(_pub) if _pub
+                                   else datetime.now(timezone.utc))
+                            if _dt.tzinfo is None:
+                                _dt = _dt.replace(tzinfo=timezone.utc)
+                            _items.append(CCNewsItem(
+                                id=int(_r.get("id", 0) or 0),
+                                title=str(_r.get("title", "")),
+                                body=str(_r.get("body", "")),
+                                url=str(_r.get("url", "")),
+                                source=str(_r.get("source", "")),
+                                published_at=_dt,
+                                categories=list(_r.get("categories") or []),
+                                sentiment=str(_r.get("sentiment", "NEUTRAL")),
+                            ))
+                        self._cache[str(_cat)] = (_ts, _items)
+                    except (TypeError, ValueError, AttributeError):  # noqa: silent-swallow
+                        continue  # one corrupt category must not lose the rest
+                if self._cache:
+                    _newest = max(v[0] for v in self._cache.values())
+                    logger.info(
+                        f"[CC_NEWS] restored cache: {len(self._cache)} "
+                        f"category(ies), age "
+                        f"{(time.time() - _newest) / 3600.0:.1f}h of "
+                        f"{MIN_FETCH_INTERVAL / 3600.0:.0f}h — this restart "
+                        f"will NOT re-spend account quota")
         except Exception as e:  # noqa: silent-swallow — a bad state file must not break startup
             logger.warning(f"[CC_NEWS] state restore failed: {type(e).__name__}: {e}")
 
@@ -125,8 +170,34 @@ class CCNewsFeed:
             os.makedirs(os.path.dirname(p) or ".", exist_ok=True)
             tmp = p + ".tmp"
             with open(tmp, "w", encoding="utf-8") as fh:
+                # [P293b] Persist the cache with the backoff so the 12h
+                # throttle survives a restart (see _restore_state). Bodies
+                # are truncated to keep the state file small; only the
+                # timestamp is load-bearing for quota protection.
+                _cache_out = {}
+                for _cat, _entry in (self._cache or {}).items():
+                    try:
+                        _ts, _items = _entry
+                    except (TypeError, ValueError):  # noqa: silent-swallow
+                        continue
+                    _cache_out[str(_cat)] = {
+                        "ts": float(_ts),
+                        "items": [{
+                            "id": getattr(i, "id", 0),
+                            "title": getattr(i, "title", "")[:300],
+                            "body": getattr(i, "body", "")[:500],
+                            "url": getattr(i, "url", ""),
+                            "source": getattr(i, "source", ""),
+                            "published_at": (
+                                i.published_at.isoformat()
+                                if getattr(i, "published_at", None) else None),
+                            "categories": list(getattr(i, "categories", []) or []),
+                            "sentiment": getattr(i, "sentiment", "NEUTRAL"),
+                        } for i in (_items or [])[:20]],
+                    }
                 _json.dump({"state_version": self._STATE_VERSION,
                             "backoff_until": self._backoff_until,
+                            "cache": _cache_out,
                             "saved_ts": time.time()}, fh)
             os.replace(tmp, p)
         except Exception as e:  # noqa: silent-swallow — telemetry must not break the tick
@@ -245,6 +316,10 @@ class CCNewsFeed:
                 f"[CC_NEWS] 1 call served {len(TRACKED_CATEGORIES)} assets: "
                 + ", ".join(f"{c}={len(self._cache[c][1])}" for c in TRACKED_CATEGORIES)
             )
+            # [P293b] Persist on SUCCESS, not only on 429. Without this the
+            # restored cache would always be empty and the 12h throttle could
+            # never bind across a restart.
+            self._persist_state()
             return self._cache.get(cache_key, (now, items))[1]
         except Exception as e:
             self._last_error = str(e)

@@ -191,6 +191,10 @@ class CoinbaseSleeve:
         self._last_dd_pct: float = 0.0  # [P265] last real dd; served when equity is unknown
         self._max_contracts_per_asset = int(max_contracts_per_asset)
         self._sleeve_start_equity: Optional[float] = None
+        # [P293h] cumulative deposits/withdrawals, excluded from PnL
+        self._external_flow_usd: float = 0.0
+        self._last_equity_for_flow: Optional[float] = None
+        self._last_equity_for_flow_ts: Optional[float] = None  # [P294]
         self._halted: bool = False
         self._halt_reason: str = ""
         # [P150] persist the risk baseline + halt across restarts. Without this
@@ -876,6 +880,24 @@ class CoinbaseSleeve:
                 return
             se = st.get("sleeve_start_equity")
             self._sleeve_start_equity = float(se) if se is not None else None
+            try:  # [P293h] cumulative external transfers
+                self._external_flow_usd = float(
+                    st.get("external_flow_usd") or 0.0)
+            except (TypeError, ValueError):  # noqa: silent-swallow
+                self._external_flow_usd = 0.0
+            try:  # [P294] flow reference across restarts (see _detect_external_flow)
+                _lef = st.get("last_equity_for_flow")
+                self._last_equity_for_flow = (
+                    float(_lef) if _lef is not None else None)
+                _lts = st.get("last_equity_for_flow_ts")
+                self._last_equity_for_flow_ts = (
+                    float(_lts) if _lts is not None else None)
+            except (TypeError, ValueError):  # noqa: silent-swallow
+                # An unreadable reference means "no reference": the next tick
+                # takes the prev-is-None path and simply re-anchors. Never
+                # fabricate one — a wrong reference invents a transfer.
+                self._last_equity_for_flow = None
+                self._last_equity_for_flow_ts = None
             self._halted = bool(st.get("halted", False))
             self._halt_reason = str(st.get("halt_reason", "") or "")
             logger.info(
@@ -895,6 +917,19 @@ class CoinbaseSleeve:
             with open(tmp, "w", encoding="utf-8") as fh:
                 json.dump({
                     "sleeve_start_equity": self._sleeve_start_equity,
+                    # [P293h] without this a restart forgets the
+                    # transfer and re-books it as profit
+                    "external_flow_usd": getattr(
+                        self, "_external_flow_usd", 0.0),
+                    # [P294] Persisting the flow reference is what makes a
+                    # transfer during DOWNTIME detectable. Without it a fresh
+                    # process always took the `prev is None` early return, so
+                    # the common operational sequence (wire the funds, then
+                    # restart) was exactly the one the detector was blind to.
+                    "last_equity_for_flow": getattr(
+                        self, "_last_equity_for_flow", None),
+                    "last_equity_for_flow_ts": getattr(
+                        self, "_last_equity_for_flow_ts", None),
                     "halted": self._halted,
                     "halt_reason": self._halt_reason,
                     "base_version": self._BASE_VERSION,
@@ -913,18 +948,150 @@ class CoinbaseSleeve:
                 f"({type(e).__name__}: {e}) — halted={self._halted}: if the "
                 f"halt is tripped it will NOT survive a restart")
 
+    # [P293h] A per-tick equity step larger than this multiple of the current
+    # position notional cannot be trading PnL on a few nano contracts. Set
+    # deliberately high (a 50% adverse move on the whole book in one 4H tick
+    # is already extreme) so ONLY unmistakable transfers are caught.
+    FLOW_DETECT_NOTIONAL_MULT = 0.5
+    # Floor for the flat/near-flat case: with no position, ANY material
+    # equity change is a transfer or a fee, and fees are cents.
+    FLOW_DETECT_MIN_USD = 200.0
+
+    def _position_notional_usd(self) -> float:
+        """Best-effort USD notional of the current book. 0.0 if unknown.
+
+        Uses the adapter's contract size — the same source `_sizing_inputs`
+        uses — so the detector and the sizer agree on what a contract is
+        worth (P172). An unpriceable leg contributes 0, which makes the
+        detector MORE conservative: a smaller notional means a smaller
+        allowed PnL step, so an ambiguous case is more likely to be left
+        classified as PnL rather than silently adjusted away.
+        """
+        total = 0.0
+        for a, p in (self._last_positions or {}).items():
+            try:
+                ct = abs(_f(p.get("signed_contracts")))
+                px = _f(p.get("current_price")) or _f(p.get("entry_vwap"))
+                if not (ct and px):
+                    continue
+                cs = 0.0
+                try:
+                    from exchange.symbol_mapping import to_venue_symbol
+                    _pid = to_venue_symbol(a, "coinbase", "perp")
+                    cs = _f(self._adapter._contract_size(_pid))
+                except Exception:  # noqa: silent-swallow — see docstring
+                    cs = 0.0
+                if cs:
+                    total += ct * px * cs
+            except Exception:  # noqa: silent-swallow — see docstring
+                continue
+        return total
+
+    # [P294] The reference equity is compared across whatever gap actually
+    # elapsed, including a restart. A longer gap can accumulate more honest
+    # PnL, so the allowed step scales with elapsed 4H periods — capped, or a
+    # long outage would widen the bound until nothing is ever detected.
+    FLOW_DETECT_MAX_PERIODS = 12.0   # ~2 days of 4H bars
+
+    def _detect_external_flow(self, eq: float, now: Optional[float] = None) -> float:
+        """[P293h] Return the size of an unmistakable capital transfer, else 0.
+
+        Returns 0.0 whenever the step is explainable as trading PnL, or when
+        there is no previous equity to compare against. Never guesses.
+
+        [P294] The reference is PERSISTED, so a transfer that lands while the
+        process is DOWN is detected on the next start. That is not an edge
+        case: the wire is a manual operator step (P274) and deploys are
+        frequent, so "deposit, then restart" is the NORMAL sequence — and it
+        was the one sequence the original detector could not see, because
+        `_last_equity_for_flow` lived only in RAM and a fresh process always
+        took the `prev is None` early return.
+
+        The tolerance widens with the elapsed gap (see FLOW_DETECT_MAX_PERIODS)
+        because a multi-day outage can accumulate more mark-to-market than one
+        4H tick. Widening is the CONSERVATIVE direction here: the failure mode
+        it protects is "silently reclassify real PnL as a transfer", which
+        would hide a loss.
+        """
+        prev = getattr(self, "_last_equity_for_flow", None)
+        if prev is None or not (prev > 0) or not (eq > 0):
+            return 0.0
+        step = eq - prev
+        notional = self._position_notional_usd()
+        periods = 1.0
+        _prev_ts = getattr(self, "_last_equity_for_flow_ts", None)
+        if _prev_ts:
+            try:
+                _elapsed_h = max(0.0, ((now or time.time()) - float(_prev_ts))) / 3600.0
+                periods = min(self.FLOW_DETECT_MAX_PERIODS,
+                              max(1.0, _elapsed_h / 4.0))
+            except (TypeError, ValueError):  # noqa: silent-swallow
+                periods = 1.0  # [P294] unreadable stamp -> the tight bound
+        limit = max(self.FLOW_DETECT_MIN_USD,
+                    notional * self.FLOW_DETECT_NOTIONAL_MULT * periods)
+        if abs(step) <= limit:
+            return 0.0
+        return step
+
     def log_pnl_point(self) -> Dict[str, Any]:
         """[P150] Append one forward-PnL record to a JSONL so the sleeve's live
         edge can be JUDGED on real data (not a backtest) over days/weeks. Returns
         the record. Call once per tick. Best-effort; never raises to the caller."""
         eq = self.sleeve_equity_usd()
         start = self._sleeve_start_equity
-        pnl_usd = (eq - start) if (start is not None) else 0.0
-        pnl_pct = (pnl_usd / start) if (start and start > 0) else 0.0
+
+        # [P293h] SUBTRACT EXTERNAL CAPITAL FLOWS. `pnl = eq - start` counts a
+        # DEPOSIT as profit. Measured on the live ledger 2026-08-17: after the
+        # 2026-08-16 deposit of $7,074 this reported **+$6,850 (+171%)** while
+        # actual trading PnL over the same 65 days was **-$225 (-6.3%)** — a
+        # 177-percentage-point misreport, in the flattering direction, on the
+        # one number that answers "is this strategy making money".
+        #
+        # P274/P287 documented the WITHDRAWAL direction (it reads as drawdown
+        # against the sticky halt anchor) and prescribed a manual re-anchor;
+        # the deposit direction was never handled, and the manual step was not
+        # performed for this deposit. So the anchor is stale and the ledger
+        # has been wrong since.
+        #
+        # Detection is bounded, not clever: this sleeve holds at most a few
+        # nano contracts, so the largest per-tick PnL physically possible is a
+        # fraction of the position notional. An equity step far exceeding that
+        # cannot be trading PnL and is a transfer. Ambiguous steps are NEVER
+        # classified as flows — the failure direction is "keep counting it as
+        # PnL", i.e. the honest-but-noisy reading, never a silent adjustment
+        # that could hide a real loss.
+        _flow = self._detect_external_flow(eq)
+        if _flow:
+            self._external_flow_usd = getattr(self, "_external_flow_usd", 0.0) + _flow
+            logger.warning(
+                "[P293h] EXTERNAL CAPITAL FLOW detected: %+,.2f USD "
+                "(equity %,.2f -> %,.2f). Excluded from PnL; cumulative "
+                "flow now %+,.2f. Trading PnL is measured NET of transfers.",
+                _flow, self._last_equity_for_flow or 0.0, eq,
+                self._external_flow_usd)
+            self._persist_state()
+        self._last_equity_for_flow = eq
+        self._last_equity_for_flow_ts = time.time()
+        if not _flow:
+            # [P294] Keep the reference fresh on ordinary ticks too. Persisting
+            # only when a flow fires would leave a stale stamp behind, and the
+            # elapsed-gap tolerance is computed FROM that stamp — an old one
+            # widens the bound and blinds the next detection. One small atomic
+            # write per 4H tick; the flow branch above already persisted.
+            self._persist_state()
+
+        _flows = float(getattr(self, "_external_flow_usd", 0.0) or 0.0)
+        pnl_usd = (eq - start - _flows) if (start is not None) else 0.0
+        # Percent is against invested capital (start + net deposits), not the
+        # original anchor — otherwise a deposit shrinks the denominator's
+        # meaning and the ratio stops being comparable over time.
+        _basis = (start + _flows) if start is not None else 0.0
+        pnl_pct = (pnl_usd / _basis) if _basis > 0 else 0.0
         rec = {
             "ts": time.time(),
             "equity_usd": round(eq, 2),
             "start_equity_usd": round(start, 2) if start is not None else None,
+            "external_flow_usd": round(_flows, 2),
             "pnl_usd": round(pnl_usd, 2),
             "pnl_pct": round(pnl_pct, 4),
             "buying_power_usd": round(self._last_buying_power_usd, 2),
@@ -956,7 +1123,8 @@ class CoinbaseSleeve:
         return 0
 
     def target_for(self, asset: str, direction: float,
-                   threshold: float = 0.15) -> int:
+                   threshold: float = 0.15,
+                   conviction: float = 1.0) -> int:
         """[P273] SIZED per-asset target: sign from target_for_signal x the
         configured per-asset size. The configured cap IS the target — the
         book runs at full configured size or flat/reversed; partial sizes
@@ -966,7 +1134,16 @@ class CoinbaseSleeve:
         as much money as possible"), bounded by the STANDING policy caps —
         can_trade's per-asset cap, the P208 net budget (0.50) and the P210
         gross caps all still gate every order independently. getattr-
-        defended: live order path (P85)."""
+        defended: live order path (P85).
+
+        [P293d option C] `conviction` is the "conviction-magnitude input the
+        +/-1-era driver never had" this docstring names above. It is the ONLY
+        channel by which the 22 non-DECIDE agents can reach an order: their
+        entire output is exposure modulation, which is discarded twice
+        downstream (the tranche overwrite at integration_v36.py:1678, then
+        this method's sign-based sizing). Default 1.0 is byte-identical to
+        every prior release; it only ever REDUCES magnitude (advisors may
+        express doubt, never leverage) and never changes the sign."""
         sign = self.target_for_signal(direction, threshold)
         if sign == 0:
             return 0
@@ -998,11 +1175,35 @@ class CoinbaseSleeve:
                 _cur = float(self.signed_contracts(asset) or 0.0)
             except Exception:  # noqa: silent-swallow — an unreadable current position just skips damping; the raw sized target is the pre-P287 behavior
                 _cur = 0.0
+            sized = self._apply_conviction(sized, conviction)
+            if sized == 0:
+                return 0
             return self._dampen_boundary_step(_cur, sign * sized, fr, eq,
                                               one_ct)
         fixed = int(getattr(self, "_max_contracts_by_asset", {}).get(
             asset, 1) or 1)
-        return sign * max(1, fixed)
+        fixed = self._apply_conviction(max(1, fixed), conviction)
+        return sign * fixed
+
+    @staticmethod
+    def _apply_conviction(size: int, conviction: float) -> int:
+        """[P293d option C] Scale a POSITIVE contract count by conviction.
+
+        Fail direction is deliberate and one-way: anything unusable
+        (non-numeric, NaN, inf, negative) returns the size UNCHANGED rather
+        than 0, because a fabricated 0 reads as "every advisor said flat"
+        — a very different claim from "the ratio was unreadable" (P2).
+        Values above 1.0 are clamped: this channel expresses doubt, not
+        leverage.
+        """
+        try:
+            c = float(conviction)
+        except (TypeError, ValueError):  # noqa: silent-swallow
+            return int(size)
+        if c != c or c in (float("inf"), float("-inf")) or c < 0.0:
+            return int(size)
+        c = min(1.0, c)
+        return max(0, min(int(size), int(round(int(size) * c))))
 
     @staticmethod
     def _dampen_boundary_step(cur: float, proposed: int, fr: float,
@@ -1092,7 +1293,8 @@ class CoinbaseSleeve:
         return max(1, int(fr * eq / one_ct))
 
     async def manage_to_signal(self, asset: str, direction: float,
-                               threshold: float = 0.15) -> Dict[str, Any]:
+                               threshold: float = 0.15,
+                               conviction: float = 1.0) -> Dict[str, Any]:
         """Per-tick driver: move `asset` to the contract target implied by the
         fused direction (incl. flatten on hold). The SOLE Coinbase order path —
         called every tick for routed assets so positions are actively managed
@@ -1110,7 +1312,8 @@ class CoinbaseSleeve:
             # the streak pauses rather than resets.
             return {"status": "SKIPPED_STALE", "asset": asset,
                     "reason": "reconcile_failed"}
-        target = self.target_for(asset, direction, threshold)  # [P273] sized
+        # [P273] sized; [P293d] conviction defaults to 1.0 = unchanged
+        target = self.target_for(asset, direction, threshold, conviction)
         # [P198] Flip-persistence: an opposing target against a LIVE position
         # must persist `_flip_persist_ticks` consecutive ticks before the flip
         # executes; until then, hold the current position (no close, no

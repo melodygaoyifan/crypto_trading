@@ -128,7 +128,7 @@ class TestMlpSeatCheckDirs:
             [sys.executable, "-X", "utf8",
              str(REPO / "scripts" / "mlp_seat_check.py"),
              "--today", "2026-08-28"],
-            capture_output=True, text=True, cwd=str(REPO), timeout=120)
+            capture_output=True, text=True, cwd=str(REPO), timeout=120, encoding="utf-8")
         assert out.returncode == 2
         assert "SUSPENDED" in out.stderr
 
@@ -203,7 +203,7 @@ class TestMakerFillReview:
             [sys.executable, "-X", "utf8",
              str(REPO / "scripts" / "maker_fill_review.py"),
              "--log-file", str(f)],
-            capture_output=True, text=True, cwd=str(REPO), timeout=120)
+            capture_output=True, text=True, cwd=str(REPO), timeout=120, encoding="utf-8")
 
     def test_error_path_legs_are_counted_as_taker(self, tmp_path):
         # DESIGNED so the verdict is only reachable BECAUSE the error-path
@@ -239,7 +239,7 @@ class TestMakerFillReview:
             [sys.executable, "-X", "utf8",
              str(REPO / "scripts" / "maker_fill_review.py"),
              "--log-file", str(tmp_path / "nope.txt")],
-            capture_output=True, text=True, cwd=str(REPO), timeout=120)
+            capture_output=True, text=True, cwd=str(REPO), timeout=120, encoding="utf-8")
         assert out.returncode == 2
         assert "REFUSING" in out.stdout
 
@@ -308,11 +308,39 @@ class TestSeptemberCheck:
 
 class TestSlopeCalibratorProvenance:
     def test_stamp_and_age_arithmetic(self):
+        """[P293k] Pins the ARITHMETIC and the stamp's validity, not the
+        stamp's VALUE.
+
+        The original asserted `THRESHOLDS_STAMPED == "2026-08-08"`, which
+        rots by design: the whole point of the stamp is that it MOVES when
+        the thresholds are legitimately refreshed against a new friction
+        regime (P289 spreads, P291b venue-true hold). Re-pinning a fresh
+        literal would just reset the same trap for the next refresh, so
+        this now asserts what must always be true — the same lesson applied
+        to the P171 BOM test and the P239 header tests.
+        """
+        from datetime import date as _date
         from analytics.calibration import slope_calibrator as scal
-        assert scal.THRESHOLDS_STAMPED == "2026-08-08"
-        assert scal.default_thresholds_age_days(date(2026, 9, 10)) == 33
-        assert scal.default_thresholds_age_days(date(2026, 8, 20)) == 12
+
+        stamped = datetime.strptime(scal.THRESHOLDS_STAMPED, "%Y-%m-%d").date()
+        assert stamped <= _date.today(), "stamp is in the future"
+        # age arithmetic is exact, whatever the stamp is
+        assert scal.default_thresholds_age_days(stamped) == 0
+        assert scal.default_thresholds_age_days(
+            stamped + timedelta(days=33)) == 33
+        assert scal.default_thresholds_age_days(
+            stamped + timedelta(days=12)) == 12
         assert scal.THRESHOLDS_STALE_AFTER_DAYS == 30
+
+    def test_thresholds_are_a_snapshot_not_a_constant(self):
+        """[P293k] The values must track the live friction regime. They were
+        stale by 1.5-1.9x for nine days because the staleness guard is
+        TIME-based while the thresholds move when friction CODE changes."""
+        from analytics.calibration import slope_calibrator as scal
+        # post-P289 spreads + P291b venue-true hold
+        assert scal.DEFAULT_THRESHOLDS["BTC"] == pytest.approx(19.1)
+        assert scal.DEFAULT_THRESHOLDS["ETH"] == pytest.approx(26.7)
+        assert scal.DEFAULT_THRESHOLDS["SOL"] == pytest.approx(29.0)
 
     def test_report_carries_provenance_and_warning_exists(self):
         src = (REPO / "analytics" / "calibration" /

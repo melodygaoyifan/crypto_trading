@@ -211,7 +211,33 @@ class LunarCrushFeed:
     def get_latest(self) -> Optional[LunarCrushAttentionData]:
         """Get cached data."""
         return self._last_data
-    
+
+    def cache_age_sec(self) -> Optional[float]:
+        """Seconds since the last successful fetch, or None if never fetched.
+
+        [P293] None ("never fetched") is deliberately distinct from a large
+        age ("fetched long ago") — different causes, different fixes.
+        """
+        if self._last_fetch_time is None:
+            return None
+        _t = self._last_fetch_time
+        if _t.tzinfo is None:  # [P40/P97] defensive
+            _t = _t.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - _t).total_seconds()
+
+    async def fetch_if_stale(self) -> Optional[LunarCrushAttentionData]:
+        """Fetch only when the cache is older than poll_interval_sec.
+
+        [P293] One _fetch_real() costs one request PER SUPPORTED_SYMBOL, and
+        the tick loop calls this once per asset — so throttling is what keeps
+        a 4H loop from spending ~9 requests per cycle on 10-minute data.
+        """
+        _age = self.cache_age_sec()
+        if _age is not None and _age < self.poll_interval_sec:
+            return self._last_data
+        return await self.fetch()
+
+
     def get_attention_metrics(self, symbol: str = "BTC") -> Dict[str, Any]:
         """
         Get attention metrics for integration.

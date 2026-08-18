@@ -347,6 +347,11 @@ class TradeIntentV36:
     confidence: float = 0.5
     confidence_multiplier: float = 1.0
     lead_lag_amplifier_applied: bool = False
+    # [P293d option C] DECLARED, not a dynamic attribute — the P239 rule: a
+    # field set only at runtime is invisible to serialization and absent on
+    # every early-return intent (the P85 contract gap). Default 1.0 equals
+    # every consumer's getattr default, so declaring it is behaviour-neutral.
+    fusion_conviction: float = 1.0
     
     # v3.6.1: Constitution guarantees tracking
     no_trade_triggers_internal: bool = True
@@ -1572,6 +1577,17 @@ class HMATSv36Engine:
 
         intent.direction = fusion_result.direction
         intent.target_exposure = fusion_result.target_exposure
+        # [P293d option C] Carry the conviction ratio alongside. This is
+        # recorded, never acted on here: `intent.target_exposure` is
+        # overwritten by the tranche a few hundred lines below (Bug #44,
+        # which is a REAL fix and is deliberately not reverted), so the ratio
+        # is the only surviving trace of what the CONFIRM/ADVISE/CAP layers
+        # concluded. A consumer opts in via `fusion_conviction_to_sleeve`.
+        try:
+            intent.fusion_conviction = float(
+                getattr(fusion_result, "fusion_conviction", 1.0) or 1.0)
+        except (TypeError, ValueError):  # noqa: silent-swallow
+            intent.fusion_conviction = 1.0
         intent.confidence = getattr(fusion_result, 'confidence', 0.5)  # [FIX-4]
         intent.tranche_target = fusion_result.tranche_target
         intent.allow_escalation = fusion_result.allow_escalation

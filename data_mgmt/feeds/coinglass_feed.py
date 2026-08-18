@@ -235,6 +235,27 @@ class CoinglassFeed:
             # crowd data look fresh forever.
             return self._refreshed_staleness(self._last_data)
 
+    async def fetch_if_stale(self) -> Optional[CoinglassCrowdData]:
+        """[P293f] Fetch only when the cache is older than poll_interval_sec.
+
+        MEASURED WASTE this removes: `fetch()` has no throttle and the tick
+        loop calls it once per ASSET, while `_fetch_real()` already loops
+        SUPPORTED_SYMBOLS = [BTC, ETH, SOL] internally across three endpoint
+        families. So a 4H cycle spent roughly 3x the requests it needed —
+        every symbol fetched three times, on a PAID plan — because the first
+        asset's fetch already contained the other two assets' data.
+
+        The APIs here expose no ETag / Last-Modified (probed 2026-08-17), so
+        conditional requests are unavailable and client-side TTL is the only
+        lever. 300s on a 14400s tick means all three assets read data less
+        than a minute old while only one request set is spent.
+        """
+        from data_mgmt.feeds._http import cache_age_seconds
+        _age = cache_age_seconds(self._last_fetch_time)
+        if _age is not None and _age < float(self.poll_interval_sec or 0):
+            return self._refreshed_staleness(self._last_data)
+        return await self.fetch()
+
     def get_latest(self) -> Optional[CoinglassCrowdData]:
         """Get cached data with up-to-date staleness_sec."""
         # [P100 2026-04-27] Compute current staleness on every read so

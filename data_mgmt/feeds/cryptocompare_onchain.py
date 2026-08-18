@@ -129,6 +129,63 @@ class CryptoCompareOnChainFeed:
                         f"[CC_ONCHAIN] restored ACTIVE backoff from disk "
                         f"({until - time.time():.0f}s remaining) — the "
                         f"restart does not reset the limiter")
+
+                # [P293b] Restore the THROTTLE CLOCK and the PAYLOAD too.
+                # P253d persisted the backoff and left `_last_fetch_time`
+                # (and `_data`) in RAM, one line above its own comment that
+                # "a limiter that re-arms on restart is not a limiter". The
+                # throttle reads
+                #     now - self._last_fetch_time < MIN_FETCH_INTERVAL and self._data
+                # so with BOTH halves reset a restart could never be
+                # throttled: every process start re-spent 2 calls against a
+                # 100/month account cap. Measured: 14 process starts across
+                # the retained logs, and the shared budget was exhausted by
+                # Aug 10 — nine days into the month.
+                #
+                # The payload is restored as well, deliberately: restoring
+                # only the clock would leave `_data` empty, the `and
+                # self._data` clause False, and the persistence decorative —
+                # the exact trap P253d called out for the backoff.
+                _lft = float(d.get("last_fetch_time", 0.0) or 0.0)
+                _payload = d.get("payload") or {}
+                if _lft > 0.0 and isinstance(_payload, dict) and _payload:
+                    _restored = {}
+                    for _sym, _row in _payload.items():
+                        if not isinstance(_row, dict):
+                            continue
+                        try:
+                            _ts_raw = _row.get("timestamp")
+                            _ts = (datetime.fromisoformat(_ts_raw)
+                                   if _ts_raw else datetime.now(timezone.utc))
+                            if _ts.tzinfo is None:
+                                _ts = _ts.replace(tzinfo=timezone.utc)
+                            _restored[_sym] = CryptoCompareOnChainData(
+                                symbol=str(_row.get("symbol", _sym)),
+                                timestamp=_ts,
+                                active_addresses=int(_row.get("active_addresses", 0) or 0),
+                                new_addresses=int(_row.get("new_addresses", 0) or 0),
+                                transaction_count=int(_row.get("transaction_count", 0) or 0),
+                                average_transaction_value=float(
+                                    _row.get("average_transaction_value", 0.0) or 0.0),
+                                large_transaction_count=int(
+                                    _row.get("large_transaction_count", 0) or 0),
+                                hashrate=float(_row.get("hashrate", 0.0) or 0.0),
+                                block_time=float(_row.get("block_time", 0.0) or 0.0),
+                                current_supply=float(_row.get("current_supply", 0.0) or 0.0),
+                                is_mock=bool(_row.get("is_mock", True)),
+                            )
+                        except (TypeError, ValueError):  # noqa: silent-swallow
+                            continue  # one corrupt row must not lose the rest
+                    if _restored:
+                        self._data = _restored
+                        self._last_fetch_time = _lft
+                        _age_h = (time.time() - _lft) / 3600.0
+                        logger.info(
+                            f"[CC_ONCHAIN] restored throttle clock + "
+                            f"{len(_restored)} asset(s) from disk "
+                            f"(age {_age_h:.1f}h of "
+                            f"{MIN_FETCH_INTERVAL / 3600.0:.0f}h) — this "
+                            f"restart will NOT re-spend account quota")
         except Exception as e:  # noqa: silent-swallow — a corrupt state file must not break startup (P154 precedent); cold start is the stated consequence
             logger.warning(f"[CC_ONCHAIN] backoff restore failed "
                            f"({type(e).__name__}) — cold start")
@@ -137,8 +194,36 @@ class CryptoCompareOnChainFeed:
         try:
             import json as _json
             tmp = self._state_path + ".tmp"
+            # [P293b] Persist the throttle clock + payload alongside the
+            # backoff, so a restart cannot re-spend account quota. Mock rows
+            # are never written: restoring them would let a mock survive as
+            # if it were a reading (P2).
+            _payload = {}
+            for _sym, _row in (self._data or {}).items():
+                if getattr(_row, "is_mock", True):
+                    continue
+                _ts = getattr(_row, "timestamp", None)
+                _payload[_sym] = {
+                    "symbol": getattr(_row, "symbol", _sym),
+                    "timestamp": _ts.isoformat() if _ts else None,
+                    "active_addresses": getattr(_row, "active_addresses", 0),
+                    "new_addresses": getattr(_row, "new_addresses", 0),
+                    "transaction_count": getattr(_row, "transaction_count", 0),
+                    "average_transaction_value": getattr(
+                        _row, "average_transaction_value", 0.0),
+                    "large_transaction_count": getattr(
+                        _row, "large_transaction_count", 0),
+                    "hashrate": getattr(_row, "hashrate", 0.0),
+                    "block_time": getattr(_row, "block_time", 0.0),
+                    "current_supply": getattr(_row, "current_supply", 0.0),
+                    "is_mock": False,
+                }
             with open(tmp, "w", encoding="utf-8") as fh:
-                _json.dump({"rate_limited_until": self._rate_limited_until}, fh)
+                _json.dump({
+                    "rate_limited_until": self._rate_limited_until,
+                    "last_fetch_time": self._last_fetch_time,
+                    "payload": _payload,
+                }, fh)
             os.replace(tmp, self._state_path)
         except Exception as e:  # noqa: silent-swallow — telemetry persistence must not break the fetch; the RAM value still governs this process
             logger.warning(f"[CC_ONCHAIN] backoff persist failed "
@@ -294,6 +379,11 @@ class CryptoCompareOnChainFeed:
 
             self._last_fetch_time = now
             self._fetch_count += 1
+            # [P293b] Persist the throttle clock + payload on SUCCESS. Without
+            # this the clock is only ever written on a rate-limit path, so a
+            # healthy fetch followed by a restart re-spends quota — the very
+            # case that exhausted the month's budget in nine days.
+            self._persist_backoff()
 
         except Exception as e:
             logger.warning(f"[CC_ONCHAIN] Session failed: {e}")

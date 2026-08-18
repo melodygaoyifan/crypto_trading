@@ -278,14 +278,30 @@ class MAFilterEchoStrategy:
     Ledger claim: ``direction`` is the FILTERED signal — the sleeve target
     with any model_alpha disagreement zeroed. That is the strategy the P166
     cost-aware IC gate scores.
+
+    [P294] ``strategy_name`` is a CONSTRUCTOR ARGUMENT, not a constant. A
+    second filter (whale, P293d option A) reuses this echo, and
+    ``compute_per_strategy_ic`` groups records by the record's ``strategy``
+    field — NOT by filename or ledger prefix. With a hardcoded name the two
+    ledgers pooled into one series: the whale claim became unmeasurable, and
+    the ma_filter exam (which has a live config decision attached) was
+    contaminated by rows from a different filter, with the inflated n
+    loosening the gate's |t| requirement on a meaningless merge.
+
+    The default is unchanged ("ma_filtered"), so every existing P236 row and
+    pin keeps its exact meaning.
     """
+
+    def __init__(self, strategy_name: str = "ma_filtered"):
+        self._strategy_name = str(strategy_name)
 
     class _Sig:
         __slots__ = ("strategy_name", "direction", "confidence", "reason",
                      "diagnostics")
 
-        def __init__(self, direction, confidence, reason, diagnostics):
-            self.strategy_name = "ma_filtered"
+        def __init__(self, direction, confidence, reason, diagnostics,
+                     strategy_name="ma_filtered"):
+            self.strategy_name = strategy_name
             self.direction = direction
             self.confidence = confidence
             self.reason = reason
@@ -316,6 +332,7 @@ class MAFilterEchoStrategy:
                 "action": market_data.get("_maf_action"),
                 "enforce": market_data.get("_maf_enforce"),
             },
+            strategy_name=self._strategy_name,
         )
 
 
@@ -333,4 +350,33 @@ def build_ma_filter_shadow_harness(
         strategies=[MAFilterEchoStrategy()],
         log_dir=log_dir,
         log_prefix="ma_filter",
+    )
+
+
+def build_whale_filter_shadow_harness(
+    log_dir: Optional[Path] = None,
+) -> MicrostructureShadowHarness:
+    """[P293d option A] whale disagreement filter shadow harness.
+
+    Output ledger: data/strategy_shadow/whale_filter_YYYYMMDD.jsonl
+    Scored by analytics/shadow_ic/compute_shadow_ic.py (prefix registered
+    there). Reuses MAFilterEchoStrategy — the echo reads the same
+    `_maf_*` observation keys and the sleeve driver populates them
+    identically for both filters, so the two ledgers are directly
+    comparable and there is ONE echo implementation (P172).
+
+    [P294] It carries its OWN strategy name. The scorer groups by the
+    record's `strategy` field, not by prefix or filename, so sharing the
+    echo's default name pooled this ledger into the ma_filter exam — see
+    MAFilterEchoStrategy's docstring.
+
+    Promotion = P166 forward evidence + its own P-entry, never automatic.
+    Whale's raw-agent IC does NOT clear that bar today (60d 16h t=0.26);
+    this ledger measures the FILTER, which is a different claim from the
+    raw agent and has to earn its own verdict.
+    """
+    return MicrostructureShadowHarness(
+        strategies=[MAFilterEchoStrategy(strategy_name="whale_filtered")],
+        log_dir=log_dir,
+        log_prefix="whale_filter",
     )

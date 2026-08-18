@@ -65,7 +65,7 @@ import signal
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Dict, Any, Optional, List, Tuple
+from typing import Dict, Any, Optional, List, Set, Tuple
 from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
@@ -1610,6 +1610,78 @@ class ProductionConfig:
     # False: it is a live data input. Proven inert at current rates (both venues
     # far below every downstream threshold) but the SIGN differs on BTC/SOL.
     coinbase_venue_aware_funding: bool = False
+    # [P293] Data-coverage repair batch. Every flag here is DEFAULT OFF and
+    # absent from the live profile: each one changes what a fusion-consumed
+    # agent emits, which is an activation decision (P141), not a bugfix. The
+    # underlying feeds run and LEDGER regardless — that is the evidence
+    # pipeline; only the last hop into the decision layer is gated.
+    #
+    #   sentiment_zscore_mode
+    #     "linear"     (default) keep (fg-50)/50*3, today's live behaviour
+    #     "historical" use the real trailing z-score against the persisted
+    #                  F&G series. NOT cosmetic: at F&G=31 the linear form
+    #                  says z=-1.14 (confidently bearish, conf 0.38) while
+    #                  the real 365d distribution says z=+0.25 / 71st pct,
+    #                  because the past year averaged ~27. Flipping this
+    #                  changes the sign of a live ADVISE input.
+    #   options_use_deribit
+    #     Feed the options agent Deribit's real put/call ratio instead of
+    #     the 1.0 neutral it has emitted since the CoinGlass v3 option
+    #     paths began returning 404 (P218). options is a zero-weighted
+    #     ADVISE agent, so this is the safest of the four.
+    #   exchange_netflow_to_flow_agent
+    #     Bridge measured exchange netflow into flow_direction. flow carries
+    #     ADVISE weight 0.20 and has emitted a structural 0.0 forever, so
+    #     this is the largest live change in the batch.
+    #   dvol_to_market_data
+    #     Publish Deribit DVOL as market_data["dvol"]. That key has never
+    #     had a producer, and the P0 guard reading it force-flattens at
+    #     z>=5 (P265d deliberately did not add one). Arming an emergency
+    #     path that has never executed needs its own operator decision.
+    sentiment_zscore_mode: str = "linear"
+    options_use_deribit: bool = False
+    exchange_netflow_to_flow_agent: bool = False
+    dvol_to_market_data: bool = False
+    #   macro_gci_live
+    #     Drive GlobalContextInformer.update_if_stale(). Its update_async()
+    #     has never had a caller, so `get_macro_signal()` has returned the
+    #     initial default state forever (regime NEUTRAL, leverage_cap 1.0).
+    #     Its indicators now come from FRED instead of the absent yfinance,
+    #     but note the cap map is TWO-DIRECTIONAL — CRISIS=1.5, RISK_OFF=1.2
+    #     LOOSEN the cap, RISK_ON=0.7 tightens it — so driving it is a live
+    #     change in both directions, not a pure tightening.
+    macro_gci_live: bool = False
+    # [P293d] The three whale-influence options, built after the measured
+    # finding that adding an ADVISE weight is a NO-OP on live orders.
+    #
+    # WHY A WEIGHT DOES NOTHING (verified in code, not assumed): fusion's
+    # ADVISE/CONFIRM layers modify `base_exposure` only — LAYER 3 is the one
+    # place `result.direction` is set, and it reads DECIDE agents alone. That
+    # exposure is then overwritten at integration_v36.py:1678 by the tranche
+    # value, and the sleeve sizes by SIGN (`target_for(asset, dir)`), which
+    # discards magnitude entirely. So the ADVISE channel is severed twice.
+    #
+    #   A. coinbase_whale_filter_enforce — whale disagreement blocks
+    #      entry-from-flat on the SLEEVE DRIVER, bypassing fusion entirely.
+    #      Same mechanism as the P236 model_alpha filter, and the best fit
+    #      for a weak-but-positive signal: a veto is more defensible than a
+    #      driver. Never forces exits (P195).
+    #   B. whale_seat_mode / whale_seat_assets — whale takes the DECIDE slot
+    #      by the same quant-slot injection the trend and regimebook seats
+    #      use, so the whole chain (alpha gate, vetoes, caps, stops) still
+    #      binds. NOT justified on current evidence (60d 16h t=0.26) —
+    #      built so the decision is a config flip when evidence supports it.
+    #   C. fusion_conviction_to_sleeve — carries fusion's ADVISE/CONFIRM
+    #      influence to the sleeve as a CONVICTION SCALAR on contract size,
+    #      which is the only way those 18 agents can reach an order at all.
+    #      See the sizing note in `sleeve_conviction_contracts`: at 1-3
+    #      contracts this rounds to the same integer most of the time, so
+    #      even armed it is near-inert at current equity. Recorded rather
+    #      than oversold.
+    coinbase_whale_filter_enforce: bool = False
+    whale_seat_mode: str = "off"
+    whale_seat_assets: Optional[List[str]] = None
+    fusion_conviction_to_sleeve: bool = False
     # [P201] P198 shipped these two as JSON keys read via
     # `getattr(self.config, ..., default)` (main.py:7802, :18313) but never
     # declared them here and never parsed them in from_file — so the JSON keys
@@ -1998,6 +2070,35 @@ class ProductionConfig:
             short_bias_skip_regimes=(
                 list(data["short_bias_skip_regimes"])
                 if isinstance(data.get("short_bias_skip_regimes"), list) else None),
+            # [P293] declared + parsed together (the P201 rule). Unknown
+            # sentiment_zscore_mode values fall back to "linear" — an
+            # unrecognised mode must never silently switch a live signal.
+            sentiment_zscore_mode=(
+                str(data.get("sentiment_zscore_mode", "linear") or "linear").lower()
+                if str(data.get("sentiment_zscore_mode", "linear") or "linear").lower()
+                in ("linear", "historical") else "linear"),
+            options_use_deribit=bool(
+                data.get("options_use_deribit", False)),
+            exchange_netflow_to_flow_agent=bool(
+                data.get("exchange_netflow_to_flow_agent", False)),
+            dvol_to_market_data=bool(
+                data.get("dvol_to_market_data", False)),
+            macro_gci_live=bool(
+                data.get("macro_gci_live", False)),
+            # [P293d] declared + parsed together (the P201 rule). An
+            # unrecognised whale_seat_mode falls back to "off" — an unknown
+            # mode must never silently seat an agent on the decider slot.
+            coinbase_whale_filter_enforce=bool(
+                data.get("coinbase_whale_filter_enforce", False)),
+            whale_seat_mode=(
+                str(data.get("whale_seat_mode", "off") or "off").lower()
+                if str(data.get("whale_seat_mode", "off") or "off").lower()
+                in ("off", "enforce") else "off"),
+            whale_seat_assets=(
+                list(data["whale_seat_assets"])
+                if isinstance(data.get("whale_seat_assets"), list) else None),
+            fusion_conviction_to_sleeve=bool(
+                data.get("fusion_conviction_to_sleeve", False)),
             # [P201] see the dataclass comment — these were read by getattr but
             # never parsed, so the JSON keys were inert.
             trend_regime_gate=str(
@@ -2419,6 +2520,104 @@ def sleeve_position_feed(pos_contracts, flatten_tick, round_count):
     return int(pos_contracts or 0)
 
 
+def sleeve_conviction_contracts(raw_target, conviction, enabled):
+    """[P293d option C] Scale a contract target by fusion's conviction ratio.
+
+    This is the ONLY path by which the 22 non-DECIDE agents can reach a live
+    order. Their entire output is exposure modulation, and exposure is
+    discarded twice on the way to the venue (tranche overwrite at
+    integration_v36.py:1678, then the sleeve's sign-based sizing). Passing
+    the ratio through here reconnects that channel without reverting Bug #44.
+
+    HONEST LIMIT, stated because it is easy to oversell: at 1-3 contracts
+    this mostly rounds to the same integer. BTC trades 1 contract, so any
+    conviction above 0.5 rounds back to 1 and anything below drops to 0 —
+    the channel is nearly binary at current equity, and genuinely inert for
+    single-contract assets unless conviction is low enough to flatten. It
+    becomes meaningful only as equity (and therefore contract count) grows.
+
+    Rules:
+      * disabled -> returns raw_target unchanged (byte-identical default)
+      * the SIGN is never changed — conviction cannot flip a position
+      * a non-finite/negative conviction is treated as 1.0 (no information),
+        never as 0.0, which would read as "flatten" (P2)
+      * scaling NEVER increases magnitude beyond |raw_target|: advisors may
+        express doubt, not leverage (conviction > 1 is clamped for sizing)
+      * a non-zero target never rounds to 0 unless conviction is genuinely
+        below the half-contract mark — rounding, not truncation, so a
+        0.9-conviction 1ct target stays 1ct rather than silently vanishing
+    """
+    raw = int(raw_target or 0)
+    if not enabled or raw == 0:
+        return raw
+    try:
+        c = float(conviction)
+    except (TypeError, ValueError):  # noqa: silent-swallow
+        return raw
+    if c != c or c in (float("inf"), float("-inf")) or c < 0.0:
+        return raw          # no information -> unchanged, never flattened
+    c = min(1.0, c)         # doubt only, never leverage
+    scaled = int(round(abs(raw) * c))
+    scaled = min(scaled, abs(raw))
+    return scaled if raw > 0 else -scaled
+
+
+def whale_direction_from_pressure(net_pressure):
+    """[P293d] whale_net_pressure -> discrete direction, ONE implementation.
+
+    The +/-0.3 deadband is the WHALE-BRIDGE threshold that has always
+    governed `whale_flow_direction`. The seat (option B) needs the same
+    number at a point in the tick BEFORE the bridge runs, so it is extracted
+    here rather than restated — a second copy of a threshold is how two
+    consumers of "the whale signal" start disagreeing about what it says
+    (P172).
+
+    Returns 0.0 for anything inside the deadband or unparseable: no opinion,
+    which every consumer treats as fail-open.
+    """
+    try:
+        p = float(net_pressure or 0.0)
+    except (TypeError, ValueError):  # noqa: silent-swallow
+        return 0.0
+    if p != p:  # NaN
+        return 0.0
+    if p > 0.3:
+        return 1.0
+    if p < -0.3:
+        return -1.0
+    return 0.0
+
+
+def sleeve_agent_filter_decision(current_contracts, raw_target, agent_dir,
+                                 agent_tag="agent"):
+    """[P293d] Generic confirming-agent disagreement filter for the sleeve.
+
+    Extracted verbatim from `sleeve_ma_filter_decision` so a second filter
+    (whale, P293d option A) reuses the SAME tested rules instead of a copy —
+    one implementation, two entry points (the P172 rule, applied the same
+    way as `_calculate_streak_for_asset`).
+
+    Returns ``(ledger_dir, action, reason)``; see the wrapper below for the
+    full contract. ``agent_tag`` only names the reason strings, so each
+    filter's ledger stays attributable.
+    """
+    pos = int(current_contracts or 0)
+    raw = int(raw_target or 0)
+    a = float(agent_dir or 0.0)
+    if raw == 0:
+        return 0, "", "no_target"            # exits/holds are never filtered
+    if abs(a) <= 1e-9:
+        return raw, "", f"{agent_tag}_silent"   # fail-open on no opinion
+    if a * raw > 0:
+        return raw, "", f"{agent_tag}_agrees"
+    # Disagreement.
+    if pos == 0:
+        return 0, "block_entry", f"{agent_tag}_disagrees_entry"
+    if raw * pos < 0:
+        return 0, "flip_to_flat", f"{agent_tag}_disagrees_flip"
+    return 0, "", f"{agent_tag}_disagrees_hold_kept"
+
+
 def sleeve_ma_filter_decision(current_contracts, raw_target, ma_dir):
     """[P236] model_alpha disagreement filter for the sleeve driver — pure,
     unit-testable (the P206 pattern).
@@ -2445,21 +2644,11 @@ def sleeve_ma_filter_decision(current_contracts, raw_target, ma_dir):
     of 0.0 is "no opinion" and always allows — a dead agent must not become
     a trading stop (P208).
     """
-    pos = int(current_contracts or 0)
-    raw = int(raw_target or 0)
-    ma = float(ma_dir or 0.0)
-    if raw == 0:
-        return 0, "", "no_target"           # exits/holds are never filtered
-    if abs(ma) <= 1e-9:
-        return raw, "", "ma_silent"         # fail-open on no opinion
-    if ma * raw > 0:
-        return raw, "", "ma_agrees"
-    # Disagreement.
-    if pos == 0:
-        return 0, "block_entry", "ma_disagrees_entry"
-    if raw * pos < 0:
-        return 0, "flip_to_flat", "ma_disagrees_flip"
-    return 0, "", "ma_disagrees_hold_kept"
+    # [P293d] Delegates to the generic implementation above. The reason
+    # strings are unchanged ("ma_agrees", "ma_disagrees_entry", ...), so
+    # every existing P236 pin and ledger row keeps its exact meaning.
+    return sleeve_agent_filter_decision(
+        current_contracts, raw_target, ma_dir, agent_tag="ma")
 
 
 def stop_reconcile_intended_target(manage_status, intended_target):
@@ -4450,7 +4639,7 @@ class HMATSProductionRunner:
                 config_path = asset_dir / "gmm_config.json"
                 model_path = asset_dir / "gmm_model.pkl"
                 if config_path.exists() and model_path.exists():
-                    with open(config_path) as f:
+                    with open(config_path, encoding="utf-8") as f:
                         _cfg = json.load(f)
                     from infra.safe_torch_load import safe_joblib_load
                     _model = safe_joblib_load(model_path, joblib_module=joblib)
@@ -4480,7 +4669,7 @@ class HMATSProductionRunner:
                 config_path = gmm_base / "gmm_config.json"
                 model_path = gmm_base / "gmm_model.pkl"
                 if config_path.exists() and model_path.exists():
-                    with open(config_path) as f:
+                    with open(config_path, encoding="utf-8") as f:
                         gmm_config = json.load(f)
                     from infra.safe_torch_load import safe_joblib_load
                     self._gmm_model = safe_joblib_load(model_path, joblib_module=joblib)
@@ -5173,6 +5362,54 @@ class HMATSProductionRunner:
         except Exception as e:
             logger.warning(f"  CryptoCompare OnChain: STUB ({e})")
 
+        # [P293] Deribit options + DVOL (public, keyless). Closes two gaps:
+        # options PCR pinned at 1.0 since the CoinGlass v3 option paths began
+        # 404ing (P218), and market_data["dvol"] never having had a producer
+        # (P265d). BTC/ETH only — Deribit carries no SOL options book, and
+        # SOL is left honestly absent rather than defaulted to neutral.
+        self._deribit_feed = None
+        try:
+            from data_mgmt.feeds.deribit_feed import get_deribit_feed
+            self._deribit_feed = get_deribit_feed()
+            logger.info("  DeribitFeed: ACTIVE (public API, no key; BTC/ETH options + DVOL)")
+        except Exception as e:
+            logger.warning(f"  DeribitFeed: STUB ({e})")
+
+        # [P293] Exchange netflow (CoinGlass v4, existing key). The producer
+        # for `exchange_flow`, which has summed an empty list — a structural
+        # 0.0 — for the life of the system, pinning flow_direction at 0 on an
+        # agent carrying ADVISE weight 0.20. BTC/ETH only (the endpoint
+        # returns zero SOL exchanges).
+        self._exchange_netflow_feed = None
+        try:
+            from data_mgmt.feeds.exchange_netflow_feed import get_exchange_netflow_feed
+            _cg_key_for_netflow = os.environ.get("COINGLASS_API_KEY", "")
+            self._exchange_netflow_feed = get_exchange_netflow_feed(
+                api_key=_cg_key_for_netflow,
+                mock_mode=not bool(_cg_key_for_netflow),
+            )
+            logger.info(
+                f"  ExchangeNetflowFeed: "
+                f"{'MOCK' if self._exchange_netflow_feed._mock_mode else 'ACTIVE'}"
+            )
+        except Exception as e:
+            logger.warning(f"  ExchangeNetflowFeed: STUB ({e})")
+
+        # [P293] Fear & Greed HISTORY — the distribution the "z-score" never
+        # had. The live feed asks for limit=1, so sentiment_zscore is a fixed
+        # linear rescale of today's value; the same free endpoint serves the
+        # whole series (3116 days on a live probe).
+        self._fng_history = None
+        try:
+            from data_mgmt.feeds.fear_greed_history import get_fear_greed_history
+            self._fng_history = get_fear_greed_history()
+            logger.info(
+                f"  FearGreedHistory: ACTIVE "
+                f"({self._fng_history.sample_count()} day(s) restored)"
+            )
+        except Exception as e:
+            logger.warning(f"  FearGreedHistory: STUB ({e})")
+
         # Solana RPC on-chain (SOL network health + Jito MEV)
         self._sol_onchain = None
         try:
@@ -5831,6 +6068,28 @@ class HMATSProductionRunner:
                 f"{type(_maf_err).__name__}: {_maf_err}"
             )
 
+        # [P293d option A] Whale disagreement filter — the SAME mechanism as
+        # the MA filter above, for the best-evidenced of the 12 deliberately
+        # zero-weighted ADVISE agents. It acts on the sleeve driver because
+        # that is the only place a non-DECIDE agent CAN act: fusion's ADVISE
+        # channel scales exposure, and exposure is discarded twice (the
+        # tranche overwrite at integration_v36.py:1678, then the sleeve's
+        # sign-based sizing) before any order is placed.
+        # Observation always-on; enforcement gated (default OFF).
+        self._whale_filter_shadow = None
+        self._last_whale_directions: Dict[str, float] = {}
+        self._last_whale_confidences: Dict[str, float] = {}
+        try:
+            from defense.strategy_shadow_v5_1 import build_whale_filter_shadow_harness
+            self._whale_filter_shadow = build_whale_filter_shadow_harness()
+            logger.info("  [P293d] WhaleFilterShadowHarness: ACTIVE (observation-only; enforce=%s)",
+                        "ON" if getattr(self.config, "coinbase_whale_filter_enforce", False) else "OFF")
+        except Exception as _wf_err:
+            logger.warning(
+                f"  [P293d] WhaleFilterShadowHarness init failed: "
+                f"{type(_wf_err).__name__}: {_wf_err}"
+            )
+
         # [P248] Regime-book shadow (GP2): records the P247 leak-corrected
         # roster (BTC full book / ETH trend-only / SOL parity-gated) to
         # data/strategy_shadow/regimebook_*.jsonl every loop, feeding the
@@ -6157,7 +6416,7 @@ class HMATSProductionRunner:
             import json as _json_ood
             _manifest_p = Path("configs/feature_manifest.json")
             if _manifest_p.exists():
-                with open(_manifest_p) as _mf:
+                with open(_manifest_p, encoding="utf-8") as _mf:
                     _manifest = _json_ood.load(_mf)
                 self._feature_cols_for_ood = _manifest.get("all_features", [])
                 logger.info(f"  OOD feature cols: {len(self._feature_cols_for_ood)} loaded")
@@ -6554,6 +6813,28 @@ class HMATSProductionRunner:
                 pass
         # ===== DIAG_END_INIT =====
 
+        # [P294] Clear the per-asset whale stash at the TOP of the tick.
+        #
+        # P293d's comment claimed "reset-then-set on EVERY tick", but the code
+        # was set-only, at the whale bridge ~4000 lines below. Any tick that
+        # returns before that point — the P253 crash and disconnect returns, a
+        # prefetch failure, an exception anywhere earlier — left the PREVIOUS
+        # tick's whale direction in the stash, and the sleeve driver (which
+        # runs later in run_live regardless of how this tick ended) then
+        # filtered an entry on a stale opinion and wrote that stale claim into
+        # the whale_filter ledger. That is the P155-L5 high-water-mark shape,
+        # and the same defect P287 fixed for the eventfilter gated-dir stash.
+        #
+        # 0.0 means "no opinion": the filter fails OPEN (a dead agent must
+        # never become a standing entry veto, P208) and the seat is not taken.
+        # The MA filter it mirrors resets the same way, immediately before its
+        # own guarded block.
+        if not hasattr(self, "_last_whale_directions"):
+            self._last_whale_directions = {}
+            self._last_whale_confidences = {}
+        self._last_whale_directions[asset] = 0.0
+        self._last_whale_confidences[asset] = 0.0
+
         self._tick_count += 1
         tick_start = datetime.now(timezone.utc)
 
@@ -6926,7 +7207,11 @@ class HMATSProductionRunner:
             _feed_tasks = []
             _feed_names = []
             if self.coinglass_feed:
-                _feed_tasks.append(self.coinglass_feed.fetch())
+                # [P293f] throttled: fetch() had NO throttle and this
+                # block runs once per ASSET, while _fetch_real already
+                # loops all three symbols internally — so a cycle spent
+                # ~3x the requests it needed on a PAID plan.
+                _feed_tasks.append(self.coinglass_feed.fetch_if_stale())
                 _feed_names.append("COINGLASS")
             if self.kraken_futures_feed:
                 _feed_tasks.append(self.kraken_futures_feed.fetch())
@@ -6936,6 +7221,42 @@ class HMATSProductionRunner:
             if self.onchain_feed:
                 _feed_tasks.append(self.onchain_feed.fetch())
                 _feed_names.append("ONCHAIN")
+            # [P293] FRED + LunarCrush had NO producer. Both feeds initialize
+            # non-mock with valid keys, but nothing in the whole non-test tree
+            # ever called fetch()/start() — every consumer calls get_latest()
+            # or get_macro_context()/get_attention_metrics(), which are pure
+            # CACHE READS. So _last_data stayed None forever and the adapter
+            # served its neutral defaults (macro_risk=0.5, attention=0.5) on
+            # every tick since the feeds shipped. Same shape as the
+            # "[BUGFIX DATA-1] OnChainFeed.fetch() was never called" note
+            # three lines above — found for onchain, never for these two.
+            # fetch_if_stale() self-throttles on poll_interval_sec, so adding
+            # them to a per-asset block does not triple the request count.
+            if self.fred_feed:
+                _feed_tasks.append(self.fred_feed.fetch_if_stale())
+                _feed_names.append("FRED")
+            if self.lunarcrush_feed:
+                _feed_tasks.append(self.lunarcrush_feed.fetch_if_stale())
+                _feed_names.append("LUNARCRUSH")
+            # [P293] New producers. All self-throttle on their own interval,
+            # and every one is fail-soft through the gather(return_exceptions)
+            # below — a data feed must never be able to stop a tick.
+            if getattr(self, "_deribit_feed", None):
+                _feed_tasks.append(self._deribit_feed.fetch_if_stale())
+                _feed_names.append("DERIBIT")
+            if getattr(self, "_exchange_netflow_feed", None):
+                _feed_tasks.append(self._exchange_netflow_feed.fetch_if_stale())
+                _feed_names.append("EXCH_NETFLOW")
+            if getattr(self, "_fng_history", None):
+                _feed_tasks.append(self._fng_history.refresh_if_stale())
+                _feed_names.append("FNG_HISTORY")
+            # [P293] GCI's updater has never been called, so get_macro_signal()
+            # returns its initial defaults on every tick. Driving it is gated:
+            # its leverage-cap map both tightens (RISK_ON 0.7) and LOOSENS
+            # (RISK_OFF 1.2, CRISIS 1.5), so this is not a one-way safety fix.
+            if getattr(self.config, "macro_gci_live", False) and self.global_context:
+                _feed_tasks.append(self.global_context.update_if_stale())
+                _feed_names.append("GCI_MACRO")
             # [GAP-P1b] SOL DEX liquidity -only fetch for SOL ticks
             if self._sol_dex_monitor and asset.upper().startswith("SOL"):
                 _feed_tasks.append(self._sol_dex_monitor.update_async())
@@ -6948,22 +7269,48 @@ class HMATSProductionRunner:
                         _feed_failures.append(_feed_names[_i])
                         logger.warning(f"[{_feed_names[_i]}] Tick fetch failed: {_fr}")
 
+                # [P294] Split the roster before counting. P293 added six
+                # feeds to this gather, and the >=2 / >=3 thresholds were
+                # calibrated when every member of it fed a live signal. A
+                # feed whose only consumers sit behind a default-OFF flag
+                # cannot degrade a trading decision, so counting it toward a
+                # CRITICAL makes the alert fire for something the operator
+                # can neither act on nor be harmed by — the P202/P240 shape,
+                # and the fastest way to teach everyone to ignore the
+                # channel. Both counts are reported; only one escalates.
+                #
+                # GCI is decided by its FLAG, not by its name: driving it is
+                # exactly what makes it live.
+                _advisory_feeds = {"DERIBIT", "EXCH_NETFLOW", "FNG_HISTORY"}
+                if not getattr(self.config, "macro_gci_live", False):
+                    _advisory_feeds.add("GCI_MACRO")
+                _live_failures = [f for f in _feed_failures
+                                  if f not in _advisory_feeds]
+                _adv_failures = [f for f in _feed_failures
+                                 if f in _advisory_feeds]
                 # [D2-FIX] Escalate when multiple feeds fail simultaneously
-                if len(_feed_failures) >= 2:
+                if len(_live_failures) >= 2:
                     logger.error(
-                        f"[FEED_DEGRADATION] {len(_feed_failures)}/{len(_feed_tasks)} feeds "
-                        f"failed: {_feed_failures} -data quality severely degraded"
+                        f"[FEED_DEGRADATION] {len(_live_failures)}/{len(_feed_tasks)} feeds "
+                        f"failed: {_live_failures} -data quality severely degraded"
+                        + (f" (plus advisory: {_adv_failures})" if _adv_failures else "")
                     )
                     market_data["_multi_feed_degradation"] = True
-                    market_data["_failed_feeds"] = _feed_failures
-                    if self.alert_manager and len(_feed_failures) >= 3:
+                    market_data["_failed_feeds"] = _live_failures
+                    if self.alert_manager and len(_live_failures) >= 3:
                         try:
                             self.alert_manager.send_alert(
-                                f"CRITICAL: {len(_feed_failures)} data feeds failed: {_feed_failures}",
+                                f"CRITICAL: {len(_live_failures)} data feeds failed: {_live_failures}",
                                 severity="CRITICAL",
                             )
                         except Exception:
                             pass
+                elif _adv_failures:
+                    # Still visible, at a severity matching what it means:
+                    # an observation-only stream missed a cycle.
+                    logger.warning(
+                        f"[FEED_DEGRADATION] advisory feeds failed "
+                        f"(no live signal affected): {_adv_failures}")
 
         if self.macro_crowd_adapter and self.config.mode != RunMode.VERIFY:
             try:
@@ -6981,12 +7328,33 @@ class HMATSProductionRunner:
                 )
 
                 # Merge into our context (adapter returns safe defaults if feeds unavailable)
+                # [P293] source_status is now derived from FEED PROVENANCE, not
+                # from dict shape. The adapter always returns a populated dict,
+                # so the old `if adapter_context.get("macro")` test was True on
+                # every tick and marked hardcoded defaults as "available" — the
+                # reason FRED/LunarCrush being empty stayed invisible for months.
+                # A missing provenance method degrades to the old behaviour.
+                try:
+                    _prov = self.macro_crowd_adapter.feed_provenance()
+                except Exception:  # noqa: silent-swallow
+                    _prov = {}
+                _macro_has_data = _prov.get("fred", True)
+                _crowd_has_data = (
+                    _prov.get("coinglass", True)
+                    or _prov.get("lunarcrush", True)
+                    or _prov.get("cryptopanic", True)
+                )
                 if adapter_context.get("macro"):
                     macro_crowd_context["macro"].update(adapter_context["macro"])
-                    macro_crowd_context["macro"]["source_status"] = "available"
+                    macro_crowd_context["macro"]["source_status"] = (
+                        "available" if _macro_has_data else "defaults_only"
+                    )
+                    macro_crowd_context["macro"]["provenance"] = _prov
                 if adapter_context.get("crowd"):
                     macro_crowd_context["crowd"].update(adapter_context["crowd"])
-                    macro_crowd_context["crowd"]["source_status"] = "available"
+                    macro_crowd_context["crowd"]["source_status"] = (
+                        "available" if _crowd_has_data else "defaults_only"
+                    )
                 if adapter_context.get("sentiment"):
                     macro_crowd_context["sentiment"].update(adapter_context["sentiment"])
                     macro_crowd_context["sentiment"]["source_status"] = "available"
@@ -7267,7 +7635,13 @@ class HMATSProductionRunner:
                 if fg_tick is None or fg_tick.is_stale(max_staleness_sec=300):
                     # [BUGFIX AUDIT-A5] Add 10s timeout -sentiment must never block tick
                     try:
-                        _fresh = await asyncio.wait_for(self.sentiment_feed.fetch(), timeout=10.0)
+                        # [P293f] fetch_if_stale: the outer check uses the
+                        # DATA timestamp (F&G updates daily, so it reads
+                        # stale on every asset) — the inner throttle is on
+                        # FETCH time, which is what stops the same daily
+                        # value being re-requested once per asset.
+                        _fresh = await asyncio.wait_for(
+                            self.sentiment_feed.fetch_if_stale(), timeout=10.0)
                         if _fresh and _fresh.fear_greed:
                             fg_tick = _fresh
                         else:
@@ -7335,13 +7709,79 @@ class HMATSProductionRunner:
                     # F&G=50 (neutral) ->zscore=0.0 ->conf=0.0 (silent)
                     # F&G=80 (greed) ->zscore=+1.8 ->conf=0.6
                     fg_direction = (fg_value - 50) / 50.0
-                    market_data["sentiment_zscore"] = fg_direction * 3.0
+                    _fg_z_linear = fg_direction * 3.0
+                    market_data["sentiment_zscore"] = _fg_z_linear
+
+                    # [P293] The line above is NOT a z-score — it is a fixed
+                    # linear rescale of today's reading, because the feed asks
+                    # for limit=1. Fusion turns it into this agent's
+                    # confidence via min(|z|/3, 1), so a hardcoded scale has
+                    # been setting the strength of a live ADVISE input.
+                    # The real distribution is free from the same endpoint.
+                    # Both are logged every tick; the live value only changes
+                    # when sentiment_zscore_mode == "historical" (P141).
+                    _fg_z_hist = None
+                    _fg_pct = None
+                    _fg_n = 0
+                    _fg_reason = "history_unavailable"
+                    try:
+                        _fngh = getattr(self, "_fng_history", None)
+                        if _fngh is not None:
+                            _fg_stats = _fngh.score(float(fg_value))
+                            _fg_z_hist = _fg_stats.zscore
+                            _fg_pct = _fg_stats.percentile
+                            _fg_n = _fg_stats.n_samples
+                            _fg_reason = _fg_stats.reason
+                    except Exception as _fgh_err:  # noqa: silent-swallow
+                        _fg_reason = f"error:{type(_fgh_err).__name__}"
+
+                    market_data["sentiment_zscore_linear"] = _fg_z_linear
+                    market_data["sentiment_zscore_historical"] = _fg_z_hist
+                    market_data["sentiment_percentile"] = _fg_pct
+
+                    _fg_mode = str(
+                        getattr(self.config, "sentiment_zscore_mode", "linear") or "linear")
+                    if _fg_mode == "historical" and _fg_z_hist is not None:
+                        # Clip to the +/-3 range the downstream confidence
+                        # formula assumes; an unclipped 4-sigma reading would
+                        # saturate rather than mean anything different.
+                        market_data["sentiment_zscore"] = max(-3.0, min(3.0, _fg_z_hist))
+                        market_data["sentiment_zscore_source"] = "historical"
+                    else:
+                        market_data["sentiment_zscore_source"] = "linear"
+
+                    # [P293e] Record all THREE competing interpretations to
+                    # one ledger, judged by the same P166 gate. The live rule
+                    # (momentum), the same rule on a real historical z, and
+                    # the deterministic engine's asymmetric CONTRARIAN
+                    # mapping — which is the reading the module CLAUDE.md
+                    # calls the sentiment engine, and which disagrees in SIGN
+                    # with the live one whenever the market is greedy.
+                    # Observation-only; changes no signal.
+                    try:
+                        from defense.sentiment_variant_shadow import (
+                            get_sentiment_variant_shadow)
+                        get_sentiment_variant_shadow().record_tick(
+                            asset=asset.replace("/USD", "").upper(),
+                            fg_value=float(fg_value),
+                            z_linear=_fg_z_linear,
+                            z_historical=_fg_z_hist,
+                        )
+                    except Exception as _sv_err:  # noqa: silent-swallow
+                        logger.debug(
+                            f"[SENTVARIANT] {asset}: skipped "
+                            f"({type(_sv_err).__name__})")
 
                     market_data["_sentiment_feed_alive"] = True
                     logger.info(
                         f"[SENTIMENT_L1] {asset} F&G={fg_value} ({fg_tick.fear_greed.label}) "
                         f"dir={sent_output.direction_score:+.2f} str={sent_output.strength:.2f} "
-                        f"fg_dir={fg_direction:+.3f} zscore={market_data['sentiment_zscore']:+.3f}"
+                        f"fg_dir={fg_direction:+.3f} zscore={market_data['sentiment_zscore']:+.3f} "
+                        f"[src={market_data['sentiment_zscore_source']} "
+                        f"linear={_fg_z_linear:+.3f} "
+                        f"hist={('%+.3f' % _fg_z_hist) if _fg_z_hist is not None else 'n/a'} "
+                        f"pct={('%.3f' % _fg_pct) if _fg_pct is not None else 'n/a'} "
+                        f"n={_fg_n} {_fg_reason}]"
                     )
             except Exception as e:
                 logger.warning(f"[SENTIMENT_L1] Fetch failed (non-fatal): {e}")
@@ -8563,6 +9003,67 @@ class HMATSProductionRunner:
             except Exception as e:
                 logger.debug(f"[WIRE] OptionsSentimentAgent skipped: {e}")
 
+        # [P293] Deribit put/call ratio. The agent's own CoinGlass paths are
+        # 404 (P218), so `options_put_call_ratio` above is the neutral 1.0 on
+        # every tick — indistinguishable from a balanced options market.
+        # Deribit carries the real book. Observation keys are written ALWAYS
+        # (that is the evidence pipeline); the agent signal is only replaced
+        # when `options_use_deribit` is on.
+        #
+        # SOL gets nothing here, permanently and correctly: Deribit lists no
+        # SOL options, and the agent's SUPPORTED_ASSETS is already BTC/ETH.
+        try:
+            _drb = getattr(self, "_deribit_feed", None)
+            if _drb is not None:
+                _drb_m = _drb.get_options_metrics(asset.replace("/USD", "").upper())
+                if _drb_m is not None and _drb_m.is_usable():
+                    agent_signals['deribit_put_call_ratio'] = _drb_m.put_call_ratio_oi
+                    agent_signals['deribit_put_call_ratio_volume'] = (
+                        _drb_m.put_call_ratio_volume)
+                    agent_signals['deribit_dvol'] = _drb_m.dvol
+                    agent_signals['deribit_mean_iv'] = _drb_m.mean_mark_iv
+
+                    if getattr(self.config, "options_use_deribit", False) \
+                            and self.options_sentiment_agent:
+                        _drb_sig = self.options_sentiment_agent.apply_external_pcr(
+                            asset=asset.replace("/USD", "").upper(),
+                            pcr_oi=_drb_m.put_call_ratio_oi,
+                            pcr_vol=_drb_m.put_call_ratio_volume,
+                            current_price=float(
+                                market_data.get("price", market_data.get("close", 0)) or 0),
+                        )
+                        if _drb_sig:
+                            agent_signals['options_short_confirmation'] = (
+                                _drb_sig['short_confirmation'])
+                            agent_signals['options_confidence'] = _drb_sig['confidence']
+                            agent_signals['options_put_call_ratio'] = (
+                                _drb_sig['put_call_ratio'])
+                            logger.info(
+                                f"[P293-OPTIONS] {asset}: DERIBIT pcr_oi="
+                                f"{_drb_m.put_call_ratio_oi:.3f} "
+                                f"pcr_vol={_drb_m.put_call_ratio_volume or 0:.3f} -> "
+                                f"short_conf={_drb_sig['short_confirmation']:+.3f} "
+                                f"conf={_drb_sig['confidence']:.2f} (ENFORCED)"
+                            )
+                    else:
+                        logger.info(
+                            f"[P293-OPTIONS] {asset}: DERIBIT pcr_oi="
+                            f"{_drb_m.put_call_ratio_oi:.3f} dvol="
+                            f"{_drb_m.dvol if _drb_m.dvol is not None else float('nan'):.1f}"
+                            f" (SHADOW — agent still reports its 404 fallback "
+                            f"pcr={agent_signals.get('options_put_call_ratio', 1.0)})"
+                        )
+
+                    # [P265d] market_data["dvol"] has never had a producer, and
+                    # the P0 guard reading it force-flattens at z>=5. Publishing
+                    # it ARMS a path that has never once executed, so it is its
+                    # own decision, not a side effect of fixing the PCR.
+                    if getattr(self.config, "dvol_to_market_data", False) \
+                            and _drb_m.dvol is not None:
+                        market_data["dvol"] = float(_drb_m.dvol)
+        except Exception as _drb_err:  # noqa: silent-swallow
+            logger.debug(f"[P293-OPTIONS] {asset} skipped: {_drb_err}")
+
         # [WIRE-3B] SqueezeDetectorAgent -short squeeze risk
         if self.squeeze_detector_agent and not p0_abort_tick:
             try:
@@ -9403,6 +9904,86 @@ class HMATSProductionRunner:
                     f"[MLP-SEAT] {asset}: seat skip on "
                     f"{type(_ms_e).__name__}: {_ms_e} — incumbent signal stands")
 
+        # [P293d option B] WHALE SEAT (default "off" — this block is inert).
+        # Same quant-slot injection as the trend / regimebook / mlp seats, so
+        # the ENTIRE chain (alpha gate, veto chain, P206 sleeve translation,
+        # caps, stops) stays binding. Placed LAST so precedence is
+        # deterministic: if two seats are ever enforced at once, whale wins,
+        # and that is a stated ordering rather than an accident.
+        #
+        # NOT JUSTIFIED ON CURRENT EVIDENCE, and that is the point of the
+        # flag: `agent_ic_review --window-days 60` puts whale at 4h IC +0.053
+        # (t=1.15) and 16h +0.024 (t=0.26) — positive, but indistinguishable
+        # from zero and below the P166 cost bar. Built so that promoting it
+        # is a config flip WHEN evidence supports it, not a code change under
+        # time pressure. Seating a t=0.26 signal as the DECIDER today would
+        # be exactly the mistake P147/P228 exist to prevent.
+        #
+        # Reads whale_net_pressure directly (not the per-asset stash, which
+        # this tick's bridge has not written yet) through the shared
+        # threshold helper — one definition of "what whale says".
+        _ws_mode = str(getattr(self.config, "whale_seat_mode", "off") or "off")
+        _ws_assets = getattr(self.config, "whale_seat_assets", None) or [
+            "BTC", "ETH", "SOL"]
+        if _ws_mode == "enforce" and asset in _ws_assets:
+            try:
+                _ws_press = market_data.get("whale_net_pressure", None)
+                if _ws_press is None:
+                    if not hasattr(self, "_ws_seat_silent_logged"):
+                        self._ws_seat_silent_logged: Set[str] = set()
+                    if asset not in self._ws_seat_silent_logged:
+                        self._ws_seat_silent_logged.add(asset)
+                        logger.warning(
+                            f"[WHALE-SEAT] {asset}: enforce is ON but "
+                            f"whale_net_pressure has no producer this tick — "
+                            f"seat NOT taken, incumbent signal stands "
+                            f"(absence is not flat, P2; once per asset)")
+                elif abs(whale_direction_from_pressure(_ws_press)) <= 1e-9:
+                    # [P293j] A SILENT whale must NOT seat 0.0.
+                    #
+                    # whale is a SPARSE signal — measured directional on 54%
+                    # (BTC) / 43% (ETH) / 12% (SOL) of ticks — and its
+                    # deadband (|pressure| <= 0.3) means "no opinion", NOT
+                    # "flat". Seating a 0.0 would force the book flat on the
+                    # 46/57/88% of ticks where whale simply has nothing to
+                    # say, which is both a churn engine and the P2 error
+                    # (absence read as a position). It would also destroy the
+                    # fallback: the incumbent signal must keep the seat so
+                    # something coherent drives those ticks.
+                    #
+                    # This is the difference between whale and the mlp seat
+                    # it was modelled on: mlp emits continuously, whale does
+                    # not, and copying the pattern without checking that
+                    # would have shipped a flattener.
+                    pass
+                else:
+                    _ws_dir = whale_direction_from_pressure(_ws_press)
+                    self._ws_seat_silent_logged = getattr(
+                        self, "_ws_seat_silent_logged", set())
+                    self._ws_seat_silent_logged.discard(asset)
+                    # Same asserted 30bps x |dir| the trend/regimebook/mlp
+                    # seats use — a seat swap changes the DIRECTION source,
+                    # never the alpha bar (P231/P237 govern that constant).
+                    _ws_edge = 30.0 * abs(_ws_dir)
+                    market_data["quant_direction"] = float(_ws_dir)
+                    market_data["quant_confidence"] = 0.9 if _ws_dir else 0.4
+                    market_data["signal_edge_bps"] = _ws_edge
+                    agent_signals["quant_direction"] = float(_ws_dir)
+                    agent_signals["quant_confidence"] = 0.9 if _ws_dir else 0.4
+                    agent_signals["signal_edge_bps"] = _ws_edge
+                    market_data["quant_data_quality"] = 1.0
+                    agent_signals["quant_data_quality"] = 1.0
+                    # [P149] sleeve bridge — same reason as the seats above
+                    self._last_quant_directions[asset] = float(_ws_dir)
+                    logger.info(
+                        f"[WHALE-SEAT] {asset}: dir={_ws_dir:+.1f} "
+                        f"pressure={float(_ws_press):+.3f} edge={_ws_edge:.0f}bps "
+                        f"— whale holds the seat")
+            except Exception as _ws_e:
+                logger.warning(
+                    f"[WHALE-SEAT] {asset}: seat skip on "
+                    f"{type(_ws_e).__name__}: {_ws_e} — incumbent signal stands")
+
         _gmm_probs = market_data.get("_gmm_probs", [])
         _regime_name = market_data.get("regime_state", "UNKNOWN")
         # [P265] `_last_regime` finally gets a WRITER. The live dashboard
@@ -9902,9 +10483,25 @@ class HMATSProductionRunner:
                     else:
                         agent_signals['etf_flow'] = 0.0
                     # Composite: exchange outflow = bullish, inflow = bearish
+                    #
+                    # [P293b] SIGN CORRECTED AT SOURCE. The producer
+                    # (onchain_feed._parse_raw_data) computes
+                    #     net_exchange_flow = sum(+value if inflow else -value)
+                    # i.e. POSITIVE = INFLOW. This consumer read POSITIVE as
+                    # OUTFLOW and emitted +1 (bullish) for it — the exact
+                    # inverse of its own comment. The two have disagreed since
+                    # both were written, invisible only because the producer
+                    # has always returned exactly 0.0 (sign-invariant), so
+                    # nothing could ever surface it.
+                    #
+                    # Fixed here, on the consumer, because the producer's
+                    # convention is the documented one and is what the new
+                    # P293 exchange-netflow feed also publishes. Behaviour is
+                    # unchanged TODAY (0.0 maps to 0.0 either way) and correct
+                    # the moment this key carries a real number.
                     _exf = agent_signals['exchange_flow']
                     agent_signals['flow_direction'] = (
-                        -1.0 if _exf < -1e6 else (1.0 if _exf > 1e6 else 0.0)
+                        -1.0 if _exf > 1e6 else (1.0 if _exf < -1e6 else 0.0)
                     )
             except Exception as _fl_err:
                 logger.debug(f"[B17] Flow update failed: {_fl_err}")
@@ -9913,20 +10510,97 @@ class HMATSProductionRunner:
         agent_signals.setdefault('etf_flow', 0.0)
         agent_signals.setdefault('flow_direction', 0.0)
 
+        # [P293] Measured exchange netflow (CoinGlass v4, existing key).
+        #
+        # `exchange_flow` above is the sum of an empty list — onchain_feed's
+        # `exchange_flows` has never had a source — so it is a structural 0.0
+        # and `flow_direction` (ADVISE weight 0.20) has been pinned at 0 for
+        # the life of the system.
+        #
+        # THE SIGN TRAP, handled explicitly: the producer convention
+        # (onchain_feed) is POSITIVE=INFLOW, while the consumer six lines
+        # above reads POSITIVE=OUTFLOW ("outflow = bullish" -> +1). The two
+        # disagree by a sign and it has never surfaced only because the
+        # producer always returned exactly 0.0. So this writes its own
+        # unambiguous keys, and the bridge into the legacy pair NEGATES
+        # explicitly (pinned by test). Arming a sign-inverted flow signal
+        # would be strictly worse than the zero it replaces.
+        #
+        # SOL is absent by measurement (the endpoint returns zero SOL
+        # exchanges) and must stay absent rather than reading as flat flow.
+        try:
+            _enf = getattr(self, "_exchange_netflow_feed", None)
+            if _enf is not None:
+                _enf_m = _enf.get_metrics(asset.replace("/USD", "").upper())
+                if _enf_m is not None and _enf_m.is_usable():
+                    _enf_px = float(
+                        market_data.get("price", market_data.get("close", 0)) or 0) or None
+                    _enf_usd = _enf_m.netflow_usd_1d(_enf_px)
+                    _enf_pct = _enf_m.balance_pct_1d()
+                    # POSITIVE = inflow to exchanges = bearish.
+                    agent_signals['exchange_netflow_coins_1d'] = _enf_m.netflow_coins_1d
+                    agent_signals['exchange_netflow_usd_1d'] = _enf_usd
+                    agent_signals['exchange_netflow_pct_1d'] = _enf_pct
+                    # Bearish on inflow, bullish on outflow. The 0.05% band is
+                    # a scale-free stand-in for the legacy $1M notional gate.
+                    _enf_dir = 0.0
+                    if _enf_pct is not None:
+                        if _enf_pct > 0.0005:
+                            _enf_dir = -1.0     # inflow -> sell pressure
+                        elif _enf_pct < -0.0005:
+                            _enf_dir = +1.0     # outflow -> accumulation
+                    agent_signals['exchange_netflow_direction'] = _enf_dir
+
+                    if getattr(self.config, "exchange_netflow_to_flow_agent", False):
+                        # [P293b] NO negation any more: the consumer's sign was
+                        # corrected at source (see the flow_direction block
+                        # above), so producer and consumer now share ONE
+                        # convention — positive = inflow = bearish. Writing the
+                        # value straight through is what makes that true; a
+                        # surviving negation here would silently re-open the
+                        # disagreement from the other side.
+                        agent_signals['exchange_flow'] = (
+                            _enf_usd if _enf_usd is not None else 0.0)
+                        agent_signals['flow_direction'] = _enf_dir
+                        logger.info(
+                            f"[P293-NETFLOW] {asset}: net_1d="
+                            f"{_enf_m.netflow_coins_1d:+,.0f} coins "
+                            f"({(_enf_pct or 0) * 100:+.3f}% of bal) -> "
+                            f"flow_direction={_enf_dir:+.0f} (ENFORCED)"
+                        )
+                    else:
+                        logger.info(
+                            f"[P293-NETFLOW] {asset}: net_1d="
+                            f"{_enf_m.netflow_coins_1d:+,.0f} coins "
+                            f"({(_enf_pct or 0) * 100:+.3f}% of bal) -> would be "
+                            f"flow_direction={_enf_dir:+.0f} (SHADOW — live "
+                            f"flow_direction stays "
+                            f"{agent_signals.get('flow_direction', 0.0):+.0f})"
+                        )
+        except Exception as _enf_err:  # noqa: silent-swallow
+            logger.debug(f"[P293-NETFLOW] {asset} skipped: {_enf_err}")
+
         # [WHALE-BRIDGE 2026-04-22] WhaleDetector pipeline writes whale_direction (str)
         # and whale_net_pressure (float) to market_data (pipeline:1826-1830), but fusion
         # reads whale_flow_direction + whale_confidence (integration_v36.py:2340-2346).
         # Bridge converts the key names so the fusion "whale" branch stops being dead code.
         _wh_net = float(market_data.get('whale_net_pressure', 0.0) or 0.0)
-        if _wh_net > 0.3:
-            agent_signals['whale_flow_direction'] = 1.0
-            agent_signals['whale_confidence'] = min(abs(_wh_net), 1.0)
-        elif _wh_net < -0.3:
-            agent_signals['whale_flow_direction'] = -1.0
-            agent_signals['whale_confidence'] = min(abs(_wh_net), 1.0)
-        else:
-            agent_signals['whale_flow_direction'] = 0.0
-            agent_signals['whale_confidence'] = 0.0
+        # [P293d] threshold single-sourced — see whale_direction_from_pressure
+        _wh_dir = whale_direction_from_pressure(_wh_net)
+        agent_signals['whale_flow_direction'] = _wh_dir
+        agent_signals['whale_confidence'] = (
+            min(abs(_wh_net), 1.0) if _wh_dir else 0.0)
+
+        # [P293d] Per-asset whale stash for the sleeve driver (options A/B).
+        # This is the SET half; the RESET runs at the top of the tick
+        # ([P294], search _last_whale_directions there), so an early return
+        # before this line leaves 0.0 = "no opinion" rather than the previous
+        # tick's direction. Written unconditionally, never behind a magnitude
+        # gate (the P155-L5 high-water-mark lesson).
+        self._last_whale_directions[asset] = float(
+            agent_signals.get('whale_flow_direction', 0.0) or 0.0)
+        self._last_whale_confidences[asset] = float(
+            agent_signals.get('whale_confidence', 0.0) or 0.0)
 
         # [v3.3-B18] OnChain Sentiment Fusion -per-asset on-chain + sentiment alpha
         if self._onchain_fusion:
@@ -16267,7 +16941,7 @@ class HMATSProductionRunner:
             _diag_dir = _os_diag.path.join('data', 'diagnostics')
             _os_diag.makedirs(_diag_dir, exist_ok=True)
             _diag_file = _os_diag.path.join(_diag_dir, f"diag_{asset}_{_diag['tick_time'].replace(':', '-')}.json")
-            with open(_diag_file, 'w') as _f:
+            with open(_diag_file, 'w', encoding="utf-8") as _f:
                 _json_diag.dump(_diag, _f, indent=2, default=str)
             # Log summary
             logger.info(
@@ -16461,7 +17135,7 @@ class HMATSProductionRunner:
         try:
             import os as _os_fv
             _os_fv.makedirs("data", exist_ok=True)
-            with open(f"data/feature_verification_{asset.replace('/','_')}.json", "w") as _f:
+            with open(f"data/feature_verification_{asset.replace('/','_')}.json", "w", encoding="utf-8") as _f:
                 _json_fv.dump(report, _f, indent=2)
         except Exception:
             pass
@@ -17460,7 +18134,7 @@ class HMATSProductionRunner:
             tmp = self._PAPER_POS_FILE.with_suffix(".tmp")
             # [FIX-40] Atomic write with fsync -prevent data loss on crash
             _payload_str = json.dumps(payload, indent=2, default=str)
-            with open(tmp, 'w') as _f:
+            with open(tmp, 'w', encoding="utf-8") as _f:
                 _f.write(_payload_str)
                 _f.flush()
                 os.fsync(_f.fileno())
@@ -18786,7 +19460,7 @@ class HMATSProductionRunner:
             }
             tmp = self._DASHBOARD_STATE_FILE.with_suffix(".tmp")
             # [FIX-40] fsync
-            with open(tmp, 'w') as _f:
+            with open(tmp, 'w', encoding="utf-8") as _f:
                 _f.write(json.dumps(state, indent=2, default=str))
                 _f.flush()
                 os.fsync(_f.fileno())
@@ -19614,7 +20288,7 @@ class HMATSProductionRunner:
             _session_history = []
             _sd = {}
             if _SESSION_FILE.exists():
-                _sd = json.loads(_SESSION_FILE.read_text())
+                _sd = json.loads(_SESSION_FILE.read_text(encoding="utf-8"))
                 _session_history = _sd.get("recent_starts", [])
                 if _sd.get("clean_shutdown", False):
                     _session_history = []
@@ -19627,7 +20301,7 @@ class HMATSProductionRunner:
             _manual_restart = False
             if _MANUAL_RESTART_MARKER.exists():
                 try:
-                    _mr = json.loads(_MANUAL_RESTART_MARKER.read_text())
+                    _mr = json.loads(_MANUAL_RESTART_MARKER.read_text(encoding="utf-8"))
                     _mr_ts = float(_mr.get("ts", 0) or 0)
                     _manual_restart = (_mr_ts > 0) and ((_now_ts - _mr_ts) < 900)
                 except Exception:
@@ -19643,7 +20317,7 @@ class HMATSProductionRunner:
             _sd["current_session_start"] = _now_ts
             _sd["clean_shutdown"] = False
             _sd["manual_restart_consumed"] = bool(_manual_restart)
-            _SESSION_FILE.write_text(json.dumps(_sd, indent=2))
+            _SESSION_FILE.write_text(json.dumps(_sd, indent=2), encoding="utf-8")
 
             if _manual_restart:
                 self._ac4_extended_cooldown = 0
@@ -21691,6 +22365,81 @@ class HMATSProductionRunner:
                                                 f"[MA-FILTER] {_m_a}: skipped on "
                                                 f"{type(_maf_e).__name__}: {_maf_e} "
                                                 f"— sleeve managed UNFILTERED this tick")
+
+                                        # [P293d option A] WHALE ENTRY FILTER.
+                                        # Same mechanism as the MA filter
+                                        # above and the same shared decision
+                                        # function, so both filters obey one
+                                        # set of rules (P172). Acts on the
+                                        # SLEEVE DRIVER, which is why it
+                                        # works where an ADVISE weight cannot:
+                                        # fusion's ADVISE channel only scales
+                                        # exposure, and exposure is discarded
+                                        # twice before reaching an order.
+                                        #
+                                        # Whale is the best-evidenced of the
+                                        # zero-weighted agents (positive IC in
+                                        # every measured window) but does NOT
+                                        # clear the P166 bar (60d 16h t=0.26),
+                                        # so this ships enforcement-OFF with a
+                                        # ledger: a veto is the defensible
+                                        # expression of a weak-but-positive
+                                        # signal, and the ledger is what
+                                        # earns the flip.
+                                        try:
+                                            _wf_dir = float(getattr(
+                                                self,
+                                                "_last_whale_directions",
+                                                {}).get(_m_a, 0.0) or 0.0)
+                                            _wf_pos = int(
+                                                _sl.signed_contracts(_m_a) or 0)
+                                            _wf_raw = int(
+                                                _sl.target_for(_m_a, _m_dir))
+                                            (_wf_led, _wf_act,
+                                             _wf_why) = sleeve_agent_filter_decision(
+                                                _wf_pos, _wf_raw, _wf_dir,
+                                                agent_tag="whale")
+                                            _wf_enf = bool(getattr(
+                                                self.config,
+                                                "coinbase_whale_filter_enforce",
+                                                False))
+                                            if getattr(self, "_whale_filter_shadow", None) is not None:
+                                                self._whale_filter_shadow.observe(_m_a, {
+                                                    "_maf_ledger_dir": float(_wf_led),
+                                                    "_maf_ma_dir": _wf_dir,
+                                                    "_maf_raw_target": _wf_raw,
+                                                    "_maf_sleeve_dir": float(_m_dir),
+                                                    "_maf_pos": _wf_pos,
+                                                    "_maf_action": _wf_act,
+                                                    "_maf_reason": _wf_why,
+                                                    "_maf_enforce": _wf_enf,
+                                                })
+                                            if _wf_act:
+                                                logger.info(
+                                                    f"[WHALE-FILTER] {_m_a}: {_wf_why} "
+                                                    f"raw={_wf_raw:+d} whale={_wf_dir:+.3f} "
+                                                    f"pos={_wf_pos} -> {_wf_act} "
+                                                    f"(enforce={'ON' if _wf_enf else 'OFF'})")
+                                            if _wf_enf and _wf_act == "block_entry":
+                                                _m_summary[_m_a] = (
+                                                    f"WHALE_VETO(entry,wh={_wf_dir:+.2f},"
+                                                    f"dir={_m_dir:+.2f})")
+                                                self._enh_gated_dirs[_m_a] = (
+                                                    1.0 if _wf_pos > 0 else
+                                                    (-1.0 if _wf_pos < 0
+                                                     else 0.0))
+                                                _st_res = await _sl.ensure_protective_stop(
+                                                    _m_a, intended_target=0)
+                                                _cb_stop_summary[_m_a] = _st_res.get("status")
+                                                continue
+                                            if _wf_enf and _wf_act == "flip_to_flat":
+                                                _m_dir = 0.0
+                                                _m_src = f"{_m_src}+whale_veto"
+                                        except Exception as _wf_e:  # noqa: silent-swallow
+                                            logger.warning(
+                                                f"[WHALE-FILTER] {_m_a}: skipped on "
+                                                f"{type(_wf_e).__name__}: {_wf_e} "
+                                                f"— sleeve managed UNFILTERED this tick")
                                         # [P232] Re-entry cooldown (P168's
                                         # rebuild cooldown, ported to the
                                         # venue that trades). Blocks only a
@@ -21747,7 +22496,43 @@ class HMATSProductionRunner:
                                         # branches; the HOLD/MA-veto/cooldown
                                         # branches write their own claims)
                                         self._enh_gated_dirs[_m_a] = _m_dir
-                                        _m_res = await _sl.manage_to_signal(_m_a, _m_dir)
+                                        # [P293d option C] Pass fusion's
+                                        # conviction ratio when the flag is
+                                        # on. This is the ONLY route by which
+                                        # the 22 non-DECIDE agents (CONFIRM,
+                                        # ADVISE, CAP) can reach an order —
+                                        # their whole output is exposure
+                                        # modulation, discarded twice
+                                        # downstream. Default 1.0 = today's
+                                        # behaviour byte-for-byte.
+                                        # HONEST LIMIT: at 1-3 contracts this
+                                        # mostly rounds to the same integer,
+                                        # so the channel is near-binary at
+                                        # current equity (see
+                                        # sleeve_conviction_contracts).
+                                        _cv_on = bool(getattr(
+                                            self.config,
+                                            "fusion_conviction_to_sleeve",
+                                            False))
+                                        _cv = 1.0
+                                        if _cv_on:
+                                            # `_live_intents` is a LOCAL of
+                                            # run_live (not an attribute) —
+                                            # reading self._live_intents would
+                                            # getattr-default to 1.0 and make
+                                            # the flag silently inert, which
+                                            # is the failure mode this whole
+                                            # batch exists to remove.
+                                            _cv_intent = (_live_intents or {}).get(_m_a)
+                                            _cv = float(getattr(
+                                                _cv_intent, "fusion_conviction", 1.0) or 1.0)
+                                            if abs(_cv - 1.0) > 0.01:
+                                                logger.info(
+                                                    f"[FUSION-CONVICTION] {_m_a}: "
+                                                    f"conviction={_cv:.3f} applied to sizing "
+                                                    f"(advisors modulated exposure {_cv:.2f}x)")
+                                        _m_res = await _sl.manage_to_signal(
+                                            _m_a, _m_dir, conviction=_cv)
                                         _m_st = _m_res.get("status")
                                         # [P232] record flattens for the cooldown.
                                         # [P251] Record on flatten-SENT, not only
@@ -21949,7 +22734,7 @@ class HMATSProductionRunner:
                             "tick": self._live_round_count,
                             "positions": len(_hb_positions),
                         }
-                        with open(_eq_path, "a") as _eqf:
+                        with open(_eq_path, "a", encoding="utf-8") as _eqf:
                             _eqf.write(json.dumps(_eq_rec) + "\n")
                 except Exception as _eq_err:
                     # [P253] was debug — a writer's silent failure makes the
@@ -21977,11 +22762,11 @@ class HMATSProductionRunner:
                         _kq_dir.mkdir(parents=True, exist_ok=True)
                         # 1. Snapshot (current cumulative)
                         _kq_snap_path = _kq_dir / "kq_firing_stats.json"
-                        with open(_kq_snap_path, "w") as _kqf:
+                        with open(_kq_snap_path, "w", encoding="utf-8") as _kqf:
                             json.dump(_kq_stats, _kqf, indent=2)
                         # 2. Append-only JSONL audit log (one record per tick)
                         _kq_jsonl_path = _kq_dir / "kq_firing_stats.jsonl"
-                        with open(_kq_jsonl_path, "a") as _kqj:
+                        with open(_kq_jsonl_path, "a", encoding="utf-8") as _kqj:
                             _kqj.write(json.dumps(_kq_stats) + "\n")
                 except Exception as _kq_err:
                     logger.warning(
@@ -23250,7 +24035,7 @@ class HMATSProductionRunner:
             self._TRANCHE_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
             tmp = self._TRANCHE_STATE_FILE.with_suffix(".tmp")
             # [FIX-40] fsync
-            with open(tmp, 'w') as _f:
+            with open(tmp, 'w', encoding="utf-8") as _f:
                 _f.write(json.dumps(state, indent=2))
                 _f.flush()
                 os.fsync(_f.fileno())
@@ -23278,7 +24063,7 @@ class HMATSProductionRunner:
         if not self._TRANCHE_STATE_FILE.exists():
             return
         try:
-            state = json.loads(self._TRANCHE_STATE_FILE.read_text())
+            state = json.loads(self._TRANCHE_STATE_FILE.read_text(encoding="utf-8"))
             scheduler = self.engine.guarantees.tranche_scheduler
             from defense.constitution import TrancheLevel
             restored = 0
@@ -23477,10 +24262,10 @@ class HMATSProductionRunner:
         try:
             _sf = DATA_DIR / "session_state.json"
             if _sf.exists():
-                _sd = json.loads(_sf.read_text())
+                _sd = json.loads(_sf.read_text(encoding="utf-8"))
                 _sd["last_shutdown"] = time.time()
                 _sd["clean_shutdown"] = True
-                _sf.write_text(json.dumps(_sd, indent=2))
+                _sf.write_text(json.dumps(_sd, indent=2), encoding="utf-8")
         except Exception:
             pass
         
@@ -23528,7 +24313,7 @@ class HMATSProductionRunner:
         if self._proof_logs:
             log_path = self.config.log_dir / f"proof_log_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.log"
             log_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(log_path, 'w') as f:
+            with open(log_path, 'w', encoding="utf-8") as f:
                 f.write('\n'.join(self._proof_logs))
             logger.info(f"[SHUTDOWN] Proof logs saved to {log_path}")
 

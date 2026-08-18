@@ -50,6 +50,12 @@ def _run_scanner(args: List[str]) -> Dict[str, Any]:
         [sys.executable, "-X", "utf8", *args],
         capture_output=True,
         text=True,
+        # [P294] The child is launched with -X utf8 so it EMITS utf-8; without
+        # this the parent still DECODED it with the ambient locale codec, and
+        # on a GBK machine the gate died in a reader thread before running a
+        # single scanner - so the repo's own gate was unrunnable there, which
+        # is how the type baseline's environment offset went unexamined.
+        encoding="utf-8",
         cwd=REPO_ROOT,
     )
     if r.returncode != 0:

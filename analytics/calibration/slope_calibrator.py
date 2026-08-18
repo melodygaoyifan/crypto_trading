@@ -53,8 +53,26 @@ HORIZONS = (1, 4)       # 4h, 16h
 # and the P237 tripwire consumes the TRADEABLE/GATE-CLOSED verdict string
 # these produce verbatim. Provenance is stamped and staleness warned below
 # so a Sep-1 deactivation decision cannot silently ride a frozen snapshot.
-DEFAULT_THRESHOLDS = {"BTC": 28.93, "ETH": 42.77, "SOL": 55.34}
-THRESHOLDS_STAMPED = "2026-08-08"   # P230 verification date
+# [P293k 2026-08-17] REFRESHED. The previous snapshot {BTC 28.93, ETH 42.77,
+# SOL 55.34} was stamped 2026-08-08 and had been overtaken TWICE by code:
+#   P289 (08-16) re-priced spreads from the Kraken-era constants
+#   P291b (08-17) armed venue-true hold (CDE posts collateral, not a borrow)
+# leaving the tripwire comparing against thresholds 1.5-1.9x too high
+# (BTC 1.51x, ETH 1.60x, SOL 1.91x).
+#
+# THE DEFECT THIS EXPOSED, which matters more than the numbers: the staleness
+# guard below is TIME-based (30 days), but these thresholds move when FRICTION
+# CODE changes — which happened one day before the guard's window opened. A
+# time-based check cannot detect a code-driven change, so it reported "verified
+# 10d ago" while the values were already wrong. Any P-entry that moves friction
+# (fees, spreads, hold cost, smart-beta gate mult) MUST update these and
+# re-stamp, or pass --thresholds; the cron should prefer --thresholds.
+#
+# Immaterial to the 2026-08-17 verdict — published max alpha was 0.0/1.9/1.2
+# against even the CORRECTED thresholds, so GATE-CLOSED stands either way —
+# but it would silently distort the first period where slopes actually rise.
+DEFAULT_THRESHOLDS = {"BTC": 19.1, "ETH": 26.7, "SOL": 29.0}
+THRESHOLDS_STAMPED = "2026-08-17"   # P293k: post-P289 spreads + P291b hold
 THRESHOLDS_STALE_AFTER_DAYS = 30
 
 
@@ -113,6 +131,9 @@ def main() -> int:
     bars = {a: fetch_closes(a) for a in KRAKEN_PAIRS}
 
     pairs: dict = {a: {h: [] for h in HORIZONS} for a in KRAKEN_PAIRS}
+    # [P293k] entry-time-aligned companion series (see the loop below)
+    pairs_entry: dict = {a: {h: [] for h in HORIZONS}
+                         for a in KRAKEN_PAIRS}
     for rec in records:
         q = next((s for s in rec.get("signals", [])
                   if s.get("agent_name") == "quant"), None)
@@ -127,6 +148,25 @@ def main() -> int:
             if 0 <= i and i + h < len(closes):
                 pairs[rec["asset"]][h].append(
                     (d, (closes[i + h] / closes[i] - 1.0) * 1e4))
+            # [P293k] SECOND ALIGNMENT, reported alongside. `closes[i]` is the
+            # close of the bar CONTAINING the signal, so the return above
+            # starts ~4h AFTER the decision — it excludes the bar the sleeve
+            # actually enters in. That is conservative against look-ahead but
+            # it is NOT what the book experiences.
+            #
+            # Measured 2026-08-17, the difference is material and runs the
+            # UNFAVOURABLE way: BTC 4h -0.74 -> -6.07, ETH +3.01 -> -7.15,
+            # SOL +1.91 -> -10.89. The entry bar is where this signal loses
+            # most, which is consistent with entering after the move.
+            #
+            # Both are reported rather than silently switching: changing the
+            # basis would invalidate every prior weekly report the tripwire
+            # has counted, and the look-ahead concern behind the original
+            # choice is legitimate. The operator sees both numbers and the
+            # tripwire keeps keying on the established one.
+            if 0 <= i - 1 and (i - 1) + h < len(closes):
+                pairs_entry[rec["asset"]][h].append(
+                    (d, (closes[(i - 1) + h] / closes[i - 1] - 1.0) * 1e4))
 
     print(f"Shadow slope calibration — {args.window_days}d window, "
           f"shrink k={SHRINK_K}, prior=0, floor=0, cap={SLOPE_CAP}")
@@ -164,6 +204,11 @@ def main() -> int:
         report["assets"][a] = {}
         for h in HORIZONS:
             r = shrunk_slope(pairs[a][h], overlap=h)
+            # [P293k] the same statistic on the entry-aligned basis, reported
+            # for comparison only — the verdict below still keys on `r`.
+            r_entry = shrunk_slope(pairs_entry[a][h], overlap=h)
+            r["entry_aligned_slope_ols"] = r_entry.get("slope_ols")
+            r["entry_aligned_t"] = r_entry.get("t_overlap_corrected")
             report["assets"][a][f"{h*4}h"] = r
             if "slope_published" in r:
                 max_alpha = r["slope_published"]  # at |dir| = 1.0
