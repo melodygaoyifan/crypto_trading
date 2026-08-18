@@ -6854,6 +6854,10 @@ class HMATSProductionRunner:
             self._last_whale_confidences = {}
         self._last_whale_directions[asset] = 0.0
         self._last_whale_confidences[asset] = 0.0
+        # [P298] Per-tick seat marker, cleared here for the same reason the
+        # stash is: a stale "the book took the seat" from a previous tick
+        # would silently mute whale on a tick the book never ran (P155-L5).
+        getattr(self, "_rb_seat_took", set()).discard(asset)
 
         self._tick_count += 1
         tick_start = datetime.now(timezone.utc)
@@ -9859,6 +9863,15 @@ class HMATSProductionRunner:
                     agent_signals["quant_data_quality"] = 1.0
                     # [P149] sleeve bridge — same reason as the trend seat
                     self._last_quant_directions[asset] = float(_rb_dir)
+                    # [P298] Record a DIRECTIONAL book target so the whale
+                    # seat below can defer to it. A FLAT book (dir == 0) is
+                    # deliberately not recorded: the book saying "no position"
+                    # is not the book claiming the seat, and whale is welcome
+                    # to those bars — that is the whole point of the P293j
+                    # arming (whale trades where the incumbent cannot).
+                    if _rb_dir:
+                        self._rb_seat_took = getattr(self, "_rb_seat_took", set())
+                        self._rb_seat_took.add(asset)
                     logger.info(
                         f"[REGIMEBOOK-SEAT] {asset}: dir={_rb_dir:+.1f} "
                         f"leg={_rb_leg} age={_rb_age/3600:.1f}h "
@@ -9950,7 +9963,18 @@ class HMATSProductionRunner:
         _ws_mode = str(getattr(self.config, "whale_seat_mode", "off") or "off")
         _ws_assets = getattr(self.config, "whale_seat_assets", None) or [
             "BTC", "ETH", "SOL"]
-        if _ws_mode == "enforce" and asset in _ws_assets:
+        if _ws_mode == "enforce" and asset in _ws_assets                 and asset not in getattr(self, "_rb_seat_took", set()):
+            # [P298] PRECEDENCE, stated rather than accidental. This block
+            # runs LAST and therefore wins by default (P293d placed it there
+            # deliberately, when it was the only enforced seat). With
+            # regimebook_mode=enforce that default is backwards on evidence:
+            # the book is certified over 6 years and three eras, beating a
+            # same-cell random control by ~286 points (P297), while whale's
+            # own instrument puts it at 16h t=0.26 — indistinguishable from
+            # zero. So whale now takes the seat only where the book is FLAT,
+            # which preserves the P293j intent (whale trades where the
+            # incumbent could not) without letting the weaker signal override
+            # the stronger one. With regimebook off, nothing changes.
             try:
                 _ws_press = market_data.get("whale_net_pressure", None)
                 if _ws_press is None:

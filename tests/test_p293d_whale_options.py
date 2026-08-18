@@ -453,8 +453,12 @@ class TestConfigTrio:
         if not prof.exists():
             pytest.skip("live profile not present")
         data = json.loads(prof.read_text(encoding="utf-8-sig"))
-        assert flag not in data, (
-            f"{flag} is in the live profile — that is an activation decision"
+        # [P298] Flipped by explicit operator instruction ("make a plan on enabling all items, i don't want to wait"). The pin now asserts the DECIDED value rather than OFF, so a silent revert fails too - either direction is a live-money change (the P237/P270 pattern).
+        # A (whale entry filter) is tightening-only and fails OPEN; C
+        # (conviction sizing) can only REDUCE size and never changes a sign.
+        assert data.get(flag) is True, (
+            f"{flag} is not at its decided value True — a silent revert is "
+            f"as much a live-money change as the flip was"
         )
 
     def test_whale_seat_is_the_DECIDED_value(self):

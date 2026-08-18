@@ -89,9 +89,16 @@ class TestConfigContract:
     def test_live_profile_pins_off(self):
         live = json.loads((REPO / "configs" / "live_high_risk.json"
                            ).read_text(encoding="utf-8-sig"))
-        assert live.get("regimebook_mode") == "off", (
-            "the live profile flipped the seat on — that requires the P166 "
-            "forward-gate read + its own P-entry (P141)")
+        # [P298] Flipped by explicit operator instruction ("make a plan on enabling all items, i don't want to wait"). The pin now asserts the DECIDED value rather than OFF, so a silent revert fails too - either direction is a live-money change (the P237/P270 pattern).
+        # The evidence the original pin demanded now exists, from history
+        # rather than the forward gate: P297 measured the BTC book over 6
+        # years in the derivatives expression - +243.9% vs trend-only +151.7%
+        # vs buy-and-hold +184.5%, the funding-leg increment positive in ALL
+        # THREE eras, beating a same-cell random control by ~286 points, and
+        # the book's Sharpe CI the only one in that comparison excluding zero.
+        assert live.get("regimebook_mode") == "enforce", (
+            "the regimebook seat is not at its decided value 'enforce' — a "
+            "silent revert is as much a live-money change as the flip was")
 
 
 # ---------------------------------------------------------------------------

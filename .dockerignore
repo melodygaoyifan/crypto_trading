@@ -34,6 +34,10 @@ scripts/
 # reads the ledger + Kraken's PUBLIC OHLC endpoint; places no orders.
 !scripts/trend_regime_review.py
 !scripts/fill_quality_review.py
+# [P295c] seat controller CLI — reads the attribution volume and the
+# regimebook ledgers, so it must run in-container (P213). Stdlib-only,
+# read-only, places no orders.
+!scripts/seat_check.py
 pytorch_build/
 deploy/
 data/diagnostics/

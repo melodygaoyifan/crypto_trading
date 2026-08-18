@@ -495,10 +495,29 @@ class TestConfigTrioDefaultsOff:
         if not prof.exists():
             pytest.skip("live profile not present")
         data = json.loads(prof.read_text(encoding="utf-8-sig"))
-        assert flag not in data, (
-            f"{flag} appeared in the live profile — that is an activation "
-            f"decision and needs its own P-entry"
-        )
+        # [P298] Flipped by explicit operator instruction ("make a plan on enabling all items, i don't want to wait"). The pin now asserts the DECIDED value rather than OFF, so a silent revert fails too - either direction is a live-money change (the P237/P270 pattern).
+        #
+        # dvol_to_market_data is the one that did NOT flip, and for a reason
+        # worth keeping: Deribit publishes DVOL as an INDEX LEVEL (BTC 34.5)
+        # while the constitution aliases dvol -> dvol_zscore and fires
+        # EXTREME_DVOL at >= 5.0, which is not in the sleeve's HOLD set. It
+        # would have flattened the book on every tick, permanently.
+        DECIDED = {
+            "sentiment_zscore_mode": "historical",
+            "options_use_deribit": True,
+            "exchange_netflow_to_flow_agent": True,
+            "macro_gci_live": True,
+        }
+        if flag in DECIDED:
+            assert data.get(flag) == DECIDED[flag], (
+                f"{flag} is not at its decided value {DECIDED[flag]!r} — a "
+                f"silent revert is as much a live-money change as the flip was"
+            )
+        else:
+            assert flag not in data, (
+                f"{flag} appeared in the live profile — that is an activation "
+                f"decision and needs its own P-entry"
+            )
 
 
 # =============================================================================

@@ -103,10 +103,14 @@ class TestConfigContract:
         # silently flip on.
         live = json.loads((REPO / "configs" / "live_high_risk.json"
                            ).read_text(encoding="utf-8-sig"))
-        assert live.get("coinbase_ma_filter_enforce") is False, (
-            "coinbase_ma_filter_enforce is not explicitly false in the live "
-            "profile — flipping it on is an operator decision requiring P166 "
-            "forward evidence from the ma_filter ledger + its own P-entry"
+        # [P298] Flipped by explicit operator instruction ("make a plan on enabling all items, i don't want to wait"). The pin now asserts the DECIDED value rather than OFF, so a silent revert fails too - either direction is a live-money change (the P237/P270 pattern).
+        # Enforcement is ON. Evidence is the P236 live counterfactual the
+        # filter was built from: quant earns +24.9bps/tick when model_alpha
+        # AGREES and -78.9bps/tick when it disagrees (t=-3.42). The filter is
+        # tightening-only, fails OPEN on a silent agent, and never exits.
+        assert live.get("coinbase_ma_filter_enforce") is True, (
+            "coinbase_ma_filter_enforce is not at its decided value True — a "
+            "silent revert is as much a live-money change as the flip was"
         )
 
 

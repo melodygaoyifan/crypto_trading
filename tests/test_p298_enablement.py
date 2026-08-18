@@ -1,0 +1,167 @@
+"""
+================================================================================
+HMATS [P298] - the enablement batch, and the units bug that would have flattened
+================================================================================
+
+Operator: "make a plan on enabling all items, i don't want to wait, implement
+right away." Seven flags flipped in one deploy; four deliberately NOT flipped
+because measurement contradicts them; one blocked by a units bug found while
+checking what it actually arms.
+================================================================================
+"""
+
+import json
+import re
+from pathlib import Path
+
+import pytest
+
+REPO = Path(__file__).resolve().parents[1]
+LIVE = REPO / "configs" / "live_high_risk.json"
+MAIN = REPO / "main.py"
+
+
+def _live():
+    return json.loads(LIVE.read_text(encoding="utf-8"))
+
+
+def _src(p: Path) -> str:
+    return p.read_text(encoding="utf-8")
+
+
+class TestGroupAEnabled:
+    """Each of these is real data replacing a fabricated constant on a channel
+    that cannot reach an order, or a strictly tightening control."""
+
+    @pytest.mark.parametrize("flag", [
+        "options_use_deribit",
+        "exchange_netflow_to_flow_agent",
+        "coinbase_whale_filter_enforce",
+        "coinbase_ma_filter_enforce",
+        "macro_gci_live",
+        "fusion_conviction_to_sleeve",
+    ])
+    def test_flag_is_on_with_its_evidence_note(self, flag):
+        d = _live()
+        assert d.get(flag) is True, f"{flag} is not enabled"
+        notes = [k for k in d if k.startswith("_") and flag.split("_")[0] in k]
+        assert notes, f"{flag} enabled with no annotation (P141: a live flip is a decision)"
+
+    def test_sentiment_uses_the_historical_distribution(self):
+        assert _live().get("sentiment_zscore_mode") == "historical"
+
+    def test_regimebook_holds_the_seat(self):
+        assert _live().get("regimebook_mode") == "enforce"
+
+
+class TestGroupDStaysOff:
+    """Not flipped, because measurement says otherwise. Pinned so a later
+    'enable everything' pass has to argue with the evidence rather than
+    quietly include them."""
+
+    def test_withdrawn_model_is_not_seated(self):
+        """P285c: mlp_small was withdrawn by its own 10-seed probe (median
+        -0.088, 5/10 nonpositive) and its checker refuses permanently."""
+        assert "mlpshadow_mode" not in _live()
+
+    def test_dead_strategies_stay_off(self):
+        """P199: 6 of 9 v5.1 strategies scored KILL with n_directional = 0 -
+        they emit nothing at all."""
+        assert _live().get("v5_1_strategies_live") is False
+
+    def test_inverted_gate_stays_in_shadow(self):
+        """P198/P270: forward evidence is INVERTED - the ticks this gate would
+        block made +9.2bps/4h while the ones it keeps made -2.5."""
+        assert _live().get("trend_regime_gate") == "shadow"
+
+    def test_gate_that_would_flatten_the_book_stays_off(self):
+        """P287 measured enforcement would flatten the standing BTC long
+        (alpha ~30bps vs friction x1.5 ~34.5bps)."""
+        assert _live().get("dynamic_alpha_gate_enforce") in (None, False)
+
+
+class TestDvolUnitsBug:
+    """THE FINDING. `dvol_to_market_data` reads like 'arm an emergency stop at
+    z>=5'. It is not: Deribit publishes DVOL as an INDEX LEVEL (BTC 34.5, ETH
+    46.0 measured live), the constitution ALIASES dvol -> dvol_zscore, and
+    EXTREME_DVOL fires at >= 5.0. 34.5 >= 5.0 on every tick, forever - and
+    EXTREME_DVOL is not in the sleeve's HOLD set, so it falls through to
+    veto_flat. Enabling it would have flattened the book permanently.
+
+    P219/P169 class: a raw quantity fed into a field whose consumer expects a
+    standardized one. The flag stays absent until a real z is published.
+    """
+
+    def test_the_alias_that_makes_it_a_units_bug_is_still_there(self):
+        src = _src(REPO / "defense" / "constitution.py")
+        assert '"dvol": "dvol_zscore"' in src, (
+            "the alias moved - re-derive whether publishing raw dvol is still "
+            "a units bug before enabling the flag"
+        )
+
+    def test_the_threshold_is_a_zscore_threshold(self):
+        src = _src(REPO / "defense" / "constitution.py")
+        m = re.search(r"DVOL_ZSCORE_EXTREME\s*=\s*([0-9.]+)", src)
+        assert m, "threshold constant moved"
+        assert float(m.group(1)) <= 10.0, (
+            "a threshold this small can only be a z-score, never a DVOL index "
+            "level (which runs 20-100)"
+        )
+
+    def test_extreme_dvol_flattens_rather_than_holds(self):
+        """Why the bug is severe rather than noisy."""
+        src = _src(MAIN)
+        m = re.search(r"_SLEEVE_HOLD_NO_TRADE_TRIGGERS\s*=\s*\(([^)]*)\)", src)
+        assert m, "hold roster moved"
+        assert "EXTREME_DVOL" not in m.group(1), (
+            "if EXTREME_DVOL became a HOLD trigger the severity changes - "
+            "re-derive this test"
+        )
+
+    def test_the_flag_is_not_enabled(self):
+        assert "dvol_to_market_data" not in _live(), (
+            "publishing a raw DVOL index into a z-score field permanently "
+            "flattens the book - fix the units before enabling"
+        )
+
+
+class TestSeatPrecedence:
+    """With regimebook enforced, the whale seat would otherwise override it -
+    it runs last and wins by default (P293d placed it there when it was the
+    only enforced seat). That default is backwards on evidence: the book is
+    certified over 6 years / 3 eras and beats a same-cell random control by
+    ~286 points (P297); whale's own instrument puts it at 16h t=0.26."""
+
+    def test_whale_defers_to_a_directional_book(self):
+        src = _src(MAIN)
+        assert 'asset not in getattr(self, "_rb_seat_took", set())' in src, (
+            "whale no longer defers - the weaker signal would override the "
+            "certified one"
+        )
+
+    def test_only_a_directional_book_claims_the_seat(self):
+        """A FLAT book is not the book claiming the seat; whale keeps those
+        bars, which is the P293j intent."""
+        src = _src(MAIN)
+        # anchor on the CLAIM site, not the first mention - the reset at the
+        # top of the tick comes earlier in the file and matched instead.
+        i = src.index('self._rb_seat_took = getattr(self, "_rb_seat_took", set())')
+        window = src[max(0, i - 400): i]
+        assert "if _rb_dir:" in window, (
+            "the marker must be set only for a DIRECTIONAL book target"
+        )
+
+    def test_the_marker_is_cleared_every_tick(self):
+        """A stale marker would mute whale on a tick the book never ran
+        (P155-L5)."""
+        src = _src(MAIN)
+        assert 'getattr(self, "_rb_seat_took", set()).discard(asset)' in src
+
+    def test_the_reset_precedes_both_seats(self):
+        src = _src(MAIN)
+        reset = src.index('getattr(self, "_rb_seat_took", set()).discard(asset)')
+        book = src.index("self._rb_seat_took = getattr(self, \"_rb_seat_took\", set())")
+        whale = src.index('asset not in getattr(self, "_rb_seat_took", set())')
+        assert reset < book < whale, (
+            "order must be reset -> book claims -> whale defers"
+        )
