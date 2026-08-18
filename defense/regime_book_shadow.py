@@ -735,6 +735,24 @@ class RegimeBookShadow:
                 "regime": regime,
                 "leg": leg,
                 "coverage_note": coverage_note,
+                # [P295] AVAILABILITY — is this book STRUCTURALLY ABLE to
+                # take a position right now, as distinct from choosing not to?
+                #
+                # SOL's bear leg needs the exported ridge model, and P250
+                # DELETED configs/regimebook/SOL_bear_ridge.json (it was the
+                # leak artifact — its "+64.2%" was the leaked feature). The
+                # directory does not exist, so SOL emits direction 0.0 forever
+                # while ETH ALSO emits 0.0 because its trend-only book is
+                # correctly flat outside a bull regime. Those two zeros mean
+                # completely different things, and a consumer reading only
+                # `direction` cannot tell them apart — a broken candidate
+                # would score as a flat OPINION and could win a seat by
+                # default (P2, and the reason the P294 seat controller has an
+                # UNAVAILABLE state at all).
+                #
+                # False = cannot express a position at all. It is NOT a claim
+                # about the market.
+                "available": not str(version).startswith("v1_degraded"),
                 "funding_z": None if fz is None else round(fz, 4),
                 # [P265] stale-z rows are now filterable post-hoc
                 "funding_age_days": _fage,

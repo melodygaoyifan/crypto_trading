@@ -65,6 +65,33 @@ class TrendDecisionLayer:
         self.base_edge_bps = float(base_edge_bps)
         # |signal| below this -> treat as no trend (flat); avoids trading weak chop.
         self.min_abs_signal = float(min_abs_signal)
+        # [P295] REACHABILITY CHECK. `signal` is a MEAN OF SIGNS over
+        # `lookbacks` votes, so |signal| can only take the values
+        # {1/N, 3/N, ...} — with the shipped N=3 that is {1/3, 1}. A floor of
+        # 0.30 therefore sits BELOW the smallest reachable value and can never
+        # fire: the "weak trend -> flat" branch was unreachable for the life of
+        # this class (a P174 control that cannot act), and trend consequently
+        # ALWAYS had an opinion — it is the alpha GATE, not the strategy, that
+        # produced the flat book.
+        #
+        # This says so out loud rather than leaving it to be rediscovered. It
+        # does NOT change the floor: raising it is a live behaviour change and
+        # belongs in config (`trend_min_abs_signal`), not in a constructor
+        # default.
+        self._min_reachable_abs_signal = (
+            1.0 / len(self._strat.lookbacks) if self._strat.lookbacks else 0.0)
+        if self.min_abs_signal < self._min_reachable_abs_signal:
+            logger.warning(
+                "[TREND-LAYER] min_abs_signal=%.3f is UNREACHABLE: the signal "
+                "is a %d-vote mean of signs, so the smallest |signal| it can "
+                "produce is %.4f. The weak-trend->flat branch can never fire, "
+                "so trend always asserts an opinion (%.0fbps at the weakest "
+                "vote) and the alpha gate is what blocks it. Set "
+                "trend_min_abs_signal above %.4f to make this control act.",
+                self.min_abs_signal, len(self._strat.lookbacks),
+                self._min_reachable_abs_signal,
+                self.base_edge_bps * self._min_reachable_abs_signal * 0.75,
+                self._min_reachable_abs_signal)
         self._closes: Dict[str, List[float]] = {}
         self._closes_cached_at: Dict[str, float] = {}  # [P265] staleness bound
         # [P198] regime gate: off | shadow (log only, DEFAULT) | enforce (zero

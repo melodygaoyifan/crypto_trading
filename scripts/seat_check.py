@@ -24,8 +24,8 @@ STRUCTURAL FACTS ENCODED HERE (inspected 2026-08-18, P294 §inspection):
     slice of that book. Surfaced as a warning on the recommendation.
   * trend's signal is a 3-lookback vote quantized to {+-1/3, +-1}, so its
     asserted alpha is either 10bps (blocked by every threshold) or 30bps.
-    It trades only on unanimity. Surfaced so a "trend holds" verdict is read
-    with that in mind.
+    It trades only on unanimity. [P295] the weak vote now reads FLAT rather
+    than asserting an opinion the gate must veto.
 
 Exit: 0 incumbent holds · 3 SWITCH recommended · 2 refusal (no usable input)
 """
@@ -36,6 +36,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Optional
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
@@ -54,8 +55,10 @@ CAVEATS = {
     "trend": (
         "trend is a 3-lookback vote quantized to {+-1/3, +-1}: it asserts "
         "either 10bps (below every live threshold) or 30bps, so it trades "
-        "ONLY on unanimous agreement. `min_abs_signal=0.30` can never fire "
-        "because |sig| is never inside (0, 0.30)."
+        "ONLY on unanimous agreement. [P295] The weak-vote floor now ACTS "
+        "(trend_min_abs_signal=0.50, live): a 2-of-3 vote reads FLAT rather "
+        "than asserting 10bps for the gate to veto. The old 0.30 sat below "
+        "the smallest reachable |sig| (1/3) and could never fire."
     ),
     "whale": (
         "whale clears the gate because it is BINARY (+-1 -> 30bps), not "
@@ -90,6 +93,34 @@ def _from_ic_report(path: Path) -> dict:
                     except (TypeError, ValueError):
                         continue
     return out
+
+
+def availability_from_ledger(ledger_dir: Path, asset: str) -> Optional[bool]:
+    """[P295] Read the regimebook ledger's own `available` flag.
+
+    The book now stamps availability on every row (False when its version is
+    degraded, e.g. SOL whose bear-leg model was deleted in P250), so the seat
+    controller reads the producer's OWN statement instead of a hand-maintained
+    list here that would drift the moment a model is restored.
+
+    Returns None when the ledger cannot be read or predates the flag — which
+    the caller must treat as "unknown", never as available.
+    """
+    p = Path(ledger_dir) / f"regimebook_{asset}.jsonl"
+    try:
+        last = None
+        with open(p, "r", encoding="utf-8") as fh:
+            for line in fh:
+                if line.strip():
+                    last = line
+        if not last:
+            return None
+        rec = json.loads(last)
+    except Exception:
+        return None
+    if "available" not in rec:
+        return None
+    return bool(rec.get("available"))
 
 
 def build_candidates(stats: dict) -> list:
@@ -169,6 +200,18 @@ def main(argv=None) -> int:
         return _refuse("no evidence source: pass --stats or --ic-report")
 
     cands = build_candidates(stats)
+    # [P295] Let the regimebook ledger's OWN `available` flag override any
+    # hand-passed value — the producer knows whether it can take a position.
+    _ldir = REPO / "data" / "strategy_shadow"
+    for c in cands:
+        if c.name != "regimebook":
+            continue
+        avail = [availability_from_ledger(_ldir, a) for a in ("BTC", "ETH", "SOL")]
+        known = [a for a in avail if a is not None]
+        if known and not any(known):
+            c.available = False
+            c.note = ("every regimebook asset reports available=false "
+                      "(SOL's bear-leg model was deleted in P250)")
     if not cands:
         return _refuse("no candidates could be built from the evidence")
 

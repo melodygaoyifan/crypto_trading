@@ -1678,6 +1678,24 @@ class ProductionConfig:
     #      contracts this rounds to the same integer most of the time, so
     #      even armed it is near-inert at current equity. Recorded rather
     #      than oversold.
+    # [P295] Trend's weak-vote floor. `signal` is a mean of signs over 3
+    # lookbacks, so |signal| is quantized to {1/3, 1} — and through
+    # 40 x |sig| x 0.75 that is 10bps or 30bps against live thresholds of
+    # 19.1/26.7/29.0. A 2-of-3 majority is therefore UNTRADEABLE by
+    # construction: the gate vetoes it every time.
+    #
+    # The honest resolution is NOT to raise the asserted alpha so 2-of-3
+    # clears the bar — P293k measured trend's realized slope at -0.74..+3.01
+    # with every |t| < 0.8, so a bigger assertion would be manufacturing
+    # tradeability on a signal measured at ~zero (the P231 error).
+    # It is to let trend SAY FLAT when its vote is weak, instead of asserting
+    # an opinion the gate must then veto. Same resulting book, honest logs,
+    # and a clean hand-off to whichever seat can actually act.
+    #
+    # 0.50 sits strictly between the two reachable values, so it zeroes the
+    # 2-of-3 vote and keeps the unanimous one. The old 0.30 default is
+    # preserved here so any profile that omits the key is byte-identical.
+    trend_min_abs_signal: float = 0.30
     coinbase_whale_filter_enforce: bool = False
     whale_seat_mode: str = "off"
     whale_seat_assets: Optional[List[str]] = None
@@ -2088,6 +2106,8 @@ class ProductionConfig:
             # [P293d] declared + parsed together (the P201 rule). An
             # unrecognised whale_seat_mode falls back to "off" — an unknown
             # mode must never silently seat an agent on the decider slot.
+            trend_min_abs_signal=float(
+                data.get("trend_min_abs_signal", 0.30) or 0.30),
             coinbase_whale_filter_enforce=bool(
                 data.get("coinbase_whale_filter_enforce", False)),
             whale_seat_mode=(
@@ -9761,6 +9781,11 @@ class HMATSProductionRunner:
                     # evidence only (scripts/trend_regime_review.py).
                     regime_gate_mode=str(getattr(
                         self.config, "trend_regime_gate", "shadow") or "shadow"),
+                    # [P295] see the dataclass note: 0.50 makes the weak-vote
+                    # floor ACT (2-of-3 -> flat) instead of asserting 10bps for
+                    # the gate to veto.
+                    min_abs_signal=float(getattr(
+                        self.config, "trend_min_abs_signal", 0.30) or 0.30),
                 ).process(
                     asset, _ohlcv_df, agent_signals, market_data)
                 # [P149 2026-06-14] Bridge to the Coinbase perp sleeve: it's driven
