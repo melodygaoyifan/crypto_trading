@@ -255,14 +255,38 @@ _singleton: Optional[TrendDecisionLayer] = None
 
 
 def get_trend_decision_layer(mode: str = "off",
-                             regime_gate_mode: Optional[str] = None) -> TrendDecisionLayer:
+                             regime_gate_mode: Optional[str] = None,
+                             min_abs_signal: Optional[float] = None,
+                             ) -> TrendDecisionLayer:
+    """[P295b] `min_abs_signal` must be accepted HERE, not only on the
+    constructor.
+
+    The P295 wiring passed it to this FACTORY, which did not take it — so
+    every call raised TypeError, main.py's handler logged "process skip", and
+    the trend layer produced NOTHING on every tick. It failed safe (no signal
+    rather than a wrong one, and the whale seat still held), but the control
+    it was meant to arm was inert in the opposite direction from intended.
+
+    The P295 test pinned the CALL SITE as a source string, which proves the
+    argument is passed — not that the callee accepts it. That is the P234
+    lesson exactly, and it is now covered by a behavioural test that actually
+    invokes this factory with the kwarg.
+
+    Applied on an EXISTING singleton too: the layer is built once at startup
+    and a later config change must reach it, or the value silently applies
+    only on a cold process.
+    """
     global _singleton
     if _singleton is None:
         _singleton = TrendDecisionLayer(
             mode=mode,
-            regime_gate_mode=(regime_gate_mode or "shadow"))
+            regime_gate_mode=(regime_gate_mode or "shadow"),
+            **({} if min_abs_signal is None
+               else {"min_abs_signal": float(min_abs_signal)}))
     else:
         _singleton.set_mode(mode)
         if regime_gate_mode is not None:
             _singleton.set_regime_gate_mode(regime_gate_mode)
+        if min_abs_signal is not None:
+            _singleton.min_abs_signal = float(min_abs_signal)
     return _singleton

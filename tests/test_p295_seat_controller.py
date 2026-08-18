@@ -344,6 +344,53 @@ class TestWeakVoteFloorNowActs:
         assert 'self.config, "trend_min_abs_signal", 0.30' in src
         assert "min_abs_signal=float(getattr(" in src
 
+    def test_the_factory_actually_accepts_the_kwarg(self):
+        """[P295b] THE BUG THIS FILE MISSED, now covered behaviourally.
+
+        The source-string pin above proves the argument is PASSED; it says
+        nothing about whether the callee accepts it. It did not: main.py
+        passed `min_abs_signal` to the singleton FACTORY, which had no such
+        parameter, so every tick raised TypeError, the handler logged
+        "[TREND-LAYER] process skip", and the trend layer produced NOTHING.
+
+        That is P234 verbatim — "a test that asserts a substring exists proves
+        the code was written, not that it runs" — committed by the author of
+        that lesson's own citation. This test CALLS the factory.
+        """
+        import core.trend_decision_layer as tdl
+        tdl._singleton = None
+        try:
+            layer = tdl.get_trend_decision_layer(
+                mode="shadow", regime_gate_mode="shadow", min_abs_signal=0.50)
+            assert layer.min_abs_signal == pytest.approx(0.50)
+            # and it must reach an ALREADY-BUILT singleton, or a config change
+            # applies only on a cold process
+            again = tdl.get_trend_decision_layer(
+                mode="shadow", regime_gate_mode="shadow", min_abs_signal=0.60)
+            assert again is layer
+            assert again.min_abs_signal == pytest.approx(0.60)
+            # omitting it must not disturb the existing value
+            same = tdl.get_trend_decision_layer(mode="shadow")
+            assert same.min_abs_signal == pytest.approx(0.60)
+        finally:
+            tdl._singleton = None
+
+    def test_main_calls_the_factory_with_a_signature_that_accepts_it(self):
+        """Belt-and-braces on the same class of defect: whatever main.py
+        passes must exist in the factory's signature."""
+        import inspect as _i
+        import re as _re
+        from core.trend_decision_layer import get_trend_decision_layer
+        params = set(_i.signature(get_trend_decision_layer).parameters)
+        src = (REPO / "main.py").read_text(encoding="utf-8-sig")
+        m = _re.search(r"get_trend_decision_layer\((.*?)\)\.process", src, _re.S)
+        assert m, "the trend factory call site was not found"
+        passed = set(_re.findall(r"(\w+)\s*=", m.group(1)))
+        # only keyword args at the call site count; drop nested kwargs
+        unknown = {k for k in passed if k in
+                   {"mode", "regime_gate_mode", "min_abs_signal"}} - params
+        assert not unknown, f"main.py passes kwargs the factory rejects: {unknown}"
+
 
 class TestRegimebookAvailability:
     def test_degraded_versions_report_unavailable(self):
