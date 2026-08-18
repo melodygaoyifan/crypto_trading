@@ -1700,6 +1700,13 @@ class ProductionConfig:
     whale_seat_mode: str = "off"
     whale_seat_assets: Optional[List[str]] = None
     fusion_conviction_to_sleeve: bool = False
+    # [P304] Feed the CascadeExhaustionGovernor a REAL short-window
+    # liquidation figure (the change in the rolling 24h total) instead of the
+    # 24h average, which structurally cannot detect a burst. Default OFF:
+    # cascade_phase reaches a fusion disable-condition, so arming a detector
+    # that has never fired is a P141 decision. [CASCADE-OBSERVE] logs both
+    # numbers every tick meanwhile.
+    cascade_real_liquidation_window: bool = False
     # [P201] P198 shipped these two as JSON keys read via
     # `getattr(self.config, ..., default)` (main.py:7802, :18313) but never
     # declared them here and never parsed them in from_file — so the JSON keys
@@ -2119,6 +2126,8 @@ class ProductionConfig:
                 if isinstance(data.get("whale_seat_assets"), list) else None),
             fusion_conviction_to_sleeve=bool(
                 data.get("fusion_conviction_to_sleeve", False)),
+            cascade_real_liquidation_window=bool(
+                data.get("cascade_real_liquidation_window", False)),
             # [P201] see the dataclass comment — these were read by getattr but
             # never parsed, so the JSON keys were inert.
             trend_regime_gate=str(
@@ -6802,6 +6811,54 @@ class HMATSProductionRunner:
             "regime": _regime,
         }
 
+    def _cascade_liq_delta(self, asset, total_24h):
+        """[P304] Liquidations observed since the previous reading, or None.
+
+        The rolling 24h total is the only liquidation figure the CoinGlass
+        call returns. Its CHANGE between ticks responds to a burst; its
+        average cannot. Returns None until a previous reading exists, and
+        None is NEVER treated as zero by the caller (P2) - it falls back to
+        the old behaviour rather than reporting "no liquidations".
+
+        Floored at 0: the window also sheds liquidations that aged out 24h
+        ago, so a NEGATIVE delta means the tail rolled off, not that a
+        negative amount was liquidated.
+
+        Persisted, because a per-process cache would reset on every deploy
+        and this engine deploys several times a day - the P301/P302/P303
+        class, which is what made three other signals look dead.
+        """
+        try:
+            total = float(total_24h or 0.0)
+            if not (total > 0):
+                return None
+            import json as _json
+            import os as _os
+            _dir = _os.environ.get("HMATS_DATA_DIR", "data")
+            path = _os.path.join(_dir, "cascade_liq_prev.json")
+            state = {}
+            try:
+                if _os.path.exists(path):
+                    with open(path, encoding="utf-8") as fh:
+                        state = _json.load(fh) or {}
+            except Exception:  # noqa: silent-swallow — a bad file is a cold start
+                state = {}
+            prev = state.get(asset)
+            state[asset] = total
+            try:
+                _os.makedirs(_dir, exist_ok=True)
+                tmp = path + ".tmp"
+                with open(tmp, "w", encoding="utf-8") as fh:
+                    _json.dump(state, fh)
+                _os.replace(tmp, path)
+            except Exception:  # noqa: silent-swallow — observation only
+                pass
+            if prev is None:
+                return None
+            return max(0.0, total - float(prev))
+        except Exception:  # noqa: silent-swallow — never disturbs a tick
+            return None
+
     async def _process_4h_tick_inner(
         self,
         asset: str,
@@ -7476,9 +7533,45 @@ class HMATSProductionRunner:
                 _price_chg_4h = market_data.get("price_change_4h_pct", 0.0)
                 _price_chg_1h = market_data.get("price_change_1h_pct", 0.0)
                 _vol_spike = effective_volume_ratio(market_data)
+                # [P304] THE CASCADE DETECTOR COULD NOT DETECT A CASCADE.
+                # Every window it was fed is a UNIFORM SHARE of the same 24h
+                # aggregate: liq_24h/24 as the "1h" volume, liq_24h/6 as the
+                # "4h" one, and price_change_4h_pct/4 as the "1h" move
+                # (market_data_pipeline.py:1539). Dividing a 24h total by 24
+                # is precisely the operation that ERASES a burst — and a
+                # cascade IS a burst. Measured 2026-08-18: a $36.6M day feeds
+                # $1.53M against a $10M cascade_detect_liq_threshold, so it
+                # would take a $240M day to trip, and even then it would be
+                # reading a sustained average rather than the spike.
+                #
+                # The honest short-window figure costs no new API call: the
+                # CHANGE in the rolling 24h total between ticks responds to a
+                # burst, where its average cannot. (It is noisy — the window
+                # also sheds liquidations that aged out 24h ago — so it is
+                # floored at 0 and only a POSITIVE jump is treated as signal.)
+                #
+                # SHADOW-FIRST (P287), and this time the shadow can actually
+                # observe (the P300 lesson: an instrument gated behind the
+                # condition it is meant to measure never reads anything).
+                # `cascade_phase` reaches a fusion disable-condition
+                # (authority_fusion.py:851), so arming a detector that has
+                # never fired is a P141 decision, not a side effect.
+                _liq_obs = self._cascade_liq_delta(asset, _liq_vol_24h)
+                _cascade_real = bool(getattr(
+                    self.config, "cascade_real_liquidation_window", False))
+                logger.info(
+                    f"[CASCADE-OBSERVE] {asset}: 24h=${_liq_vol_24h:,.0f} | "
+                    f"fed_1h(avg)=${_liq_vol_24h / 24.0:,.0f} vs "
+                    f"observed_since_last=${(_liq_obs if _liq_obs is not None else 0.0):,.0f} "
+                    f"| threshold=$10,000,000 "
+                    f"({'ARMED' if _cascade_real else 'shadow'})")
+                _liq_1h = (_liq_obs if (_cascade_real and _liq_obs is not None)
+                           else _liq_vol_24h / 24.0)
+                _liq_4h = (_liq_obs if (_cascade_real and _liq_obs is not None)
+                           else _liq_vol_24h / 6.0)
                 _cascade_gov.update_metrics(
-                    liquidation_volume_1h=_liq_vol_24h / 24.0,
-                    liquidation_volume_4h=_liq_vol_24h / 6.0,
+                    liquidation_volume_1h=_liq_1h,
+                    liquidation_volume_4h=_liq_4h,
                     price_change_1h_pct=_price_chg_1h,
                     price_change_4h_pct=_price_chg_4h,
                     volume_spike_ratio=_vol_spike,

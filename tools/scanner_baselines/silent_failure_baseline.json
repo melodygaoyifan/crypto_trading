@@ -23,7 +23,8 @@
   "_p293b_note": "694 was 691: +3 for the P293b quota/restart batch. Attribution: +1 cryptopanic_feed (reading the 429 BODY to tell a MONTHLY QUOTA from a transient rate limit - a body read must not be able to break the error path); +1 cryptocompare_onchain (per-row coercion while restoring the persisted payload, so one corrupt row cannot lose the rest); +1 global_context_informer (_fetch_aggregate_flow_coinglass, whose failure must degrade to 'ETF flow absent', never to a fabricated 0.0). All three LOG or return an explicit absence. Counter by hand, never --update (P171).",
   "_p293d_note": "695 was 694: +1 for the P293d whale-filter guard in the sleeve driver (the overlay must never stop the order path, Iron Law 7 \u2014 it logs a WARNING naming that the sleeve was managed UNFILTERED, mirroring the P236 MA-filter guard beside it). Counter by hand, never --update (P171).",
   "_p303_note": "695 -> 697: the two guards in RegimeBookShadow._restore_last_records - one per bad ledger row (skip that file, keep the rest) and one around the whole restore (a failed restore is exactly today behaviour: no seat on the first tick). Both are annotated at source and the outer one LOGS. Hand-bumped with attribution, never --update (P171).",
+  "_p304_note": "697 -> 699: the guards in HMATSProductionRunner._cascade_liq_delta. An unreadable state file is a cold start (returns None, which the caller treats as 'no previous reading' and falls back to the old behaviour, never as zero liquidations), and a failed write is observation-only. Both annotated at source. Hand-bumped with attribution, never --update (P171).",
   "dictget_count": 42,
   "flags_count": 0,
-  "tryexcept_count": 697
+  "tryexcept_count": 699
 }

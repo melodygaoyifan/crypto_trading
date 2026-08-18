@@ -382,3 +382,82 @@ class TestSeatSurvivesRestart:
         (d / "regimebook_BTC.jsonl").write_text("{not json\n", encoding="utf-8")
         h = RegimeBookShadow(data_dir=str(tmp_path))
         assert h.last_direction("BTC") is None
+
+
+class TestCascadeCanDetectACascade:
+    """[P304] Every window the CascadeExhaustionGovernor was fed is a UNIFORM
+    SHARE of one 24h aggregate: liq_24h/24 as the "1h" volume, liq_24h/6 as
+    the "4h", and price_change_4h_pct/4 as the "1h" move. Dividing a 24h
+    total by 24 is exactly the operation that erases a burst - and a cascade
+    IS a burst.
+
+    Measured 2026-08-18 on the live ledger: a $36.6M day feeds $1.53M against
+    a $10M cascade_detect_liq_threshold, so it would take a $240M day to trip,
+    and even then it would be reading a sustained average rather than a spike.
+    """
+
+    def _runner(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HMATS_DATA_DIR", str(tmp_path))
+        import main
+        return main.HMATSProductionRunner.__new__(main.HMATSProductionRunner)
+
+    def test_the_average_cannot_reach_the_threshold(self):
+        """The arithmetic that makes this a defect and not a tuning choice."""
+        from risk.cascade_exhaustion_governor import CascadeExhaustionConfig as CascadeConfig
+        thr = CascadeConfig().cascade_detect_liq_threshold
+        observed_24h = 36_607_740          # a real reading from the ledger
+        assert observed_24h / 24.0 < thr, "premise: the average is under the bar"
+        assert observed_24h / 24.0 < thr / 6, (
+            "it is not marginally under - it is an order of magnitude under, "
+            "which is why the detector has never fired"
+        )
+
+    def test_a_burst_is_visible_in_the_delta(self, tmp_path, monkeypatch):
+        from risk.cascade_exhaustion_governor import CascadeExhaustionConfig as CascadeConfig
+        r = self._runner(tmp_path, monkeypatch)
+        assert r._cascade_liq_delta("BTC", 36_607_740) is None, "no previous yet"
+        burst = r._cascade_liq_delta("BTC", 48_607_740)
+        assert burst == pytest.approx(12_000_000)
+        assert burst >= CascadeConfig().cascade_detect_liq_threshold, (
+            "a $12M burst must be able to trip a $10M threshold - the whole "
+            "point of measuring the change instead of the average"
+        )
+
+    def test_the_first_reading_is_absent_not_zero(self, tmp_path, monkeypatch):
+        """[P2] None falls back to the old behaviour; a 0.0 would claim 'no
+        liquidations happened', which is a measurement nobody made."""
+        r = self._runner(tmp_path, monkeypatch)
+        assert r._cascade_liq_delta("ETH", 10_000_000) is None
+
+    def test_window_rolloff_never_reports_negative_liquidations(self, tmp_path,
+                                                                monkeypatch):
+        r = self._runner(tmp_path, monkeypatch)
+        r._cascade_liq_delta("BTC", 50_000_000)
+        assert r._cascade_liq_delta("BTC", 40_000_000) == 0.0
+
+    def test_the_previous_reading_survives_a_restart(self, tmp_path, monkeypatch):
+        """A per-process cache would reset on every deploy and the delta would
+        be None forever - the P301/P302/P303 class that made three other
+        signals look dead."""
+        r1 = self._runner(tmp_path, monkeypatch)
+        r1._cascade_liq_delta("BTC", 36_000_000)
+        r2 = self._runner(tmp_path, monkeypatch)      # a restart
+        assert r2._cascade_liq_delta("BTC", 44_000_000) == pytest.approx(8_000_000)
+
+    def test_arming_is_a_config_decision_and_defaults_off(self):
+        """cascade_phase reaches a fusion disable-condition
+        (authority_fusion.py:851), so a detector that has never fired is armed
+        deliberately or not at all (P141)."""
+        import json
+        from main import ProductionConfig
+        assert ProductionConfig().cascade_real_liquidation_window is False
+        live = json.loads(
+            (REPO / "configs" / "live_high_risk.json").read_text(encoding="utf-8"))
+        assert "cascade_real_liquidation_window" not in live
+
+    def test_both_numbers_are_logged_so_the_shadow_can_be_read(self):
+        """[P300] an instrument gated behind the condition it is meant to
+        measure never reads anything - this one logs every tick regardless."""
+        src = (REPO / "main.py").read_text(encoding="utf-8")
+        assert "[CASCADE-OBSERVE]" in src
+        assert "fed_1h(avg)" in src and "observed_since_last" in src
