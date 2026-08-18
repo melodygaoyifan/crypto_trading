@@ -390,7 +390,17 @@ class CoinbaseSleeve:
                         f"total_balance={tb!r} (not > 0) — treating equity as "
                         "unknown this pass")
         except Exception as e:
-            logger.warning(f"[COINBASE_SLEEVE] portfolio equity fetch failed: {type(e).__name__}: {e}")
+            # [P304] Truncated: the vendor attaches its full HTML error page
+            # to the exception, and this line is what an operator actually
+            # reads. The status code and reason survive; the CSS does not.
+            try:
+                from infra.vendor_log_hygiene import strip_html_body as _shb
+            except Exception:  # noqa: silent-swallow — hygiene helper is optional; fall back to raw text
+                def _shb(x):
+                    return x
+            logger.warning(
+                f"[COINBASE_SLEEVE] portfolio equity fetch failed: "
+                f"{type(e).__name__}: {_shb(str(e))}")
         # [P265] The futures-summary figure is an FCM-ONLY SUBSET of the real
         # cross-collateralized equity (~$439 vs ~$4,000 — the exact P153
         # confusion). It is a WRONG-DENOMINATION number, not a degraded copy of
