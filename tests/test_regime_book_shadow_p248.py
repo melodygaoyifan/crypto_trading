@@ -82,13 +82,38 @@ def test_eth_book_is_trend_only():
     assert book_target("ETH", "peace", -3.0)[0] == 0.0
 
 
-def test_sol_book_is_declared_degraded():
-    """SOL's bear ridge leg ships only with full feature parity; until then
-    the book is hold-bull/flat-elsewhere AND says so in its version tag —
-    its forward IC must never be mistaken for the full book's."""
+def test_sol_book_is_trend_only_not_degraded():
+    """[P299] SOL's BEHAVIOUR is unchanged and still pinned — hold in bull,
+    flat everywhere else — but its LABEL is now honest.
+
+    The old tag `v1_degraded_no_bear_leg` set `available: False` on every
+    row, which (a) made the candidate permanently unscoreable and (b) fed the
+    live seat a 0.0 that reads as an opinion. What SOL actually runs is ETH's
+    certified trend-only book verbatim; the only thing it lacks is a BEAR
+    leg, which P250 deleted as a leak artifact and P262 never certified for
+    SOL. A book is not "degraded" for missing a leg that was never certified.
+    """
+    # Behaviour: unchanged in every regime.
     assert book_target("SOL", "bull", None)[0] == 1.0
     assert book_target("SOL", "bear", 2.0)[0] == 0.0
-    assert BOOKS_VERSION["SOL"] == "v1_degraded_no_bear_leg"
+    assert book_target("SOL", "peace", 2.0)[0] == 0.0
+    # Label: honest, and therefore scoreable.
+    assert BOOKS_VERSION["SOL"] == "v1_trend_only"
+    assert not BOOKS_VERSION["SOL"].startswith("v1_degraded")
+    # SOL and ETH are the same mechanism outside bull — that is the claim.
+    assert book_target("SOL", "peace", 2.0)[1] == book_target("ETH", "peace", 2.0)[1]
+
+
+def test_sol_still_has_no_bear_leg():
+    """[P299] The relabel must not be read as 'the bear leg came back'."""
+    from defense.regime_book_shadow import RegimeBookShadow
+    import tempfile
+    h = RegimeBookShadow(data_dir=tempfile.mkdtemp())
+    h._sol_model = None
+    target, leg, version, _note = h._sol_bear_target()
+    assert target == 0.0, "no model means no short, ever"
+    assert version == "v1_trend_only"
+    assert "bear" not in leg
 
 
 # ---------------------------------------------------------------- harness

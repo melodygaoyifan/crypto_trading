@@ -392,8 +392,14 @@ class TestTripwireNoData:
         for day in ["2026-08-11", "2026-08-18", "2026-08-25", "2026-09-01"]:
             self._write_report(tmp_path, day, vs="BELOW-THRESHOLD")
         rc, out = self._run_main(tmp_path, monkeypatch, capsys)
-        assert rc == 3, "genuine GATE-CLOSED x4 past the date must still fire"
-        assert "TRIPWIRE FIRED" in out
+        # [P299] The PRESCRIPTION is retired, the DETECTION is not: the
+        # streak must still be counted and reported (that evidence feeds
+        # the seat decision), but the checker no longer exits 3 or tells
+        # anyone to edit trend_assets.
+        assert rc == 0, "the tripwire no longer FIRES — it reports (P299)"
+        assert "FIRED" in out, "the streak must still be DETECTED"
+        assert "SUPERSEDED" in out
+        assert "trend_assets" not in out or "do NOT edit" in out
 
 
 # ===========================================================================

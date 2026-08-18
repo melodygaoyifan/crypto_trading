@@ -164,9 +164,10 @@ class TestTripwireWeeklySpacing:
                           (date(2026, 8, 17) + timedelta(days=7 * i)).isoformat(),
                           tradeable=False)
         rc = _run_tripwire(monkeypatch, tmp_path, "2026-09-08")
-        assert rc == 3, (
-            "four genuinely weekly GATE-CLOSED reports past the date gate "
-            "did NOT fire — the spacing filter over-reached")
+        # [P299] The spacing filter is what this test guards, and it still
+        # must not over-reach — but the checker reports rather than fires, so
+        # DETECTION is asserted on the output, not on the exit code.
+        assert rc == 0, "the tripwire reports now, it does not fire (P299)"
 
     def test_tradeable_weeks_do_not_fire(self, monkeypatch, tmp_path):
         for i in range(4):

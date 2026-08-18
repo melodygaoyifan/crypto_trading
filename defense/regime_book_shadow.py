@@ -52,7 +52,16 @@ MIN_BARS = MOM_W + 20
 BOOKS_VERSION = {
     "BTC": "v1_full",
     "ETH": "v1_full",           # trend-only IS the full measured ETH book
-    "SOL": "v1_degraded_no_bear_leg",
+    # [P299] SOL is TREND-ONLY, not degraded. Its behaviour has always been
+    # ETH's certified book verbatim — hold in bull (the shared bull block
+    # gives SOL 1.0), flat otherwise — and the only thing it lacks is a BEAR
+    # leg, which P250 deleted as a leak artifact and which P262 never
+    # certified for SOL in the first place. Labelling a book "degraded" for
+    # missing a leg that was never certified made `available` False on every
+    # row, which (a) made the whole candidate unscoreable and (b) fed the live
+    # seat a 0.0 that reads as an opinion. Trend-only IS the P262-certified
+    # mechanism; this is the honest name for what it already does.
+    "SOL": "v1_trend_only",
     # [P271] breadth assets below: trend-only, see BREADTH_ASSETS
 }
 
@@ -269,7 +278,9 @@ def book_target(asset: str, regime: str, funding_z: Optional[float]) -> tuple:
     if asset == "ETH":
         return 0.0, "trend_flat"        # trend-only: flat outside bull
     if asset == "SOL":
-        return 0.0, "flat_degraded"     # bear ridge leg pending full parity
+        # [P299] Same leg ETH takes: trend-only is flat outside bull. This is
+        # a POSITION ("be flat"), not a missing capability.
+        return 0.0, "trend_flat"
     if asset in BREADTH_ASSETS:
         # [P271] trend-only, the P262-certified mechanism verbatim: the
         # bull leg is handled by the shared bull block above ONLY for
@@ -380,6 +391,16 @@ class RegimeBookShadow:
             return None
         age = time.time() - float(rec.get("ts", 0.0) or 0.0)
         if age > max_age_s:
+            return None
+        # [P299] AVAILABILITY GATES THE SEAT. The consumer at main.py's
+        # regimebook seat assigns quant_direction UNCONDITIONALLY, including
+        # 0.0 — so serving a row whose own `available` flag is False would let
+        # a book that CANNOT take a position flatten the incumbent, which is
+        # precisely the UNAVAILABLE-is-not-FLAT error (P2) the ledger's
+        # `available` field was added to make visible. A book can degrade
+        # dynamically too (a feature-coverage gap, see _record_for), so this
+        # is not only about SOL. Absent capability -> no seat input at all.
+        if rec.get("available") is False:
             return None
         return float(rec.get("direction", 0.0) or 0.0), str(rec.get("leg", "")), age
 
@@ -675,7 +696,12 @@ class RegimeBookShadow:
         degraded flat unless model + FRESH stash + 100% coverage all hold."""
         m = self._sol_model
         if m is None:
-            return 0.0, "flat_degraded_no_model", "v1_degraded_no_bear_leg", None
+            # [P299] No model is the PERMANENT state (P250 deleted the export
+            # and the dir does not exist), so this is not a degradation — it
+            # is simply the trend-only book, which says flat outside bull.
+            # The model path is kept so a future re-export revives the richer
+            # book without a code change.
+            return 0.0, "trend_flat", "v1_trend_only", None
         ts_vals = self._feature_stash.get("SOL")
         if not ts_vals or (time.time() - ts_vals[0]) > FEATURE_STASH_MAX_AGE_S:
             return 0.0, "flat_degraded_stale_features", "v1_degraded_no_bear_leg", None

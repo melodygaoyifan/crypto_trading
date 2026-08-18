@@ -24,6 +24,26 @@ from strategies.funding_rate_v5_1 import (
 from risk.sleeve_allocator_v5_1 import build_phase7_sleeve_allocator
 
 
+@pytest.fixture(autouse=True)
+def _isolated_warmup_state(tmp_path, monkeypatch):
+    """[P299] P301 gave these strategies PERSISTED warmup history, rehydrated
+    from ``$HMATS_DATA_DIR/v5_1_warmup``. That silently made the warmup tests
+    environment-dependent: they pass on a clean checkout (CI has no data/) and
+    FAIL on any machine that has run the engine, because the history is
+    already there and the strategy correctly stops reporting warmup.
+
+    That is the P194/P294 class exactly — "a test that passes only where the
+    file is missing is not testing the fallback, it is testing the absence" —
+    and it re-reds the operator's local suite, which is how a real failure
+    becomes indistinguishable from noise (P188).
+
+    So the state is CONSTRUCTED, not inherited: every test in this file gets
+    an empty, private warmup directory.
+    """
+    monkeypatch.setenv("HMATS_DATA_DIR", str(tmp_path))
+    yield
+
+
 # ---------- FundingRateExtremeStrategy ------------------------------------
 
 def test_funding_extreme_neutral_when_field_missing():

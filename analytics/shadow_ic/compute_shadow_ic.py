@@ -393,12 +393,56 @@ def _spearman(x: List[float], y: List[float]) -> float:
 # Per-strategy compute
 # ---------------------------------------------------------------------------
 
+POOLED_KEY = "POOLED"
+
+# [P299] Families that are ONE RULE applied to several assets. Scoring them
+# per-asset splits one exam into three underpowered ones: the P166 gate needs
+# |t| = IC*sqrt(n_eff - 1) >= 2 with n_eff = n/h, so at 16h a 30-day window can
+# only certify IC >= 0.302 while the ECONOMIC bar asks ~0.13 — an
+# economically-adequate candidate would need ~330 DAYS (P293g). Pooling three
+# assets triples n and cuts that to ~123 days; it is a SCORER change, not a
+# wait. A family belongs here only when the same rule, with the same
+# parameters, produces every asset's record.
+POOLABLE_FAMILIES = frozenset({
+    "regimebook", "regimebook_adj", "regimebook_volskip",
+    "donchian", "emaens", "xsmom",
+    "ma_filter", "whale_filter",
+    "sentvariant", "sent_momentum_linear", "sent_momentum_hist",
+    "sent_contrarian",
+    "oidiv_confirm", "oidiv_fade", "stablecoinflow", "eventfilter",
+    "derivflow", "liquidation_squeeze", "liquidation_exhaustion",
+})
+
+# [P299] Measured DEAD over 2026-08-09..18 on the live volume: records
+# accruing daily since April with essentially no directional content —
+# cascade 0/486, microstructure 1/729, funding 1/729. These are the P199
+# KILL verdicts (n_directional = 0) still occupying the report four months
+# later. `ml_factor` is NOT here: 156/243 directional, genuinely alive.
+# They are reported in their own section rather than deleted, so the archive
+# is auditable and a family that starts emitting again is visible.
+ARCHIVED_FAMILIES = {
+    "cascade": "P199 KILL, n_directional=0; re-measured 0/486 over 9d (P299)",
+    "microstructure": "P199 KILL; re-measured 1/729 directional over 9d (P299)",
+    "funding": "P199 KILL/HOLD on n<=14; re-measured 1/729 over 9d (P299)",
+}
+
+
 def compute_per_strategy_ic(
     records: List[Dict[str, Any]],
     horizons_bars: Tuple[int, ...] = (4, 12, 24),
+    pool_assets: bool = False,
 ) -> Dict[Tuple[str, str], Dict[str, Any]]:
     """Group records by (strategy, asset). For each group compute IC at
-    each horizon. Returns {(strategy, asset): {n, ic_per_h, ...}}."""
+    each horizon. Returns {(strategy, asset): {n, ic_per_h, ...}}.
+
+    [P299] With ``pool_assets=True`` a family in POOLABLE_FAMILIES is scored
+    as ONE exam across every asset it covers, keyed ``(strategy, "POOLED")``.
+    Forward returns are STANDARDIZED WITHIN EACH ASSET before pooling — a
+    high-volatility asset would otherwise occupy the extreme ranks and the
+    pooled Spearman would mostly measure that asset. Non-poolable families
+    are left per-asset even when the flag is on: pooling genuinely per-asset
+    claims would merge different claims into one number (the P294 lesson,
+    where a shared strategy_name silently merged two exams)."""
 
     # Group records
     grouped: Dict[Tuple[str, str], List[Dict[str, Any]]] = defaultdict(list)
@@ -407,7 +451,10 @@ def compute_per_strategy_ic(
         asset = r.get("asset")
         if not strat or not asset:
             continue
-        grouped[(strat, asset)].append(r)
+        key_asset = (POOLED_KEY
+                     if (pool_assets and strat in POOLABLE_FAMILIES)
+                     else asset)
+        grouped[(strat, key_asset)].append(r)
 
     # Cache OHLCV per asset
     ohlcv_cache: Dict[str, Any] = {}
@@ -423,14 +470,39 @@ def compute_per_strategy_ic(
 
     out: Dict[Tuple[str, str], Dict[str, Any]] = {}
     for (strat, asset), recs in grouped.items():
-        df = get_ohlcv(asset)
-        if df is None:
-            out[(strat, asset)] = {"n": 0, "ic_per_h": {}, "error": "ohlcv_missing"}
-            continue
+        pooled = (asset == POOLED_KEY)
+        if pooled:
+            # [P299] Every member asset must be loadable; one that is not is
+            # dropped from the pool with its name recorded, never silently.
+            _assets = sorted({str(r.get("asset")) for r in recs if r.get("asset")})
+            _ok = [a for a in _assets if get_ohlcv(a) is not None]
+            if not _ok:
+                out[(strat, asset)] = {"n": 0, "ic_per_h": {},
+                                       "error": "ohlcv_missing",
+                                       "pooled_assets": [],
+                                       "pooled_dropped": _assets}
+                continue
+            df = None
+        else:
+            df = get_ohlcv(asset)
+            if df is None:
+                out[(strat, asset)] = {"n": 0, "ic_per_h": {},
+                                       "error": "ohlcv_missing"}
+                continue
 
         # Build per-horizon (signal_x, forward_y) pairs
         per_h: Dict[int, Tuple[List[float], List[float]]] = {h: ([], []) for h in horizons_bars}
         per_trade_returns: List[float] = []  # for Sharpe at largest horizon
+
+        # [P299] In pooled mode collect per ASSET first, standardize the
+        # forward returns within each asset, and only then pool. Spearman is
+        # rank-based, so pooling raw returns from assets with different
+        # dispersion lets the widest-dispersion asset own the extreme ranks —
+        # the pooled IC would then largely measure that one asset while
+        # reporting a triple-sized n. Standardizing first makes the ranks
+        # comparable, which is the whole point of pooling.
+        _by_asset: Dict[str, Dict[int, Tuple[List[float], List[float]]]] = {}
+        _pt_by_asset: Dict[str, List[float]] = defaultdict(list)
 
         for r in recs:
             ts = r.get("_parsed_ts")
@@ -438,18 +510,48 @@ def compute_per_strategy_ic(
             confidence = float(r.get("confidence", 0.0) or 0.0)
             if ts is None:
                 continue
+            _a = str(r.get("asset")) if pooled else asset
+            _df = get_ohlcv(_a) if pooled else df
+            if _df is None:
+                continue
             x_val = direction * confidence
+            if pooled:
+                _slot = _by_asset.setdefault(
+                    _a, {h: ([], []) for h in horizons_bars})
+            else:
+                _slot = per_h
             for h in horizons_bars:
-                fr = find_forward_return(df, ts, h)
+                fr = find_forward_return(_df, ts, h)
                 if fr is None:
                     continue
-                per_h[h][0].append(x_val)
-                per_h[h][1].append(fr)
+                _slot[h][0].append(x_val)
+                _slot[h][1].append(fr)
             # Per-trade return uses largest horizon, ONLY for non-zero direction
             if direction != 0.0:
-                fr_large = find_forward_return(df, ts, max(horizons_bars))
+                fr_large = find_forward_return(_df, ts, max(horizons_bars))
                 if fr_large is not None:
-                    per_trade_returns.append(direction * fr_large)
+                    if pooled:
+                        _pt_by_asset[_a].append(direction * fr_large)
+                    else:
+                        per_trade_returns.append(direction * fr_large)
+
+        if pooled:
+            for _a, _slot in _by_asset.items():
+                for h in horizons_bars:
+                    xs, ys = _slot[h]
+                    if not ys:
+                        continue
+                    _m = sum(ys) / len(ys)
+                    _var = sum((y - _m) ** 2 for y in ys) / max(1, len(ys) - 1)
+                    _sd = _var ** 0.5
+                    if _sd <= 0.0:
+                        # A constant series carries no rank information; a
+                        # zero-divide would fabricate one (P2).
+                        continue
+                    per_h[h][0].extend(xs)
+                    per_h[h][1].extend([(y - _m) / _sd for y in ys])
+            for _a, _pts in _pt_by_asset.items():
+                per_trade_returns.extend(_pts)
 
         ic_per_h = {h: _spearman(per_h[h][0], per_h[h][1]) for h in horizons_bars}
         n_per_h = {h: len(per_h[h][0]) for h in horizons_bars}
@@ -793,6 +895,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--prefixes",
                    default="microstructure,cascade,funding,ml_factor,derivflow,regimebook,etfflow,stablecoinflow,oidiv,calbasis,xsmom,eventfilter,mlpshadow,donchian,emaens,whale_filter,sentvariant,ma_filter",  # [P199,P219,P236,P248,P270,P277,P284,P289,P293d]
                    help="ledger file prefixes")
+    p.add_argument("--pool-assets", action="store_true",
+                   help="[P299] score one-rule-many-asset families as a "
+                        "SINGLE pooled exam (forward returns standardized "
+                        "within each asset first). At 16h this cuts the "
+                        "calendar time to certify an economically-adequate "
+                        "IC from ~330d to ~123d for a 3-asset family — the "
+                        "30-day clock cannot fire without it (P293g).")
     p.add_argument("--output", default=None,
                    help="optional JSON output path; defaults to analytics/shadow_ic/reports/")
     args = p.parse_args(argv)
@@ -808,7 +917,23 @@ def main(argv: Optional[List[str]] = None) -> int:
               file=sys.stderr)
         return 1
 
-    per_strategy = compute_per_strategy_ic(records, horizons_bars=horizons)
+    per_strategy = compute_per_strategy_ic(
+        records, horizons_bars=horizons,
+        pool_assets=bool(getattr(args, "pool_assets", False)))
+    # [P299] Report the archived families separately rather than deleting
+    # them: an archive that cannot be audited is indistinguishable from a
+    # family nobody looked at. If one of these ever emits directional
+    # records again, this section is where it shows up.
+    _arch = {k: v for k, v in per_strategy.items() if k[0] in ARCHIVED_FAMILIES}
+    if _arch:
+        print("")
+        print("ARCHIVED families (kept accruing, excluded from the "
+              "promotion table — measured dead, see the reason):")
+        for (st, a), st_data in sorted(_arch.items()):
+            print(f"   {st:16s} {a:8s} n={st_data.get('n', 0):5d}  "
+                  f"{ARCHIVED_FAMILIES[st]}")
+        for k in list(_arch):
+            per_strategy.pop(k, None)
 
     # [P213] "No price series for ANY asset" is a WRONG-ENVIRONMENT error, not a
     # result. Without this the run prints a full table of ohlcv_missing and

@@ -401,11 +401,31 @@ class TestRegimebookAvailability:
             encoding="utf-8-sig")
         assert '"available": not str(version).startswith("v1_degraded")' in src
 
-    def test_sol_version_is_a_degraded_one(self):
+    def test_no_book_is_declared_degraded_any_more(self):
+        """[P299] SOL was relabelled trend-only: its behaviour always WAS
+        ETH's certified book, and the 'degraded' tag made it unscoreable."""
         from defense.regime_book_shadow import BOOKS_VERSION
-        assert BOOKS_VERSION["SOL"].startswith("v1_degraded")
-        assert not BOOKS_VERSION["BTC"].startswith("v1_degraded")
-        assert not BOOKS_VERSION["ETH"].startswith("v1_degraded")
+        for a in ("BTC", "ETH", "SOL"):
+            assert not BOOKS_VERSION[a].startswith("v1_degraded"), a
+        assert BOOKS_VERSION["SOL"] == "v1_trend_only"
+
+    def test_an_unavailable_book_never_reaches_the_live_seat(self, tmp_path):
+        """[P299] The live consumer (main.py regimebook seat) assigns
+        quant_direction UNCONDITIONALLY, 0.0 included — so a book that CANNOT
+        take a position must not be served at all, or it flattens the
+        incumbent while its own row says available=False."""
+        from defense.regime_book_shadow import RegimeBookShadow
+        h = RegimeBookShadow(data_dir=str(tmp_path))
+        import time as _t
+        h._last_records["SOL"] = {"ts": _t.time(), "direction": 0.0,
+                                  "leg": "flat_degraded", "available": False}
+        assert h.last_direction("SOL") is None, (
+            "an unavailable book must be NO seat input, never a flat opinion")
+        # An available book that CHOOSES flat is a real opinion and is served.
+        h._last_records["ETH"] = {"ts": _t.time(), "direction": 0.0,
+                                  "leg": "trend_flat", "available": True}
+        served = h.last_direction("ETH")
+        assert served is not None and served[0] == 0.0
 
     def test_seat_controller_reads_the_producers_own_flag(self, tmp_path):
         """Not a hand-maintained list here, which would drift the moment a

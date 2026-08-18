@@ -1,6 +1,36 @@
-"""[P237] The calibration tripwire, made executable — checks, never acts.
+"""[P237] The calibration tripwire — [P299] SUPERSEDED: it now REPORTS only.
 
-THE DECISION (P237, operator-delegated 2026-08-08): trading continues on the
+WHY THE PRESCRIPTION WAS RETIRED (P299, 2026-08-18). Two things changed
+under it:
+
+  1. ITS ACTUATOR NO LONGER TARGETS THE DECIDER. It removes an asset from
+     `trend_assets`, i.e. the TREND injection — but trend has not held the
+     DECIDE seat since 2026-08-17 (whale_seat_mode=enforce, P293j; and
+     regimebook_mode=enforce, P298). Firing it today removes the FALLBACK
+     that covers whale's silent ticks (~46/57/88% of ticks on BTC/ETH/SOL),
+     handing those ticks to Best-of-N — whose strategy weights are modulated
+     by [SENT-SWITCH], an F&G rule that has never been validated and fires on
+     ~47% of days in this regime (P293i). Removing a measured-weak signal
+     into an unmeasured one is not de-risking.
+
+  2. A BETTER INSTRUMENT EXISTS. The P295 seat controller decides the DECIDE
+     slot by COMPARISON across candidates, with `flat` as one candidate among
+     several rather than the only reachable outcome of a one-variable
+     threshold. It reached exactly this verdict on 2026-08-18 (both scoreable
+     candidates negative on both horizons -> flat wins by comparison).
+
+WHAT SURVIVES: the evidence. A GATE-CLOSED streak is a real statement about
+the calibrated alpha model and it feeds the seat decision. So this keeps
+reading the weekly slope reports and counting consecutive GATE-CLOSED
+verdicts per asset — it just no longer tells anyone to edit config, and it
+no longer exits 3. Two tools competing to prescribe the same config edit is
+how a contradiction reaches a live account.
+
+Exit codes: 0 = reported (whatever the streak); 2 = refusal (no reports —
+which must never read as "not fired", P199). Exit 3 is retired.
+
+THE ORIGINAL DECISION, kept for the record (P237, operator-delegated
+2026-08-08): trading continues on the
 asserted alpha constants ONLY through the 4-report dual-log window — weekly
 Monday `slope_calibrator` reports, first 2026-08-11, fourth 2026-09-01. If
 report #4 still shows GATE-CLOSED for an asset (and the p221b retrain has
@@ -9,12 +39,8 @@ asset's trend injection comes off via `trend_assets` in the live profile.
 
 WHAT THIS DOES: reads the weekly slope reports from the evidence directory,
 counts consecutive GATE-CLOSED verdicts per asset, and states the tripwire
-status loudly. It NEVER edits config or touches trading — firing the
-actuator is a recorded human step (P141: deactivation of a live behavior is
-operator-watched, even when a tripwire demands it). Exit codes: 0 = not yet
-fired; 3 = FIRED for at least one asset (grep-able in the cron log);
-2 = refusal (no reports — the tripwire cannot be evaluated, which must
-never read as "not fired", P199).
+status loudly. It NEVER edits config or touches trading (P141) — and since
+P299 it never prescribes an edit either; see the header.
 
 Runs from cron Mondays 06:25 UTC, right after the calibrator (P235).
 """
@@ -124,13 +150,41 @@ def main() -> int:
         print(f"  {a}: {status}")
         if fired:
             fired_any = True
-            print(f"    -> P237 TRIPWIRE FIRED for {a}: {REPORTS_REQUIRED} "
-                  f"consecutive GATE-CLOSED weekly reports past "
-                  f"{TRIPWIRE_DATE}. ACTION (human, recorded): unless the "
-                  f"p221b retrain produced a promotable basis, remove "
-                  f"'{a}' from trend_assets in configs/live_high_risk.json "
-                  f"and redeploy. This checker never edits config itself.")
-    return 3 if fired_any else 0
+            # [P299] SUPERSEDED — this no longer prescribes an action.
+            #
+            # Two things changed under it. (1) Its actuator targets
+            # `trend_assets`, i.e. the TREND injection — but trend has not
+            # held the DECIDE seat since 2026-08-17 (whale_seat_mode=enforce,
+            # P293j; regimebook_mode=enforce, P298). Removing trend now
+            # removes the FALLBACK that covers whale's silent ticks
+            # (~46/57/88% on BTC/ETH/SOL), handing them to Best-of-N, whose
+            # weights are modulated by the never-validated [SENT-SWITCH]
+            # (P293i). That is the opposite of de-risking. (2) The P295 seat
+            # controller reaches this same verdict BY COMPARISON, with
+            # `flat` as one candidate among several rather than the only
+            # reachable outcome of a one-variable threshold — and it did
+            # exactly that on 2026-08-18.
+            #
+            # The EVIDENCE half is kept: a GATE-CLOSED streak is a real
+            # statement about the calibrated alpha model, and it feeds the
+            # seat decision. Only the PRESCRIPTION is retired.
+            print(f"    -> {a}: {REPORTS_REQUIRED} consecutive GATE-CLOSED "
+                  f"weekly reports past {TRIPWIRE_DATE}. This is EVIDENCE, "
+                  f"not an instruction: the P237 prescription (remove '{a}' "
+                  f"from trend_assets) is SUPERSEDED by the P295 seat "
+                  f"controller, which decides the DECIDE slot by comparison "
+                  f"across candidates. Run scripts/seat_check.py for the "
+                  f"action; do NOT edit trend_assets from this line.")
+    if fired_any:
+        print("\n  NOTE: exit code is 0. This checker no longer FIRES — it "
+              "reports. The seat decision lives in scripts/seat_check.py "
+              "(Mondays 06:40 UTC), which can reach 'flat' as one outcome "
+              "among several instead of only ever removing a signal.")
+    # [P299] Always 0. A non-zero exit here meant "act on one variable"; the
+    # seat controller owns that decision now and signals it with ITS exit
+    # code. Two tools competing to prescribe the same config edit is how a
+    # contradiction reaches a live account.
+    return 0
 
 
 if __name__ == "__main__":

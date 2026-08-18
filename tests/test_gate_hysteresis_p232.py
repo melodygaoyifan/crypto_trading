@@ -312,8 +312,14 @@ class TestTripwireActuatorAndChecker:
         for day in ("2026-08-11", "2026-08-18", "2026-08-25", "2026-09-01"):
             self._write_report(tmp_path, day, closed_assets={"SOL"})
         r = self._run(tmp_path, "2026-09-01")
-        assert r.returncode == 3
-        assert "TRIPWIRE FIRED for SOL" in r.stdout
+        # [P299] The prescription is retired; the DETECTION still matters and
+        # is what this test guards.
+        assert r.returncode == 0, "the tripwire reports, never fires (P299)"
+        assert "SOL: FIRED" in r.stdout, "the streak must still be DETECTED"
+        assert "SUPERSEDED" in r.stdout, (
+            "a detected streak must say the prescription is retired, or a "
+            "reader acts on the old instruction")
+        assert "do NOT edit trend_assets" in r.stdout
         assert "BTC: armed 0/4" in r.stdout  # tradeable asset never fires
 
     def test_before_the_date_only_arms(self, tmp_path):

@@ -62,6 +62,11 @@ def _is_monthly_quota_error(body: str) -> bool:
     return any(m in low for m in _MONTHLY_QUOTA_MARKERS)
 
 
+# [P299] How long to wait before re-probing while a MONTHLY quota is
+# exhausted. See quota_backoff_until() for why this is not "until the 1st".
+QUOTA_REPROBE_SEC = 24 * 3600
+
+
 def _next_month_start_utc(now: datetime) -> datetime:
     """00:00 UTC on the 1st of the following month."""
     year, month = now.year, now.month
@@ -70,6 +75,35 @@ def _next_month_start_utc(now: datetime) -> datetime:
     else:
         month += 1
     return datetime(year, month, 1, tzinfo=timezone.utc)
+
+
+def quota_backoff_until(now: datetime) -> datetime:
+    """[P299] When to re-probe after a MONTHLY-quota 429.
+
+    P293b backed off to 00:00 on the 1st of the next month. That encodes a
+    GUESS about the vendor's billing cycle, and if the plan's quota resets on
+    the SUBSCRIPTION ANNIVERSARY instead — normal for a paid monthly plan —
+    the guess fails in the worst direction and keeps failing:
+
+        Sep 1  we re-probe -> still 429 -> back off to Oct 1
+        Sep 12 quota actually resets, but we are locked out
+        Oct 1  we finally re-probe
+
+    i.e. ~19 extra dark days, every month, forever, with the feed reporting
+    headlines=0 the whole time. P293b's own stated fail direction was "retry
+    sooner than necessary, never go dark for weeks by mistake"; hard-coding
+    the calendar inverted it.
+
+    So: do not encode a reset date at all. Re-probe DAILY. One request a day
+    is ~96x cheaper than the per-tick hammering P293b actually fixed (that
+    was the real defect: ~2,900 requests/month at a 15-minute retry), it
+    cannot outlive a genuine month-long exhaustion by more than a day, and it
+    is immune to whatever the vendor's cycle turns out to be. The month
+    boundary is still used as a CEILING, because the quota cannot fail to
+    have reset by then.
+    """
+    return min(now + timedelta(seconds=QUOTA_REPROBE_SEC),
+               _next_month_start_utc(now))
 
 
 # =============================================================================
@@ -626,7 +660,7 @@ class CryptoPanicFeed:
                     if _body and _is_monthly_quota_error(_body):
                         _quota_exhausted = True
                         _now = datetime.now(timezone.utc)
-                        self._backoff_until = _next_month_start_utc(_now)
+                        self._backoff_until = quota_backoff_until(_now)
                         self._persist_state()
                         if not getattr(self, "_quota_warned_month", None) == (
                             _now.year, _now.month
@@ -635,8 +669,11 @@ class CryptoPanicFeed:
                             logger.error(
                                 "[CRYPTOPANIC] MONTHLY QUOTA EXHAUSTED for "
                                 "%04d-%02d — the API says: %s. Backing off "
-                                "until %s (quota resets on the calendar, not "
-                                "on a timer). This is a BUDGET/PLAN decision, "
+                                "until %s — a DAILY re-probe, deliberately "
+                                "not 'until the 1st': the vendor's reset date "
+                                "is not something we know, and guessing it "
+                                "wrong locks the feed out for weeks (P299). "
+                                "This is a BUDGET/PLAN decision, "
                                 "NOT a market condition and NOT a transient "
                                 "fault: llm_sentiment will report "
                                 "headlines=0 until the month rolls or the "
