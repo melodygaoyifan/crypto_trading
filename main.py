@@ -6843,8 +6843,10 @@ class HMATSProductionRunner:
                         state = _json.load(fh) or {}
             except Exception:  # noqa: silent-swallow — a bad file is a cold start
                 state = {}
-            prev = state.get(asset)
-            state[asset] = total
+            import time as _time
+            now = _time.time()
+            rec = state.get(asset)
+            state[asset] = {"total": total, "ts": now}
             try:
                 _os.makedirs(_dir, exist_ok=True)
                 tmp = path + ".tmp"
@@ -6853,9 +6855,26 @@ class HMATSProductionRunner:
                 _os.replace(tmp, path)
             except Exception:  # noqa: silent-swallow — observation only
                 pass
-            if prev is None:
+            # [P305] RETURN A RATE, NOT A RAW DELTA. Ticks are 4H apart, so
+            # "observed since the last reading" is a ~4-HOUR figure; feeding
+            # it to `liquidation_volume_1h` overstated the hourly rate ~4x.
+            # That is the same units defect this whole fix exists to correct,
+            # committed in the correction itself — so the elapsed interval is
+            # now measured and the caller scales per window.
+            if not isinstance(rec, dict):
+                return None            # pre-P305 state shape: re-anchor once
+            prev_total = rec.get("total")
+            prev_ts = rec.get("ts")
+            if prev_total is None or prev_ts is None:
                 return None
-            return max(0.0, total - float(prev))
+            elapsed_h = (now - float(prev_ts)) / 3600.0
+            # Outside a sane band the window means nothing: a tiny gap divides
+            # into a huge rate, and past 24h the rolling window has fully
+            # turned over so the delta is not a measurement of anything.
+            if not (0.5 <= elapsed_h <= 24.0):
+                return None
+            delta = max(0.0, total - float(prev_total))
+            return delta / elapsed_h    # liquidations per HOUR
         except Exception:  # noqa: silent-swallow — never disturbs a tick
             return None
 
@@ -7567,12 +7586,16 @@ class HMATSProductionRunner:
                     # conflation; printing None as $0 would reproduce it in
                     # the readout (P2).
                     f"observed_since_last="
-                    f"{('$%s' % format(_liq_obs, ',.0f')) if _liq_obs is not None else 'n/a(first reading)'}"
+                    f"{('$%s/h' % format(_liq_obs, ',.0f')) if _liq_obs is not None else 'n/a(first reading)'}"
                     f" | threshold=$10,000,000 "
                     f"({'ARMED' if _cascade_real else 'shadow'})")
-                _liq_1h = (_liq_obs if (_cascade_real and _liq_obs is not None)
+                # [P305] `_liq_obs` is a per-HOUR rate; scale it to each
+                # window rather than passing one figure to both slots.
+                _liq_1h = (_liq_obs * 1.0
+                           if (_cascade_real and _liq_obs is not None)
                            else _liq_vol_24h / 24.0)
-                _liq_4h = (_liq_obs if (_cascade_real and _liq_obs is not None)
+                _liq_4h = (_liq_obs * 4.0
+                           if (_cascade_real and _liq_obs is not None)
                            else _liq_vol_24h / 6.0)
                 _cascade_gov.update_metrics(
                     liquidation_volume_1h=_liq_1h,

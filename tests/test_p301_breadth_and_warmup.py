@@ -412,16 +412,40 @@ class TestCascadeCanDetectACascade:
             "which is why the detector has never fired"
         )
 
-    def test_a_burst_is_visible_in_the_delta(self, tmp_path, monkeypatch):
+    def _age_state(self, tmp_path, asset, hours):
+        """Simulate a gap by ageing the persisted stamp."""
+        import json
+        p = tmp_path / "cascade_liq_prev.json"
+        st = json.loads(p.read_text(encoding="utf-8"))
+        st[asset]["ts"] -= hours * 3600
+        p.write_text(json.dumps(st), encoding="utf-8")
+
+    def test_a_burst_is_visible_as_an_hourly_rate(self, tmp_path, monkeypatch):
+        """[P305] The delta is a ~4h figure because ticks are 4H apart, so it
+        is returned as a per-HOUR rate. Feeding the raw delta to the 1h slot
+        overstated the hourly rate 4x - the same units defect the fix exists
+        to correct, committed inside the correction."""
         from risk.cascade_exhaustion_governor import CascadeExhaustionConfig as CascadeConfig
         r = self._runner(tmp_path, monkeypatch)
         assert r._cascade_liq_delta("BTC", 36_607_740) is None, "no previous yet"
-        burst = r._cascade_liq_delta("BTC", 48_607_740)
-        assert burst == pytest.approx(12_000_000)
-        assert burst >= CascadeConfig().cascade_detect_liq_threshold, (
-            "a $12M burst must be able to trip a $10M threshold - the whole "
-            "point of measuring the change instead of the average"
+        self._age_state(tmp_path, "BTC", 4)
+        rate = r._cascade_liq_delta("BTC", 48_607_740)          # +$12M over 4h
+        assert rate == pytest.approx(3_000_000, rel=1e-3), (
+            "a $12M/4h burst is a $3M/h rate, not a $12M hourly volume"
         )
+        assert rate * 4 >= CascadeConfig().cascade_detect_liq_threshold, (
+            "scaled to its own window the burst still clears the $10M bar - "
+            "which the 24h average ($1.53M) never could"
+        )
+
+    def test_an_unusable_interval_is_refused(self, tmp_path, monkeypatch):
+        """Too short divides into a huge rate; past 24h the rolling window has
+        fully turned over, so the delta measures nothing."""
+        r = self._runner(tmp_path, monkeypatch)
+        r._cascade_liq_delta("BTC", 36_000_000)
+        assert r._cascade_liq_delta("BTC", 48_000_000) is None, "gap too short"
+        self._age_state(tmp_path, "BTC", 60)
+        assert r._cascade_liq_delta("BTC", 60_000_000) is None, "gap too long"
 
     def test_the_first_reading_is_absent_not_zero(self, tmp_path, monkeypatch):
         """[P2] None falls back to the old behaviour; a 0.0 would claim 'no
@@ -433,6 +457,7 @@ class TestCascadeCanDetectACascade:
                                                                 monkeypatch):
         r = self._runner(tmp_path, monkeypatch)
         r._cascade_liq_delta("BTC", 50_000_000)
+        self._age_state(tmp_path, "BTC", 4)
         assert r._cascade_liq_delta("BTC", 40_000_000) == 0.0
 
     def test_the_previous_reading_survives_a_restart(self, tmp_path, monkeypatch):
@@ -441,8 +466,10 @@ class TestCascadeCanDetectACascade:
         signals look dead."""
         r1 = self._runner(tmp_path, monkeypatch)
         r1._cascade_liq_delta("BTC", 36_000_000)
+        self._age_state(tmp_path, "BTC", 4)
         r2 = self._runner(tmp_path, monkeypatch)      # a restart
-        assert r2._cascade_liq_delta("BTC", 44_000_000) == pytest.approx(8_000_000)
+        assert r2._cascade_liq_delta("BTC", 44_000_000) == pytest.approx(
+            2_000_000, rel=1e-3)   # $8M over 4h = $2M/h
 
     def test_arming_is_a_config_decision_and_defaults_off(self):
         """cascade_phase reaches a fusion disable-condition
