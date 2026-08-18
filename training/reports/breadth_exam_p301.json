@@ -1,0 +1,192 @@
+{
+  "assumed_spread_bps": 10.0,
+  "results": [
+    {
+      "asset": "XRP",
+      "bars": 12585,
+      "years": 5.7,
+      "leg_bps": 8.0,
+      "carry_priced": true,
+      "net_pct": 200.8,
+      "gross_pct": 275.3,
+      "cost_pct": 26.2,
+      "carry_pct": -48.3,
+      "sharpe": 0.53,
+      "bh_net_pct": 344.5,
+      "bh_carry_pct": -83.4,
+      "rand_net_pct": 184.9,
+      "exposure": 0.28,
+      "flips": 328,
+      "h1_pct": 178.5,
+      "h2_pct": 22.3,
+      "verdict": "FAIL",
+      "blockers": [
+        "does not beat buy-and-hold (+200.8% vs +344.5%)"
+      ]
+    },
+    {
+      "asset": "ADA",
+      "bars": 12585,
+      "years": 5.7,
+      "leg_bps": 8.0,
+      "carry_priced": true,
+      "net_pct": 248.8,
+      "gross_pct": 322.3,
+      "cost_pct": 21.8,
+      "carry_pct": -51.8,
+      "sharpe": 0.72,
+      "bh_net_pct": 254.4,
+      "bh_carry_pct": -73.4,
+      "rand_net_pct": 143.9,
+      "exposure": 0.25,
+      "flips": 272,
+      "h1_pct": 83.1,
+      "h2_pct": 165.7,
+      "verdict": "FAIL",
+      "blockers": [
+        "does not beat buy-and-hold (+248.8% vs +254.4%)"
+      ]
+    },
+    {
+      "asset": "LTC",
+      "bars": 12585,
+      "years": 5.7,
+      "leg_bps": 8.0,
+      "carry_priced": true,
+      "net_pct": -10.2,
+      "gross_pct": 74.0,
+      "cost_pct": 26.7,
+      "carry_pct": -57.4,
+      "sharpe": -0.03,
+      "bh_net_pct": 121.6,
+      "bh_carry_pct": -79.6,
+      "rand_net_pct": 61.0,
+      "exposure": 0.31,
+      "flips": 334,
+      "h1_pct": -0.1,
+      "h2_pct": -10.1,
+      "verdict": "FAIL",
+      "blockers": [
+        "net <= 0",
+        "does not beat buy-and-hold (-10.2% vs +121.6%)",
+        "era-unstable (-0.1% / -10.1%)",
+        "does not beat turnover-matched random"
+      ]
+    },
+    {
+      "asset": "DOGE",
+      "bars": 12585,
+      "years": 5.7,
+      "leg_bps": 8.0,
+      "carry_priced": true,
+      "net_pct": 580.6,
+      "gross_pct": 653.8,
+      "cost_pct": 23.0,
+      "carry_pct": -50.3,
+      "sharpe": 0.91,
+      "bh_net_pct": 731.7,
+      "bh_carry_pct": -78.0,
+      "rand_net_pct": 150.5,
+      "exposure": 0.27,
+      "flips": 288,
+      "h1_pct": 462.7,
+      "h2_pct": 117.9,
+      "verdict": "FAIL",
+      "blockers": [
+        "does not beat buy-and-hold (+580.6% vs +731.7%)"
+      ]
+    },
+    {
+      "asset": "BNB",
+      "bars": 12585,
+      "years": 5.7,
+      "leg_bps": 8.0,
+      "carry_priced": true,
+      "net_pct": 331.2,
+      "gross_pct": 384.3,
+      "cost_pct": 25.6,
+      "carry_pct": -27.5,
+      "sharpe": 1.08,
+      "bh_net_pct": 456.3,
+      "bh_carry_pct": -8.4,
+      "rand_net_pct": 140.9,
+      "exposure": 0.39,
+      "flips": 320,
+      "h1_pct": 264.3,
+      "h2_pct": 66.9,
+      "verdict": "FAIL",
+      "blockers": [
+        "does not beat buy-and-hold (+331.2% vs +456.3%)"
+      ]
+    },
+    {
+      "asset": "BTC",
+      "bars": 12585,
+      "years": 5.7,
+      "leg_bps": 4.0,
+      "carry_priced": true,
+      "net_pct": 151.7,
+      "gross_pct": 212.8,
+      "cost_pct": 11.1,
+      "carry_pct": -50.0,
+      "sharpe": 0.74,
+      "bh_net_pct": 184.3,
+      "bh_carry_pct": -68.2,
+      "rand_net_pct": 86.0,
+      "exposure": 0.37,
+      "flips": 277,
+      "h1_pct": 71.6,
+      "h2_pct": 80.0,
+      "verdict": "FAIL",
+      "blockers": [
+        "does not beat buy-and-hold (+151.7% vs +184.3%)"
+      ]
+    },
+    {
+      "asset": "ETH",
+      "bars": 12585,
+      "years": 5.7,
+      "leg_bps": 5.75,
+      "carry_priced": true,
+      "net_pct": 207.3,
+      "gross_pct": 278.9,
+      "cost_pct": 14.3,
+      "carry_pct": -57.4,
+      "sharpe": 0.81,
+      "bh_net_pct": 251.4,
+      "bh_carry_pct": -73.4,
+      "rand_net_pct": 30.9,
+      "exposure": 0.33,
+      "flips": 248,
+      "h1_pct": 130.1,
+      "h2_pct": 77.1,
+      "verdict": "FAIL",
+      "blockers": [
+        "does not beat buy-and-hold (+207.3% vs +251.4%)"
+      ]
+    },
+    {
+      "asset": "SOL",
+      "bars": 12524,
+      "years": 5.7,
+      "leg_bps": 5.0,
+      "carry_priced": true,
+      "net_pct": 422.9,
+      "gross_pct": 486.0,
+      "cost_pct": 13.7,
+      "carry_pct": -49.4,
+      "sharpe": 1.02,
+      "bh_net_pct": 705.7,
+      "bh_carry_pct": -25.2,
+      "rand_net_pct": 258.4,
+      "exposure": 0.34,
+      "flips": 274,
+      "h1_pct": 226.6,
+      "h2_pct": 196.3,
+      "verdict": "FAIL",
+      "blockers": [
+        "does not beat buy-and-hold (+422.9% vs +705.7%)"
+      ]
+    }
+  ]
+}

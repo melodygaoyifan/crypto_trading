@@ -38,6 +38,25 @@ from __future__ import annotations
 
 import logging
 from collections import deque
+
+from strategies._warmup_state import load as _warmup_load, save as _warmup_save
+
+
+def _restore_warmup(obj, name: str) -> None:
+    """[P301] Rehydrate obj._history from disk. Never raises."""
+    try:
+        for asset, vals in (_warmup_load(name) or {}).items():
+            obj._history[asset] = deque(vals[-obj._maxlen:], maxlen=obj._maxlen)
+    except Exception:  # noqa: silent-swallow — a failed restore is a cold start
+        pass
+
+
+def _persist_warmup(obj, name: str) -> None:
+    """[P301] Write the warmup back. Best-effort; a tick never depends on it."""
+    try:
+        _warmup_save(name, obj._history)
+    except Exception:  # noqa: silent-swallow — see _warmup_state.save
+        pass
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, NamedTuple, Optional
 
@@ -173,11 +192,18 @@ class FundingRateMeanReversionStrategy:
     confidence_cap: float = 0.45
     min_history: int = 12   # need at least 12 obs (×3/day = 4 days) for stable std
 
+    _WARMUP_NAME = "funding_mean_reversion"
+
     def __post_init__(self) -> None:
         # Per-asset rolling history — assume ~3 funding obs/day for 8h cadence
         self._history: Dict[str, deque] = {}
         # 14 days × 3 obs/day
         self._maxlen = self.lookback_days * 3
+        # [P301] Restore across restarts. The counter read history_warmup(1/12)
+        # on the server because this deque started empty on every construction,
+        # so a 12-observation warmup (~4 days at 3 obs/day) never completed
+        # between deploys. Failure restores nothing and warms up as before.
+        _restore_warmup(self, self._WARMUP_NAME)
 
     def evaluate(self, asset: str, market_data: Dict[str, Any]) -> ShadowSignal:
         funding_8h = _get_float(market_data, "funding_rate_8h")
@@ -188,6 +214,7 @@ class FundingRateMeanReversionStrategy:
             self._history[asset] = deque(maxlen=self._maxlen)
         hist = self._history[asset]
         hist.append(funding_8h)
+        _persist_warmup(self, self._WARMUP_NAME)
 
         if len(hist) < self.min_history:
             return NEUTRAL("funding_mean_reversion", asset,
@@ -254,10 +281,15 @@ class FundingRatePostETFRegimeStrategy:
     confidence_cap: float = 0.50
     min_regime_obs: int = 30              # minimum obs to trust the ceiling
 
+    _WARMUP_NAME = "funding_post_etf_regime"
+
     def __post_init__(self) -> None:
         self._history: Dict[str, deque] = {}
         # 60d × 3 obs/day
         self._maxlen = self.regime_window_days * 3
+        # [P301] see the sibling above — this one read regime_warmup(1/30),
+        # i.e. ~10 days of uninterrupted uptime it has never had.
+        _restore_warmup(self, self._WARMUP_NAME)
 
     def evaluate(self, asset: str, market_data: Dict[str, Any]) -> ShadowSignal:
         funding_8h = _get_float(market_data, "funding_rate_8h")
@@ -268,6 +300,7 @@ class FundingRatePostETFRegimeStrategy:
             self._history[asset] = deque(maxlen=self._maxlen)
         hist = self._history[asset]
         hist.append(funding_8h)
+        _persist_warmup(self, self._WARMUP_NAME)
 
         if len(hist) < self.min_regime_obs:
             return NEUTRAL("funding_post_etf_regime", asset,
