@@ -1,0 +1,190 @@
+{
+  "fng_days": 3116,
+  "fng_span": [
+    "2018-02-01",
+    "2026-08-17"
+  ],
+  "assets": [
+    "BTC",
+    "ETH",
+    "SOL"
+  ],
+  "carry": true,
+  "cost_model": {
+    "cde_full_spread_bps": {
+      "BTC": 2.0,
+      "ETH": 5.5,
+      "SOL": 4.0
+    },
+    "taker_fee_bps": 3.0
+  },
+  "results": [
+    {
+      "strategy": "sent_momentum_linear",
+      "assets": [
+        "BTC",
+        "ETH",
+        "SOL"
+      ],
+      "bars": 13235,
+      "years": 6.04,
+      "net_return_pct": 363.84,
+      "gross_return_pct": 422.84,
+      "cost_pct": 11.65,
+      "carry_pct": -49.47,
+      "sharpe": 0.92,
+      "sharpe_ci90": [
+        0.26,
+        1.54
+      ],
+      "half1_return_pct": 315.3,
+      "half2_return_pct": 48.55,
+      "exposure_frac": 0.657,
+      "flips_per_asset": 235.0,
+      "carry_priced": true,
+      "verdict": "PASS",
+      "blockers": []
+    },
+    {
+      "strategy": "sent_momentum_hist",
+      "assets": [
+        "BTC",
+        "ETH",
+        "SOL"
+      ],
+      "bars": 13235,
+      "years": 6.04,
+      "net_return_pct": 305.94,
+      "gross_return_pct": 337.63,
+      "cost_pct": 9.93,
+      "carry_pct": -23.89,
+      "sharpe": 0.905,
+      "sharpe_ci90": [
+        0.31,
+        1.472
+      ],
+      "half1_return_pct": 245.23,
+      "half2_return_pct": 60.71,
+      "exposure_frac": 0.439,
+      "flips_per_asset": 201.0,
+      "carry_priced": true,
+      "verdict": "PASS",
+      "blockers": []
+    },
+    {
+      "strategy": "sent_contrarian",
+      "assets": [
+        "BTC",
+        "ETH",
+        "SOL"
+      ],
+      "bars": 13235,
+      "years": 6.04,
+      "net_return_pct": -427.23,
+      "gross_return_pct": -460.09,
+      "cost_pct": 17.95,
+      "carry_pct": 52.97,
+      "sharpe": -1.198,
+      "sharpe_ci90": [
+        -1.902,
+        -0.49
+      ],
+      "half1_return_pct": -316.74,
+      "half2_return_pct": -110.49,
+      "exposure_frac": 0.628,
+      "flips_per_asset": 364.0,
+      "carry_priced": true,
+      "verdict": "FAIL",
+      "blockers": [
+        "net after cost+carry -427.23% <= 0",
+        "era-unstable: halves -316.74% / -110.49%"
+      ]
+    },
+    {
+      "strategy": "buy_and_hold",
+      "assets": [
+        "BTC",
+        "ETH",
+        "SOL"
+      ],
+      "bars": 13235,
+      "years": 6.04,
+      "net_return_pct": 393.36,
+      "gross_return_pct": 450.97,
+      "cost_pct": 0.05,
+      "carry_pct": -59.68,
+      "sharpe": 0.867,
+      "sharpe_ci90": [
+        0.203,
+        1.554
+      ],
+      "half1_return_pct": 284.76,
+      "half2_return_pct": 108.6,
+      "exposure_frac": 1.0,
+      "flips_per_asset": 0.0,
+      "carry_priced": true,
+      "verdict": "PASS",
+      "blockers": []
+    },
+    {
+      "strategy": "random_control",
+      "assets": [
+        "BTC",
+        "ETH",
+        "SOL"
+      ],
+      "bars": 13235,
+      "years": 6.04,
+      "net_return_pct": -9.29,
+      "gross_return_pct": 87.24,
+      "cost_pct": 96.55,
+      "carry_pct": -4.42,
+      "sharpe": -0.025,
+      "sharpe_ci90": [
+        -0.781,
+        0.634
+      ],
+      "half1_return_pct": -38.31,
+      "half2_return_pct": 29.02,
+      "exposure_frac": 0.649,
+      "flips_per_asset": 1485.0,
+      "carry_priced": true,
+      "verdict": "FAIL",
+      "blockers": [
+        "net after cost+carry -9.29% <= 0",
+        "Sharpe CI [-0.78,+0.63] includes zero",
+        "era-unstable: halves -38.31% / +29.02%"
+      ]
+    },
+    {
+      "strategy": "random_turnover_matched",
+      "assets": [
+        "BTC",
+        "ETH",
+        "SOL"
+      ],
+      "bars": 13235,
+      "years": 6.04,
+      "net_return_pct": -217.71,
+      "gross_return_pct": -197.0,
+      "cost_pct": 7.47,
+      "carry_pct": -13.24,
+      "sharpe": -0.559,
+      "sharpe_ci90": [
+        -1.257,
+        0.145
+      ],
+      "half1_return_pct": -302.79,
+      "half2_return_pct": 85.08,
+      "exposure_frac": 0.726,
+      "flips_per_asset": 112.0,
+      "carry_priced": true,
+      "verdict": "FAIL",
+      "blockers": [
+        "net after cost+carry -217.71% <= 0",
+        "Sharpe CI [-1.26,+0.14] includes zero",
+        "era-unstable: halves -302.79% / +85.08%"
+      ]
+    }
+  ]
+}
