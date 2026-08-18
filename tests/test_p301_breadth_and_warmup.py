@@ -318,3 +318,67 @@ class TestMicrostructureStateSurvivesRestart:
         monkeypatch.setattr(mod, "_warmup_save", boom)
         s = M.KyleLambdaStrategy()
         assert s.evaluate("BTC", self._md(64000)) is not None
+
+
+class TestSeatSurvivesRestart:
+    """[P303] `tick()` runs at LOOP level AFTER decide (P248), so the first
+    tick of every process had no target to seat and logged "no fresh book
+    target exists" - measured live on 2026-08-18 for all three assets right
+    after a deploy, while the ledger already held BTC=bear/funding_short/-1.0.
+
+    With regimebook_mode: enforce that costs the CERTIFIED book (P297) a full
+    4H tick per deploy, on an engine that deploys often. Same restart class as
+    the P301/P302 warmups, on the signal now holding the seat.
+    """
+
+    def _ledger(self, tmp_path, name, rec):
+        import json
+        d = tmp_path / "strategy_shadow"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / f"{name}.jsonl").write_text(json.dumps(rec) + "\n",
+                                         encoding="utf-8")
+
+    def test_the_seat_has_a_target_on_the_first_tick(self, tmp_path):
+        import time
+        from defense.regime_book_shadow import RegimeBookShadow
+        self._ledger(tmp_path, "regimebook_BTC",
+                     {"ts": time.time(), "asset": "BTC",
+                      "direction": -1.0, "leg": "funding_short"})
+        h = RegimeBookShadow(data_dir=str(tmp_path))
+        got = h.last_direction("BTC")
+        assert got is not None, "the seat still loses a tick to every restart"
+        assert got[0] == -1.0 and got[1] == "funding_short"
+
+    def test_sibling_exams_are_never_mistaken_for_the_book(self, tmp_path):
+        """regimebook_adj / _banded / _volskip are SEPARATE exams; seating one
+        would put an unpromoted overlay on the decider slot."""
+        import time
+        from defense.regime_book_shadow import RegimeBookShadow
+        now = time.time()
+        self._ledger(tmp_path, "regimebook_adj_BTC",
+                     {"ts": now, "asset": "BTC", "direction": 1.0, "leg": "x"})
+        self._ledger(tmp_path, "regimebook_volskip_ETH",
+                     {"ts": now, "asset": "ETH", "direction": 1.0, "leg": "x"})
+        h = RegimeBookShadow(data_dir=str(tmp_path))
+        assert h._last_records == {}
+        assert h.last_direction("BTC") is None
+        assert h.last_direction("ETH") is None
+
+    def test_a_stale_ledger_yields_no_seat_rather_than_a_stale_one(self, tmp_path):
+        """[P2] absent is not flat, and old is not fresh - last_direction's
+        own 6h bound still governs whatever is restored."""
+        import time
+        from defense.regime_book_shadow import RegimeBookShadow
+        self._ledger(tmp_path, "regimebook_BTC",
+                     {"ts": time.time() - 48 * 3600, "asset": "BTC",
+                      "direction": -1.0, "leg": "funding_short"})
+        h = RegimeBookShadow(data_dir=str(tmp_path))
+        assert h.last_direction("BTC") is None
+
+    def test_a_corrupt_ledger_is_a_cold_start_not_a_crash(self, tmp_path):
+        from defense.regime_book_shadow import RegimeBookShadow
+        d = tmp_path / "strategy_shadow"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "regimebook_BTC.jsonl").write_text("{not json\n", encoding="utf-8")
+        h = RegimeBookShadow(data_dir=str(tmp_path))
+        assert h.last_direction("BTC") is None

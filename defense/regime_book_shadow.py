@@ -326,6 +326,21 @@ class RegimeBookShadow:
         self._last_funding_refresh_day: Dict[str, str] = {}
         self._feature_stash: dict = {}    # asset -> (ts, {name: value})
         self._last_records: Dict[str, dict] = {}   # [P256] asset -> last rec
+        # [P303] Restore from the LEDGER so the seat survives a restart.
+        # `tick()` runs at LOOP level AFTER decide (P248), so the first tick of
+        # any process had nothing to seat and logged "no fresh book target
+        # exists" — measured live on 2026-08-18 for all three assets right
+        # after a deploy, while the ledger on disk already held
+        # BTC=bear/funding_short/-1.0. With `regimebook_mode: enforce` that
+        # costs the CERTIFIED book (P297: 6 years, 3/3 eras) a full 4H tick
+        # per deploy, and this engine deploys often — the same restart class
+        # as the P301/P302 warmups, on the one signal now holding the seat.
+        #
+        # The rows are already written and already carry `ts`, so nothing new
+        # is persisted; `last_direction()` applies its own 6h staleness bound
+        # to whatever is restored, so a genuinely old ledger still yields NO
+        # SEAT rather than a stale one (P2: absent is not flat).
+        self._restore_last_records()
         self._adj_state: Dict[str, dict] = {}      # [P256] adjust mechanism
         # [P259] banded-forecast overlay: model per asset (None = no export,
         # leg silent) + band state machine per asset
@@ -369,6 +384,38 @@ class RegimeBookShadow:
                       "direction": rec.get("direction", 0.0),
                       "changed": changed}
         return out
+
+    def _restore_last_records(self) -> None:
+        """[P303] Rehydrate `_last_records` from the newest ledger row per
+        asset. Never raises: a failed restore is exactly today's behaviour
+        (no seat on the first tick)."""
+        try:
+            import glob
+            for path in glob.glob(str(self._dir / "regimebook_*.jsonl")):
+                name = Path(path).name
+                # only the RAW book feeds the seat — adj/banded/volskip are
+                # separate exams and must never be mistaken for it
+                stem = name[len("regimebook_"):-len(".jsonl")]
+                if "_" in stem:
+                    continue
+                try:
+                    with open(path, encoding="utf-8") as fh:
+                        lines = [ln for ln in fh if ln.strip()]
+                    if not lines:
+                        continue
+                    rec = json.loads(lines[-1])
+                except Exception:  # noqa: silent-swallow — skip a bad ledger
+                    continue
+                if isinstance(rec, dict) and rec.get("ts"):
+                    self._last_records[stem] = rec
+            if self._last_records:
+                logger.info(
+                    "[REGIMEBOOK] restored last targets for %s from the ledger "
+                    "— the seat does not lose a tick to this restart",
+                    ", ".join(sorted(self._last_records)))
+        except Exception as e:  # noqa: silent-swallow — logged
+            logger.warning("[REGIMEBOOK] ledger restore failed (%s) — the "
+                           "first tick will have no seat input", type(e).__name__)
 
     def last_direction(self, asset: str, max_age_s: float = 6 * 3600):
         """The book's most recent recorded target for `asset`, or None.

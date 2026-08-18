@@ -122,6 +122,18 @@ def test_vpin_anomaly_high_alone_triggers():
 
 # ---------- Kyle's lambda ---------------------------------------------------
 
+@pytest.fixture(autouse=True)
+def _isolate_warmup_state(monkeypatch, tmp_path):
+    """[P303] KyleLambdaStrategy now PERSISTS `_last_price` and its lambda
+    history (they were RAM-only, which is why the strategy recorded 1
+    directional row in 6,168 - every restart wiped them). These tests assume
+    a cold start, and without isolation they would inherit whatever a
+    previous run left in the repo's data/ dir - the P186 class, where the
+    suite writes into the checkout and later runs read it back.
+    """
+    monkeypatch.setenv("HMATS_DATA_DIR", str(tmp_path))
+
+
 def test_kyle_neutral_warmup():
     s = KyleLambdaStrategy(lookback=30)
     md = {"current_price": 60000, "order_book_imbalance": 0.2, "spread_bps": 10}

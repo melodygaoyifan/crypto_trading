@@ -104,3 +104,6 @@ analytics/sixty_day_review/reports/*
 # [P271] september_check pulls — server evidence copies, never live truth
 data/strategy_shadow_pulled/
 data/evidence_reports_pulled/
+
+# [P303] v5.1 strategy warmup state - runtime, per-machine
+data/v5_1_warmup/
