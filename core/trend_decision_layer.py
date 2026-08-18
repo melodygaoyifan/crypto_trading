@@ -36,7 +36,13 @@ from strategies.trend_following import TrendFollowingStrategy
 logger = logging.getLogger(__name__)
 
 _VALID_MODES = ("off", "shadow", "enforce")
-_VALID_GATE_MODES = ("off", "shadow", "enforce")
+# [P307b] RETIRED as an actuator. "enforce" is no longer a valid gate
+# mode — see _DEFAULT_GATE_REGIMES below for the measurement that
+# retired it. The mode survives as "off" | "shadow" so the ledger keeps
+# accruing (the DETECTION is still worth having, and separating it from
+# the PRESCRIPTION is the P299 lesson), but nothing can arm it.
+_VALID_GATE_MODES = ("off", "shadow")
+_RETIRED_GATE_MODES = ("enforce",)
 
 # [P198 2026-08-07] Regimes in which the trend signal is gated (zeroed when the
 # gate is in enforce; logged-only in shadow). Chosen from the 2026-06-14 ->
@@ -45,11 +51,27 @@ _VALID_GATE_MODES = ("off", "shadow", "enforce")
 #   NEUTRAL_DRIFT       n=11   hit 27.3%  -68.9 bps/tick
 #   QUIET_ACCUMULATION  n=663  hit 52.5%  +2.6 bps/tick  (NOT gated — mildly
 #     positive, and gating it too would block 93% of all ticks = system off)
-# That window is IN-SAMPLE (it is the window that showed the loss), which is
-# exactly why the gate DEFAULTS TO SHADOW: it logs what it would have done to
-# data/trend_regime_shadow.jsonl, and promotion to enforce is a config flip
-# (`trend_regime_gate: "enforce"`) to be made only on FORWARD evidence — the
-# same discipline that gates trend enforce itself (see module docstring).
+# [P307b] THAT HYPOTHESIS IS NOW MEASURED AND IT IS WRONG. The numbers above
+# are per-tick signed-return averages BY REGIME, which is not the question:
+# a regime can have a negative mean return and still be one the trend book is
+# SHORT in, where gating it destroys the profit. training/trend_gate_lab.py
+# asks the decision's own question — does zeroing the trend seat in these
+# regimes leave more money after costs — with a pre-committed verdict, and the
+# answer is NO in BOTH eras on ALL THREE assets:
+#
+#     asset   design    pre-design
+#     BTC     -0.699    -0.289
+#     ETH     -0.243    -0.228
+#     SOL     -0.623    -0.258
+#
+# Six reads out of six negative, re-derived after the P307 GMM refit changed
+# the labels (the pre-refit run agreed: -0.332/-0.210, -0.687/-0.259,
+# -0.509/-0.657). The forward evidence that looked "inverted" was right.
+#
+# So "enforce" is RETIRED rather than left as a flag someone could flip. The
+# shadow ledger keeps writing, because a regime census is worth having and
+# retiring a PRESCRIPTION is not a reason to retire the DETECTION beside it
+# (P299).
 _DEFAULT_GATE_REGIMES = ("WEAK_CONSOLIDATION", "NEUTRAL_DRIFT")
 
 
@@ -96,6 +118,19 @@ class TrendDecisionLayer:
         self._closes_cached_at: Dict[str, float] = {}  # [P265] staleness bound
         # [P198] regime gate: off | shadow (log only, DEFAULT) | enforce (zero
         # the trend signal in gated regimes -> the sleeve flattens there).
+        # [P307b] A retired mode is REFUSED LOUDLY, not silently coerced: a
+        # config that says "enforce" and behaves as "shadow" is the P16 shape
+        # (a flag declared and never gated), and the operator must find out
+        # from the log rather than from the absence of an effect.
+        if regime_gate_mode in _RETIRED_GATE_MODES:
+            logger.error(
+                "[TREND-GATE] regime_gate_mode=%r is RETIRED and will NOT be "
+                "applied. training/trend_gate_lab.py measured it as negative "
+                "in BOTH eras on ALL THREE assets (BTC -0.699/-0.289, ETH "
+                "-0.243/-0.228, SOL -0.623/-0.258 net after cost). Running in "
+                "SHADOW instead; remove the key from the config.",
+                regime_gate_mode)
+            regime_gate_mode = "shadow"
         self.regime_gate_mode = (regime_gate_mode
                                  if regime_gate_mode in _VALID_GATE_MODES
                                  else "shadow")
@@ -106,6 +141,12 @@ class TrendDecisionLayer:
         self.mode = mode if mode in _VALID_MODES else "off"
 
     def set_regime_gate_mode(self, mode: str) -> None:
+        """[P307b] "enforce" is retired — see the constant block above."""
+        if mode in _RETIRED_GATE_MODES:
+            logger.error("[TREND-GATE] regime_gate_mode=%r is RETIRED "
+                         "(measured negative in both eras on all three "
+                         "assets); ignoring.", mode)
+            return
         if mode in _VALID_GATE_MODES:
             self.regime_gate_mode = mode
 

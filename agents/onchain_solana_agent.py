@@ -199,6 +199,9 @@ class OnChainConfig:
 
     # Data sources (public APIs)
     use_solscan: bool = True
+    # [P307b] NO READER (with use_solscan below): declared, never
+    # consulted. Neither provider is called anywhere in the tree, so
+    # these describe an intended integration rather than a live switch.
     use_birdeye: bool = True
     use_flipside: bool = False
 

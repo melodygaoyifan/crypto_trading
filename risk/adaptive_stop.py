@@ -213,6 +213,15 @@ class StopConfiguration:
     # Breakeven settings
     breakeven_r_trigger: float = 2.0
     use_calmar_adjustment: bool = True
+    # [P307b] NO READER. `use_calmar_adjustment` beside it IS consulted;
+    # this one is only ever WRITTEN (from `enable_volatility_adjustment`
+    # at the v4.5 compatibility constructor below), so half of that
+    # caller's intent evaporates silently. The percentile itself is
+    # computed and used for vol_regime classification — what is missing
+    # is any stop-sizing branch gated on this flag. Deliberately NOT
+    # wired: the whole adaptive_stop stack is Kraken-only and dormant
+    # (P275), so arming an untested stop-sizing path here would be a
+    # P141 activation, not a fix.
     use_vol_percentile_adjustment: bool = True
     
     # Trailing settings

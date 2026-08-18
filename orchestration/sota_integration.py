@@ -154,6 +154,9 @@ class SOTAIntegrationConfig:
     
     # Alert settings
     alert_email_enabled: bool = False
+    # [P307b] NO READER: declared, never consulted. `enable_alerts`
+    # beside it IS read; this one is not, so a popup cannot be
+    # disabled (or enabled) through it.
     alert_popup_enabled: bool = True
     
     # Agent weights (v6.1.2-INTEGRATED:  volatility, onchain_fusion)

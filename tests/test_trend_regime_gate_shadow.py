@@ -93,18 +93,34 @@ def test_unknown_regime_is_not_gated(_isolate):
 # ENFORCE: zeroes the signal only in gated regimes
 # ---------------------------------------------------------------------------
 
-def test_enforce_gate_zeroes_signal_in_gated_regime(_isolate):
-    layer = _layer(gate="enforce")
+def test_enforce_is_retired_and_cannot_zero_the_signal(_isolate, caplog):
+    """[P307b] This test used to pin that enforce ZEROES the signal in a
+    gated regime. training/trend_gate_lab.py then measured the gate on the
+    question that decides it — does zeroing the trend seat leave more money
+    after costs — and the answer is NO in BOTH eras on ALL THREE assets
+    (BTC -0.699/-0.289, ETH -0.243/-0.228, SOL -0.623/-0.258 net). Six reads
+    out of six, and it reproduced either side of the P307 GMM refit.
+
+    So "enforce" is retired rather than left as a flag someone can flip, and
+    what is pinned now is that asking for it changes nothing AND says so.
+    """
+    import logging
+    with caplog.at_level(logging.ERROR):
+        layer = _layer(gate="enforce")
+    assert layer.regime_gate_mode == "shadow"
+    assert any("RETIRED" in r.message for r in caplog.records), (
+        "a retired mode was coerced SILENTLY — a config that says enforce "
+        "and behaves as shadow is the P16 shape")
     _, agent_signals, market_data = _run(layer, "WEAK_CONSOLIDATION")
-    assert market_data["quant_direction"] == 0.0
-    assert agent_signals["quant_direction"] == 0.0
-    # the log must still carry the RAW signal, else the forward evidence
-    # for (or against) the gate stops accumulating the moment it's enforced
+    assert market_data["quant_direction"] == pytest.approx(0.8)
+    assert agent_signals["quant_direction"] == pytest.approx(0.8)
+    # the ledger keeps accruing: retiring a PRESCRIPTION is not a reason to
+    # retire the DETECTION beside it (P299)
     assert _log_lines(_isolate)[0]["trend_sig"] == pytest.approx(0.8)
 
 
-def test_enforce_gate_leaves_ungated_regime_alone(_isolate):
-    layer = _layer(gate="enforce")
+def test_shadow_still_leaves_an_ungated_regime_alone(_isolate):
+    layer = _layer(gate="shadow")
     _, _, market_data = _run(layer, "QUIET_ACCUMULATION")
     assert market_data["quant_direction"] == pytest.approx(0.8)
 
@@ -135,14 +151,22 @@ def test_default_gate_mode_is_shadow():
 
 def test_singleton_updates_gate_mode():
     layer = get_trend_decision_layer("enforce", regime_gate_mode="shadow")
-    layer2 = get_trend_decision_layer("enforce", regime_gate_mode="enforce")
-    assert layer is layer2 and layer2.regime_gate_mode == "enforce"
+    layer2 = get_trend_decision_layer("enforce", regime_gate_mode="off")
+    assert layer is layer2 and layer2.regime_gate_mode == "off"
+
+
+def test_singleton_refuses_the_retired_mode_and_keeps_the_current_one():
+    """[P307b] The setter must not silently downgrade either."""
+    get_trend_decision_layer("enforce", regime_gate_mode="off")
+    layer = get_trend_decision_layer("enforce", regime_gate_mode="enforce")
+    assert layer.regime_gate_mode == "off", (
+        "a retired mode must leave the live mode untouched, not reset it")
 
 
 def test_singleton_gate_mode_untouched_when_not_passed():
-    get_trend_decision_layer("enforce", regime_gate_mode="enforce")
+    get_trend_decision_layer("enforce", regime_gate_mode="off")
     layer = get_trend_decision_layer("enforce")
-    assert layer.regime_gate_mode == "enforce"
+    assert layer.regime_gate_mode == "off"
 
 
 def test_invalid_gate_mode_falls_back_to_shadow():
@@ -166,3 +190,15 @@ def test_shadow_write_failure_is_warned_not_debug_swallowed(_isolate, monkeypatc
     with caplog.at_level(logging.WARNING):
         _run(layer)
     assert any("shadow log write failed" in r.message for r in caplog.records)
+
+
+def test_re_arming_enforce_requires_editing_two_constants_and_fails_both():
+    """[P307b] Defence in depth, pinned. "enforce" must be absent from the
+    VALID set AND present in the RETIRED set: removing it from one alone
+    leaves it either refused-with-a-reason or coerced-as-invalid, so no
+    single edit can silently re-arm a gate measured negative 6 reads out of
+    6. A falsification probe that only put it back in the VALID set stayed
+    GREEN, which is what this pin exists to make impossible."""
+    from core import trend_decision_layer as M
+    assert "enforce" in M._RETIRED_GATE_MODES
+    assert "enforce" not in M._VALID_GATE_MODES

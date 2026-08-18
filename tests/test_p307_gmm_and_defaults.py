@@ -217,3 +217,56 @@ def test_soldex_confidence_is_zero_on_a_flat_direction():
         "soldex confidence no longer collapses on a flat direction")
     assert 'agent_signals["soldex_liquidity_score"] = _sd_liq' in src, (
         "the undiluted liquidity reading must stay available separately")
+
+
+# ---------------------------------------------------------------------------
+# 4. the recurring source-pin trap, made mechanical
+# ---------------------------------------------------------------------------
+_COND_PIN = re.compile(
+    r"""assert\s+["']([^"']*(?:==|!=|>=|<=|\s>\s|\s<\s|\bnot\b|\band\b|\bor\b|\bis\b)[^"']*)["']\s+in\s+""",
+    re.M)
+
+# Accepted 2026-08-18. A pin of the shape `assert "<condition>" in src`
+# survives `if False and <condition>` — it proves the code was WRITTEN, not
+# that it RUNS. That has now bitten three times (P234's gate-hysteresis block,
+# P251's stale-snapshot guard, and P307's GMM shape guard, whose first
+# falsification probe stayed green). Converting every existing instance would
+# mean extracting six predicates across six live modules — disproportionate
+# for guards that are currently correct. So the roster is frozen instead: it
+# may SHRINK, never grow, and a new one sends its author to the fix that
+# works (extract the predicate into a pure function and CALL it).
+_ACCEPTED_COND_PINS = 14
+
+
+def _cond_pins():
+    out = []
+    for p in sorted((REPO / "tests").glob("test_p3*.py")) +             sorted((REPO / "tests").glob("test_p29*.py")):
+        t = io.open(p, encoding="utf-8").read()
+        for m in _COND_PIN.finditer(t):
+            out.append((p.name, t[:m.start()].count("\n") + 1, m.group(1)))
+    return out
+
+
+def test_the_condition_pin_scan_finds_something():
+    """P174: a regex that matches nothing makes the guard below vacuous."""
+    assert len(_cond_pins()) > 5
+
+
+def test_no_new_source_text_condition_pins():
+    n = len(_cond_pins())
+    assert n <= _ACCEPTED_COND_PINS, (
+        f"{n - _ACCEPTED_COND_PINS} new source-text pin(s) of a CONDITION: "
+        f"{[h for h in _cond_pins()][_ACCEPTED_COND_PINS:]}. Such a pin stays "
+        f"green against `if False and <condition>` — it proves the code was "
+        f"written, not that it runs (P234/P251/P307). Extract the predicate "
+        f"into a pure function and assert its truth table by CALLING it, then "
+        f"pin the call site separately.")
+
+
+def test_the_accepted_count_is_not_stale():
+    """If the roster shrinks, lower it — otherwise the ceiling silently makes
+    room for a new one."""
+    n = len(_cond_pins())
+    assert n == _ACCEPTED_COND_PINS, (
+        f"only {n} condition pins remain (accepted {_ACCEPTED_COND_PINS}) — "
+        f"lower _ACCEPTED_COND_PINS to {n} so the guard keeps its teeth")

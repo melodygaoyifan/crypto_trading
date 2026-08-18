@@ -1426,6 +1426,10 @@ class ProductionConfig:
     
     # Logging
     log_dir: Path = field(default_factory=lambda: LOG_DIR)  # [FIX-37]
+    # [P307b] NO READER, and configs/sota_config.json SETS it to true —
+    # so a config file is configuring a switch nothing consults. Kept
+    # (removing a field a config sets is a contract change) but it must
+    # not be read as controlling proof logging: it does not.
     proof_log_enabled: bool = True
     
     # TASK C (P1): Simulate disconnect for testing (0 = disabled)

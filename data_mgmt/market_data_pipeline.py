@@ -1507,9 +1507,22 @@ class MarketDataPipeline:
                     f"{_raw_vol_ratio_log:.2f} eff={_effective_vol_ratio_log:.2f}"
                 )
 
+            _rp = raw.get("_gmm_probs") or []
+            if len(_rp) >= 2:
+                _sorted = sorted(_rp, reverse=True)
+                _regime_margin_text = f"(2nd={_sorted[1]:.3f})"
+            else:
+                _regime_margin_text = ""
             logger.info(
                 f"[QUANT_SIGNAL] {asset}: dir={quant_dir:+.3f} | conf={quant_conf:.2f} | "
-                f"regime_conf={regime_conf:.2f} "
+                # [P307b] THREE decimals plus the runner-up. At 2dp, 0.995 and 1.000
+                # both print "1.00", so an operator reading this line
+                # cannot tell a confident call from a saturated one —
+                # which is exactly the wrong reading I drew from it.
+                # The margin over the second-best cluster is what
+                # separates the two.
+                f"regime_conf={regime_conf:.3f}"
+                f"{_regime_margin_text} "
                 f"{'[GMM:' + gmm_regime_name + ']' if gmm_regime_name else '[ADX]'} | "
                 f"rel_alpha={raw.get('relative_alpha_vs_btc', 0):.4f} | "
                 f"HL={raw.get('higher_lows_detected', False)} | "
