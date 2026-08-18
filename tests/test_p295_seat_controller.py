@@ -438,3 +438,115 @@ class TestRegimebookAvailability:
         (tmp_path / "regimebook_OLD.jsonl").write_text(
             json.dumps({"direction": 0.0}) + "\n", encoding="utf-8")
         assert mod.availability_from_ledger(tmp_path, "OLD") is None
+
+
+# =============================================================================
+# [P295c] The two defects the first LIVE run exposed
+# =============================================================================
+
+class TestP295cRefusalIsNotAFlatVerdict:
+    """"Nothing measurable" must never be recommended as "go flat".
+
+    The first live run recommended vacating every seat on n=0 evidence — the
+    P199 shape (no data reading as a verdict), produced by this tool's own
+    parser bug. Flat may only win by COMPARISON.
+    """
+
+    def test_no_scoreable_candidate_refuses_and_recommends_nothing(self):
+        from analytics.seat.seat_controller import Candidate, decide_seat
+        # Exactly the live failure: both candidates below the evidence floor.
+        cands = [Candidate(name="trend", n=0), Candidate(name="whale", n=0)]
+        d = decide_seat(cands, incumbent="whale")
+        assert d.refused is True
+        assert d.switch is False, "a refusal must never recommend an action"
+        assert d.winner == "whale", "the incumbent holds through a refusal"
+        assert "REFUSING" in d.reason
+
+    def test_flat_still_wins_when_candidates_are_measured_and_nonpositive(self):
+        """The live numbers: both scoreable, both negative -> flat, NOT refusal."""
+        from analytics.seat.seat_controller import Candidate, decide_seat, FLAT
+        cands = [
+            Candidate(name="trend", ic_4h=-0.0326, ic_16h=-0.086,
+                      t_4h=-0.87, t_16h=-1.14, n=704),
+            Candidate(name="whale", ic_4h=-0.0698, ic_16h=-0.0651,
+                      t_4h=-1.05, t_16h=-0.48, n=225),
+        ]
+        d = decide_seat(cands, incumbent="whale")
+        assert d.refused is False, "measured evidence is not a refusal"
+        assert d.winner == FLAT and d.switch is True
+
+    def test_one_scoreable_candidate_is_enough_to_reach_a_verdict(self):
+        from analytics.seat.seat_controller import Candidate, decide_seat, FLAT
+        cands = [Candidate(name="trend", ic_4h=-0.05, ic_16h=-0.05,
+                           t_4h=-1.0, t_16h=-1.0, n=700),
+                 Candidate(name="whale", n=0)]
+        d = decide_seat(cands, incumbent="trend")
+        assert d.refused is False and d.winner == FLAT
+
+    def test_render_of_a_refusal_prints_no_config_edit(self):
+        from analytics.seat.seat_controller import Candidate, decide_seat, render
+        txt = render(decide_seat([Candidate(name="trend", n=0)], incumbent="trend"))
+        assert "CONFIG EDIT IMPLIED" not in txt
+        assert "NO RECOMMENDATION" in txt
+
+
+class TestP295cReportParserMatchesTheRealShape:
+    """The parser read agents.<a>.<h>; the emitter writes agents.<a>.horizons.<h>."""
+
+    # Verbatim excerpt of the live 2026-08-17 report on the data volume.
+    REAL = {
+        "generated": "2026-08-17T06:10:02+00:00",
+        "window_days": 30,
+        "agents": {
+            "quant": {"horizons": {
+                "1": {"n": 713, "ic": -0.0326, "t": -0.87},
+                "4": {"n": 704, "ic": -0.086, "t": -1.14}},
+                "verdict": "HOLD"},
+            "whale": {"horizons": {
+                "1": {"n": 226, "ic": -0.0698, "t": -1.05},
+                "4": {"n": 225, "ic": -0.0651, "t": -0.48}},
+                "verdict": "HOLD"},
+        },
+    }
+
+    def _write(self, tmp_path, payload):
+        import json
+        p = tmp_path / "agent_ic.json"
+        p.write_text(json.dumps(payload), encoding="utf-8")
+        return p
+
+    def test_the_real_nested_shape_yields_real_n(self, tmp_path):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "seat_check_p295c", REPO / "scripts" / "seat_check.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        parsed = mod._from_ic_report(self._write(tmp_path, self.REAL))
+        assert parsed["quant"][4] == (-0.086, -1.14, 704), (
+            "the live report's cells must parse; n=0 here is the bug that made "
+            "the controller recommend flat from nothing")
+        assert parsed["whale"][1] == (-0.0698, -1.05, 226)
+
+    def test_end_to_end_on_the_real_shape_reaches_a_measured_verdict(self, tmp_path):
+        """The whole CLI, on the real report, must NOT exit 2."""
+        import subprocess, sys as _s
+        p = self._write(tmp_path, self.REAL)
+        r = subprocess.run(
+            [_s.executable, "-X", "utf8", str(REPO / "scripts" / "seat_check.py"),
+             "--ic-report", str(p), "--incumbent", "whale"],
+            capture_output=True, text=True, encoding="utf-8", cwd=str(REPO))
+        assert r.returncode == 3, (
+            f"expected a measured SWITCH-to-flat verdict, got rc={r.returncode}\n"
+            f"{r.stdout}\n{r.stderr}")
+        assert "n=0" not in r.stdout
+
+    def test_the_flat_shape_still_parses(self, tmp_path):
+        """Hand-built stats files must keep working."""
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "seat_check_p295c_flat", REPO / "scripts" / "seat_check.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        parsed = mod._from_ic_report(self._write(
+            tmp_path, {"agents": {"quant": {"1": {"n": 99, "ic": 0.1, "t": 2.0}}}}))
+        assert parsed["quant"][1] == (0.1, 2.0, 99)

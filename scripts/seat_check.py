@@ -81,9 +81,17 @@ def _from_ic_report(path: Path) -> dict:
     out: dict = {}
     rows = data.get("agents") or data.get("results") or data
     if isinstance(rows, dict):
-        for agent, per_h in rows.items():
-            if not isinstance(per_h, dict):
+        for agent, block in rows.items():
+            if not isinstance(block, dict):
                 continue
+            # [P295c] The real report nests per-horizon cells under "horizons"
+            # (verified against the live 2026-08-17 report). The flat shape is
+            # accepted too so a hand-built stats file still parses — but the
+            # nested one is what agent_ic_review actually emits, and reading
+            # only the flat shape silently produced n=0 for every agent, i.e.
+            # a verdict computed from nothing (P264).
+            per_h = block.get("horizons") if isinstance(
+                block.get("horizons"), dict) else block
             out[agent] = {}
             for h, d in per_h.items():
                 if isinstance(d, dict):
@@ -222,6 +230,10 @@ def main(argv=None) -> int:
     if _cav:
         print(f"\nCAVEAT on '{decision.winner}': {_cav}")
 
+    if decision.refused:
+        print("\nExiting 2 (refusal): no scoreable candidate. This is NOT a "
+              "recommendation to go flat.", file=sys.stderr)
+        return 2
     return 3 if decision.switch else 0
 
 

@@ -126,6 +126,10 @@ class SeatDecision:
     reason: str
     scores: Dict[str, Optional[float]] = field(default_factory=dict)
     blockers: Dict[str, List[str]] = field(default_factory=dict)
+    # [P295c] True when NO candidate was scoreable at all. Distinct from a
+    # flat verdict: "nothing could be measured" must never read as "measured
+    # and found worthless" (P199). A refusal recommends NO action.
+    refused: bool = False
 
     def to_dict(self) -> Dict:
         return {
@@ -135,6 +139,7 @@ class SeatDecision:
             "reason": self.reason,
             "scores": self.scores,
             "blockers": self.blockers,
+            "refused": self.refused,
         }
 
 
@@ -166,6 +171,21 @@ def decide_seat(
 
     scoreable = [c for c in candidates if scores.get(c.name) is not None]
     positive = [c for c in scoreable if (scores[c.name] or 0.0) > 0.0]
+
+    # [P295c] THE LOAD-BEARING DISTINCTION. If nothing is scoreable, we have
+    # measured NOTHING — and "flat wins" would be a live-money recommendation
+    # manufactured from missing data, which is exactly the failure this file's
+    # rule 5 forbids one level down (UNAVAILABLE != flat). Flat may only win
+    # by COMPARISON: at least one candidate must have been measurable and
+    # found non-positive. A refusal recommends no action at all.
+    if not scoreable:
+        return SeatDecision(
+            incumbent, incumbent, False,
+            "REFUSING: no candidate was scoreable (every one is unavailable "
+            "or below the evidence floor) — a seat verdict from missing data "
+            "would be a guess wearing a measurement's name; the incumbent "
+            "holds and nothing is recommended",
+            scores, blockers, refused=True)
 
     if not positive:
         # Nothing has a non-negative edge on both horizons -> flat.
@@ -243,7 +263,10 @@ def render(decision: SeatDecision) -> str:
         for b in decision.blockers.get(name, []):
             lines.append(f"        - {b}")
     lines.append("")
-    if decision.switch:
+    if decision.refused:
+        lines.append("NO RECOMMENDATION. The evidence could not be scored, so "
+                     "no config edit is implied — refusal is not a verdict.")
+    elif decision.switch:
         lines.append("CONFIG EDIT IMPLIED (apply by hand — this tool never "
                      "edits config, P141):")
         lines.append(f"   {SEAT_CONFIG_EDIT.get(decision.winner, '(unknown seat)')}")
