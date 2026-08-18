@@ -1,0 +1,81 @@
+{
+  "asset": "BTC",
+  "rows": [
+    {
+      "name": "book (trend + funding legs)",
+      "bars": 12675,
+      "net_pct": 243.9,
+      "gross_pct": 326.36,
+      "cost_pct": 32.56,
+      "carry_pct": -49.9,
+      "sharpe": 0.945,
+      "ci90": [
+        0.18,
+        1.595
+      ]
+    },
+    {
+      "name": "trend_only (P262-certified)",
+      "bars": 12675,
+      "net_pct": 151.66,
+      "gross_pct": 212.82,
+      "cost_pct": 11.12,
+      "carry_pct": -50.04,
+      "sharpe": 0.738,
+      "ci90": [
+        -0.107,
+        1.407
+      ]
+    },
+    {
+      "name": "buy_and_hold",
+      "bars": 12675,
+      "net_pct": 184.46,
+      "gross_pct": 252.95,
+      "cost_pct": 0.04,
+      "carry_pct": -68.44,
+      "sharpe": 0.548,
+      "ci90": [
+        -0.209,
+        1.232
+      ]
+    },
+    {
+      "name": "INCREMENT (funding legs)",
+      "bars": 12675,
+      "net_pct": 92.24,
+      "gross_pct": 113.54,
+      "cost_pct": 21.44,
+      "carry_pct": 0.14,
+      "sharpe": 0.59,
+      "ci90": [
+        -0.1,
+        1.277
+      ]
+    },
+    {
+      "name": "increment: random same-cell",
+      "bars": 12675,
+      "net_pct": -194.03,
+      "gross_pct": -80.59,
+      "cost_pct": 113.52,
+      "carry_pct": 0.09,
+      "sharpe": -1.516,
+      "ci90": [
+        -2.208,
+        -0.86
+      ]
+    }
+  ],
+  "era_increment": {
+    "pre_design": 0.1687138504055815,
+    "design": 0.4367682073260705,
+    "validation": 0.2903060685440837
+  },
+  "verdict": "FAIL",
+  "blockers": [
+    "increment Sharpe CI [-0.10,+1.28] includes zero"
+  ],
+  "active_bars": 3220,
+  "total_bars": 12676
+}
