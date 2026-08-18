@@ -33,6 +33,8 @@ from __future__ import annotations
 
 import logging
 from collections import deque
+
+from strategies._warmup_state import load as _warmup_load, save as _warmup_save
 from dataclasses import dataclass, field
 from typing import Any, Dict, NamedTuple, Optional
 
@@ -241,9 +243,42 @@ class KyleLambdaStrategy:
     eps: float = 1e-4
     confidence_cap: float = 0.50
 
+    _WARMUP_NAME = "kyle_lambda"
+
     def __post_init__(self) -> None:
         self._lambda_history: Dict[str, deque] = {}
         self._last_price: Dict[str, float] = {}
+        # [P302] Both dicts were RAM-only, and BOTH silences this strategy
+        # reports come from that. Measured on the server: of 6,168 recorded
+        # rows exactly ONE was directional, and the reasons split between
+        # `no_prev_price` (the return needs a previous tick's price, and
+        # `_last_price` starts empty every process) and
+        # `z_below_threshold(+0.00)` (the z is 0.00 because the lambda
+        # history needs >= max(8, 0.3*lookback) samples and restarts at 0).
+        # One sample per 4H tick means ~1.5 days of uninterrupted uptime -
+        # which this engine has not had. Same class as the P301 funding
+        # warmups and P154/P148/P150 before them.
+        try:
+            st = _warmup_load(self._WARMUP_NAME) or {}
+            for asset, vals in st.items():
+                if asset.endswith("::price"):
+                    if vals:
+                        self._last_price[asset[:-7]] = float(vals[-1])
+                else:
+                    self._lambda_history[asset] = deque(
+                        vals[-self.lookback:], maxlen=self.lookback)
+        except Exception:  # noqa: silent-swallow — a failed restore is a cold start
+            pass
+
+    def _persist(self) -> None:
+        """[P302] Best-effort; a tick never depends on it."""
+        try:
+            blob = {a: list(v) for a, v in self._lambda_history.items()}
+            for a, px in self._last_price.items():
+                blob[f"{a}::price"] = [float(px)]
+            _warmup_save(self._WARMUP_NAME, blob)
+        except Exception:  # noqa: silent-swallow — see _warmup_state.save
+            pass
 
     def evaluate(self, asset: str, market_data: Dict[str, Any]) -> ShadowSignal:
         price = _get_float(market_data, "current_price")
@@ -257,6 +292,7 @@ class KyleLambdaStrategy:
         prev_price = self._last_price.get(asset)
         self._last_price[asset] = price
         if prev_price is None or prev_price <= 0:
+            self._persist()   # [P302] so the NEXT process has a previous price
             return NEUTRAL("kyle_lambda", asset, "no_prev_price")
         ret = (price - prev_price) / prev_price
 
@@ -270,6 +306,7 @@ class KyleLambdaStrategy:
         hist = self._lambda_history[asset]
         hist.append(lambda_proxy)
 
+        self._persist()   # [P302] the warmup must survive a restart
         if len(hist) < max(8, int(self.lookback * 0.3)):
             return NEUTRAL("kyle_lambda", asset, f"history_warmup({len(hist)}/{self.lookback})")
 

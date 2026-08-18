@@ -159,3 +159,162 @@ class TestWarmupSurvivesRestart:
         s = F.FundingRateMeanReversionStrategy()
         out = s.evaluate("BTC", {"funding_rate_8h": 0.0001})
         assert out is not None
+
+
+class TestNoSilentIndexRealignment:
+    """[P301] `pd.Series(df["col"], index=other)` ALIGNS on the Series' own
+    index instead of replacing it, so a non-overlapping index yields all-NaN.
+
+    Measured: this turned the breadth exam's entire subject - the funding
+    carry - into exactly 0.0% for all eight assets, and `fillna(0.0)` made it
+    look like a measurement. It survived because a zero is a plausible-looking
+    number; it was caught only because a 0.0 six-year funding bill is not.
+
+    The dangerous shape is specifically a PANDAS expression (`df[col]`, or an
+    `.astype()` chain on one) passed as `data` alongside `index=`. A plain
+    list or a numpy array has no index and is safe, so the scan is written to
+    ignore those rather than cry wolf.
+    """
+
+    @staticmethod
+    def _is_pandas_expr(node):
+        import ast
+        # df["col"] / df.loc[...] — a subscript on a name or attribute
+        if isinstance(node, ast.Subscript):
+            return True
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if node.func.attr in ("to_numpy", "values", "tolist", "to_list"):
+                return False        # explicitly de-indexed: the correct form
+            if node.func.attr in ("astype", "fillna", "round", "abs", "copy"):
+                return TestNoSilentIndexRealignment._is_pandas_expr(
+                    node.func.value)
+        return False
+
+    def _scan(self, src):
+        import ast
+        out = []
+        try:
+            tree = ast.parse(src)
+        except SyntaxError:
+            return out
+        for n in ast.walk(tree):
+            if not isinstance(n, ast.Call):
+                continue
+            f = n.func
+            name = (f.attr if isinstance(f, ast.Attribute)
+                    else (f.id if isinstance(f, ast.Name) else None))
+            if name not in ("Series", "DataFrame") or not n.args:
+                continue
+            if not any(k.arg == "index" for k in n.keywords):
+                continue
+            if self._is_pandas_expr(n.args[0]):
+                out.append(n.lineno)
+        return out
+
+    def test_the_scan_bites_on_the_exact_bug_that_happened(self):
+        """[P174] anti-vacuity, using the real line that produced the zero."""
+        bad = 'pd.Series(df["funding_close"].astype(float), index=idx)\n'
+        assert self._scan(bad) == [1]
+        good = ('pd.Series(df["funding_close"].to_numpy(dtype=float), index=idx)\n'
+                "pd.Series(vals, index=idx)\n"
+                "pd.Series([1, 2, 3], index=idx)\n"
+                "pd.Series(np.zeros(3), index=idx)\n")
+        assert self._scan(good) == []
+
+    def test_no_such_site_survives_anywhere(self):
+        import io
+        import os
+        skip = {"venv", "archive", "__pycache__", ".git", "node_modules",
+                "models", "training_data"}
+        offenders = []
+        for dp, dn, fn in os.walk(REPO):
+            dn[:] = [d for d in dn if d not in skip]
+            for f in fn:
+                if not f.endswith(".py"):
+                    continue
+                p = Path(dp) / f
+                try:
+                    src = io.open(p, encoding="utf-8").read()
+                except (UnicodeDecodeError, OSError):
+                    continue
+                for ln in self._scan(src):
+                    offenders.append(f"{p.relative_to(REPO)}:{ln}")
+        assert not offenders, (
+            "pandas will ALIGN on the source index here, not replace it — "
+            "a non-overlapping index yields silent all-NaN:\n  "
+            + "\n  ".join(offenders)
+        )
+
+
+class TestMicrostructureStateSurvivesRestart:
+    """[P302] Of 6,168 recorded microstructure rows exactly ONE was
+    directional. Both of its silences came from RAM-only state, not from a
+    quiet market:
+
+        no_prev_price          `_last_price` starts empty every process, so
+                               the return since the last tick cannot exist
+        z_below_threshold(+0.00)  the lambda history needs >= max(8, 0.3*30)
+                               samples and restarts at 0
+
+    At one sample per 4H tick that is ~1.5 days of uninterrupted uptime.
+    Same class as the P301 funding warmups and P154/P148/P150 before them.
+    """
+
+    @pytest.fixture()
+    def isolated(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("HMATS_DATA_DIR", str(tmp_path))
+        import strategies._warmup_state as ws
+        importlib.reload(ws)
+        import strategies.microstructure_v5_1 as M
+        importlib.reload(M)
+        return M
+
+    @staticmethod
+    def _md(px):
+        return {"current_price": px, "order_book_imbalance": 0.1,
+                "spread_bps": 3.0}
+
+    def test_previous_price_survives_a_restart(self, isolated):
+        M = isolated
+        s = M.KyleLambdaStrategy()
+        assert s.evaluate("BTC", self._md(64000)).reason == "no_prev_price"
+        fresh = M.KyleLambdaStrategy()
+        assert fresh._last_price.get("BTC") == 64000, (
+            "every restart would otherwise burn a tick per asset on "
+            "no_prev_price"
+        )
+        assert fresh.evaluate("BTC", self._md(64100)).reason != "no_prev_price"
+
+    def test_lambda_history_survives_a_restart(self, isolated):
+        M = isolated
+        s = M.KyleLambdaStrategy()
+        for i in range(10):
+            s.evaluate("BTC", self._md(64000 + i * 40))
+        n = len(s._lambda_history["BTC"])
+        assert n >= 8
+        assert len(M.KyleLambdaStrategy()._lambda_history.get("BTC", [])) == n
+
+    def test_the_price_key_cannot_collide_with_an_asset(self, isolated):
+        """`_last_price` and the lambda history share one file; the price
+        rows are suffixed so an asset literally named like the suffix cannot
+        overwrite a history."""
+        M = isolated
+        s = M.KyleLambdaStrategy()
+        for i in range(3):
+            s.evaluate("BTC", self._md(64000 + i * 40))
+        s._persist()
+        import strategies._warmup_state as ws
+        blob = ws.load("kyle_lambda")
+        assert "BTC::price" in blob and "BTC" in blob
+        assert blob["BTC::price"] != blob["BTC"]
+
+    def test_a_failed_save_never_raises_into_the_tick(self, isolated,
+                                                      monkeypatch):
+        M = isolated
+        import strategies.microstructure_v5_1 as mod
+
+        def boom(*a, **k):
+            raise OSError("disk full")
+        monkeypatch.setattr(mod, "_warmup_save", boom)
+        s = M.KyleLambdaStrategy()
+        assert s.evaluate("BTC", self._md(64000)) is not None
