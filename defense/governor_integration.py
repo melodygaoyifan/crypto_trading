@@ -230,7 +230,17 @@ class GovernorIntegration:
         
         # 3. Check Cascade Exhaustion (for adding to positions)
         if self._cascade_governor and tranche > 1:
-            cascade_result = self._cascade_governor.check_tranche(
+            # [P306] Read the phase of the symbol being guarded. The cached
+            # instance is the SHARED one, whose phase used to be whatever
+            # asset main.py updated last; the per-asset machines are the ones
+            # main.py actually feeds.
+            try:
+                from risk.cascade_exhaustion_governor import (
+                    get_cascade_exhaustion_governor as _gceg)
+                _cg = _gceg(asset=symbol)
+            except Exception:  # noqa: silent-swallow - falls back to today
+                _cg = self._cascade_governor
+            cascade_result = _cg.check_tranche(
                 symbol=symbol,
                 tranche=tranche,
                 direction=direction,
@@ -292,6 +302,11 @@ class GovernorIntegration:
             )
         
         # Update Cascade Exhaustion Governor
+        # [P306] NOTE: this entry point carries no symbol, so it can only feed
+        # the SHARED instance. That is now self-consistent (one feeder, one
+        # machine) rather than scrambled across assets, but a caller that
+        # wants per-asset phase must feed the per-asset instance the way
+        # main.py does.
         if self._cascade_governor:
             if liquidation_volume_1h is not None:
                 self._cascade_governor.update_metrics(

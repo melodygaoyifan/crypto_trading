@@ -589,34 +589,133 @@ class CascadeExhaustionGovernor:
 
 _cascade_exhaustion_governor: Optional[CascadeExhaustionGovernor] = None
 
+# [P306] PER-ASSET INSTANCES. The accessor used to hand every caller ONE
+# instance, and main.py feeds it BTC -> ETH -> SOL in sequence every tick. So
+# the state machine's `prev_metrics` was always the PREVIOUS ASSET's reading:
+#
+#   liq_acceleration = (this_asset_vol - prev_asset_vol) / prev_asset_vol
+#   price_velocity   = this_asset_1h  - prev_asset_1h
+#
+# Measured on the live ledger 2026-08-18: BTC feeds ~$6.19M/h against SOL's
+# ~$0.16M/h, so the SOL tick computes acceleration -0.97, which clears
+# `< -exhaustion_decel_threshold (-0.5)` and raises the exhaustion signal on
+# essentially every SOL tick — purely from the order the assets are iterated
+# in. `market_data["cascade_phase"]` was likewise read off a machine last
+# transitioned by a different asset.
+#
+# This is the P225 cross-asset leak (`_last_phase_result`) on a live risk
+# path. Instances are now keyed by asset; the no-arg call keeps returning the
+# same shared instance it always did, so callers that legitimately have no
+# asset in scope are byte-identical.
+_cascade_governors: Dict[str, CascadeExhaustionGovernor] = {}
+_cascade_permissions_override: Optional[Dict] = None
+
 
 def get_cascade_exhaustion_governor(
     config: CascadeExhaustionConfig = None,
     permissions_override: Dict = None,
+    asset: Optional[str] = None,
 ) -> CascadeExhaustionGovernor:
-    """Get or create singleton instance."""
-    global _cascade_exhaustion_governor
-    if _cascade_exhaustion_governor is None:
-        _cascade_exhaustion_governor = CascadeExhaustionGovernor(
-            config, permissions_override=permissions_override
-        )
-    elif (
-        (config is not None and _cascade_exhaustion_governor.config != config)
-        or getattr(_cascade_exhaustion_governor, "permissions_override", {}) != (permissions_override or {})
-    ):
-        logger.info("[CASCADE_EXHAUSTION] Constructor inputs changed; refreshing singleton instance")
-        _cascade_exhaustion_governor = CascadeExhaustionGovernor(
-            config, permissions_override=permissions_override
-        )
-    return _cascade_exhaustion_governor
+    """Get or create the governor for `asset` (None = the shared instance).
+
+    A permissions override supplied once (main.py's [P1-03] pre-init) is
+    remembered and applied to every instance created afterwards — otherwise
+    per-asset instances would silently run on default permissions while the
+    operator believed the override was in force.
+    """
+    global _cascade_exhaustion_governor, _cascade_permissions_override
+    if permissions_override is not None:
+        _cascade_permissions_override = permissions_override
+    effective = (permissions_override
+                 if permissions_override is not None
+                 else _cascade_permissions_override)
+
+    key = str(asset).upper() if asset else ""
+    existing = (_cascade_exhaustion_governor if not key
+                else _cascade_governors.get(key))
+
+    def _store(inst):
+        global _cascade_exhaustion_governor
+        if key:
+            _cascade_governors[key] = inst
+        else:
+            _cascade_exhaustion_governor = inst
+        return inst
+
+    if existing is None:
+        return _store(CascadeExhaustionGovernor(
+            config, permissions_override=effective))
+    if ((config is not None and existing.config != config)
+            or getattr(existing, "permissions_override", {}) != (effective or {})):
+        logger.info(
+            "[CASCADE_EXHAUSTION] Constructor inputs changed; refreshing "
+            "instance for %s", key or "<shared>")
+        return _store(CascadeExhaustionGovernor(
+            config, permissions_override=effective))
+    return existing
+
+
+def all_governor_states() -> Dict[str, Dict]:
+    """[P306] Every instance's state, keyed by asset ("" = the shared one).
+
+    Per-asset machines were introduced in P306; without this the phase of
+    each asset's machine would reset on every deploy while the shared
+    instance's kept being persisted — which is exactly the RAM-only-state
+    class (P301/P302/P303) that made three other signals look dead.
+    """
+    out: Dict[str, Dict] = {}
+    try:
+        if _cascade_exhaustion_governor is not None:
+            out[""] = _cascade_exhaustion_governor.to_dict()
+        for k, inst in _cascade_governors.items():
+            out[k] = inst.to_dict()
+    except Exception as e:  # noqa: silent-swallow — logged; persistence only
+        logger.warning("[CASCADE_EXHAUSTION] state capture failed (%s: %s)",
+                       type(e).__name__, e)
+    return out
+
+
+def restore_governor_states(data: Optional[Dict]) -> int:
+    """Restore states written by `all_governor_states`. Returns the count.
+
+    Accepts the PRE-P306 flat shape too (a single governor's own to_dict),
+    which restores into the shared instance — a state file written by the
+    previous build must not be read as "no state", nor mistaken for a
+    per-asset map (its keys are field names, not asset names).
+    """
+    if not isinstance(data, dict) or not data:
+        return 0
+    per_asset = all(isinstance(v, dict) for v in data.values())
+    n = 0
+    try:
+        if not per_asset:
+            get_cascade_exhaustion_governor().from_dict(data)
+            return 1
+        for key, state in data.items():
+            if not isinstance(state, dict):
+                continue
+            inst = get_cascade_exhaustion_governor(asset=key or None)
+            inst.from_dict(state)
+            n += 1
+    except Exception as e:  # noqa: silent-swallow — logged; cold start is safe
+        logger.warning("[CASCADE_EXHAUSTION] state restore failed (%s: %s) — "
+                       "starting from NONE", type(e).__name__, e)
+    return n
 
 
 def reset_cascade_exhaustion_governor():
-    """Reset singleton."""
-    global _cascade_exhaustion_governor
+    """Reset every instance."""
+    global _cascade_exhaustion_governor, _cascade_permissions_override
     if _cascade_exhaustion_governor:
         _cascade_exhaustion_governor.reset()
+    for _inst in _cascade_governors.values():
+        try:
+            _inst.reset()
+        except Exception:  # noqa: silent-swallow - teardown only
+            pass
+    _cascade_governors.clear()
     _cascade_exhaustion_governor = None
+    _cascade_permissions_override = None
 
 
 # =============================================================================

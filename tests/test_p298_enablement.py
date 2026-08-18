@@ -118,11 +118,23 @@ class TestDvolUnitsBug:
             "re-derive this test"
         )
 
-    def test_the_flag_is_not_enabled(self):
-        assert "dvol_to_market_data" not in _live(), (
-            "publishing a raw DVOL index into a z-score field permanently "
-            "flattens the book - fix the units before enabling"
+    def test_the_flag_is_enabled_only_because_a_real_zscore_is_published(self):
+        """[P306] The units bug is FIXED, so the flag is on - but the reason
+        this pin existed has not gone away, it has moved. What must never
+        happen is the flag being on while the raw INDEX LEVEL is published,
+        so both halves are asserted together and either one reverting is red.
+        """
+        src = _src(MAIN)
+        assert 'market_data["dvol"] = float(_dvz)' in src, (
+            "the z-score publication is gone; with the flag on, whatever is "
+            "published lands in a field that fires EXTREME_DVOL at 5.0"
         )
+        assert 'market_data["dvol"] = float(_drb_m.dvol)' not in src, (
+            "the raw Deribit index level is being published again - BTC ~34 "
+            "reads as z=34 and permanently flattens the book"
+        )
+        if "dvol_to_market_data" in _live():
+            assert _live()["dvol_to_market_data"] is True
 
 
 class TestSeatPrecedence:

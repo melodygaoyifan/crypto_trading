@@ -507,7 +507,18 @@ class TestConfigTrioDefaultsOff:
             "options_use_deribit": True,
             "exchange_netflow_to_flow_agent": True,
             "macro_gci_live": True,
+            # [P306] dvol_to_market_data flipped LAST, and only after the
+            # units bug this comment block describes was fixed: what is
+            # published is now a z-score computed against a fetched trailing
+            # year (BTC 34.13 -> z -1.38), not the Deribit index level.
+            "dvol_to_market_data": True,
         }
+        if flag == "dvol_to_market_data" and data.get(flag):
+            # the precondition, asserted with the decision (P306): the flag
+            # being on while the raw LEVEL is published is the failure mode.
+            main_src = (REPO / "main.py").read_text(encoding="utf-8")
+            assert 'market_data["dvol"] = float(_dvz)' in main_src
+            assert 'market_data["dvol"] = float(_drb_m.dvol)' not in main_src
         if flag in DECIDED:
             assert data.get(flag) == DECIDED[flag], (
                 f"{flag} is not at its decided value {DECIDED[flag]!r} — a "

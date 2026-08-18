@@ -405,7 +405,14 @@ class NoTradeTriggerChecker:
         
         # DVOL extreme
         dvol_zscore = market_data.get('dvol_zscore', 0)
-        dvol_score = min(1.0, dvol_zscore / self.DVOL_ZSCORE_EXTREME)
+        # [P306] Clamped at 0. EXTREME_DVOL is one-sided by construction
+        # (only a vol EXPANSION is the hazard), so a calm market must
+        # contribute 0 activation, not a negative one. Behaviour-identical
+        # today because both consumers take max(trigger_scores.values()),
+        # but P306 is the first change that makes this value genuinely
+        # negative (live z is about -1.4 BTC / -2.0 ETH), and a future
+        # consumer that sums or averages would read calm as risk RELIEF.
+        dvol_score = max(0.0, min(1.0, dvol_zscore / self.DVOL_ZSCORE_EXTREME))
         trigger_scores['extreme_dvol'] = dvol_score
         if dvol_zscore >= self.DVOL_ZSCORE_EXTREME:
             active_conditions.append(NoTradeCondition(

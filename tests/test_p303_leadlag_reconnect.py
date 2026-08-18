@@ -217,9 +217,17 @@ class TestDvolAbsenceIsANoOpNotAFabrication:
         import json
         cfg = json.loads((REPO / "configs" / "live_high_risk.json").read_text(
             encoding="utf-8-sig"))
-        assert "dvol_to_market_data" not in cfg, (
-            "arming DVOL needs a real z from a persisted trailing series, "
-            "not a live connection (P298)")
+        # [P306] The condition this pin named has been MET: a real z is now
+        # computed against a persisted trailing year of Deribit daily DVOL
+        # (data_mgmt/feeds/dvol_history.py), so the flag is on. The pin keeps
+        # its teeth by asserting the precondition rather than the absence.
+        if "dvol_to_market_data" in cfg and cfg["dvol_to_market_data"]:
+            main_src = (REPO / "main.py").read_text(encoding="utf-8")
+            assert 'market_data["dvol"] = float(_dvz)' in main_src, (
+                "the flag is armed but the z-score publication is gone")
+            assert 'market_data["dvol"] = float(_drb_m.dvol)' not in main_src, (
+                "the raw INDEX LEVEL is armed into a z-score field - "
+                "EXTREME_DVOL (>= 5.0) fires on every tick")
 
 
 # =============================================================================

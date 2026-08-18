@@ -884,7 +884,9 @@ async def execute_intent_v2(
     # === V10A: CascadeExhaustionGovernor -tranche guard ===
     try:
         from risk.cascade_exhaustion_governor import get_cascade_exhaustion_governor
-        _cascade_gov = get_cascade_exhaustion_governor()
+        # [P306] the tranche guard must read the phase of the asset it is
+        # guarding, not whichever asset main.py updated last.
+        _cascade_gov = get_cascade_exhaustion_governor(asset=asset)
         _pos_cascade = ctx.paper_positions.get(asset, {})
         _cur_tranche = _pos_cascade.get("tranche", 0) + 1
         if _cur_tranche >= 2:

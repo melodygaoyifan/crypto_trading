@@ -1642,6 +1642,13 @@ class ProductionConfig:
     options_use_deribit: bool = False
     exchange_netflow_to_flow_agent: bool = False
     dvol_to_market_data: bool = False
+    #   real_1h_price_change
+    #     [P306] Feed the cascade governor + strategy a MEASURED 1h price
+    #     change (Kraken public hourly OHLC) instead of
+    #     price_change_4h_pct / 4.0. Off => today's rescale; the measured
+    #     value is still logged and published as
+    #     price_change_1h_pct_real for comparison.
+    real_1h_price_change: bool = False
     #   macro_gci_live
     #     Drive GlobalContextInformer.update_if_stale(). Its update_async()
     #     has never had a caller, so `get_macro_signal()` has returned the
@@ -2108,6 +2115,8 @@ class ProductionConfig:
                 data.get("exchange_netflow_to_flow_agent", False)),
             dvol_to_market_data=bool(
                 data.get("dvol_to_market_data", False)),
+            real_1h_price_change=bool(
+                data.get("real_1h_price_change", False)),
             macro_gci_live=bool(
                 data.get("macro_gci_live", False)),
             # [P293d] declared + parsed together (the P201 rule). An
@@ -4109,6 +4118,19 @@ class HMATSProductionRunner:
                 )
                 self.audit_manager.start()
                 logger.info("  AuditManager: ACTIVE (SQLite + Discord)")
+                try:
+                    # [P304] Before Discord is attached to the ROOT logger:
+                    # muzzle vendor SDKs that log an entire HTML error page at
+                    # ERROR. On 2026-08-18 a single transient Coinbase 502 sent
+                    # 27 lines of CSS to Discord for a condition our own code
+                    # had already handled correctly one line later (P265a). The
+                    # filter truncates, keeps 4xx loud, and re-escalates a
+                    # SUSTAINED 5xx — it never drops a record.
+                    from infra.vendor_log_hygiene import install_vendor_log_filters
+                    _n_vf = install_vendor_log_filters()
+                    logger.info(f"  Vendor log hygiene: {_n_vf} logger(s) filtered")
+                except Exception as _vf_err:
+                    logger.warning(f"  Vendor log hygiene: FAILED ({_vf_err})")
                 try:
                     from infra.persistence import DiscordLogHandler
                     _discord_handler = DiscordLogHandler(self.audit_manager.discord)
@@ -6878,6 +6900,57 @@ class HMATSProductionRunner:
         except Exception:  # noqa: silent-swallow — never disturbs a tick
             return None
 
+    def _publish_real_1h_change(self, asset, market_data):
+        """[P306] Replace the fabricated 1h price move with a measured one.
+
+        `market_data["price_change_1h_pct"]` was `price_change_4h_pct / 4.0`
+        (market_data_pipeline.py:1539) — a fixed rescale wearing a
+        measurement's name, the P293 sentiment-"z-score" shape. Two live
+        consequences in `risk/cascade_exhaustion_governor.py`:
+
+          * DETECT needs `price_change_1h_pct <= -3%`, which under a /4
+            rescale needs a 12% 4H move — effectively unreachable;
+          * exhaustion is set to >=0.5 whenever `|1h| < 1%`, and |4h/4| is
+            almost always under 1%, so the governor claimed "price
+            stabilizing" through the whole of any real cascade.
+
+        The real value comes from Kraken's public hourly OHLC (keyless; the
+        regimebook harness already reads the same endpoint at interval=240).
+        Both numbers are LOGGED every tick regardless of the flag — an
+        instrument gated behind the condition it measures never reads
+        anything (the P300 lesson).
+
+        Absence is never a number: no reading leaves the old value in place
+        and stamps the source, rather than writing 0.0 (P2).
+        """
+        _fab = market_data.get("price_change_1h_pct")
+        _real = None
+        try:
+            from data_mgmt.feeds.kraken_hourly import get_hourly_returns
+            _real = get_hourly_returns().get(asset)
+        except Exception as e:  # noqa: silent-swallow — logged, degrades to fab
+            logger.debug(f"[PRICE-1H] {asset}: unavailable ({e})")
+        _armed = bool(getattr(self.config, "real_1h_price_change", False))
+        if _real is not None:
+            market_data["price_change_1h_pct_real"] = float(_real)
+        if _real is not None and _armed:
+            market_data["price_change_1h_pct"] = float(_real)
+            market_data["price_change_1h_source"] = "kraken_hourly_completed"
+        else:
+            market_data["price_change_1h_source"] = (
+                "rescaled_4h_over_4" if _real is None else
+                "rescaled_4h_over_4(real available, flag off)")
+        try:
+            _fab_s = "n/a" if _fab is None else f"{float(_fab) * 100:+.3f}%"
+            _real_s = "n/a" if _real is None else f"{float(_real) * 100:+.3f}%"
+            logger.info(
+                f"[PRICE-1H] {asset}: fabricated(4h/4)={_fab_s} vs "
+                f"measured(kraken 1h)={_real_s} "
+                f"({'ARMED' if _armed else 'shadow'}); "
+                f"detect<=-3.000% stabilize<1.000%")
+        except Exception:  # noqa: silent-swallow — logging only
+            pass
+
     async def _process_4h_tick_inner(
         self,
         asset: str,
@@ -7473,6 +7546,13 @@ class HMATSProductionRunner:
                     logger.warning(f"[EXTERNAL] Failed to fetch macro/crowd context: {e}")
                     self._external_feeds_warned = True
         
+        # [P306] The 1h price move: measured, not rescaled. Placed here,
+        # OUTSIDE the CoinGlass freshness branch, because the cascade
+        # STRATEGY reads market_data too — gating the correction on an
+        # unrelated feed's health would leave one consumer on the
+        # fabricated value and one on the real one.
+        self._publish_real_1h_change(asset, market_data)
+
         # =================================================================
         # V6.7: COINGLASS FUNDING RATE ->market_data
         # Wire raw funding rate + normalized bias into market_data so all
@@ -7546,7 +7626,10 @@ class HMATSProductionRunner:
             # === V10A: CascadeExhaustionGovernor -feed liquidation metrics ===
             try:
                 from risk.cascade_exhaustion_governor import get_cascade_exhaustion_governor
-                _cascade_gov = get_cascade_exhaustion_governor()
+                # [P306] per-asset instance: one shared machine fed
+                # BTC->ETH->SOL in sequence made every acceleration and
+                # velocity a CROSS-ASSET difference.
+                _cascade_gov = get_cascade_exhaustion_governor(asset=asset)
                 _liq_data = cg_data.liquidations.get(cg_symbol)
                 _liq_vol_24h = _liq_data.total_liquidations_24h if _liq_data else 0.0
                 _price_chg_4h = market_data.get("price_change_4h_pct", 0.0)
@@ -9203,9 +9286,45 @@ class HMATSProductionRunner:
                     # the P0 guard reading it force-flattens at z>=5. Publishing
                     # it ARMS a path that has never once executed, so it is its
                     # own decision, not a side effect of fixing the PCR.
-                    if getattr(self.config, "dvol_to_market_data", False) \
-                            and _drb_m.dvol is not None:
-                        market_data["dvol"] = float(_drb_m.dvol)
+                    # [P306] What is published is a Z-SCORE, not the index
+                    # level. constitution.py:81 aliases "dvol" ->
+                    # "dvol_zscore" and fires EXTREME_DVOL at >= 5.0, so
+                    # publishing Deribit's LEVEL (BTC ~34) would have read as
+                    # z=34 and force-flattened the book every tick --
+                    # EXTREME_DVOL is not in the sleeve HOLD set. That units
+                    # bug is the whole reason P298 could not enable this flag.
+                    #
+                    # The denominator is FETCHED, not accrued: Deribit's
+                    # volatility-index endpoint takes an arbitrary range, so
+                    # the trailing year exists from the first tick (unlike the
+                    # P301 warmups, which is what made three other signals
+                    # look dead). SOL is absent by design -- Deribit lists
+                    # zero SOL options, and an absence stays an absence (P2).
+                    if _drb_m.dvol is not None:
+                        _dv_cur = asset.replace("/USD", "").upper()
+                        _dvz = None
+                        _dv_span = "unscoreable"
+                        try:
+                            from data_mgmt.feeds.dvol_history import (
+                                get_dvol_history)
+                            _dvh = get_dvol_history()
+                            _dvh.refresh_if_stale()
+                            _dvz = _dvh.zscore(_dv_cur, _drb_m.dvol)
+                            if _dvz is not None:
+                                _dv_span = _dvh.span_str(_dv_cur)
+                        except Exception as _dvh_e:  # noqa: silent-swallow
+                            logger.debug(
+                                f"[DVOL] {asset} history unavailable: {_dvh_e}")
+                        _dv_armed = bool(getattr(
+                            self.config, "dvol_to_market_data", False))
+                        _dvz_s = "n/a" if _dvz is None else ("%+.2f" % _dvz)
+                        _dv_mode = "ARMED" if _dv_armed else "shadow"
+                        logger.info(
+                            f"[DVOL] {asset}: level={_drb_m.dvol:.2f} "
+                            f"z={_dvz_s} ({_dv_span}) extreme>=5.0 "
+                            f"({_dv_mode})")
+                        if _dv_armed and _dvz is not None:
+                            market_data["dvol"] = float(_dvz)
         except Exception as _drb_err:  # noqa: silent-swallow
             logger.debug(f"[P293-OPTIONS] {asset} skipped: {_drb_err}")
 
@@ -9597,7 +9716,14 @@ class HMATSProductionRunner:
                     _buf.pop(0)
                 _p4 = next((p for (t, p) in _buf if (_now - t).total_seconds() >= 4 * 3600), None)
                 if _p4 and _p4 > 0:
-                    _enrich["price_change_4h_pct"] = (float(_cp) - _p4) / _p4 * 100.0
+                    # [P306] FRACTION, not percent. The pipeline writes
+                    # this key as (p1-p0)/p0 and every threshold reads it
+                    # that way (cascade trigger_drop_pct=0.015 means
+                    # 1.5%), so the * 100.0 here was a 100x unit
+                    # disagreement between two producers of one key.
+                    # Latent only because the pipeline always sets the
+                    # key, so this branch never fires -- a pre-armed P2.
+                    _enrich["price_change_4h_pct"] = (float(_cp) - _p4) / _p4
             # (e) [P147-c] ml_factor needs the 122 NAMED features (manifest order), which
             # live in the computed feature dataframe (TA cache), NOT flat in market_data —
             # the same `_ohlcv_df` the DRL obs builder consumes at :7705. Merge its last
@@ -18211,9 +18337,11 @@ class HMATSProductionRunner:
             # Persist governor states for hot-restart continuity
             cascade_state = {}
             try:
-                from risk.cascade_exhaustion_governor import get_cascade_exhaustion_governor
-                _ceg = get_cascade_exhaustion_governor()
-                cascade_state = _ceg.to_dict()
+                # [P306] EVERY instance, keyed by asset. Persisting only the
+                # shared one would leave each asset's machine resetting to
+                # NONE on every deploy.
+                from risk.cascade_exhaustion_governor import all_governor_states
+                cascade_state = all_governor_states()
             except Exception as e:
                 logger.warning(f"[FIX-27] cascade_governor persist failed: {e}")
 
@@ -24173,10 +24301,10 @@ class HMATSProductionRunner:
 
         # Cascade exhaustion governor (singleton, has to_dict)
         try:
-            from risk.cascade_exhaustion_governor import get_cascade_exhaustion_governor
-            _gov = get_cascade_exhaustion_governor()
-            if _gov is not None and hasattr(_gov, 'to_dict'):
-                _ps("data/cascade_governor_state.json", _gov.to_dict())
+            from risk.cascade_exhaustion_governor import all_governor_states
+            _states = all_governor_states()   # [P306] per-asset, keyed
+            if _states:
+                _ps("data/cascade_governor_state.json", _states)
         except Exception as _e:
             # P83: same as above — promote DEBUG → WARNING
             logger.warning(f"[F7] cascade_gov save: {type(_e).__name__}: {_e}")
@@ -24205,12 +24333,14 @@ class HMATSProductionRunner:
             logger.debug(f"[F7] failure_memory restore: {_e}")
 
         try:
-            from risk.cascade_exhaustion_governor import get_cascade_exhaustion_governor
-            _gov = get_cascade_exhaustion_governor()
-            if _gov is not None and hasattr(_gov, 'from_dict'):
-                if (data := _ls("data/cascade_governor_state.json")):
-                    _gov.from_dict(data)
-                    logger.info("[F7] cascade_governor state restored")
+            # [P306] restores the per-asset map, and still accepts the
+            # pre-P306 flat shape written by the previous build.
+            from risk.cascade_exhaustion_governor import restore_governor_states
+            if (data := _ls("data/cascade_governor_state.json")):
+                _n_cg = restore_governor_states(data)
+                if _n_cg:
+                    logger.info(
+                        f"[F7] cascade_governor state restored ({_n_cg})")
         except Exception as _e:
             logger.debug(f"[F7] cascade_gov restore: {_e}")
 

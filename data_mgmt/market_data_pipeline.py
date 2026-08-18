@@ -1536,6 +1536,11 @@ class MarketDataPipeline:
             raw['price_change_4h_pct'] = (_prices[-1] - _prices[-2]) / _prices[-2]
         else:
             raw['price_change_4h_pct'] = 0.0
+        # [P306] The FALLBACK only. main.py::_publish_real_1h_change overwrites this
+        # key with the last COMPLETED Kraken hourly return when
+        # `real_1h_price_change` is on, and always publishes the measured value
+        # alongside as `price_change_1h_pct_real`. Left in place so a Kraken outage
+        # degrades to today's behaviour instead of to an absent key.
         raw['price_change_1h_pct'] = raw['price_change_4h_pct'] / 4.0
 
         _fast_move = abs(raw.get('price_move_pct', 0)) > 0.05
@@ -2130,6 +2135,23 @@ class MarketDataPipeline:
         rets = _np.diff(closes) / _np.where(closes[:-1] != 0, closes[:-1], 1.0)
 
         ret_4h = float(rets[-1]) if len(rets) > 0 else 0.0
+        # [P306] DELIBERATELY still a rescale, and it must stay one until a joint
+        # refit. This `ret_1h` is GMM feature #1 (see the feature vector below),
+        # and training/scripts/rebuild_pipeline.py:368 computes it IDENTICALLY --
+        # so train and serve agree, which is the property P214/P221 exist to
+        # protect. Changing it here alone would be a train/serve skew on a live
+        # regime classifier; changing it on both sides is a feature-definition
+        # change and {GMM, parquets, checkpoints} move as ONE versioned set
+        # (P215).
+        #
+        # Worth recording as a measurement finding: being exactly ret_4h / 4, this
+        # column is PERFECTLY COLLINEAR with ret_4h and carries no information the
+        # GMM does not already have. P221 found 2 of the 12 GMM inputs are
+        # constants; this makes a third non-informative, so the classifier runs on
+        # 9 independent features, not 12.
+        #
+        # The cascade path's 1h move is fixed elsewhere and does not touch this:
+        # main.py::_publish_real_1h_change overwrites market_data at the consumer.
         ret_1h = ret_4h / 4.0
         ret_24h = float((closes[-1] - closes[-7]) / closes[-7]) if n >= 7 and closes[-7] > 0 else 0.0
         ret_7d = float((closes[-1] - closes[-43]) / closes[-43]) if n >= 43 and closes[-43] > 0 else 0.0

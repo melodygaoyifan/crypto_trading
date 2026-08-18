@@ -1,0 +1,329 @@
+{
+  "generated": "2026-08-18T11:36:08.445224+00:00",
+  "sma": 200,
+  "eras": {
+    "design": [
+      3000,
+      9100
+    ],
+    "pre_design": [
+      800,
+      3000
+    ]
+  },
+  "live_gate_set": [
+    "WEAK_CONSOLIDATION",
+    "NEUTRAL_DRIFT"
+  ],
+  "assets": {
+    "BTC": {
+      "cost_rt_bps": 6.0,
+      "vocabulary": [
+        "EXTREME_VOLATILITY",
+        "MOMENTUM_RALLY",
+        "PANIC_SELLOFF",
+        "QUIET_ACCUMULATION",
+        "VOLATILE_CHOP",
+        "WEAK_CONSOLIDATION"
+      ],
+      "neutral_drift_exists": false,
+      "base": {
+        "design": 1.2051,
+        "pre_design": 0.3241
+      },
+      "gates": {
+        "LIVE_SET": {
+          "regimes": [
+            "WEAK_CONSOLIDATION"
+          ],
+          "share_of_bars": 0.2026,
+          "design": 0.873,
+          "pre_design": 0.1139,
+          "design_delta": -0.3321,
+          "pre_design_delta": -0.2102,
+          "verdict": "BASE STANDS"
+        },
+        "EXTREME_VOLATILITY": {
+          "regimes": [
+            "EXTREME_VOLATILITY"
+          ],
+          "share_of_bars": 0.0845,
+          "design": 1.3336,
+          "pre_design": 0.3648,
+          "design_delta": 0.1285,
+          "pre_design_delta": 0.0407,
+          "verdict": "ENFORCE"
+        },
+        "MOMENTUM_RALLY": {
+          "regimes": [
+            "MOMENTUM_RALLY"
+          ],
+          "share_of_bars": 0.0939,
+          "design": 1.1755,
+          "pre_design": 0.5154,
+          "design_delta": -0.0296,
+          "pre_design_delta": 0.1913,
+          "verdict": "BASE STANDS"
+        },
+        "PANIC_SELLOFF": {
+          "regimes": [
+            "PANIC_SELLOFF"
+          ],
+          "share_of_bars": 0.0186,
+          "design": 1.1435,
+          "pre_design": 0.8537,
+          "design_delta": -0.0616,
+          "pre_design_delta": 0.5296,
+          "verdict": "BASE STANDS"
+        },
+        "QUIET_ACCUMULATION": {
+          "regimes": [
+            "QUIET_ACCUMULATION"
+          ],
+          "share_of_bars": 0.3086,
+          "design": 0.929,
+          "pre_design": 0.1522,
+          "design_delta": -0.2761,
+          "pre_design_delta": -0.1719,
+          "verdict": "BASE STANDS"
+        },
+        "VOLATILE_CHOP": {
+          "regimes": [
+            "VOLATILE_CHOP"
+          ],
+          "share_of_bars": 0.2919,
+          "design": -0.0251,
+          "pre_design": -0.5984,
+          "design_delta": -1.2302,
+          "pre_design_delta": -0.9225,
+          "verdict": "BASE STANDS"
+        },
+        "WEAK_CONSOLIDATION": {
+          "regimes": [
+            "WEAK_CONSOLIDATION"
+          ],
+          "share_of_bars": 0.2026,
+          "design": 0.873,
+          "pre_design": 0.1139,
+          "design_delta": -0.3321,
+          "pre_design_delta": -0.2102,
+          "verdict": "BASE STANDS"
+        }
+      }
+    },
+    "ETH": {
+      "cost_rt_bps": 8.0,
+      "vocabulary": [
+        "EXTREME_VOLATILITY",
+        "MOMENTUM_RALLY",
+        "PANIC_SELLOFF",
+        "QUIET_ACCUMULATION",
+        "STEADY_UPTREND",
+        "VOLATILE_CHOP",
+        "WEAK_CONSOLIDATION"
+      ],
+      "neutral_drift_exists": false,
+      "base": {
+        "design": 0.9154,
+        "pre_design": 1.3676
+      },
+      "gates": {
+        "LIVE_SET": {
+          "regimes": [
+            "WEAK_CONSOLIDATION"
+          ],
+          "share_of_bars": 0.1985,
+          "design": 0.2283,
+          "pre_design": 1.1084,
+          "design_delta": -0.6871,
+          "pre_design_delta": -0.2592,
+          "verdict": "BASE STANDS"
+        },
+        "EXTREME_VOLATILITY": {
+          "regimes": [
+            "EXTREME_VOLATILITY"
+          ],
+          "share_of_bars": 0.1055,
+          "design": 1.2064,
+          "pre_design": 1.6946,
+          "design_delta": 0.291,
+          "pre_design_delta": 0.327,
+          "verdict": "ENFORCE"
+        },
+        "MOMENTUM_RALLY": {
+          "regimes": [
+            "MOMENTUM_RALLY"
+          ],
+          "share_of_bars": 0.078,
+          "design": 0.3331,
+          "pre_design": 0.6871,
+          "design_delta": -0.5823,
+          "pre_design_delta": -0.6805,
+          "verdict": "BASE STANDS"
+        },
+        "PANIC_SELLOFF": {
+          "regimes": [
+            "PANIC_SELLOFF"
+          ],
+          "share_of_bars": 0.0171,
+          "design": 1.1091,
+          "pre_design": 1.4734,
+          "design_delta": 0.1937,
+          "pre_design_delta": 0.1058,
+          "verdict": "ENFORCE"
+        },
+        "QUIET_ACCUMULATION": {
+          "regimes": [
+            "QUIET_ACCUMULATION"
+          ],
+          "share_of_bars": 0.2703,
+          "design": 0.0836,
+          "pre_design": 1.0967,
+          "design_delta": -0.8318,
+          "pre_design_delta": -0.2709,
+          "verdict": "BASE STANDS"
+        },
+        "STEADY_UPTREND": {
+          "regimes": [
+            "STEADY_UPTREND"
+          ],
+          "share_of_bars": 0.0871,
+          "design": 0.5456,
+          "pre_design": 0.9354,
+          "design_delta": -0.3698,
+          "pre_design_delta": -0.4322,
+          "verdict": "BASE STANDS"
+        },
+        "VOLATILE_CHOP": {
+          "regimes": [
+            "VOLATILE_CHOP"
+          ],
+          "share_of_bars": 0.2435,
+          "design": 1.2284,
+          "pre_design": 0.9605,
+          "design_delta": 0.313,
+          "pre_design_delta": -0.4071,
+          "verdict": "BASE STANDS"
+        },
+        "WEAK_CONSOLIDATION": {
+          "regimes": [
+            "WEAK_CONSOLIDATION"
+          ],
+          "share_of_bars": 0.1985,
+          "design": 0.2283,
+          "pre_design": 1.1084,
+          "design_delta": -0.6871,
+          "pre_design_delta": -0.2592,
+          "verdict": "BASE STANDS"
+        }
+      }
+    },
+    "SOL": {
+      "cost_rt_bps": 13.0,
+      "vocabulary": [
+        "EXTREME_VOLATILITY",
+        "MOMENTUM_RALLY",
+        "PANIC_SELLOFF",
+        "QUIET_ACCUMULATION",
+        "STEADY_UPTREND",
+        "VOLATILE_CHOP",
+        "WEAK_CONSOLIDATION"
+      ],
+      "neutral_drift_exists": false,
+      "base": {
+        "design": 1.6066,
+        "pre_design": 3.2225
+      },
+      "gates": {
+        "LIVE_SET": {
+          "regimes": [
+            "WEAK_CONSOLIDATION"
+          ],
+          "share_of_bars": 0.2253,
+          "design": 1.0979,
+          "pre_design": 2.5658,
+          "design_delta": -0.5087,
+          "pre_design_delta": -0.6567,
+          "verdict": "BASE STANDS"
+        },
+        "EXTREME_VOLATILITY": {
+          "regimes": [
+            "EXTREME_VOLATILITY"
+          ],
+          "share_of_bars": 0.0903,
+          "design": 0.6792,
+          "pre_design": 0.009,
+          "design_delta": -0.9274,
+          "pre_design_delta": -3.2135,
+          "verdict": "BASE STANDS"
+        },
+        "MOMENTUM_RALLY": {
+          "regimes": [
+            "MOMENTUM_RALLY"
+          ],
+          "share_of_bars": 0.0272,
+          "design": 1.3885,
+          "pre_design": 3.0537,
+          "design_delta": -0.2181,
+          "pre_design_delta": -0.1688,
+          "verdict": "BASE STANDS"
+        },
+        "PANIC_SELLOFF": {
+          "regimes": [
+            "PANIC_SELLOFF"
+          ],
+          "share_of_bars": 0.0175,
+          "design": 1.9509,
+          "pre_design": 2.3437,
+          "design_delta": 0.3443,
+          "pre_design_delta": -0.8788,
+          "verdict": "BASE STANDS"
+        },
+        "QUIET_ACCUMULATION": {
+          "regimes": [
+            "QUIET_ACCUMULATION"
+          ],
+          "share_of_bars": 0.3441,
+          "design": 0.4608,
+          "pre_design": 3.6422,
+          "design_delta": -1.1458,
+          "pre_design_delta": 0.4197,
+          "verdict": "BASE STANDS"
+        },
+        "STEADY_UPTREND": {
+          "regimes": [
+            "STEADY_UPTREND"
+          ],
+          "share_of_bars": 0.2052,
+          "design": 1.7199,
+          "pre_design": 3.3909,
+          "design_delta": 0.1133,
+          "pre_design_delta": 0.1684,
+          "verdict": "ENFORCE"
+        },
+        "VOLATILE_CHOP": {
+          "regimes": [
+            "VOLATILE_CHOP"
+          ],
+          "share_of_bars": 0.0905,
+          "design": 1.1215,
+          "pre_design": 3.8328,
+          "design_delta": -0.4851,
+          "pre_design_delta": 0.6103,
+          "verdict": "BASE STANDS"
+        },
+        "WEAK_CONSOLIDATION": {
+          "regimes": [
+            "WEAK_CONSOLIDATION"
+          ],
+          "share_of_bars": 0.2253,
+          "design": 1.0979,
+          "pre_design": 2.5658,
+          "design_delta": -0.5087,
+          "pre_design_delta": -0.6567,
+          "verdict": "BASE STANDS"
+        }
+      }
+    }
+  }
+}
