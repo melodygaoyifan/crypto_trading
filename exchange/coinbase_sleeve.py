@@ -496,9 +496,42 @@ class CoinbaseSleeve:
             self._sleeve_start_equity = eq
             logger.info(f"[COINBASE_SLEEVE] risk baseline set: ${eq:,.2f}")
             self._persist_state()  # [P150] anchor survives restart
+        # [P294] Drawdown is measured against INVESTED CAPITAL, not the
+        # inception anchor alone. A deposit raises equity without earning it,
+        # so against a fixed anchor the ratio goes NEGATIVE and the loss cap
+        # silently loosens: measured live 2026-08-18, after the 2026-08-16
+        # deposit of $7,074.27 the anchor was $3,997.75 against equity of
+        # $10,847.88, so `dd` read -171.3% and the 15% halt could not fire
+        # until equity fell to $3,398 — a 68.7% loss of the capital actually
+        # at risk. The control designed to cap losses at 15% was disarmed by
+        # a bank transfer.
+        #
+        # P274 recorded the deposit direction as "conservative" and it IS for
+        # the P0 fuse (a deposit reads as a gain there); for THIS control it
+        # is the opposite. P287's note below covers the withdrawal direction
+        # and prescribed a manual re-anchor — netting the flow out fixes both
+        # ends at once, and the withdrawal case stops needing an operator
+        # step at all once the P293h detector has seen it.
+        #
+        # With no recorded flows (`_external_flow_usd == 0.0`, every sleeve
+        # that has never seen a transfer) this is byte-identical to the old
+        # arithmetic.
+        _flows = float(getattr(self, "_external_flow_usd", 0.0) or 0.0)
+        _basis = (self._sleeve_start_equity or 0.0) + _flows
         dd = 0.0
         if self._sleeve_start_equity and self._sleeve_start_equity > 0:
-            dd = (self._sleeve_start_equity - eq) / self._sleeve_start_equity
+            if _basis > 0:
+                dd = (_basis - eq) / _basis
+            else:
+                # A withdrawal at or beyond the whole invested base leaves no
+                # denominator. Hold the last real drawdown rather than divide
+                # into nonsense, and never touch the halt state (same rule as
+                # the stale/unknown-equity branches above).
+                logger.warning(
+                    "[COINBASE_SLEEVE] drawdown basis <= 0 "
+                    "(start=%.2f flows=%+.2f) — holding last dd %.4f",
+                    self._sleeve_start_equity or 0.0, _flows, self._last_dd_pct)
+                dd = self._last_dd_pct
         self._last_dd_pct = dd
         # [P287] WITHDRAWAL direction, recorded (P274 documented deposits
         # only): a capital withdrawal from the perp portfolio lowers eq

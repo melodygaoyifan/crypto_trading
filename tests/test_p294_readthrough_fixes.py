@@ -376,3 +376,83 @@ class TestExchangeNetflowCarryAndProvenance:
     def test_real_readings_are_not_labelled_mock(self):
         from data_mgmt.feeds.exchange_netflow_feed import ExchangeNetflowMetrics
         assert ExchangeNetflowMetrics(symbol="BTC").mock is False
+
+
+# =============================================================================
+# 7 - the deposit disarmed the sleeve loss cap
+# =============================================================================
+
+class TestDrawdownIsNetOfExternalFlows:
+    """MEASURED LIVE 2026-08-18. The 15% sleeve drawdown halt compares equity
+    to the INCEPTION anchor, so the 2026-08-16 deposit of $7,074.27 (anchor
+    $3,997.75, equity $10,847.88) made `dd` read -171.3% and pushed the halt
+    trigger down to $3,398 - a 68.7% loss of the capital actually at risk.
+
+    P274 called the deposit direction "conservative", which is true of the P0
+    fuse and FALSE of this control; P287's note covers only withdrawals.
+    Netting the recorded flow out of the basis fixes both ends.
+    """
+
+    def _sleeve(self, start, flows, eq, halt=0.15):
+        from exchange.coinbase_sleeve import CoinbaseSleeve
+        s = CoinbaseSleeve.__new__(CoinbaseSleeve)
+        s._sleeve_start_equity = start
+        s._external_flow_usd = flows
+        s._last_dd_pct = 0.0
+        s._halted = False
+        s._halt_reason = ""
+        s._max_sleeve_drawdown_pct = halt
+        s.sleeve_equity_usd = lambda: eq
+        s._equity_is_stale = lambda: False
+        s.sleeve_equity_age_sec = lambda: 1.0
+        s._persist_state = lambda: None
+        return s
+
+    def test_the_live_numbers_now_read_honestly(self):
+        s = self._sleeve(3997.7520864755475, 7074.27, 10847.88)
+        r = s.update_risk()
+        assert r["drawdown_pct"] == pytest.approx(0.0202, abs=5e-4), (
+            "the 2.02% trading loss on invested capital, not -171%"
+        )
+        assert not r["halted"]
+
+    def test_the_halt_binds_on_capital_actually_at_risk(self):
+        """15% of the $11,072 invested base is ~$9,411 - not the $3,398 the
+        inception anchor implied."""
+        s = self._sleeve(3997.7520864755475, 7074.27, 9400.0)
+        r = s.update_risk()
+        assert r["halted"], "a 15% loss of invested capital must halt"
+        s2 = self._sleeve(3997.7520864755475, 7074.27, 9500.0)
+        assert not s2.update_risk()["halted"], "just under 15% must not halt"
+
+    def test_the_old_anchor_would_not_have_halted_there(self):
+        """Pins WHY this changed: at equity $9,400 the pre-fix arithmetic
+        reported a NEGATIVE drawdown, i.e. a profit."""
+        start, eq = 3997.7520864755475, 9400.0
+        assert (start - eq) / start < 0
+
+    def test_no_recorded_flows_is_byte_identical(self):
+        """Every sleeve that has never seen a transfer must be unaffected."""
+        for eq in (3600.0, 3997.75, 3398.0, 3000.0):
+            s = self._sleeve(3997.7520864755475, 0.0, eq)
+            expected = (3997.7520864755475 - eq) / 3997.7520864755475
+            assert s.update_risk()["drawdown_pct"] == pytest.approx(expected)
+
+    def test_a_withdrawal_no_longer_reads_as_drawdown(self):
+        """P287 recorded that a withdrawal trips the sticky halt with one bank
+        transfer and prescribed a manual re-anchor. Once the P293h detector
+        has recorded the outflow, the basis shrinks with it and no operator
+        step is needed."""
+        s = self._sleeve(10000.0, -5000.0, 5000.0)
+        r = s.update_risk()
+        assert r["drawdown_pct"] == pytest.approx(0.0), (
+            "withdrawing half the capital is not a 50% loss"
+        )
+        assert not r["halted"]
+
+    def test_a_total_withdrawal_holds_rather_than_dividing_by_zero(self):
+        s = self._sleeve(4000.0, -4000.0, 0.01)
+        s._last_dd_pct = 0.03
+        r = s.update_risk()
+        assert r["drawdown_pct"] == pytest.approx(0.03), "held, not fabricated"
+        assert not r["halted"], "an unusable basis must never trip the halt"
