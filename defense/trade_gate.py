@@ -109,7 +109,15 @@ class TradeGateConfig:
     # [FEE-CANONICAL 2026-04-15] Sourced from canonical_config (was hardcoded 26/16)
     kraken_taker_fee_bps: float = _CC_TAKER_BPS  # Default; overridden by update_fee_tier()
     kraken_maker_fee_bps: float = _CC_MAKER_BPS  # Maker fee; used when post_only/PASSIVE_PREFERRED
-    use_maker_fee: bool = True  # v6.7: post_only maker orders enabled by default
+    # [P307] NO READER. This field is declared and never consulted
+    # anywhere in the tree — the gate always prices `kraken_taker_fee_bps`.
+    # Left in place rather than deleted (a profile may set it, and
+    # removing a config field is a contract change), but it must not be
+    # read as "the gate prices maker fills": it does not. The P177 shape
+    # — a switch that looks armed and controls nothing — on a component
+    # that DOES bind the sleeve (P275), which is why it is called out
+    # here rather than left to the next audit to re-derive.
+    use_maker_fee: bool = True  # v6.7 vintage; see the note above
     slippage_bps: float = 5.0
     latency_cost_bps: float = 2.0
     KRAKEN_FREE_TIER_USD: float = _CC_FREE_TIER  # [FIX-33] from canonical_config

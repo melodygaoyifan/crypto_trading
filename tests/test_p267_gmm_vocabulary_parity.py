@@ -84,7 +84,16 @@ class TestDeployedArtifacts:
                 f"{a}: {len(cfg['regime_names'])} names for k={k}")
             assert len(cfg["weights"]) == k
             n_feat = len(cfg["feature_cols"])
-            assert n_feat == 12, f"{a}: GMM feature count drifted ({n_feat})"
+            # [P307] read the expected count from the training list rather
+            # than a literal — the literal went stale the moment the
+            # feature set legitimately changed (12 -> 9), which is a
+            # test failing on a correct change rather than a wrong one.
+            from tests.test_rebuild_pipeline_gmm_split import (
+                _load_rebuild_module)
+            GMM_FEATURE_COLS = _load_rebuild_module().GMM_FEATURE_COLS
+            assert n_feat == len(GMM_FEATURE_COLS), (
+                f"{a}: deployed GMM has {n_feat} features, the builder "
+                f"declares {len(GMM_FEATURE_COLS)} — redeploy the artifacts")
             assert len(cfg["scaler_mean"]) == n_feat
             assert len(cfg["scaler_scale"]) == n_feat
 

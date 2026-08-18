@@ -98,33 +98,18 @@ def test_vol_percentile_window_constant_matches_runtime_frame():
 # cross_asset_correlation: constant-by-ordering, pinned from both sides
 # ---------------------------------------------------------------------------
 
-def test_cross_corr_constants_agree():
+def test_cross_corr_is_no_longer_a_gmm_feature_at_all():
+    """[P307] This pin used to assert the two 0.87 constants AGREED. They no
+    longer exist: `cross_asset_correlation` was zero-variance on both sides
+    and was removed from the feature set, which is strictly stronger than
+    keeping two constants in sync — a feature that is absent cannot drift.
+
+    The ordering pin below (cross_corr written after the GMM predicts) is
+    consequently obsolete as a GMM concern and was removed with it.
+    """
     rp = _load_rebuild()
-    src = io.open(REPO / "training" / "scripts" / "rebuild_pipeline.py",
-                  encoding="utf-8").read()
-    assert "cross_corr = 0.87" in src
-    assert 'raw.get("cross_asset_correlation", 0.87)' in _runtime_src(), (
-        "runtime default for cross_asset_correlation is no longer 0.87 — "
-        "training's constant and the runtime default have drifted"
-    )
-
-
-def test_cross_corr_is_written_after_the_gmm_predicts():
-    """The load-bearing accident: the live correlation lands in `raw` only
-    AFTER _predict_gmm_regime has read its default. If the write ever moves
-    before the predict, the GMM's serve-time input starts varying while its
-    training input was constant — a silent distribution change on one of the
-    12 inputs. This pin makes that move loud."""
-    rt = _runtime_src()
-    predict_pos = rt.find("gmm_result = self._predict_gmm_regime(")
-    write_pos = rt.find('raw["cross_asset_correlation"] = ')
-    assert predict_pos != -1 and write_pos != -1
-    assert predict_pos < write_pos, (
-        "cross_asset_correlation is now written BEFORE the GMM predicts — "
-        "the GMM's serve-time input is no longer the 0.87 constant it was "
-        "trained on. Either feed the live value in training too (and refit) "
-        "or restore the ordering."
-    )
+    assert "cross_asset_correlation" not in rp.GMM_FEATURE_COLS
+    assert "cross_corr" not in _runtime_src().split("features = _np.array")[1][:400]
 
 
 # ---------------------------------------------------------------------------
@@ -140,13 +125,40 @@ def test_fear_index_is_the_same_rsi_proxy_on_both_sides():
     )
 
 
-def test_spread_defaults_agree():
+def test_spread_is_no_longer_a_gmm_feature_at_all():
+    """[P307] Same as cross_asset_correlation: per-asset constants on both
+    sides, so they contributed zero variance and only a BIC-penalty
+    dimension. Removed rather than kept in sync."""
     rp = _load_rebuild()
-    assert rp.SPREAD_DEFAULTS == {"BTC": 5.0, "ETH": 8.0, "SOL": 12.0}
+    assert "spread_percentile" not in rp.GMM_FEATURE_COLS
+    assert "spread_pct" not in _runtime_src().split("features = _np.array")[1][:400]
+
+
+def test_the_two_builders_produce_the_same_feature_count():
+    """[P215/P307] The training list and the runtime array are a two-file
+    contract; a change to one alone feeds the classifier a vector its scaler
+    was not fitted on."""
+    rp = _load_rebuild()
+    body = _runtime_src().split("features = _np.array([")[1].split("]")[0]
+    n_runtime = len([t for t in body.split(",") if t.strip()])
+    assert n_runtime == len(rp.GMM_FEATURE_COLS), (
+        f"runtime builds {n_runtime} features, training declares "
+        f"{len(rp.GMM_FEATURE_COLS)}")
+
+
+def test_a_shape_mismatch_refuses_loudly_instead_of_falling_through():
+    """[P307] Before this, a mismatched artifact pair surfaced as a numpy
+    broadcast error inside a broad handler — i.e. as a silent ADX fallback.
+
+    The predicate is asserted by CALLING it; the source pin below only
+    confirms the predict path still consults it. A textual pin alone stayed
+    green against `if False and ...` when it was first probed (P234/P251).
+    """
+    from data_mgmt.market_data_pipeline import gmm_shape_mismatch as g
+    assert g([1, 2, 3], [1, 2]) is True and g([1, 2], [1, 2]) is False
     rt = _runtime_src()
-    assert '{"BTC": 5.0, "ETH": 8.0, "SOL": 12.0}' in rt, (
-        "runtime spread defaults have drifted from training's SPREAD_DEFAULTS"
-    )
+    assert "feature_count_mismatch" in rt
+    assert "if gmm_shape_mismatch(_scaler_mean, features):" in rt
 
 
 # ---------------------------------------------------------------------------

@@ -83,13 +83,40 @@ MAX_REGIME_PROBA = 8  # Zero-pad proba vector to 8 columns
 # trailing depth or the percentile distributions diverge.
 GMM_VOL_PCT_WINDOW = 1024
 
+# [P307] NINE features, down from twelve. The three that were removed were
+# measured non-informative AND actively distorting:
+#
+#   return_1h              was exactly return_4h / 4 (corr = 1.0 verified),
+#                          so after the StandardScaler it is an IDENTICAL
+#                          column. In a full-covariance GMM that is not
+#                          neutral - the return_4h direction is counted
+#                          TWICE in the distance that assigns each bar to a
+#                          cluster.
+#   cross_asset_correlation  a hardcoded 0.87 here, and a runtime .get()
+#                          default of 0.87 on the serve side because the
+#                          real value is written AFTER the GMM reads it
+#                          (P221). Zero variance either way.
+#   spread_percentile      per-asset constants on both sides.
+#
+# Measured cost of keeping them (training/scripts/gmm_redundancy_probe.py,
+# same recipe, same fit boundary): dropping return_1h changes the bar-by-bar
+# assignment at ARI 0.690 / 0.657 / 0.741 (BTC/ETH/SOL) and moves BTC's
+# BIC-selected k from 6 to 7. The two constants add no likelihood but do add
+# BIC penalty dimensions, which moved SOL's k.
+#
+# NB: BIC is NOT comparable across these variants - a different feature count
+# is a different likelihood space. The 12-feature fit reporting a lower BIC
+# says nothing about which model is better.
+#
+# CHANGING THIS LIST IS A P215 ATOMIC OPERATION: {GMM artifacts, parquets,
+# and the runtime builder in data_mgmt/market_data_pipeline.py} must move in
+# ONE step, or the classifier is fed a vector of a different shape than its
+# scaler was fitted on.
 GMM_FEATURE_COLS = [
-    "return_1h", "return_4h", "return_24h", "return_7d",
+    "return_4h", "return_24h", "return_7d",
     "volatility_1h", "volatility_24h", "vol_percentile", "vol_of_vol",
     "momentum_consistency",
-    "cross_asset_correlation",
     "fear_index",
-    "spread_percentile",
 ]
 
 GMM_BASE_CONFIG = {
@@ -360,12 +387,16 @@ def merge_external_data(df_4h: pd.DataFrame, asset: str) -> pd.DataFrame:
 # ══════════════════════════════════════════════════════════════════════
 
 def compute_gmm_features_for_bar(closes, volumes, rets, i, asset="BTC"):
-    """Compute 12 GMM features for a single bar. Mirrors main.py _predict_gmm_regime()."""
+    """Compute the GMM features for one bar (P307: 9, was 12).
+
+    Mirrors data_mgmt/market_data_pipeline.py::_predict_gmm_regime. The two
+    builders are a two-file contract (P192): a change to either alone is a
+    train/serve skew on a live regime classifier.
+    """
     if i < 50:
         return np.full(len(GMM_FEATURE_COLS), np.nan)
 
     ret_4h = rets[i]
-    ret_1h = ret_4h / 4.0
     ret_24h = (closes[i] - closes[i - 6]) / closes[i - 6] if closes[i - 6] > 0 else 0.0
     ret_7d = (closes[i] - closes[i - 42]) / closes[i - 42] if i >= 42 and closes[i - 42] > 0 else 0.0
 
@@ -397,7 +428,9 @@ def compute_gmm_features_for_bar(closes, volumes, rets, i, asset="BTC"):
     else:
         mom_con = 0.0
 
-    cross_corr = 0.87  # default, matches runtime
+    # [P307] cross_corr / spread dropped from the feature set: both were
+    # constants on both sides (P221), contributing zero variance and only
+    # a BIC penalty dimension.
 
     if i >= 14:
         deltas = np.diff(closes[i - 14:i + 1])
@@ -409,20 +442,19 @@ def compute_gmm_features_for_bar(closes, volumes, rets, i, asset="BTC"):
         rsi = 50.0
     fear_idx = 100.0 - rsi
 
-    spread = SPREAD_DEFAULTS.get(asset, 8.0)
 
+    # [P307] order must match GMM_FEATURE_COLS exactly, and the runtime
+    # builder in data_mgmt/market_data_pipeline.py must match both.
     return np.array([
-        ret_1h, ret_4h, ret_24h, ret_7d,
+        ret_4h, ret_24h, ret_7d,
         vol_1h, vol_24h, vol_pct, vov,
         mom_con,
-        cross_corr,
         fear_idx,
-        spread,
     ])
 
 
 def compute_gmm_features_batch(df: pd.DataFrame, asset: str = "BTC") -> np.ndarray:
-    """Compute 12 GMM features for all bars."""
+    """Compute the GMM features for all bars (P307: 9, was 12)."""
     closes = df["close"].values
     volumes = df["volume"].values
     n = len(closes)

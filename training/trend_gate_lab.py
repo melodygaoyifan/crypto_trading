@@ -68,7 +68,10 @@ DS, DE = DESIGN
 PRE = (800, 3000)
 SMA_N = 200
 LIVE_GATE = ("WEAK_CONSOLIDATION", "NEUTRAL_DRIFT")
-REPORT = REPO / "training" / "reports" / "trend_gate_lab_p306.json"
+# [P307] The P306 run is preserved at trend_gate_lab_p306.json; the P307 GMM
+# refit changed the regime LABELS this lab reads, so its verdict had to be
+# re-derived rather than carried over.
+REPORT = REPO / "training" / "reports" / "trend_gate_lab_p307.json"
 
 
 def _regimes(asset: str, n: int):

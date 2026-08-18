@@ -1,0 +1,220 @@
+{
+  "generated": "2026-08-18T12:20:05.616823+00:00",
+  "features": [
+    "return_1h",
+    "return_4h",
+    "return_24h",
+    "return_7d",
+    "volatility_1h",
+    "volatility_24h",
+    "vol_percentile",
+    "vol_of_vol",
+    "momentum_consistency",
+    "cross_asset_correlation",
+    "fear_index",
+    "spread_percentile"
+  ],
+  "assets": {
+    "BTC": {
+      "fit_bars": 7132,
+      "return_1h_is_return_4h_over_4": true,
+      "corr_ret1h_ret4h": 1.0,
+      "constant_columns": [
+        "cross_asset_correlation",
+        "spread_percentile"
+      ],
+      "variants": {
+        "full": {
+          "n_features": 12,
+          "dropped": [],
+          "k": 6,
+          "bic": 75149.8,
+          "mean_max_posterior": 0.9184,
+          "census_pct": {
+            "0": 17.68,
+            "1": 3.3,
+            "2": 10.89,
+            "3": 12.68,
+            "4": 30.2,
+            "5": 25.25
+          }
+        },
+        "no_dup": {
+          "n_features": 11,
+          "dropped": [
+            "return_1h"
+          ],
+          "k": 7,
+          "bic": 88288.7,
+          "mean_max_posterior": 0.8901,
+          "census_pct": {
+            "0": 17.67,
+            "1": 10.84,
+            "2": 21.72,
+            "3": 11.02,
+            "4": 14.4,
+            "5": 22.31,
+            "6": 2.05
+          }
+        },
+        "no_dead": {
+          "n_features": 9,
+          "dropped": [
+            "return_1h",
+            "cross_asset_correlation",
+            "spread_percentile"
+          ],
+          "k": 7,
+          "bic": 126332.9,
+          "mean_max_posterior": 0.8901,
+          "census_pct": {
+            "0": 17.67,
+            "1": 10.84,
+            "2": 21.72,
+            "3": 11.02,
+            "4": 14.4,
+            "5": 22.31,
+            "6": 2.05
+          }
+        }
+      },
+      "ari_full_vs_no_dup": 0.6897,
+      "ari_full_vs_no_dead": 0.6897
+    },
+    "ETH": {
+      "fit_bars": 7132,
+      "return_1h_is_return_4h_over_4": true,
+      "corr_ret1h_ret4h": 1.0,
+      "constant_columns": [
+        "cross_asset_correlation",
+        "spread_percentile"
+      ],
+      "variants": {
+        "full": {
+          "n_features": 12,
+          "dropped": [],
+          "k": 7,
+          "bic": 74185.5,
+          "mean_max_posterior": 0.9036,
+          "census_pct": {
+            "0": 14.2,
+            "1": 26.85,
+            "2": 4.46,
+            "3": 23.91,
+            "4": 4.66,
+            "5": 13.07,
+            "6": 12.86
+          }
+        },
+        "no_dup": {
+          "n_features": 11,
+          "dropped": [
+            "return_1h"
+          ],
+          "k": 7,
+          "bic": 88615.4,
+          "mean_max_posterior": 0.8945,
+          "census_pct": {
+            "0": 11.26,
+            "1": 16.7,
+            "2": 21.1,
+            "3": 3.55,
+            "4": 11.74,
+            "5": 12.2,
+            "6": 23.46
+          }
+        },
+        "no_dead": {
+          "n_features": 9,
+          "dropped": [
+            "return_1h",
+            "cross_asset_correlation",
+            "spread_percentile"
+          ],
+          "k": 7,
+          "bic": 126659.6,
+          "mean_max_posterior": 0.8945,
+          "census_pct": {
+            "0": 11.26,
+            "1": 16.7,
+            "2": 21.1,
+            "3": 3.55,
+            "4": 11.74,
+            "5": 12.2,
+            "6": 23.46
+          }
+        }
+      },
+      "ari_full_vs_no_dup": 0.6566,
+      "ari_full_vs_no_dead": 0.6566
+    },
+    "SOL": {
+      "fit_bars": 7099,
+      "return_1h_is_return_4h_over_4": true,
+      "corr_ret1h_ret4h": 1.0,
+      "constant_columns": [
+        "cross_asset_correlation",
+        "spread_percentile"
+      ],
+      "variants": {
+        "full": {
+          "n_features": 12,
+          "dropped": [],
+          "k": 7,
+          "bic": 69340.6,
+          "mean_max_posterior": 0.8989,
+          "census_pct": {
+            "0": 19.79,
+            "1": 25.95,
+            "2": 11.03,
+            "3": 12.68,
+            "4": 3.79,
+            "5": 8.1,
+            "6": 18.66
+          }
+        },
+        "no_dup": {
+          "n_features": 11,
+          "dropped": [
+            "return_1h"
+          ],
+          "k": 7,
+          "bic": 83181.0,
+          "mean_max_posterior": 0.8942,
+          "census_pct": {
+            "0": 20.51,
+            "1": 14.31,
+            "2": 23.54,
+            "3": 6.99,
+            "4": 3.16,
+            "5": 19.41,
+            "6": 12.09
+          }
+        },
+        "no_dead": {
+          "n_features": 9,
+          "dropped": [
+            "return_1h",
+            "cross_asset_correlation",
+            "spread_percentile"
+          ],
+          "k": 8,
+          "bic": 120846.9,
+          "mean_max_posterior": 0.8887,
+          "census_pct": {
+            "0": 19.28,
+            "1": 11.89,
+            "2": 2.99,
+            "3": 12.8,
+            "4": 20.47,
+            "5": 23.57,
+            "6": 6.35,
+            "7": 2.65
+          }
+        }
+      },
+      "ari_full_vs_no_dup": 0.7405,
+      "ari_full_vs_no_dead": 0.7285
+    }
+  }
+}

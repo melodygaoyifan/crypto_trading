@@ -8514,8 +8514,18 @@ class HMATSProductionRunner:
                     agent_signals["soldex_arb_strength"] = 0.0
                 agent_signals["soldex_liquidity_score"] = _sd_liq
                 agent_signals["soldex_arb_active"] = bool(_sd_arb > 0.5)
-                # Confidence: liquidity_score normalized [0,1]
-                agent_signals["soldex_confidence"] = max(0.0, min(_sd_liq, 1.0))
+                # [P307] Confidence must be ZERO on a flat direction. This
+                # was the liquidity score alone, so a deeply liquid DEX with
+                # NO arbitrage opportunity emitted dir=+0.00 conf=1.00 — a
+                # maximally-confident non-signal, seen live on SOL. Fusion
+                # and the IC scorer both consume direction x confidence, so a
+                # confident zero is not merely meaningless, it is weighted.
+                # Exactly the P224 defect (`flow` saturating on a magnitude
+                # with no sign), in a second agent. Liquidity remains
+                # available undiluted as soldex_liquidity_score.
+                _sd_dir = float(agent_signals["soldex_arb_direction"])
+                agent_signals["soldex_confidence"] = (
+                    max(0.0, min(_sd_liq, 1.0)) * abs(_sd_dir))
                 if abs(_sd_delta) > 0.5 or _sd_arb > 0.5:
                     logger.info(
                         f"[SOL_DEX] arb_dir={agent_signals['soldex_arb_direction']:+.0f} "

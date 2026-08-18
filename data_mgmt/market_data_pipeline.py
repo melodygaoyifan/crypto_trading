@@ -152,6 +152,23 @@ _KNOWN_REGIMES.update({
 _LOGGED_UNKNOWN_REGIMES: set = set()
 
 
+def gmm_shape_mismatch(scaler_mean, features) -> bool:
+    """[P307] True when the loaded GMM artifact and the built feature vector
+    disagree on length — i.e. the P215 set {GMM, parquets, builder} is
+    half-moved and the classifier is about to be fed a vector its scaler was
+    not fitted on.
+
+    A missing scaler is NOT a mismatch: that is a separate condition with its
+    own branch, and collapsing the two would report the wrong cause.
+    """
+    if scaler_mean is None or features is None:
+        return False
+    try:
+        return len(scaler_mean) != len(features)
+    except TypeError:      # noqa: silent-swallow — unsized input is not a
+        return False       # length disagreement; the caller's own guards run
+
+
 class MarketDataPipeline:
     """Fetches live Kraken data, computes TA indicators, GMM regime, quant signals."""
 
@@ -2135,24 +2152,16 @@ class MarketDataPipeline:
         rets = _np.diff(closes) / _np.where(closes[:-1] != 0, closes[:-1], 1.0)
 
         ret_4h = float(rets[-1]) if len(rets) > 0 else 0.0
-        # [P306] DELIBERATELY still a rescale, and it must stay one until a joint
-        # refit. This `ret_1h` is GMM feature #1 (see the feature vector below),
-        # and training/scripts/rebuild_pipeline.py:368 computes it IDENTICALLY --
-        # so train and serve agree, which is the property P214/P221 exist to
-        # protect. Changing it here alone would be a train/serve skew on a live
-        # regime classifier; changing it on both sides is a feature-definition
-        # change and {GMM, parquets, checkpoints} move as ONE versioned set
-        # (P215).
-        #
-        # Worth recording as a measurement finding: being exactly ret_4h / 4, this
-        # column is PERFECTLY COLLINEAR with ret_4h and carries no information the
-        # GMM does not already have. P221 found 2 of the 12 GMM inputs are
-        # constants; this makes a third non-informative, so the classifier runs on
-        # 9 independent features, not 12.
-        #
-        # The cascade path's 1h move is fixed elsewhere and does not touch this:
-        # main.py::_publish_real_1h_change overwrites market_data at the consumer.
-        ret_1h = ret_4h / 4.0
+        # [P307] RESOLVED. The P306 note here recorded ret_1h as a deliberate
+        # rescale kept for train/serve parity, on the reading that a perfect
+        # duplicate carries no information and therefore costs nothing. The
+        # second half of that was WRONG and the probe says so: in a
+        # full-covariance GMM a duplicated column double-weights its twin in the
+        # Mahalanobis distance, and dropping it moved the bar-by-bar assignment
+        # at ARI 0.690/0.657/0.741 (BTC/ETH/SOL) and changed BTC's BIC-selected k
+        # from 6 to 7. return_1h, cross_asset_correlation and spread_percentile
+        # are all gone from the feature set; both builders and the fitted
+        # artifacts moved together (P215).
         ret_24h = float((closes[-1] - closes[-7]) / closes[-7]) if n >= 7 and closes[-7] > 0 else 0.0
         ret_7d = float((closes[-1] - closes[-43]) / closes[-43]) if n >= 43 and closes[-43] > 0 else 0.0
 
@@ -2175,10 +2184,7 @@ class MarketDataPipeline:
         else:
             mom_con = 0.0
 
-        cross_corr = raw.get("cross_asset_correlation", 0.87)
         fear_idx = 100.0 - raw.get("rsi", 50.0)
-        _spread_defaults = {"BTC": 5.0, "ETH": 8.0, "SOL": 12.0}
-        spread_pct = _spread_defaults.get(asset, 8.0)
 
         if asset in self._gmm_configs:
             _cfg = self._gmm_configs[asset]
@@ -2212,11 +2218,39 @@ class MarketDataPipeline:
             _regime_names = self._gmm_regime_names
             feature_names = self._gmm_feature_cols
 
+        # [P307] NINE features. return_1h was exactly ret_4h/4 (a duplicate
+        # column that double-weighted ret_4h in the cluster assignment,
+        # measured ARI 0.66-0.74 and a changed k on BTC); cross_corr and
+        # spread_pct were constants on both sides (P221). Order must match
+        # training/scripts/rebuild_pipeline.py::GMM_FEATURE_COLS exactly.
         features = _np.array([
-            ret_1h, ret_4h, ret_24h, ret_7d,
+            ret_4h, ret_24h, ret_7d,
             vol_1h, vol_24h, vol_pct, vov,
-            mom_con, cross_corr, fear_idx, spread_pct,
+            mom_con, fear_idx,
         ], dtype=_np.float64)
+
+        # [P307] A mismatched artifact pair used to surface as a numpy
+        # broadcast error inside a broad handler, i.e. as a silent fallback to
+        # the ADX proxy. Refuse LOUDLY and name both shapes instead (P4).
+        #
+        # The predicate lives in a module-level pure function so the guard can
+        # be tested by CALLING it. A pin on the source text proves the code
+        # was written, not that it runs (P234/P251) — the first falsification
+        # probe of this guard stayed GREEN against `if False and ...`.
+        if gmm_shape_mismatch(_scaler_mean, features):
+            if not hasattr(self, "_gmm_shape_warned"):
+                self._gmm_shape_warned: set = set()
+            if asset not in self._gmm_shape_warned:
+                self._gmm_shape_warned.add(asset)
+                logger.error(
+                    f"[GMM] {asset}: artifact/builder MISMATCH — scaler "
+                    f"expects {len(_scaler_mean)} features, the builder "
+                    f"produced {len(features)}. The deployed GMM was fitted "
+                    f"on a different feature set (P215: {{GMM, parquets, "
+                    f"builder}} move as ONE versioned set). Using the ADX "
+                    f"proxy until the artifacts are redeployed.")
+            raw["_gmm_fallback"] = "feature_count_mismatch"
+            return None
 
         if _scaler_mean is None or _scaler_scale is None:
             logger.warning(f"[GMM] {asset}: scaler not loaded, falling back to ADX proxy")

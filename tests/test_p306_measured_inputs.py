@@ -304,14 +304,20 @@ class TestDecisions:
             "a calm market would contribute NEGATIVE activation to "
             "trigger_scores, which a summing consumer reads as risk relief")
 
-    def test_the_two_gmm_ret_1h_sites_still_agree(self):
-        """P215/P221: train and serve must compute the GMM's ret_1h the same
-        way. Both are deliberately still ret_4h/4 - changing one alone is a
-        train/serve skew on a live regime classifier."""
+    def test_the_gmm_ret_1h_feature_is_gone_from_both_sides(self):
+        """[P307 supersedes the P306 pin here.] P306 kept ret_1h = ret_4h/4
+        on BOTH sides and pinned that they agreed, on the reading that a
+        perfect duplicate carries no information and so costs nothing. The
+        second half was wrong: in a full-covariance GMM the duplicate
+        double-weights ret_4h in the assignment distance (measured ARI
+        0.690/0.657/0.741, and BTC's k moved 6 -> 7). The feature was removed
+        from both builders and the artifacts refitted as one set (P215), so
+        what is pinned now is ABSENCE on both sides rather than agreement.
+        """
         for rel in ("data_mgmt/market_data_pipeline.py",
                     "training/scripts/rebuild_pipeline.py"):
             src = _strip_comments(_src(rel))
-            assert "ret_1h = ret_4h / 4.0" in src, rel
+            assert "ret_1h = ret_4h / 4.0" not in src, rel
 
     def test_the_latent_percent_unit_bug_is_gone(self):
         src = _strip_comments(_src("main.py"))
