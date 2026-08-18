@@ -68,15 +68,28 @@ except ImportError as e:
     logger.warning("Execution loop controller unavailable: %s", e)
 
 # SOTA Scheduler
+# [P308] `ExecutionPlan` has never existed in sota_scheduler — the module
+# defines ScheduleType / SliceStatus / UrgencyLevel / SchedulerConfig /
+# OrderSlice / ScheduledOrder / SOTAExecutionScheduler. Naming it here made
+# the WHOLE try-block raise ImportError, so the two symbols that DO import
+# fine were silently dropped from `execution.__all__` and every boot logged
+# "SOTA scheduler unavailable" about a module that is present and importable.
+# The P192/P214 shape: a symbol list is a contract, and naming one absent
+# member disables the rest of the list.
+#
+# UrgencyLevel is deliberately NOT re-exported here — the production market
+# impact block below exports its own, and two names would collide.
 try:
     from .sota_scheduler import (
         SOTAExecutionScheduler,
         SchedulerConfig,
-        ExecutionPlan,
+        ScheduledOrder,
+        ScheduleType,
     )
-    __all__.extend(["SOTAExecutionScheduler", "SchedulerConfig", "ExecutionPlan"])
-except ImportError:
-    logger.warning("SOTA scheduler unavailable")
+    __all__.extend(["SOTAExecutionScheduler", "SchedulerConfig",
+                    "ScheduledOrder", "ScheduleType"])
+except ImportError as e:
+    logger.warning("SOTA scheduler unavailable: %s", e)
 
 # Production Market Impact (actual implementation)
 try:

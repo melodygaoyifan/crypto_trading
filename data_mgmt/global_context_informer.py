@@ -399,9 +399,25 @@ class MacroDataFetcher:
         """
         _now = time.time()
         if not hasattr(self, '_mock_warn_time') or _now - self._mock_warn_time > 3600:
+            # [P308] The old text said "yfinance FAILED ... Check Yahoo
+            # Finance API", which is misleading twice over now: P293 moved
+            # this to FRED, and GOLD is UNMAPPED THERE BY DECISION (FRED's
+            # daily gold series is discontinued), so it is not a fault and
+            # there is no API to go and check. An instruction the operator
+            # cannot act on is the P202 shape. The mock stays neutral by
+            # construction (change_pct=0.0, zscore_30d=0.0 — MACRO-FIX5), and
+            # P294 verified `_state.gold` is write-only, so the fabricated
+            # LEVEL reaches no consumer.
+            _known_unmapped = ticker.upper() in ("GOLD",)
             logger.warning(
-                f"[GCI] yfinance FAILED for {ticker} - using MOCK indicator. "
-                "MacroRegime will default to NEUTRAL. Check Yahoo Finance API."
+                f"[GCI] {ticker}: no live series — serving a NEUTRAL mock "
+                f"(change=0, z=0), so it contributes nothing to MacroRegime. "
+                + ("This is EXPECTED and needs no action: GOLD is deliberately "
+                   "unmapped in FRED (its daily series is discontinued) and "
+                   "the value is not consumed (P293/P294/P308)."
+                   if _known_unmapped else
+                   "Unexpected for this ticker — check the FRED series "
+                   "mapping in fred_macro_series.py (P293).")
             )
             self._mock_warn_time = _now
         # [MACRO-FIX5] Fixed values - same value/prev_value -> zero change, zero zscore

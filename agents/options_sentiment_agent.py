@@ -56,9 +56,31 @@ class OptionsSentimentAgent:
     # fine, and I had guessed "tier limit" before checking).
     _DEAD_ENDPOINTS_WARNED: set = set()
 
+    # [P308] Paths that answered 404 THIS PROCESS. The URL is a hardcoded
+    # constant, so a 404 is a permanent property of the integration, not a
+    # market condition — re-requesting it every tick can never succeed. P218
+    # latched the WARNING and left the CALL in place, so this has been
+    # spending paid CoinGlass quota on three dead endpoints x BTC/ETH on
+    # every tick since. Process-scoped deliberately: a redeploy re-probes, so
+    # if CoinGlass ever restores the path we find out on the next restart
+    # rather than never.
+    #
+    # ONLY 404. A 5xx or a 429 is transient and must keep retrying — skipping
+    # those would turn a venue blip into a permanently dark feed, which is the
+    # opposite failure and a worse one.
+    _DEAD_ENDPOINTS_404: set = set()
+
+    @classmethod
+    def _is_known_dead(cls, path: str) -> bool:
+        return path in cls._DEAD_ENDPOINTS_404
+
     def _report_http(self, path: str, status: int) -> None:
         """Warn once per (path, status) when an endpoint answers non-200."""
         key = f"{path}:{status}"
+        if status == 404:
+            # [P308] Registered whether or not we have already warned: the
+            # warn-latch fires once, the skip must apply on every later tick.
+            self._DEAD_ENDPOINTS_404.add(path)
         if key in self._DEAD_ENDPOINTS_WARNED:
             return
         self._DEAD_ENDPOINTS_WARNED.add(key)
@@ -328,6 +350,8 @@ class OptionsSentimentAgent:
         """GET /api/option/info/max-pain?symbol={asset}"""
         try:
             url = f"{self.BASE_URL}/option/info/max-pain"
+            if self._is_known_dead(url.rsplit("/api", 1)[-1]):
+                return None            # [P308] 404 already proven this process
             async with session.get(
                 url, headers=self._headers(),
                 params={"symbol": asset},
@@ -354,6 +378,8 @@ class OptionsSentimentAgent:
         """GET /api/option/info/oi -> aggregate put vs call OI."""
         try:
             url = f"{self.BASE_URL}/option/info/oi"
+            if self._is_known_dead(url.rsplit("/api", 1)[-1]):
+                return None            # [P308] 404 already proven this process
             async with session.get(
                 url, headers=self._headers(),
                 params={"symbol": asset},
@@ -379,6 +405,8 @@ class OptionsSentimentAgent:
         """GET /api/option/info/volume -> put vs call volume."""
         try:
             url = f"{self.BASE_URL}/option/info/volume"
+            if self._is_known_dead(url.rsplit("/api", 1)[-1]):
+                return None            # [P308] 404 already proven this process
             async with session.get(
                 url, headers=self._headers(),
                 params={"symbol": asset},
