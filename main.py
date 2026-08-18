@@ -15543,7 +15543,57 @@ class HMATSProductionRunner:
         #     never run is a P141 operator decision, so it logs
         #     [V9P2-SHADOW] WOULD-VETO until deliberately enabled.
         _v9p2_health = "not_called"
-        if self._impact_model and intent.is_actionable and not intent.veto_active and intent.target_exposure > 0:
+        # [P300] THE INSTRUMENT COULD NOT OBSERVE. P287 repaired this block
+        # (it had raised NameError on `order_type` since birth) and shipped it
+        # SHADOW-FIRST so the arming decision could be earned from evidence.
+        # Measured 2026-08-18 across 2,862 per-tick diagnostics: every one of
+        # the 54 post-repair ticks records health='not_called', and the log
+        # contains ZERO [V9P2-SHADOW] lines. The gate below requires
+        # `not intent.veto_active`, and the PRIMARY alpha gate vetoes first on
+        # almost every tick (live: "Alpha 10bps < threshold 29bps"), so the
+        # secondary friction veto never gets a look — a shadow that cannot
+        # observe cannot earn anything, which is the P174 shape one level
+        # over: not a check that cannot fail, an instrument that cannot read.
+        #
+        # Split the two. The OBSERVATION now runs whenever there is a
+        # directional intent to reason about, so the ledger fills; the
+        # ENFORCEMENT stays behind the original gate, because a secondary
+        # veto can only matter on an intent that would otherwise trade.
+        # P287's recorded reason for keeping enforce off ("would flatten the
+        # standing BTC long, alpha ~30bps vs friction x1.5 ~34.5") also
+        # compared against the HALVE threshold: `v9p2_gate_decision` vetoes on
+        # `alpha < friction` and only halves urgency at `alpha < friction*1.5`.
+        _v9p2_observe = (self._impact_model is not None
+                         and abs(float(getattr(intent, "direction", 0.0) or 0.0)) > 0)
+        _v9p2_enforceable = (intent.is_actionable and not intent.veto_active
+                             and intent.target_exposure > 0)
+        if _v9p2_observe and not _v9p2_enforceable:
+            try:
+                _o_imp = self._impact_model.predict_impact(
+                    symbol=asset, side="buy" if intent.direction > 0 else "sell",
+                    size_usd=max(0.0, float(intent.target_exposure or 0.0))
+                    * self.config.initial_capital,
+                )
+                _o_fee = float((market_data.get("fee_context", {}) if market_data
+                                else {}).get("taker_fee_bps", 26.0))
+                _o_fric = _o_imp.total_impact_bps + _o_fee
+                _o_halve, _o_action = v9p2_gate_decision(
+                    intent.alpha_estimated_bps, _o_fric,
+                    bool(getattr(intent, "alpha_gate_hold", False)), False)
+                logger.info(
+                    f"[V9P2-OBSERVE] {asset}: alpha="
+                    f"{float(intent.alpha_estimated_bps or 0.0):.1f}bps "
+                    f"friction={_o_fric:.1f}bps -> would_{_o_action} "
+                    f"(halve={_o_halve}); not enforceable this tick "
+                    f"(actionable={intent.is_actionable} "
+                    f"veto={intent.veto_active} exp={intent.target_exposure:.3f})")
+                _v9p2_health = f"observe_only:{_o_action}"
+            except Exception as _o_e:  # noqa: silent-swallow — logged next line
+                _v9p2_health = f"observe_raised:{type(_o_e).__name__}"
+                logger.warning(
+                    f"[V9P2-OBSERVE] {asset}: skipped on "
+                    f"{type(_o_e).__name__}: {_o_e}")
+        if self._impact_model and _v9p2_enforceable:
             try:
                 _size_usd = intent.target_exposure * self.config.initial_capital
                 _impact = self._impact_model.predict_impact(
