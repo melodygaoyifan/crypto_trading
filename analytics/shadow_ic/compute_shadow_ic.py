@@ -404,27 +404,47 @@ POOLED_KEY = "POOLED"
 # wait. A family belongs here only when the same rule, with the same
 # parameters, produces every asset's record.
 POOLABLE_FAMILIES = frozenset({
+    # [P309] KEYED ON THE RECORD'S `strategy` FIELD, which is what
+    # compute_per_strategy_ic groups by — NOT on the ledger-file prefix.
+    # P299 mixed the two, so `ma_filter`/`whale_filter` (prefixes) never
+    # matched `ma_filtered`/`whale_filtered` (names) and those two families
+    # were silently left un-pooled while the feature reported success. The
+    # P294 lesson, committed by the author who had just quoted it: the thing
+    # that separates two claims is whatever the SCORER groups by.
     "regimebook", "regimebook_adj", "regimebook_volskip",
     "donchian", "emaens", "xsmom",
-    "ma_filter", "whale_filter",
-    "sentvariant", "sent_momentum_linear", "sent_momentum_hist",
-    "sent_contrarian",
+    "ma_filtered", "whale_filtered",
+    "sent_momentum_linear", "sent_momentum_hist", "sent_contrarian",
     "oidiv_confirm", "oidiv_fade", "stablecoinflow", "eventfilter",
-    "derivflow", "liquidation_squeeze", "liquidation_exhaustion",
+    "liquidation_squeeze", "liquidation_exhaustion",
+    "calbasis", "etfflow",
+    # NOT here on purpose: `mlpshadow` is a BTC-only exported model, not one
+    # rule applied across assets.
 })
 
-# [P299] Measured DEAD over 2026-08-09..18 on the live volume: records
-# accruing daily since April with essentially no directional content —
-# cascade 0/486, microstructure 1/729, funding 1/729. These are the P199
-# KILL verdicts (n_directional = 0) still occupying the report four months
-# later. `ml_factor` is NOT here: 156/243 directional, genuinely alive.
-# They are reported in their own section rather than deleted, so the archive
-# is auditable and a family that starts emitting again is visible.
+# [P309] Measured over the full pulled ledger history (2026-04-30 -> 08-18),
+# total records vs records carrying a non-zero direction:
+#     cascade_anticipation   2/2082      funding_extreme      0/2082
+#     kyle_lambda            0/2082      ofi                  1/2082
+#     stop_hunt_defense      0/2082      vpin_spike           0/2082
+# Exactly P199's six KILL verdicts, still occupying the report four months on.
+#
+# ALSO KEYED ON THE STRATEGY NAME, and that correction matters more here than
+# for pooling: P299 keyed this on FILE PREFIXES, and the `funding_*.jsonl`
+# files hold THREE strategies — archiving "funding" would have buried
+# `funding_mean_reversion` (50 directional) and `funding_post_etf_regime`
+# (93), both alive. It escaped only because the key never matched anything.
+# An archive list must name what it archives, not the file it lives in.
 ARCHIVED_FAMILIES = {
-    "cascade": "P199 KILL, n_directional=0; re-measured 0/486 over 9d (P299)",
-    "microstructure": "P199 KILL; re-measured 1/729 directional over 9d (P299)",
-    "funding": "P199 KILL/HOLD on n<=14; re-measured 1/729 over 9d (P299)",
+    "cascade_anticipation": "P199 KILL; 2/2082 directional over the full ledger (P309)",
+    "funding_extreme": "P199 KILL; 0/2082 directional (P309)",
+    "kyle_lambda": "P199 KILL; 0/2082 directional (P309)",
+    "ofi": "P199 KILL; 1/2082 directional (P309)",
+    "stop_hunt_defense": "P199 KILL; 0/2082 directional (P309)",
+    "vpin_spike": "P199 KILL; 0/2082 directional (P309)",
 }
+# Deliberately NOT archived, on the same measurement: ml_factor (924/2082),
+# funding_mean_reversion (50), funding_post_etf_regime (93). They emit.
 
 
 def compute_per_strategy_ic(
@@ -924,17 +944,6 @@ def main(argv: Optional[List[str]] = None) -> int:
     # them: an archive that cannot be audited is indistinguishable from a
     # family nobody looked at. If one of these ever emits directional
     # records again, this section is where it shows up.
-    _arch = {k: v for k, v in per_strategy.items() if k[0] in ARCHIVED_FAMILIES}
-    if _arch:
-        print("")
-        print("ARCHIVED families (kept accruing, excluded from the "
-              "promotion table — measured dead, see the reason):")
-        for (st, a), st_data in sorted(_arch.items()):
-            print(f"   {st:16s} {a:8s} n={st_data.get('n', 0):5d}  "
-                  f"{ARCHIVED_FAMILIES[st]}")
-        for k in list(_arch):
-            per_strategy.pop(k, None)
-
     # [P213] "No price series for ANY asset" is a WRONG-ENVIRONMENT error, not a
     # result. Without this the run prints a full table of ohlcv_missing and
     # writes a report — indistinguishable from "the strategies have no signal",
@@ -944,6 +953,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     # Deliberately ALL, not ANY: one missing asset is a genuine data gap the run
     # should report per-strategy and continue through. Every asset missing means
     # the tool is running somewhere it cannot work.
+    # [P309] Evaluated BEFORE the archive filter, on the FULL result set.
+    # The archive block POPS its rows out of per_strategy, and with an
+    # all-archived window that emptied the dict — so `if per_strategy` was
+    # False and this refusal silently returned 0 instead of 2, defeating the
+    # very guard that exists so "no prices" can never read as "no signal".
+    # An archived family reporting ohlcv_missing is still evidence that the
+    # prices are missing.
     _priced = [v for v in per_strategy.values() if v.get("error") != "ohlcv_missing"]
     if per_strategy and not _priced:
         _assets = sorted({a for (_s, a) in per_strategy})
@@ -960,6 +976,37 @@ def main(argv: Optional[List[str]] = None) -> int:
             file=sys.stderr,
         )
         return 2
+
+    # [P309] THE DURABLE GUARD. Both lists are keyed on the record's
+    # `strategy` field, and an entry that matches nothing is INVISIBLE — that
+    # is exactly how P299 shipped `ma_filter`/`whale_filter` un-pooled and an
+    # archive section that never rendered, while both features reported
+    # success. Report the misses, so the next wrong name costs one run
+    # instead of a month (P264: registered-but-unmatched).
+    _seen_names = {k[0] for k in per_strategy}
+    _unmatched_pool = sorted(n for n in POOLABLE_FAMILIES if n not in _seen_names)
+    _unmatched_arch = sorted(n for n in ARCHIVED_FAMILIES if n not in _seen_names)
+    if _unmatched_pool or _unmatched_arch:
+        print("")
+        print("NOTE — allowlist entries that matched NO strategy in this "
+              "window. Either the family is not emitting yet, or the name is "
+              "wrong (these lists key on the record's `strategy` field, NOT "
+              "the ledger-file prefix):")
+        if _unmatched_pool:
+            print(f"   poolable, unmatched: {', '.join(_unmatched_pool)}")
+        if _unmatched_arch:
+            print(f"   archived, unmatched: {', '.join(_unmatched_arch)}")
+
+    _arch = {k: v for k, v in per_strategy.items() if k[0] in ARCHIVED_FAMILIES}
+    if _arch:
+        print("")
+        print("ARCHIVED families (kept accruing, excluded from the "
+              "promotion table — measured dead, see the reason):")
+        for (st, a), st_data in sorted(_arch.items()):
+            print(f"   {st:16s} {a:8s} n={st_data.get('n', 0):5d}  "
+                  f"{ARCHIVED_FAMILIES[st]}")
+        for k in list(_arch):
+            per_strategy.pop(k, None)
 
     print(render_summary(per_strategy, args.window_days, horizons))
 

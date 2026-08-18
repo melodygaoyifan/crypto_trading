@@ -181,13 +181,23 @@ class TestPooledScoringMakesTheClockAbleToFire:
         """An archive without its measurement is an opinion. These three were
         re-measured on the live volume: cascade 0/486 directional over 9d."""
         from analytics.shadow_ic.compute_shadow_ic import ARCHIVED_FAMILIES
-        assert set(ARCHIVED_FAMILIES) == {"cascade", "microstructure", "funding"}
+        # [P309] Re-keyed on the record's `strategy` field. P299 used ledger
+        # FILE PREFIXES, which matched nothing — and would have been worse if
+        # they had: "funding" covers three strategies, two of them alive.
+        assert set(ARCHIVED_FAMILIES) == {
+            "cascade_anticipation", "funding_extreme", "kyle_lambda",
+            "ofi", "stop_hunt_defense", "vpin_spike"}
+        for alive in ("ml_factor", "funding_mean_reversion",
+                      "funding_post_etf_regime"):
+            assert alive not in ARCHIVED_FAMILIES, (
+                f"{alive} emits directional records — archiving it would hide "
+                f"a live candidate")
         for fam, reason in ARCHIVED_FAMILIES.items():
             assert any(ch.isdigit() for ch in reason), (
                 f"{fam}'s archive reason must carry the measurement, not just "
                 f"an assertion")
         assert "ml_factor" not in ARCHIVED_FAMILIES, (
-            "ml_factor measured 156/243 directional — it is alive")
+            "ml_factor measured 924/2082 directional — it is alive")
 
     def test_poolable_list_holds_only_one_rule_families(self):
         from analytics.shadow_ic.compute_shadow_ic import (
@@ -195,6 +205,9 @@ class TestPooledScoringMakesTheClockAbleToFire:
         assert not (set(POOLABLE_FAMILIES) & set(ARCHIVED_FAMILIES)), (
             "an archived family must not also be advertised as poolable")
         assert "regimebook" in POOLABLE_FAMILIES
+        # [P309] the two that P299 keyed on the prefix and lost
+        assert "ma_filtered" in POOLABLE_FAMILIES
+        assert "whale_filtered" in POOLABLE_FAMILIES
         assert "mlpshadow" not in POOLABLE_FAMILIES, (
             "mlpshadow is a BTC-only exported model, not one rule over assets")
 
