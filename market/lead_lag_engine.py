@@ -182,7 +182,11 @@ class BinanceTakerMonitor:
         # WebSocket
         self.ws = None
         self._running = False
-    
+        # [P303] _reconnect_ws reads _reconnect_count, and it is no longer
+        # reachable only from process_messages (which used to initialise it).
+        self._reconnect_count = 0
+        self._connect_failures = 0
+
     def _get_symbol(self, asset: str) -> str:
         """Convert asset to Binance symbol."""
         return f"{asset.lower()}usdt"
@@ -204,12 +208,37 @@ class BinanceTakerMonitor:
         
         self.logger.info(f"Connecting to Binance: {url[:80]}...")
         
+        # [P303] Arm the message loop BEFORE the attempt. `_running` used to be
+        # set only on the SUCCESS path, and process_messages gates on
+        # `while self._running:` — so a failed INITIAL connect left the monitor
+        # permanently dead: the loop returned immediately, `_reconnect_ws` was
+        # never reached, and the L4-03 "auto-reconnect" could not fire in the
+        # one case it was written for (a venue outage at boot). Nothing above
+        # recovers it either — main.py's restart guard reads the ENGINE's
+        # `_running`, which `start()` sets unconditionally, so the engine
+        # reports healthy while both its monitors are dead. Setting it first
+        # costs nothing: close()/stop() still set it False to stop the loop.
+        self._running = True
         try:
             self.ws = await websockets.connect(url)
-            self._running = True
             self.logger.info("Connected to Binance WebSocket")
+            self._connect_failures = 0
         except Exception as e:
-            self.logger.error(f"Failed to connect: {e}")
+            # [P303] WARNING, not ERROR. ERROR is forwarded to Discord, and a
+            # venue-side outage is something the operator can neither act on
+            # nor be harmed by while the reconnect loop is running — the
+            # P202/P240 shape (an alert whose only resolutions are theatre or
+            # ignoring it, which is how a real CRITICAL stops being read). A
+            # SUSTAINED failure is a different claim and still escalates.
+            self._connect_failures = getattr(self, "_connect_failures", 0) + 1
+            _msg = (f"[LEAD_LAG] Binance connect failed "
+                    f"(attempt {self._connect_failures}): "
+                    f"{type(e).__name__}: {e} — reconnect loop is armed; "
+                    f"until it succeeds the taker-flow inputs go stale")
+            if self._connect_failures >= 4:
+                self.logger.error(_msg + " — SUSTAINED, no longer a blip")
+            else:
+                self.logger.warning(_msg)
 
     async def process_messages(self):
         """Process incoming WebSocket messages with auto-reconnect (L4-03)."""
@@ -371,6 +400,10 @@ class DeribitDVOLMonitor:
         self.state = DVOLState()
         self.ws = None
         self._running = False
+        # [P303] _reconnect_ws reads _reconnect_count, and it is no longer
+        # reachable only from process_messages (which used to initialise it).
+        self._reconnect_count = 0
+        self._connect_failures = 0
     
     async def connect(self):
         """Connect to Deribit WebSocket."""
@@ -382,16 +415,41 @@ class DeribitDVOLMonitor:
         
         self.logger.info(f"Connecting to Deribit: {url}")
         
+        # [P303] Same defect and same fix as BinanceTakerMonitor.connect — this
+        # is the monitor that exposed it. Deribit returned HTTP 503 during the
+        # 2026-08-18 10:03 boot; measured as a VENDOR-side outage (503 from the
+        # server AND from an unrelated host, on REST and WS alike, so not a
+        # block on us and not the P293b Cloudflare client-signature trap), and
+        # DVOL would have stayed dead for the whole process lifetime even after
+        # Deribit recovered.
+        self._running = True
         try:
             self.ws = await websockets.connect(url)
-            self._running = True
-            
+
             # Subscribe to DVOL indices
             await self._subscribe()
-            
+
             self.logger.info("Connected to Deribit WebSocket")
+            self._connect_failures = 0
         except Exception as e:
-            self.logger.error(f"Failed to connect: {e}")
+            # [P303] WARNING, not ERROR — see the Binance sibling. DVOL has no
+            # live consumer today (`dvol_to_market_data` is deliberately absent
+            # per P298: Deribit publishes an INDEX LEVEL, and the constitution
+            # reads that field as a z-score, so arming it would fire
+            # EXTREME_DVOL every tick). Its only effect is the lead-lag
+            # confidence modifier, which is exactly 1.0 when DVOL is 0.0.
+            # Threshold is higher than Binance's: DVOL is advisory, taker flow
+            # is not.
+            self._connect_failures = getattr(self, "_connect_failures", 0) + 1
+            _msg = (f"[LEAD_LAG] Deribit connect failed "
+                    f"(attempt {self._connect_failures}): "
+                    f"{type(e).__name__}: {e} — reconnect loop is armed; until "
+                    f"it succeeds DVOL stays 0.0, which leaves the lead-lag "
+                    f"confidence modifier at a neutral 1.0 (no live consumer)")
+            if self._connect_failures >= 8:
+                self.logger.error(_msg + " — SUSTAINED, no longer a blip")
+            else:
+                self.logger.warning(_msg)
     
     async def _subscribe(self):
         """Subscribe to DVOL channels."""

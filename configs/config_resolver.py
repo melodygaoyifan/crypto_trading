@@ -342,6 +342,27 @@ _RISK_SCHEMA = {
         "max_gross_exposure", "max_leverage", "max_single_asset_pct",
         "max_asset_exposure", "reduce_at_drawdown", "halt_at_drawdown",
         "critical_drawdown",
+        # [P303] max_net_exposure is P144's NET signed directional budget —
+        # parsed at main.py:2050 and enforced in risk/global_exposure_cap.py,
+        # live at 0.50. The schema did not know it, so every boot warned
+        # "Unknown key (typo?)" about an armed safety control. That is worse
+        # than silence: it invites someone to "fix" the typo by deleting the
+        # net cap, and it trains the reader to skip CONFIG_SCHEMA lines
+        # (P202 — an alert whose only resolution is to ignore it).
+        "max_net_exposure",
+        # [P303] ADVISORY, and deliberately so — see the live profile's
+        # `_caps_authority_note`. It mirrors `exposure_caps` (the pre-leverage
+        # control) for readability; the enforced caps are `exposure_caps` and
+        # `post_leverage_caps`. It is not consumed by main.py, but it is not a
+        # typo either, and a schema that cannot tell those apart makes the
+        # operator ignore the one line that would flag a REAL typo.
+        "per_asset_caps",
+        # [P303] Consumed by the PRE-LIVE checkers (scripts/pre_live_checks.py,
+        # scripts/verify_live_config.py), which read it as the gross-exposure
+        # figure to verify. It mirrors `max_gross_exposure`; if the two ever
+        # drift, the pre-live gate verifies a stale number and still reports
+        # PASS, so a test pins them equal.
+        "max_exposure_total",
     },
     "ranges": {
         "hard_drawdown_halt": (0.01, 0.50),
