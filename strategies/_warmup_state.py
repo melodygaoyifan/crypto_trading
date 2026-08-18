@@ -52,7 +52,7 @@ import logging
 import os
 import tempfile
 import time
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Iterable, List, Mapping, Optional
 
 logger = logging.getLogger("HMATS.WarmupState")
 
@@ -68,7 +68,7 @@ def state_path(name: str) -> str:
     return os.path.join(_state_dir(), f"{name}.json")
 
 
-def save(name: str, history: Dict[str, "object"]) -> bool:
+def save(name: str, history: Mapping[str, Iterable[float]]) -> bool:
     """Persist {asset: iterable_of_values} with a write timestamp.
 
     Returns True on success. Never raises: a warmup that cannot be saved must
