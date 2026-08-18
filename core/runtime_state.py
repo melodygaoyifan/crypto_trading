@@ -456,7 +456,7 @@ class RuntimeStateProvider:
     def export_to_file(self, path: str = "data/runtime_state.json"):
         """Export current state to file (atomic write)."""
         state = self.get_full_state()
-        # [P37 2026-04-24] Was open(w)+json.dump → corrupt on crash.
+        # [P37 2026-04-24] Was open(w, encoding="utf-8")+json.dump → corrupt on crash.
         from core.state_persistence import save_state
         if save_state(path, state):
             logger.debug(f"[RuntimeState] Exported to {path}")

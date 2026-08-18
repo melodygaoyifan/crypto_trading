@@ -129,7 +129,7 @@ class TestStablecoinFlow:
         assert reason in ("mint_inflow", "burn_outflow", "neutral")
         summary = s.tick()
         rec = json.loads((tmp_path / "stablecoinflow_BTC.jsonl")
-                         .read_text().splitlines()[-1])
+                         .read_text(encoding="utf-8").splitlines()[-1])
         assert rec["basis"] == "mcap_delta_proxy"
         assert rec["confidence"] == abs(rec["direction"])
 

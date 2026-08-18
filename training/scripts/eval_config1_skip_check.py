@@ -50,7 +50,7 @@ def load_data_and_splits():
         data = smoother.smooth_column(data, "regime")
 
     manifest_path = PROJECT_ROOT / "configs" / "feature_manifest.json"
-    with open(manifest_path) as f:
+    with open(manifest_path, encoding="utf-8") as f:
         manifest = json.load(f)
     feature_cols = [c for c in manifest["all_features"] if c in data.columns]
 
@@ -233,7 +233,7 @@ def main():
         "all_positive": bool(all_positive),
         "skip_config2": bool(skip),
     }
-    with open(out_path, "w") as f:
+    with open(out_path, "w", encoding="utf-8") as f:
         json.dump(result, f, indent=2)
     logger.info(f"\n  Results saved: {out_path}")
 

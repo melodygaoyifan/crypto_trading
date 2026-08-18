@@ -284,7 +284,7 @@ class KrakenSpotVolumeTracker:
         """Load persisted volume data."""
         try:
             if self._file_path.exists():
-                with open(self._file_path) as f:
+                with open(self._file_path, encoding="utf-8") as f:
                     data = json.load(f)
                 self._current_record = MonthlyVolumeRecord.from_dict(data)
                 
@@ -308,7 +308,7 @@ class KrakenSpotVolumeTracker:
             return
         
         try:
-            # [P37 2026-04-24] Was open(w)+json.dump → corrupt on crash.
+            # [P37 2026-04-24] Was open(w, encoding="utf-8")+json.dump → corrupt on crash.
             from core.state_persistence import save_state
             if not save_state(self._file_path, self._current_record.to_dict()):
                 logger.error(f"Failed to save volume data to {self._file_path}")

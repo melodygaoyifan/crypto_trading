@@ -71,7 +71,7 @@ class TestAParseFailureIsNotACleanScan:
         r = subprocess.run(
             [sys.executable, "-X", "utf8", str(SCANNER), "--paths", str(tmp_path)],
             capture_output=True, text=True,
-        )
+        encoding="utf-8")
         assert r.returncode == 2, "a scan that could not read the code exited clean"
         assert "REFUSING TO REPORT" in r.stdout
 
@@ -248,7 +248,7 @@ class TestBaselineFormat:
             [sys.executable, "-X", "utf8", str(SCANNER),
              "--baseline-format", "--paths", *paths],
             capture_output=True, text=True,
-        )
+        encoding="utf-8")
         assert r.returncode == 0, r.stderr
         return json.loads(r.stdout)
 

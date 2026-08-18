@@ -827,7 +827,7 @@ async def check_4_bypass_regression(verbose: bool = False) -> CheckResult:
                 continue
             
             try:
-                content = filepath.read_text()
+                content = filepath.read_text(encoding="utf-8")
                 lines = content.split('\n')
                 
                 for i, line in enumerate(lines, 1):
@@ -1288,7 +1288,7 @@ def main():
     # Generate report
     report = generate_report(results)
     report_path = PROJECT_ROOT / args.report
-    report_path.write_text(report)
+    report_path.write_text(report, encoding="utf-8")
     print(f"\nReport written to: {report_path}")
     
     # Print final summary

@@ -286,7 +286,7 @@ def main():
 
     # Load feature cols
     fc_path = STAGE7_DIR / ASSET / "feature_cols.json"
-    with open(fc_path) as f:
+    with open(fc_path, encoding="utf-8") as f:
         feature_cols = json.load(f)
     print(f"  Features: {len(feature_cols)} | Obs dim: {len(feature_cols) + 4}")
 
@@ -422,7 +422,7 @@ def main():
 
     # ── Save ──
     out_path = STAGE7_DIR / "stage7_diagnostic.json"
-    with open(out_path, "w") as f:
+    with open(out_path, "w", encoding="utf-8") as f:
         json.dump(results, f, indent=2)
     print(f"\n  Results saved: {out_path}")
 

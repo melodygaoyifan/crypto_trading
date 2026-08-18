@@ -26,7 +26,7 @@ from pathlib import Path
 def _load(path: Path):
     out = []
     try:
-        with open(path, "r", errors="ignore") as fh:
+        with open(path, "r", errors="ignore", encoding="utf-8") as fh:
             for line in fh:
                 line = line.strip()
                 if not line:

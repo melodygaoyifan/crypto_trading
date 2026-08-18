@@ -59,7 +59,7 @@ def load_regime_map(asset: str) -> Dict[int, str]:
     cfg = REPO / "models" / "regime_classifier" / asset / "gmm_config.json"
     if cfg.exists():
         try:
-            data = json.loads(cfg.read_text())
+            data = json.loads(cfg.read_text(encoding="utf-8"))
             names = data.get("regime_names") or data.get("REGIME_NAMES") or {}
             if isinstance(names, dict):
                 return {int(k): str(v) for k, v in names.items()}
@@ -328,7 +328,7 @@ def main():
         task3_live_rsi_trace(args.host, hours=24)
 
     out = REPORT_DIR / f"diagnostic_ic_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')}.json"
-    out.write_text(json.dumps(full_report, indent=2, default=str))
+    out.write_text(json.dumps(full_report, indent=2, default=str), encoding="utf-8")
     print(f"\nReport: {out}")
 
 

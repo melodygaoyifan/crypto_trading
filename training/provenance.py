@@ -20,7 +20,7 @@ def _git(*args):
     try:
         return subprocess.run(["git", "-C", str(REPO), *args],
                               capture_output=True, text=True, timeout=15
-                              ).stdout.strip()
+                              , encoding="utf-8").stdout.strip()
     except Exception:
         return ""
 

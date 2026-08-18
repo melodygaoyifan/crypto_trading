@@ -49,7 +49,7 @@ def load_trade_returns():
             file=sys.stderr,
         )
         sys.exit(2)
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         for line in f:
             if not line.strip():
                 continue
@@ -309,7 +309,7 @@ def main():
 
     out_path = Path("reports/beta_alpha_audit.json")
     out_path.parent.mkdir(exist_ok=True)
-    with open(out_path, "w") as f:
+    with open(out_path, "w", encoding="utf-8") as f:
         json.dump(result, f, indent=2)
     logger.info(f"\nSaved to {out_path}")
 

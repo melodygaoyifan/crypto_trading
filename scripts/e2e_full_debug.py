@@ -825,7 +825,7 @@ def main():
         ["python", "-c",
          "import grep_check; print('skip')"],
         capture_output=True, text=True, cwd=os.path.dirname(os.path.dirname(__file__)),
-    )
+    encoding="utf-8")
     # Manual check instead
     print("\n[INV] DRL safety invariants...")
     new_files = [
@@ -839,7 +839,7 @@ def main():
     for f in new_files:
         fpath = os.path.join(root, f)
         if os.path.exists(fpath):
-            content = open(fpath).read()
+            content = open(fpath, encoding="utf-8").read()
             check(f"INV: {f} no obs_dim", "obs_dim" not in content)
             check(f"INV: {f} no feature_manifest", "feature_manifest" not in content)
         else:
@@ -849,7 +849,7 @@ def main():
     for f in new_files:
         fpath = os.path.join(root, f)
         if os.path.exists(fpath):
-            content = open(fpath).read()
+            content = open(fpath, encoding="utf-8").read()
             # Check for veto_active=True (actual veto implementation)
             has_veto_impl = "veto_active=True" in content or "veto_active = True" in content
             check(f"INV: {f} no veto impl", not has_veto_impl)

@@ -28,7 +28,7 @@ cmd = [
 DETACHED_PROCESS = 0x00000008
 CREATE_NEW_PROCESS_GROUP = 0x00000200
 
-with open(LOG_OUT, "w") as f_out, open(LOG_ERR, "w") as f_err:
+with open(LOG_OUT, "w", encoding="utf-8") as f_out, open(LOG_ERR, "w", encoding="utf-8") as f_err:
     proc = subprocess.Popen(
         cmd,
         stdout=f_out,

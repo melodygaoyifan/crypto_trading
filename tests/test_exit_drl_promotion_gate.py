@@ -51,7 +51,7 @@ def test_ledger_close_without_open_returns_none(tmp_path):
     out = ledger.record_close("BTC", 100.0, "stop_loss", -50.0)
     assert out is None
     assert not (tmp_path / "ledger.jsonl").exists() or \
-        (tmp_path / "ledger.jsonl").read_text() == ""
+        (tmp_path / "ledger.jsonl").read_text(encoding="utf-8") == ""
 
 
 def test_ledger_predict_without_open_is_noop(tmp_path):
@@ -95,7 +95,7 @@ def _write_validator(path: Path, asset: str, sharpe_lift: float, mean_pnl_lift: 
         "drl": {"sharpe": 0.5, "mean_pnl_bps": 100.0},
         "baseline": {"sharpe": 0.4, "mean_pnl_bps": 80.0},
         "lift_pct": {"sharpe": sharpe_lift, "mean_pnl_bps": mean_pnl_lift},
-    }))
+    }), encoding="utf-8")
 
 
 def _write_shadow_log(path: Path, days_ago: float):

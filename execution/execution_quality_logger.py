@@ -576,7 +576,7 @@ class ExecutionQualityLogger:
             
             # 追加写入
             records_to_write = list(self._records)[-self.config.flush_interval_records:]
-            with open(filepath, "a") as f:
+            with open(filepath, "a", encoding="utf-8") as f:
                 for record in records_to_write:
                     f.write(json.dumps(record.to_dict()) + "\n")
             
@@ -598,7 +598,7 @@ class ExecutionQualityLogger:
                 continue
             
             try:
-                with open(filepath, "r") as f:
+                with open(filepath, "r", encoding="utf-8") as f:
                     for line in f:
                         if line.strip():
                             d = json.loads(line)

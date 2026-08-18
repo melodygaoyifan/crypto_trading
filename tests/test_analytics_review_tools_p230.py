@@ -28,7 +28,7 @@ def _run_tool(rel, args, cwd):
     env = dict(os.environ, PYTHONPATH=str(REPO), PYTHONIOENCODING="utf-8")
     return subprocess.run(
         [sys.executable, "-X", "utf8", str(REPO / rel), *args],
-        cwd=cwd, env=env, capture_output=True, text=True, timeout=120)
+        cwd=cwd, env=env, capture_output=True, text=True, timeout=120, encoding="utf-8")
 
 
 class TestRefusals:
@@ -51,7 +51,7 @@ class TestRefusals:
         now = time.time()
         f.write_text("\n".join(
             json.dumps({"ts": now - i * 14400, "equity_usd": 3800.0})
-            for i in range(3)))
+            for i in range(3)), encoding="utf-8")
         r = _run_tool("analytics/sleeve_attribution/sleeve_beta_review.py",
                       ["--pnl-file", str(f)], tmp_path)
         assert r.returncode == 2

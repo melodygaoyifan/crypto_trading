@@ -74,7 +74,7 @@ def is_alive(pid: int) -> bool:
             result = subprocess.run(
                 ["tasklist", "/FI", f"PID eq {pid}"],
                 capture_output=True, text=True, timeout=10
-            )
+            , encoding="utf-8")
             return str(pid) in result.stdout
         except Exception:
             return False
@@ -152,11 +152,11 @@ def restart_process():
                  "Where-Object { $_.CommandLine -match 'main.py.*live' } | "
                  "ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"],
                 capture_output=True, text=True, timeout=15
-            )
+            , encoding="utf-8")
         else:
             # Linux: pkill matches against full command line with -f
             _sp.run(["pkill", "-9", "-f", "main.py.*live"],
-                    capture_output=True, text=True, timeout=15)
+                    capture_output=True, text=True, timeout=15, encoding="utf-8")
         log(f"Killed all live processes")
         time.sleep(3)
     except Exception as e:
@@ -229,7 +229,7 @@ def check_orphan_processes() -> tuple[str, str]:
                  "(Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | "
                  "Where-Object { $_.CommandLine -match 'main.py.*live' }).Count"],
                 capture_output=True, text=True, timeout=10
-            )
+            , encoding="utf-8")
             count = int(result.stdout.strip() or "0")
             threshold = 2  # 2 = parent+child (normal Windows behavior)
         else:
@@ -237,7 +237,7 @@ def check_orphan_processes() -> tuple[str, str]:
             result = subprocess.run(
                 ["pgrep", "-cf", "main.py.*live"],
                 capture_output=True, text=True, timeout=10
-            )
+            , encoding="utf-8")
             count = int(result.stdout.strip() or "0")
             threshold = 1
         if count <= threshold:
@@ -253,7 +253,7 @@ def check_drl_state_file() -> tuple[str, str]:
     try:
         if not DRL_STATE_FILE.exists():
             return "SKIP", "no state file"
-        with open(DRL_STATE_FILE) as f:
+        with open(DRL_STATE_FILE, encoding="utf-8") as f:
             state = json.load(f)
         current = state.get("authority_level", "UNKNOWN")
         if _last_known_drl_level is None:

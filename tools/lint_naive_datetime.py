@@ -163,7 +163,7 @@ def _staged_paths() -> List[Path]:
         out = subprocess.check_output(
             ["git", "diff", "--cached", "--name-only", "--diff-filter=ACMR"],
             cwd=REPO_ROOT, text=True
-        )
+        , encoding="utf-8")
         return [REPO_ROOT / p for p in out.splitlines() if p.endswith(".py")]
     except (subprocess.CalledProcessError, FileNotFoundError):
         return []

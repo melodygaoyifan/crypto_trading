@@ -133,7 +133,7 @@ def run():
             "verdict": v,
         }
 
-    OUT.write_text(json.dumps(results, indent=2, default=str))
+    OUT.write_text(json.dumps(results, indent=2, default=str), encoding="utf-8")
     print(f"\n  saved: {OUT}")
     return results
 

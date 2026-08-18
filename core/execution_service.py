@@ -240,7 +240,7 @@ def _coinbase_get_routing():
             sf = os.path.join(os.environ.get("HMATS_DATA_DIR", "data"),
                               "coinbase_routing_state.json")
             if os.path.exists(sf):
-                with open(sf) as fh:
+                with open(sf, encoding="utf-8") as fh:
                     d = json.load(fh)
                 _CB_ROUTING.phase = CutoverPhase(d.get("phase", "PRE_PHASE_2"))
                 if d.get("coinbase_assets"):
@@ -2644,7 +2644,7 @@ async def execute_intent_v2(
             "expected_price": round(current_price, 4),
             "notional_usd": round(notional_usd, 2),
         }
-        with open("logs/fill_quality.jsonl", "a") as _fq_f:
+        with open("logs/fill_quality.jsonl", "a", encoding="utf-8") as _fq_f:
             _fq_f.write(_fq_json.dumps(_fq_entry) + "\n")
         logger.info(
             f"[FILL-QUALITY] {asset} {_fq_direction}: "

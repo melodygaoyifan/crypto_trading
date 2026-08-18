@@ -296,12 +296,12 @@ def main():
     total_cls = sum(len(v.get("classes", [])) for v in inv.values())
     total_fn = sum(len(v.get("functions", [])) for v in inv.values())
     print(f"Stage 1: {total_cls} classes, {total_fn} top-level functions")
-    (OUT / "inventory.json").write_text(json.dumps(inv, indent=2))
+    (OUT / "inventory.json").write_text(json.dumps(inv, indent=2), encoding="utf-8")
 
     hot = load_hot_path()
     print(f"Stage 2: hot-path source {len(hot):,} chars")
     results = hop_analysis(inv, hot)
-    (OUT / "wiring_analysis.json").write_text(json.dumps(results, indent=2))
+    (OUT / "wiring_analysis.json").write_text(json.dumps(results, indent=2), encoding="utf-8")
 
     flows = agent_signals_flow()
     flags = config_flags()
@@ -316,7 +316,7 @@ def main():
         "agent_signals_flow": flows,
         "config_flags": flags,
     }
-    (OUT / "final_report.json").write_text(json.dumps(final, indent=2))
+    (OUT / "final_report.json").write_text(json.dumps(final, indent=2), encoding="utf-8")
 
     print_report(summary, results, flows, flags)
     print(f"\nReports: {OUT}/inventory.json, wiring_analysis.json, final_report.json")

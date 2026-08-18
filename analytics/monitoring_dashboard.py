@@ -525,7 +525,7 @@ class JSONExporter:
         filename = f"dashboard_{snapshot.timestamp.strftime('%Y%m%d_%H%M%S')}.json"
         filepath = self.output_dir / filename
         
-        with open(filepath, 'w') as f:
+        with open(filepath, 'w', encoding="utf-8") as f:
             json.dump(snapshot.to_dict(), f, indent=2, default=str)
             
         return filepath
@@ -534,7 +534,7 @@ class JSONExporter:
         """Export to latest.json (overwrites)."""
         filepath = self.output_dir / "latest.json"
         
-        with open(filepath, 'w') as f:
+        with open(filepath, 'w', encoding="utf-8") as f:
             json.dump(snapshot.to_dict(), f, indent=2, default=str)
 
 
@@ -561,7 +561,7 @@ data_path = Path("logs/dashboard/latest.json")
 
 def load_data():
     if data_path.exists():
-        with open(data_path) as f:
+        with open(data_path, encoding="utf-8") as f:
             return json.load(f)
     return None
 

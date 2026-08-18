@@ -82,7 +82,7 @@ def test_a6_regime_confidence_default():
         #   agent_signals.get("regime_confidence", 0.5)
         # We test by grepping the source for the correct default.
         import re
-        with open(PROJECT_ROOT / "integration" / "integration_v36.py", "r") as f:
+        with open(PROJECT_ROOT / "integration" / "integration_v36.py", "r", encoding="utf-8") as f:
             src = f.read()
         matches = re.findall(r'regime_confidence["\'],\s*([\d.]+)', src)
         # All occurrences should be 0.5

@@ -325,7 +325,7 @@ def main():
             all_reports[asset] = {"asset": asset, "error": str(e)}
 
     out = REPORT_DIR / f"ic_report_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')}.json"
-    out.write_text(json.dumps(all_reports, indent=2, default=str))
+    out.write_text(json.dumps(all_reports, indent=2, default=str), encoding="utf-8")
     print(f"\nReport saved: {out}")
 
 

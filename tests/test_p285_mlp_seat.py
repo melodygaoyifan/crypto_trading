@@ -248,7 +248,7 @@ class TestCriterion:
             [sys.executable, "-X", "utf8",
              str(REPO / "scripts" / "mlp_seat_check.py"),
              "--today", "2026-09-01"],
-            capture_output=True, text=True, cwd=str(REPO))
+            capture_output=True, text=True, cwd=str(REPO), encoding="utf-8")
         assert r.returncode == 2 and "SUSPENDED" in r.stderr, (
             f"FRAGILE probe did not suspend the checker: rc={r.returncode} "
             f"{r.stdout} {r.stderr}")
@@ -259,7 +259,7 @@ class TestCriterion:
              str(REPO / "scripts" / "mlp_seat_check.py"),
              "--ledger-dir", str(tmp_path / "nowhere"),
              "--today", "2026-09-01"],
-            capture_output=True, text=True, cwd=str(REPO))
+            capture_output=True, text=True, cwd=str(REPO), encoding="utf-8")
         assert r.returncode == 2, (
             f"missing ledger must exit 2 (refusal), got {r.returncode}: "
             f"{r.stdout} {r.stderr}")

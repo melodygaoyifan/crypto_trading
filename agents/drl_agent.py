@@ -532,7 +532,7 @@ class DRLAgent:
                 cfg_path = os.path.join(base, cfg_name) if base else cfg_name
                 if os.path.exists(cfg_path):
                     try:
-                        with open(cfg_path, "r") as f:
+                        with open(cfg_path, "r", encoding="utf-8") as f:
                             self._stage9_config = json.load(f)
                         self.obs_dim = self._stage9_config.get("obs_dim", self.obs_dim)
                         self.n_stack = self._stage9_config.get("n_stack", self.n_stack)

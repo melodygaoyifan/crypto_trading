@@ -56,7 +56,7 @@ def _verify_test_kills_mutation(
         cmd = [sys.executable, "-X", "utf8", "-m", "pytest",
                f"tests/{test_module}.py::{test_class}" if test_class else f"tests/{test_module}.py",
                "-x", "--no-header", "-q"]
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=30, encoding="utf-8")
         # Mutation is "killed" if tests fail (returncode != 0)
         return r.returncode != 0, r.stdout + r.stderr
     finally:
@@ -200,7 +200,7 @@ class TestMutationAuditSummary:
         import subprocess
         cmd = [sys.executable, "-X", "utf8", "-m", "pytest",
                "tests/test_invariants_p111.py", "--collect-only", "-q"]
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=30, encoding="utf-8")
         assert r.returncode == 0, (
             f"test_invariants_p111.py failed collection: {r.stdout}"
             f"{r.stderr[:500]}"

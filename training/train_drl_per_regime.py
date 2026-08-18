@@ -303,7 +303,7 @@ class PerRegimeTrainer:
         # Step 5: Save manifest
         self._manifest["trained_at"] = datetime.now(timezone.utc).isoformat()
         manifest_path = self.output_dir / "regime_router_manifest.json"
-        with open(manifest_path, "w") as f:
+        with open(manifest_path, "w", encoding="utf-8") as f:
             json.dump(self._manifest, f, indent=2)
         logger.info(f"\n  Manifest saved: {manifest_path}")
 
@@ -753,7 +753,7 @@ def main():
     # Feature columns from manifest
     manifest_path = PROJECT_ROOT / "configs" / "feature_manifest.json"
     if manifest_path.exists():
-        with open(manifest_path) as f:
+        with open(manifest_path, encoding="utf-8") as f:
             manifest = json.load(f)
         feature_cols = [c for c in manifest["all_features"] if c in data.columns]
         no_scale = set(manifest.get("no_scale_features", []))

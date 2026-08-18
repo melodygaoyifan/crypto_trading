@@ -156,7 +156,7 @@ class TestV9P2ConfigAndWiring:
         import json
         cfg = {"dynamic_alpha_gate_enforce": True}
         p = tmp_path / "c.json"
-        p.write_text(json.dumps(cfg))
+        p.write_text(json.dumps(cfg), encoding="utf-8")
         parsed = m.ProductionConfig.from_file(p)
         assert parsed.dynamic_alpha_gate_enforce is True
 

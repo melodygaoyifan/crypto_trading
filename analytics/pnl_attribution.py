@@ -600,7 +600,7 @@ class PnLAttributionManager:
         try:
             self._persist_path.parent.mkdir(parents=True, exist_ok=True)
             
-            with open(self._persist_path, "a") as f:
+            with open(self._persist_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(attr.to_dict()) + "\n")
                 f.flush()  # [P37 2026-04-24] crash-safety — without flush, the
                 # last few records can be lost when the engine is killed.
@@ -615,7 +615,7 @@ class PnLAttributionManager:
                 "trades": [t.to_dict() for t in self._completed_trades],
                 "summary": self.get_summary().to_dict(),
             }
-            # [P37 2026-04-24] Was open(w)+json.dump → corrupt on crash.
+            # [P37 2026-04-24] Was open(w, encoding="utf-8")+json.dump → corrupt on crash.
             from core.state_persistence import save_state
             if save_state(path, data):
                 logger.info(f"Attribution: Persisted {len(self._completed_trades)} trades to {path}")

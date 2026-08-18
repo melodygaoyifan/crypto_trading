@@ -528,7 +528,7 @@ class ExplanationLogger:
             if self._daily_file:
                 self._daily_file.close()
             log_path = self.log_dir / f"explanations_{today.isoformat()}.jsonl"
-            self._daily_file = open(log_path, 'a')
+            self._daily_file = open(log_path, 'a', encoding="utf-8")
             self._current_date = today
             
         # Write as JSON line

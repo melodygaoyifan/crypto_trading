@@ -402,7 +402,7 @@ class AlertManager:
             if log_dir and not os.path.exists(log_dir):
                 os.makedirs(log_dir, exist_ok=True)
             
-            with open(self.config.alert_log_file, 'a') as f:
+            with open(self.config.alert_log_file, 'a', encoding="utf-8") as f:
                 f.write(json.dumps(alert.to_dict()) + "\n")
             
             alert.channels_sent.append(AlertChannel.FILE)

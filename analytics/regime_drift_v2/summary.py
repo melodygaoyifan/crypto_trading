@@ -93,5 +93,5 @@ print("=" * 84)
 for asset, agg in aggregate.items():
     print(f"  {asset}: score={agg['score']:>3d}  {agg['severity']}")
 
-(OUT_DIR / 'summary.json').write_text(json.dumps(aggregate, indent=2))
+(OUT_DIR / 'summary.json').write_text(json.dumps(aggregate, indent=2), encoding="utf-8")
 print(f"\n  Saved: {OUT_DIR / 'summary.json'}")

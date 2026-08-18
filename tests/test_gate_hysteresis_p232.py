@@ -220,7 +220,7 @@ class TestSlopeCalibrator:
             [sys.executable, "-X", "utf8",
              str(REPO / "analytics" / "calibration" / "slope_calibrator.py"),
              "--log-dir", str(tmp_path / "nope")],
-            cwd=tmp_path, env=env, capture_output=True, text=True, timeout=120)
+            cwd=tmp_path, env=env, capture_output=True, text=True, timeout=120, encoding="utf-8")
         assert r.returncode == 2
         assert "REFUSING TO REPORT" in r.stderr
 
@@ -302,7 +302,7 @@ class TestTripwireActuatorAndChecker:
             [sys.executable, "-X", "utf8",
              str(REPO / "analytics" / "calibration" / "tripwire_check.py"),
              "--reports-dir", str(d), "--today", today],
-            capture_output=True, text=True, timeout=60, env=env)
+            capture_output=True, text=True, timeout=60, env=env, encoding="utf-8")
 
     def test_no_reports_is_a_refusal_not_a_not_fired(self, tmp_path):
         r = self._run(tmp_path, "2026-09-01")

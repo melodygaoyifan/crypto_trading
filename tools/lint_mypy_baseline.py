@@ -71,7 +71,7 @@ def mypy_version() -> str:
     r = subprocess.run(
         [sys.executable, "-m", "mypy", "--version"],
         capture_output=True, text=True, cwd=REPO,
-    )
+    encoding="utf-8")
     out = (r.stdout + r.stderr).strip()
     if r.returncode != 0 and "No module named mypy" in out:
         raise MypyUnavailable(sys.executable)
@@ -92,7 +92,7 @@ def run_mypy(paths: List[str]) -> str:
         *paths,
     ]
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, cwd=REPO)
+        r = subprocess.run(cmd, capture_output=True, text=True, cwd=REPO, encoding="utf-8")
     except FileNotFoundError:
         # [P159] Unreachable in practice: the executable is sys.executable,
         # which by definition exists. Kept only for the pathological case.

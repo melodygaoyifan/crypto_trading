@@ -410,7 +410,7 @@ if gmm_model_path.exists() and gmm_config_path.exists():
         gmm_model = joblib.load(gmm_model_path)
         check("GMM model loaded via joblib", True)
 
-        with open(gmm_config_path) as f:
+        with open(gmm_config_path, encoding="utf-8") as f:
             cfg = json.load(f)
 
         gmm_regime_names = cfg.get("regime_names", [])

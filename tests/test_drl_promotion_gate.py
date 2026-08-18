@@ -73,13 +73,13 @@ class TestInitialization:
             "authority_level": "ACTIVE",
             "peak_equity": 100.0,
             "current_equity": 80.0,
-        }))
+        }), encoding="utf-8")
         g = DRLPromotionGate(state_file=str(state_file))
         assert g.get_authority_level() == "ACTIVE"
 
     def test_invalid_persisted_level_falls_back_to_disabled(self, tmp_path):
         state_file = tmp_path / "corrupt.json"
-        state_file.write_text(json.dumps({"authority_level": "BANANA"}))
+        state_file.write_text(json.dumps({"authority_level": "BANANA"}), encoding="utf-8")
         g = DRLPromotionGate(state_file=str(state_file))
         assert g.get_authority_level() == "DISABLED"
 
@@ -102,7 +102,7 @@ class TestInitialization:
                 {"timestamp": "2026-04-19T08:00:00+00:00",
                  "from": "ACTIVE", "to": "EXIT_ONLY", "reason": "test"},
             ],
-        }))
+        }), encoding="utf-8")
         g = DRLPromotionGate(state_file=str(state_file))
         # Must not raise TypeError
         level = g.get_authority_level()

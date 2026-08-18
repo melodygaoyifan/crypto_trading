@@ -135,7 +135,7 @@ def test_picks_newest_file_per_asset(tmp_path):
     diag_dir = tmp_path / "diagnostics"
     diag_dir.mkdir()
     for ts, exp in (("2026-08-04T04-00-00", 0.0), ("2026-08-04T12-00-00", 0.25)):
-        (diag_dir / f"diag_SOL_{ts}.json").write_text(json.dumps(_diag(exposure=exp)))
+        (diag_dir / f"diag_SOL_{ts}.json").write_text(json.dumps(_diag(exposure=exp)), encoding="utf-8")
 
     found = wnt.load_latest_diags(str(tmp_path), 1)
     assert list(found) == ["SOL"]
@@ -145,7 +145,7 @@ def test_picks_newest_file_per_asset(tmp_path):
 
 def test_sticky_halt_is_surfaced(tmp_path):
     (tmp_path / "coinbase_sleeve_state.json").write_text(json.dumps(
-        {"sleeve_start_equity": 3997.75, "halted": True, "halt_reason": "dd"}))
+        {"sleeve_start_equity": 3997.75, "halted": True, "halt_reason": "dd"}), encoding="utf-8")
     out = "\n".join(wnt.sleeve_and_routing(str(tmp_path)))
     assert "STICKY HALT" in out
 
@@ -166,7 +166,7 @@ def test_main_reports_the_blocker_end_to_end(tmp_path, monkeypatch, capsys):
     diag_dir = tmp_path / "diagnostics"
     diag_dir.mkdir()
     (diag_dir / "diag_SOL_2026-08-04T12-00-00.json").write_text(
-        json.dumps(_diag(direction=0.42, exposure=0.0)))
+        json.dumps(_diag(direction=0.42, exposure=0.0)), encoding="utf-8")
     monkeypatch.setattr("sys.argv", ["why_no_trade.py", "--data-dir", str(tmp_path)])
     assert wnt.main() == 0
     out = capsys.readouterr().out

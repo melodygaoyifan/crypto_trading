@@ -154,7 +154,7 @@ def test_rebuild_pipeline_does_not_import_the_leaky_form():
     # Strip comments: the fix documents the old call by name, and a naive
     # substring check would match that prose instead of live code.
     code = "\n".join(
-        line.split("#", 1)[0] for line in src.read_text().splitlines()
+        line.split("#", 1)[0] for line in src.read_text(encoding="utf-8").splitlines()
     )
 
     assert "wavelet_denoise_causal(raw_vals)" in code, (
@@ -171,7 +171,7 @@ def test_denoise_columns_still_match_the_runtime_map():
     from pathlib import Path
 
     src = Path(__file__).resolve().parents[1] / "data_mgmt" / "market_data_pipeline.py"
-    text = src.read_text()
+    text = src.read_text(encoding="utf-8")
     for src_col, dst_col in DENOISE_COLUMNS.items():
         assert f'"{src_col}": "{dst_col}"' in text, (
             f"runtime denoise map is missing {src_col} -> {dst_col}; training "

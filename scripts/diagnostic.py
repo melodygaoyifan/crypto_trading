@@ -82,7 +82,7 @@ def test_configuration():
     
     # Load and validate config
     try:
-        with open(config_path) as f:
+        with open(config_path, encoding="utf-8") as f:
             config = json.load(f)
         log_pass("config_parse", "JSON valid")
     except json.JSONDecodeError as e:

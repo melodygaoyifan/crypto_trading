@@ -51,5 +51,5 @@ for asset in ASSETS:
 
 OUT = Path('/tmp/hmats_audit/regime_drift_v2/test4_apple_to_apple.json')
 OUT.parent.mkdir(parents=True, exist_ok=True)
-with OUT.open('w') as f: json.dump(results, f, indent=2, default=str)
+with OUT.open('w', encoding="utf-8") as f: json.dump(results, f, indent=2, default=str)
 print(f"\n  Saved: {OUT}")

@@ -103,7 +103,7 @@ class TestCoverageRefusal:
         pres["f3"] = False   # one uncovered feature
         s.tick({"BTC": feats}, {"BTC": pres})
         rec = json.loads((tmp_path / "mlpshadow_BTC.jsonl")
-                         .read_text().splitlines()[-1])
+                         .read_text(encoding="utf-8").splitlines()[-1])
         assert rec["direction"] == 0.0 and rec["confidence"] == 0.0
         assert "f3" in str(rec["coverage_note"]), (
             "a coverage gap must record flat WITH the missing names — a "
@@ -120,7 +120,7 @@ class TestCoverageRefusal:
         pres = {f"f{i}": True for i in range(5)}
         s.tick({"BTC": feats}, {"BTC": pres})
         rec = json.loads((tmp_path / "mlpshadow_BTC.jsonl")
-                         .read_text().splitlines()[-1])
+                         .read_text(encoding="utf-8").splitlines()[-1])
         assert rec["direction"] in (-1.0, 0.0, 1.0)
         assert rec["confidence"] == abs(rec["direction"])  # P236/P224
 

@@ -348,7 +348,7 @@ class TestTheCounterfactualRefusesEmptyInput:
             [sys.executable, str(COUNTERFACTUAL)],
             env={"PATH": "/usr/bin:/bin", "HMATS_LOG_DIR": str(tmp_path / "nope")},
             capture_output=True, text=True, timeout=120, cwd=str(REPO_ROOT),
-        )
+        encoding="utf-8")
         assert r.returncode != 0, (
             "the counterfactual still produces a report with no input")
         assert "P183" in (r.stdout + r.stderr)
@@ -359,7 +359,7 @@ class TestTheCounterfactualRefusesEmptyInput:
             [sys.executable, str(COUNTERFACTUAL)],
             env={"PATH": "/usr/bin:/bin", "HMATS_LOG_DIR": str(tmp_path)},
             capture_output=True, text=True, timeout=120, cwd=str(REPO_ROOT),
-        )
+        encoding="utf-8")
         assert r.returncode != 0
         assert "no signals_" in (r.stdout + r.stderr)
 

@@ -274,7 +274,7 @@ class VerifySuite:
             
             # Save report
             report_path = self.output_dir / "walkforward_report.json"
-            with open(report_path, 'w') as f:
+            with open(report_path, 'w', encoding="utf-8") as f:
                 json.dump(result.details, f, indent=2)
             
             logger.info(f"Walk-forward: {result.status} (score={result.score:.2f})")
@@ -360,7 +360,7 @@ class VerifySuite:
             
             # Save report
             report_path = self.output_dir / "statistical_gate_report.json"
-            with open(report_path, 'w') as f:
+            with open(report_path, 'w', encoding="utf-8") as f:
                 json.dump(result.details, f, indent=2)
             
             logger.info(f"Statistical gate: {result.status} (confidence={result.score:.2f})")
@@ -447,7 +447,7 @@ class VerifySuite:
             
             # Save report
             report_path = self.output_dir / "extreme_diagnostic_report.json"
-            with open(report_path, 'w') as f:
+            with open(report_path, 'w', encoding="utf-8") as f:
                 json.dump(result.details, f, indent=2)
             
             logger.info(f"Extreme diagnostic: {result.status} ({passed}/{len(scenarios)} passed)")
@@ -522,7 +522,7 @@ class VerifySuite:
             
             # Save report
             report_path = self.output_dir / "lob_replay_report.json"
-            with open(report_path, 'w') as f:
+            with open(report_path, 'w', encoding="utf-8") as f:
                 json.dump(result.details, f, indent=2)
             
             logger.info(f"LOB replay: {result.status} (fill_rate={result.score:.2f})")
@@ -571,7 +571,7 @@ class VerifySuite:
 
             # Save report
             report_path = self.output_dir / "v32_invariants_report.json"
-            with open(report_path, 'w') as f:
+            with open(report_path, 'w', encoding="utf-8") as f:
                 json.dump(result.details, f, indent=2)
 
             logger.info(
@@ -700,12 +700,12 @@ class VerifySuite:
         
         # Write summary
         summary_path = self.output_dir / "summary.md"
-        with open(summary_path, 'w') as f:
+        with open(summary_path, 'w', encoding="utf-8") as f:
             f.write(summary)
         
         # Write JSON result
         result_path = self.output_dir / "result.json"
-        with open(result_path, 'w') as f:
+        with open(result_path, 'w', encoding="utf-8") as f:
             json.dump(self.result.to_dict(), f, indent=2)
 
 
@@ -756,7 +756,7 @@ Examples:
     # Load config if provided
     config = None
     if args.config:
-        with open(args.config) as f:
+        with open(args.config, encoding="utf-8") as f:
             config = json.load(f)
     
     # Create suite

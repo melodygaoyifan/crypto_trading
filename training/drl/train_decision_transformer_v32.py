@@ -150,7 +150,7 @@ def load_feature_manifest(path: str = "configs/feature_manifest.json") -> Dict[s
         manifest_path = script_dir / path
     if not manifest_path.exists():
         raise FileNotFoundError(f"Feature manifest not found: {path}")
-    with open(manifest_path) as f:
+    with open(manifest_path, encoding="utf-8") as f:
         manifest = json.load(f)
     assert len(manifest["all_features"]) == manifest["total_feature_count"] == 122, \
         f"Feature manifest mismatch: {len(manifest['all_features'])} != 122"
@@ -463,7 +463,7 @@ class FeatureEngineerV32:
                   Path("models/regime_classifier/gmm_config.json")]:
             if p.exists():
                 try:
-                    with open(p) as f:
+                    with open(p, encoding="utf-8") as f:
                         names = json.load(f).get("regime_names", [])
                     if names and len(names) == 6:
                         FeatureEngineerV32._gmm_regime_names_cache = names

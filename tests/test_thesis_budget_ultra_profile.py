@@ -430,7 +430,7 @@ class TestRealUltraConfig:
         """configs/ultra_aggressive_5y.json must contain thesis_budget section."""
         path = Path("configs/ultra_aggressive_5y.json")
         assert path.exists()
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
         tb = data["thesis_budget"]
         assert tb["loss_budget_pct_nav"] == 0.025

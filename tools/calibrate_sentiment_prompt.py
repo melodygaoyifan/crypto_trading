@@ -398,7 +398,7 @@ async def run_calibrate(args):
 
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, "w") as f:
+    with open(output_path, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=2)
 
     logger.info(f"Calibration report saved to {output_path}")

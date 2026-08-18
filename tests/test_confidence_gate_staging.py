@@ -298,7 +298,7 @@ class TestConfigRoundTrip:
         json_path = Path("configs/ultra_aggressive_5y.json")
         if not json_path.exists():
             pytest.skip("ultra_aggressive_5y.json not found")
-        with open(json_path) as f:
+        with open(json_path, encoding="utf-8") as f:
             data = json.load(f)
         cg = data.get("confidence_gate")
         assert cg is not None
@@ -315,7 +315,7 @@ class TestConfigRoundTrip:
         json_path = Path("configs/cloud_production.json")
         if not json_path.exists():
             pytest.skip("cloud_production.json not found")
-        with open(json_path) as f:
+        with open(json_path, encoding="utf-8") as f:
             data = json.load(f)
         assert data.get("confidence_gate") is None
 

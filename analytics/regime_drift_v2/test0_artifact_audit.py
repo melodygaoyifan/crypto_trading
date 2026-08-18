@@ -84,6 +84,6 @@ for asset in ASSETS:
         s_str = f"{sc:+6.1f}%" if sc is not None else "  N/A"
         print(f"      {s['feature']:<30} mean={m_str}  scale={s_str}")
 
-with OUT.open('w') as f:
+with OUT.open('w', encoding="utf-8") as f:
     json.dump(results, f, indent=2, default=str)
 print(f"\n  Saved: {OUT}")

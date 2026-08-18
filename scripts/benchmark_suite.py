@@ -130,7 +130,7 @@ def load_asset_data(asset: str) -> pd.DataFrame:
             PROJECT_ROOT / "models" / "regime_classifier" / asset / "gmm_config.json"
         )
         if gmm_cfg_path.exists():
-            with open(gmm_cfg_path) as f:
+            with open(gmm_cfg_path, encoding="utf-8") as f:
                 gmm_cfg = json.load(f)
             rmap = gmm_cfg.get("regime_mapping", {})
             df["regime_name"] = df["regime"].astype(str).map(rmap).fillna("UNKNOWN")

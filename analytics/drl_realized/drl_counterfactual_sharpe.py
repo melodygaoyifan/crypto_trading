@@ -85,7 +85,7 @@ def parse_ts(s):
 # Promoted to logged + counted so operator can see corruption rate.
 _parse_errors = {"trades_json": 0, "signals_json": 0, "ts_parse": 0}
 trades = []
-with open(TRADES) as f:
+with open(TRADES, encoding="utf-8") as f:
     for line in f:
         try:
             t = json.loads(line)
@@ -97,7 +97,7 @@ with open(TRADES) as f:
 # Build signal lookup index: per (asset, day) → list of (ts, drl_dir, drl_conf)
 sig_idx = defaultdict(list)
 for sig_file in sorted(SIG_DIR.glob("signals_*.jsonl")):
-    with open(sig_file) as f:
+    with open(sig_file, encoding="utf-8") as f:
         for line in f:
             try:
                 rec = json.loads(line)

@@ -59,7 +59,7 @@ def fix_drl_imports():
         print("  [WARN]️ drl/train_drl_v55.py 不存在")
         return
     
-    content = drl_file.read_text()
+    content = drl_file.read_text(encoding="utf-8")
     original = content
     
     replacements = [
@@ -74,7 +74,7 @@ def fix_drl_imports():
             print(f"  修复: {old} -> {new}")
     
     if content != original:
-        drl_file.write_text(content)
+        drl_file.write_text(content, encoding="utf-8")
         print("  ON DRL v5.5 导入已修复")
     else:
         print("  ON DRL v5.5 导入已正确")

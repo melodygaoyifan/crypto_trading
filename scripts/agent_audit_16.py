@@ -71,7 +71,7 @@ SKIPPED_MATRIX_AGENTS = {
 def _safe_load_jsonl(path: Path) -> List[dict]:
     out: List[dict] = []
     try:
-        with open(path, "r", errors="ignore") as fh:
+        with open(path, "r", errors="ignore", encoding="utf-8") as fh:
             for line in fh:
                 line = line.strip()
                 if not line:
@@ -268,7 +268,7 @@ def dim5_ghost(attr_dir: Path, days: int, fusion_src: Path) -> None:
     matrix: Dict[str, str] = {}
     if fusion_src.exists():
         try:
-            src = fusion_src.read_text(errors="ignore")
+            src = fusion_src.read_text(errors="ignore", encoding="utf-8")
             m = re.search(r"AUTHORITY_MATRIX_NORMAL\s*=\s*\{(.*?)\n\}", src, re.DOTALL)
             if m:
                 for name, auth in re.findall(r'["\']([a-z_]+)["\']\s*:\s*Authority\.(\w+)', m.group(1)):

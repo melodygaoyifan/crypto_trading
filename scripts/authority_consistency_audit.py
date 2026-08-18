@@ -102,7 +102,7 @@ def _detect_grep_mode() -> str:
             r = subprocess.run(
                 ["git", "grep", "-l", mode, probe],
                 capture_output=True, text=True, cwd=REPO_ROOT,
-            )
+            encoding="utf-8")
         except FileNotFoundError:
             break
         if r.returncode == 0 and "authority_consistency_audit.py" in r.stdout:
@@ -139,7 +139,7 @@ def _git_grep(pattern: str, files_only: bool = False) -> list[str]:
     if files_only:
         args = ["git", "grep", "-l", mode, pattern]
     try:
-        r = subprocess.run(args, capture_output=True, text=True, cwd=REPO_ROOT)
+        r = subprocess.run(args, capture_output=True, text=True, cwd=REPO_ROOT, encoding="utf-8")
     except FileNotFoundError:
         return []
     if r.returncode > 1:

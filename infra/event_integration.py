@@ -428,7 +428,7 @@ class TickLogBuilder:
         
         # Save to file
         log_file = self.log_dir / f"{self._current_tick.tick_id}.json"
-        with open(log_file, 'w') as f:
+        with open(log_file, 'w', encoding="utf-8") as f:
             json.dump(tick_data, f, indent=2, default=str)
             
         logger.info(f"[TICK] Finalized: {self._current_tick.tick_id} -> {log_file}")

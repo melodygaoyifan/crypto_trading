@@ -77,7 +77,7 @@ def main():
 
     for asset in ["BTC", "ETH", "SOL"]:
         # Load model + config
-        with open(base / asset / "gmm_config.json") as f:
+        with open(base / asset / "gmm_config.json", encoding="utf-8") as f:
             cfg = json.load(f)
         model = joblib.load(base / asset / "gmm_model.pkl")
         scaler_mean = np.array(cfg["scaler_mean"])

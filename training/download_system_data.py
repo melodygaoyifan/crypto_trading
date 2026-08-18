@@ -320,7 +320,7 @@ class SystemDataDownloader:
         
         # 保存更新时间戳
         timestamp_file = self.output_dir / 'last_update.txt'
-        with open(timestamp_file, 'w') as f:
+        with open(timestamp_file, 'w', encoding="utf-8") as f:
             f.write(datetime.now().isoformat())
         
         return results

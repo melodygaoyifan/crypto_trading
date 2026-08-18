@@ -100,7 +100,7 @@ class RuntimeObsBuilder:
         if not self._manifest_path.exists():
             logger.warning(f"[ObsBuilder] Manifest not found: {self._manifest_path}")
             return
-        with open(self._manifest_path) as f:
+        with open(self._manifest_path, encoding="utf-8") as f:
             manifest = json.load(f)
         self._all_features = manifest.get("all_features", [])
         self._base_features = manifest.get("base_features", [])

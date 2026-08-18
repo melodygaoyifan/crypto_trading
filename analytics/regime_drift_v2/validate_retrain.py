@@ -132,7 +132,7 @@ try:
     assert model_path.exists(), f"missing {model_path}"
     assert scaler_path.exists(), f"missing {scaler_path}"
 
-    with open(config_path) as f:
+    with open(config_path, encoding="utf-8") as f:
         cfg = json.load(f)
     # main.py expects: scaler_mean, scaler_scale, regime_names, feature_cols
     required_keys = ['scaler_mean', 'scaler_scale', 'regime_names', 'feature_cols', 'n_components']
@@ -234,7 +234,7 @@ for name, p in checks:
     print(f"    {sym} {name}")
 print("=" * 72)
 
-with OUT.open('w') as f:
+with OUT.open('w', encoding="utf-8") as f:
     json.dump(results, f, indent=2, default=str)
 print(f"\n  Saved: {OUT}")
 

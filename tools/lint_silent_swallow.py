@@ -99,7 +99,7 @@ def _staged_py_files() -> List[Path]:
         r = subprocess.run(
             ["git", "diff", "--cached", "--name-only", "--diff-filter=ACM"],
             capture_output=True, text=True, cwd=REPO,
-        )
+        encoding="utf-8")
     except FileNotFoundError:
         return []
     if r.returncode != 0:

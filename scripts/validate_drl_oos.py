@@ -128,7 +128,7 @@ def run(asset: str) -> dict:
     df = df.sort_values("timestamp").reset_index(drop=True)
     val = df.iloc[int(len(df) * 0.85):].reset_index(drop=True)
 
-    manifest = json.load(open(_proj / "configs/feature_manifest.json"))
+    manifest = json.load(open(_proj / "configs/feature_manifest.json", encoding="utf-8"))
     all_features = manifest["all_features"]
     assert len(all_features) == 122
 

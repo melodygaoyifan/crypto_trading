@@ -99,7 +99,7 @@ class CloudConfig:
         
         # Load base config file
         if config_path.exists():
-            with open(config_path) as f:
+            with open(config_path, encoding="utf-8") as f:
                 config._raw_config = json.load(f)
             logger.info(f"Loaded config from {config_path}")
         else:

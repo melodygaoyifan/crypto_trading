@@ -78,7 +78,7 @@ def test_baseline_format_emits_unavailable_sentinel_not_zero():
         [sys.executable, "-X", "utf8", "tools/lint_mypy_baseline.py",
          "--baseline-format"],
         capture_output=True, text=True, cwd=REPO,
-    )
+    encoding="utf-8")
     assert r.returncode == 0, r.stderr
     payload = json.loads(r.stdout)
     if "unavailable" in payload:
@@ -125,7 +125,7 @@ def test_baseline_format_stamps_the_analyzer_version():
         [sys.executable, "-X", "utf8", "tools/lint_mypy_baseline.py",
          "--baseline-format"],
         capture_output=True, text=True, cwd=REPO,
-    )
+    encoding="utf-8")
     assert r.returncode == 0, r.stderr
     payload = json.loads(r.stdout)
     if "unavailable" not in payload:
@@ -156,7 +156,7 @@ def test_gate_does_not_report_phantom_findings_on_this_machine():
         [sys.executable, "-X", "utf8", "tools/ci_check_invariants.py",
          "--skip-mypy"],
         capture_output=True, text=True, cwd=REPO,
-    )
+    encoding="utf-8")
     assert r.returncode == 0, (
         f"deploy-path gate (--skip-mypy) failed:\n{r.stdout}\n{r.stderr}"
     )
@@ -166,7 +166,7 @@ def test_ci_check_never_writes_a_zero_mypy_baseline(tmp_path):
     """The committed baseline must retain its real count after a gate run on
     a machine where mypy may be missing."""
     baseline = json.loads(
-        (REPO / "tools/scanner_baselines/mypy_baseline.json").read_text()
+        (REPO / "tools/scanner_baselines/mypy_baseline.json").read_text(encoding="utf-8")
     )
     assert baseline["total_count"] > 0, (
         "mypy_baseline.json has been zeroed — this is the P159 corruption; "

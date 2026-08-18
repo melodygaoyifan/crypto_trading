@@ -279,7 +279,7 @@ class DRLPromotionGate:
             "trade_count": len(self._trade_history),
             "updated_at": datetime.now().isoformat(),
         }
-        # [P37 2026-04-24] Was open(w)+json.dump → corrupt on crash mid-write.
+        # [P37 2026-04-24] Was open(w, encoding="utf-8")+json.dump → corrupt on crash mid-write.
         # save_state() uses tempfile + os.replace for atomicity.
         from core.state_persistence import save_state
         if not save_state(self.state_file, state):
@@ -298,7 +298,7 @@ class DRLPromotionGate:
         """
         try:
             if self.state_file.exists():
-                with open(self.state_file, "r") as f:
+                with open(self.state_file, "r", encoding="utf-8") as f:
                     state = json.load(f)
                 self._authority_level = state.get("authority_level", "DISABLED")
                 if self._authority_level not in self.VALID_LEVELS:

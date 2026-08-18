@@ -190,7 +190,7 @@ class ImpactCalibrationTable:
             return
         
         try:
-            with open(self.config.calibration_file, "r") as f:
+            with open(self.config.calibration_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
             
             for bucket_key, entry_dict in data.get("entries", {}).items():
@@ -214,7 +214,7 @@ class ImpactCalibrationTable:
                 }
             }
             
-            # [P37 2026-04-24] Was open(w)+json.dump → corrupt on crash.
+            # [P37 2026-04-24] Was open(w, encoding="utf-8")+json.dump → corrupt on crash.
             from core.state_persistence import save_state
             if save_state(self.config.calibration_file, data):
                 logger.info(f"Saved {len(self._entries)} calibration entries")

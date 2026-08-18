@@ -322,7 +322,7 @@ def train(args):
 
     meta = {k: v for k, v in best_payload.items()
             if k not in ('actor_state_dict', 'critic_state_dict')}
-    (output_dir / 'exit_sac_best_meta.json').write_text(json.dumps(meta, indent=2))
+    (output_dir / 'exit_sac_best_meta.json').write_text(json.dumps(meta, indent=2), encoding="utf-8")
 
     print(
         f"\nSaved {ckpt_path}\n"

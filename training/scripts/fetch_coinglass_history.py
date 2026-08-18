@@ -431,7 +431,7 @@ def main(interval: str = INTERVAL):
     summary_path = OUTPUT_DIR / (
         "fetch_summary.json" if interval == "4h"
         else f"fetch_summary_{interval}.json")
-    with open(summary_path, "w") as f:
+    with open(summary_path, "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
     print(f"\n  Summary: {summary_path}")
 

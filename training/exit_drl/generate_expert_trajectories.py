@@ -357,7 +357,7 @@ def main():
         },
         'horizon_bars': LOOKAHEAD_BARS,
     }
-    (output_dir / f'{args.asset}_state_spec.json').write_text(json.dumps(spec, indent=2))
+    (output_dir / f'{args.asset}_state_spec.json').write_text(json.dumps(spec, indent=2), encoding="utf-8")
 
     print(f"Saved {output_file} ({dataset['observations'].shape[0]} transitions)")
 

@@ -385,7 +385,7 @@ class TestConfigFromJSON(unittest.TestCase):
         if not config_path.exists():
             self.skipTest("cloud_production.json not found")
 
-        with open(config_path) as f:
+        with open(config_path, encoding="utf-8") as f:
             data = json.load(f)
 
         block = data.get("allocation")

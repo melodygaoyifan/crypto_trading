@@ -50,7 +50,7 @@ class TestStartupS1DRLState:
         runner._drl_authority_level = "ACTIVE"
         state_file = Path("data/drl_promotion_state.json")
         if state_file.exists():
-            with open(state_file) as f:
+            with open(state_file, encoding="utf-8") as f:
                 state = json.load(f)
             if state.get("authority_level") == "ACTIVE":
                 v = StartupHealthValidator()

@@ -111,7 +111,7 @@ def main():
     logger.info(f"Resume Trial {TRIAL_NUM}: Evaluate 120K checkpoint")
     logger.info("=" * 60)
 
-    with open(MANIFEST_PATH) as f:
+    with open(MANIFEST_PATH, encoding="utf-8") as f:
         manifest = json.load(f)
     feature_cols = manifest["all_features"]
     no_scale = set(manifest.get("no_scale_features", []))

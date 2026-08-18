@@ -735,7 +735,7 @@ def retrain_gmm_per_asset(asset: str, gmm_features: np.ndarray, smooth: int = 2,
         "mean_confidence": float(max_probs.mean()),
         "bic_search": [{"k": k, "bic": b, "min_pct": p} for k, b, p in bic_results],
     }
-    with open(build_dir / "gmm_config.json", "w") as f:
+    with open(build_dir / "gmm_config.json", "w", encoding="utf-8") as f:
         json.dump(config_data, f, indent=2)
 
     logger.info(f"  GMM saved to {build_dir}/")
@@ -764,7 +764,7 @@ def load_existing_gmm_per_asset(asset: str):
             f"fit). Fix: run a split-aware per-asset fit (rebuild_pipeline "
             f"without --skip-gmm) or copy the P221 artifacts into place.")
 
-    with open(config_path) as f:
+    with open(config_path, encoding="utf-8") as f:
         config = json.load(f)
 
     gmm = joblib.load(model_path)
@@ -836,7 +836,7 @@ def generate_feature_manifest(base_features: list, output_path: Path,
     }
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, "w") as f:
+    with open(output_path, "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2)
 
     logger.info(f"  Feature manifest saved: {output_path}")
@@ -1136,7 +1136,7 @@ def main():
 
     # Save feature_cols.json (base features only, for backward compat)
     feat_cols_path = OUTPUT_DIR / "feature_cols.json"
-    with open(feat_cols_path, "w") as f:
+    with open(feat_cols_path, "w", encoding="utf-8") as f:
         json.dump(drl_feature_cols, f, indent=2)
 
     # Generate full manifest

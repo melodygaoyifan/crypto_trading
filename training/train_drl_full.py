@@ -322,7 +322,7 @@ def _load_regime_names(asset: str = None) -> list:
     for path in search_paths:
         if path.exists():
             try:
-                with open(path) as f:
+                with open(path, encoding="utf-8") as f:
                     config = json.load(f)
                 names = config.get("regime_names")
                 if names and len(names) >= 3:
@@ -1927,7 +1927,7 @@ class FullDRLTrainer:
                                 "decision_interval": inner_env._decision_interval,
                             }
                             friction_path = log_dir / "training_friction.json"
-                            with open(friction_path, "w") as f:
+                            with open(friction_path, "w", encoding="utf-8") as f:
                                 json.dump(friction_stats, f, indent=2)
                             logger.info(f"  Friction stats: cost=${friction_stats['cumulative_trade_cost']:.2f}, "
                                         f"trades={friction_stats['trade_count']}")
@@ -2268,7 +2268,7 @@ class FullDRLTrainer:
 
     def _save_results(self, summary: Dict):
         path = self.output_dir / "results.json"
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(summary, f, indent=2, default=str)
 
         logger.info("\n" + "=" * 70)
@@ -2897,7 +2897,7 @@ def run_optuna_tuning(
     }
 
     results_path = Path(output_dir) / asset / "optuna_results.json"
-    with open(results_path, "w") as f:
+    with open(results_path, "w", encoding="utf-8") as f:
         json.dump(results, f, indent=2, default=str)
 
     # === Print summary ===
@@ -3137,7 +3137,7 @@ def main():
         config_path = Path(args.config)
         if not config_path.is_absolute():
             config_path = PROJECT_ROOT / args.config
-        with open(config_path) as f:
+        with open(config_path, encoding="utf-8") as f:
             cfg = json.load(f)
         logger.info(f"  Loaded config: {config_path}")
 
@@ -3217,7 +3217,7 @@ def main():
     # Feature columns: load from manifest (preferred) or auto-detect fallback
     manifest_path = PROJECT_ROOT / "configs" / "feature_manifest.json"
     if manifest_path.exists():
-        with open(manifest_path) as f:
+        with open(manifest_path, encoding="utf-8") as f:
             manifest = json.load(f)
         feature_cols = [c for c in manifest["all_features"] if c in data.columns]
         no_scale = set(manifest.get("no_scale_features", []))
@@ -3265,7 +3265,7 @@ def main():
     output_dir = Path(args.output) / args.asset
     output_dir.mkdir(parents=True, exist_ok=True)
     fc_path = output_dir / "feature_cols.json"
-    with open(fc_path, "w") as f:
+    with open(fc_path, "w", encoding="utf-8") as f:
         json.dump(feature_cols, f, indent=2)
     logger.info(f"  Saved feature_cols: {fc_path}")
 

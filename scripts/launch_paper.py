@@ -43,7 +43,7 @@ def _read_pid() -> int | None:
     if not PID_FILE.exists():
         return None
     try:
-        data = json.loads(PID_FILE.read_text())
+        data = json.loads(PID_FILE.read_text(encoding="utf-8"))
         return data.get("pid")
     except (json.JSONDecodeError, KeyError):
         return None
@@ -76,7 +76,7 @@ def _is_alive(pid: int) -> bool:
             result = subprocess.run(
                 ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
                 capture_output=True, text=True, timeout=5,
-            )
+            encoding="utf-8")
             return str(pid) in result.stdout
         except Exception:
             return False
@@ -98,7 +98,7 @@ def _write_pid(pid: int, profile: str):
         "pid": pid,
         "started_at": started_at,
         "command": f"main.py --mode paper --risk-profile {profile}",
-    }, indent=2))
+    }, indent=2), encoding="utf-8")
 
 
 def _mark_manual_restart(action: str):
@@ -113,7 +113,7 @@ def _mark_manual_restart(action: str):
                 },
                 indent=2,
             )
-        )
+        , encoding="utf-8")
     except Exception:
         pass
 
@@ -315,7 +315,7 @@ def cmd_status():
     if alive:
         # Read PID file metadata
         try:
-            data = json.loads(PID_FILE.read_text())
+            data = json.loads(PID_FILE.read_text(encoding="utf-8"))
             started = data.get("started_at", "unknown")
             command = data.get("command", "")
         except Exception:
@@ -334,7 +334,7 @@ def cmd_status():
     pos_file = ROOT / "data" / "paper_positions.json"
     if pos_file.exists():
         try:
-            raw = json.loads(pos_file.read_text())
+            raw = json.loads(pos_file.read_text(encoding="utf-8"))
             if isinstance(raw, dict) and isinstance(raw.get("positions"), dict):
                 positions = raw.get("positions", {})
             elif isinstance(raw, dict):

@@ -322,7 +322,7 @@ class TestPersistence(unittest.TestCase):
         """
         with tempfile.TemporaryDirectory() as tmpdir:
             state_path = Path(tmpdir) / "recovery_state.json"
-            state_path.write_text("NOT VALID JSON {{{")
+            state_path.write_text("NOT VALID JSON {{{", encoding="utf-8")
             gate = _gate(state_path=state_path)
             self.assertTrue(
                 gate.has_active_halt,
@@ -417,7 +417,7 @@ class TestConfigFromJSON(unittest.TestCase):
         if not config_path.exists():
             self.skipTest("ultra_aggressive_5y.json not found")
 
-        with open(config_path) as f:
+        with open(config_path, encoding="utf-8") as f:
             data = json.load(f)
 
         cfg = AutoRecoveryConfig.from_dict(data.get("auto_recovery"))
@@ -491,7 +491,7 @@ class TestProductionConfigAutoRecovery(unittest.TestCase):
 
         # We need to test that from_file actually reads auto_recovery
         # Without importing the full main module (heavy), check JSON directly
-        with open(config_path) as f:
+        with open(config_path, encoding="utf-8") as f:
             data = json.load(f)
 
         ar = data.get("auto_recovery")
@@ -505,7 +505,7 @@ class TestProductionConfigAutoRecovery(unittest.TestCase):
         if not config_path.exists():
             self.skipTest("cloud_production.json not found")
 
-        with open(config_path) as f:
+        with open(config_path, encoding="utf-8") as f:
             data = json.load(f)
 
         ar = data.get("auto_recovery")

@@ -44,7 +44,7 @@ def _scan(path):
     r = subprocess.run(
         [sys.executable, "-X", "utf8", str(SCANNER), "--json", "--paths", str(path)],
         capture_output=True, text=True, cwd=str(REPO_ROOT),
-    )
+    encoding="utf-8")
     assert r.returncode in (0, 1), r.stderr
     return json.loads(r.stdout)
 
@@ -168,7 +168,7 @@ class TestTheCommittedBaselineMatchesReality:
     def test_baseline_equals_a_fresh_scan(self):
         r = subprocess.run(
             [sys.executable, "-X", "utf8", str(SCANNER), "--baseline-format"],
-            capture_output=True, text=True, cwd=str(REPO_ROOT))
+            capture_output=True, text=True, cwd=str(REPO_ROOT), encoding="utf-8")
         assert r.returncode == 0, r.stderr
         assert json.loads(r.stdout) == json.loads(
             BASELINE.read_text(encoding="utf-8")), (

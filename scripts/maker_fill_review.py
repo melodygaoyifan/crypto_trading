@@ -87,7 +87,7 @@ def read_lines(log_file: str | None) -> list:
          'grep "COINBASE-MAKER" '
          '/var/lib/docker/volumes/hmats-logs/_data/hmats.log; ec=$?; '
          'if [ $ec -ge 2 ]; then exit 4; fi; exit 0'],
-        capture_output=True, text=True, timeout=120)
+        capture_output=True, text=True, timeout=120, encoding="utf-8")
     if out.returncode == 4:
         print("REFUSING: the persistent server log could not be read "
               "(grep error — file missing/renamed/unreadable at "

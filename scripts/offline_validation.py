@@ -101,7 +101,7 @@ BULL_REGIMES = frozenset(["MOMENTUM_RALLY", "QUIET_ACCUMULATION"])
 # ============================================================================
 
 def load_feature_manifest() -> dict:
-    with open("configs/feature_manifest.json") as f:
+    with open("configs/feature_manifest.json", encoding="utf-8") as f:
         return json.load(f)
 
 

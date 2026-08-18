@@ -334,7 +334,7 @@ def diagnose_modules():
             result = subprocess.run(
                 [sys.executable, "-m", "py_compile", str(path)],
                 capture_output=True, text=True
-            )
+            , encoding="utf-8")
             if result.returncode == 0:
                 print_result(description, "ok", script)
             else:

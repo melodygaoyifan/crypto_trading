@@ -271,7 +271,7 @@ class TestConfigRoundTrip:
         json_path = Path("configs/ultra_aggressive_5y.json")
         if not json_path.exists():
             pytest.skip("ultra_aggressive_5y.json not found")
-        with open(json_path) as f:
+        with open(json_path, encoding="utf-8") as f:
             data = json.load(f)
         pa = data.get("passive_aggressive")
         assert pa is not None

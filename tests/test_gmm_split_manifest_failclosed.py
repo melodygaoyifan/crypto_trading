@@ -42,7 +42,7 @@ VALID_MANIFEST = {
 def _write_manifest(root, payload, dirname="configs"):
     target = root / dirname
     target.mkdir(parents=True, exist_ok=True)
-    (target / "split_manifest.json").write_text(json.dumps(payload))
+    (target / "split_manifest.json").write_text(json.dumps(payload), encoding="utf-8")
     return target
 
 
@@ -51,7 +51,7 @@ def test_reads_from_configs_not_config(tmp_path, monkeypatch):
     _write_manifest(tmp_path, VALID_MANIFEST, dirname="configs")
     # a decoy in the singular directory, as on disk today
     (tmp_path / "config").mkdir(parents=True, exist_ok=True)
-    (tmp_path / "config" / "optuna_winner.json").write_text("{}")
+    (tmp_path / "config" / "optuna_winner.json").write_text("{}", encoding="utf-8")
 
     monkeypatch.setattr(gmm, "PROJECT_ROOT", tmp_path)
     train_ends = gmm.load_split_manifest(fold=1)

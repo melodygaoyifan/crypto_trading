@@ -115,7 +115,7 @@ class StartupHealthValidator:
             if not state_file.exists():
                 return HealthCheck("S1", "DRL state consistency", "WARN",
                                    "No state file", "Bug #1")
-            with open(state_file) as f:
+            with open(state_file, encoding="utf-8") as f:
                 state = json.load(f)
             file_level = state.get("authority_level", "UNKNOWN")
             runtime_level = getattr(runner, '_drl_authority_level', "UNKNOWN")
@@ -279,14 +279,14 @@ class StartupHealthValidator:
                      "(Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | "
                      "Where-Object { $_.CommandLine -match 'main.py.*live' }).Count"],
                     capture_output=True, text=True, timeout=10
-                )
+                , encoding="utf-8")
                 count = int(result.stdout.strip() or "0")
             else:
                 # Linux: pgrep -cf counts processes whose full command line matches
                 result = subprocess.run(
                     ["pgrep", "-cf", "main.py.*live"],
                     capture_output=True, text=True, timeout=10
-                )
+                , encoding="utf-8")
                 count = int(result.stdout.strip() or "0")
             # count includes self (the running process), so 1 = healthy
             if count <= 1:

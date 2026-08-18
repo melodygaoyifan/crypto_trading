@@ -89,7 +89,7 @@ def run():
 
     if total_actions == 0:
         print("  [SKIP] No DRL action log lines found in any scanned log.")
-        OUT.write_text(json.dumps({"verdict": "NO_DATA_SKIP", "lines_scanned": total_lines_scanned}, indent=2))
+        OUT.write_text(json.dumps({"verdict": "NO_DATA_SKIP", "lines_scanned": total_lines_scanned}, indent=2), encoding="utf-8")
         return {"verdict": "NO_DATA_SKIP"}
 
     results = {"verdict_per_asset": {}, "lines_scanned": total_lines_scanned, "total_actions": total_actions}
@@ -121,7 +121,7 @@ def run():
             "verdict": v,
         }
 
-    OUT.write_text(json.dumps(results, indent=2, default=str))
+    OUT.write_text(json.dumps(results, indent=2, default=str), encoding="utf-8")
     print(f"\n  saved: {OUT}")
     return results
 

@@ -167,7 +167,7 @@ def write_outputs(per_asset_corr: Dict[str, pd.DataFrame], reports: Dict, out_di
         "per_asset": reports,
     }
     out_path = out_dir / f"agent_correlation_matrix_{sync_date}.json"
-    with open(out_path, "w") as f:
+    with open(out_path, "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
     print(f"[P131] Summary written: {out_path}")
     return out_path

@@ -279,7 +279,7 @@ class AutoRecoveryGate:
         if not self.state_path.exists():
             return HaltState()
         try:
-            with open(self.state_path) as f:
+            with open(self.state_path, encoding="utf-8") as f:
                 data = json.load(f)
             state = HaltState.from_dict(data)
             if state.is_active:
@@ -311,7 +311,7 @@ class AutoRecoveryGate:
         try:
             self.state_path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self.state_path.with_suffix(".tmp")
-            with open(tmp, "w") as f:
+            with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(self._state.to_dict(), f, indent=2)
             tmp.replace(self.state_path)
         except Exception as e:

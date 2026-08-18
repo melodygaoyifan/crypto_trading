@@ -25,7 +25,7 @@ def load_trades():
     if not path.exists():
         logger.error("No exit_alpha_tracking.jsonl found")
         return trades
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -305,7 +305,7 @@ def main():
     # Save
     out_path = Path("reports/validation_results.json")
     out_path.parent.mkdir(exist_ok=True)
-    with open(out_path, "w") as f:
+    with open(out_path, "w", encoding="utf-8") as f:
         json.dump(results, f, indent=2)
     logger.info(f"\nResults saved to {out_path}")
 

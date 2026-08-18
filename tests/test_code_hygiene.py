@@ -141,7 +141,7 @@ def test_p2_main_entrypoint():
             'main.py'
         )
         
-        with open(main_path, 'r') as f:
+        with open(main_path, 'r', encoding="utf-8") as f:
             main_content = f.read()
         
         # Check for canonical entrypoint marker
@@ -187,7 +187,7 @@ def test_p2_main_v36_protection():
             'main_v36.py'
         )
         
-        with open(main_v36_path, 'r') as f:
+        with open(main_v36_path, 'r', encoding="utf-8") as f:
             content = f.read()
         
         # Check for compatibility warning
@@ -287,7 +287,7 @@ def test_p3_decision_summary_sentiment():
             'core', 'runtime_spine.py'
         )
         
-        with open(spine_path, 'r') as f:
+        with open(spine_path, 'r', encoding="utf-8") as f:
             content = f.read()
         
         # Check for sentiment mode in decision summary

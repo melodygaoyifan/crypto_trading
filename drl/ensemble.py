@@ -383,7 +383,7 @@ def load_best_model(
     tqc_path = None
 
     if results_path.exists():
-        with open(results_path) as f:
+        with open(results_path, encoding="utf-8") as f:
             results = json.load(f)
         # [FIX 2026-04-24 P4-regression] BEST_FOLDS must override results.json.
         # results.json can report stale best_fold (e.g. ETH fold_1 with
@@ -409,7 +409,7 @@ def load_best_model(
     manifest_path = Path("configs/feature_manifest.json")
     feature_cols = None
     if manifest_path.exists():
-        with open(manifest_path) as f:
+        with open(manifest_path, encoding="utf-8") as f:
             manifest = json.load(f)
         feature_cols = manifest.get("all_features", [])
 

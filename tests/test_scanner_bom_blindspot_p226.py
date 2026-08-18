@@ -55,7 +55,7 @@ class TestScannersAreBomSafe:
         r = subprocess.run(
             [sys.executable, "-X", "utf8", str(_REPO / "tools" / "lint_silent_swallow.py"),
              "--json"],
-            capture_output=True, text=True, cwd=str(_REPO), timeout=600)
+            capture_output=True, text=True, cwd=str(_REPO), timeout=600, encoding="utf-8")
         data = json.loads(r.stdout)
         files = {str(f.get("file", "")).replace("\\", "/")
                  for f in (data.get("findings") or [])}

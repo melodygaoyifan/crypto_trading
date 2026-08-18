@@ -280,7 +280,7 @@ class TestPromotionGateHonorsPersistedLevel:
         import json as _json
         from drl.promotion_gate import DRLPromotionGate
         f = tmp_path / "state.json"
-        f.write_text(_json.dumps(payload))
+        f.write_text(_json.dumps(payload), encoding="utf-8")
         return DRLPromotionGate(state_file=str(f))
 
     def test_persisted_shadow_with_demoted_at_stays_shadow(self, tmp_path):
@@ -500,6 +500,6 @@ class TestBetaAuditRefusesLoudly:
             [_sys.executable, "-X", "utf8",
              str(REPO / "scripts" / "run_beta_audit.py")],
             cwd=tmp_path, env=env, capture_output=True, text=True, timeout=120,
-        )
+        encoding="utf-8")
         assert r.returncode == 2, (r.returncode, r.stderr[-300:])
         assert "REFUSING TO REPORT" in r.stderr

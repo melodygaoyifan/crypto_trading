@@ -64,7 +64,7 @@ def _load_state() -> dict:
     if not NONCE_STATE_PATH.exists():
         return {}
     try:
-        with open(NONCE_STATE_PATH) as f:
+        with open(NONCE_STATE_PATH, encoding="utf-8") as f:
             return json.load(f) or {}
     except Exception as e:
         print(f"  WARN  could not parse {NONCE_STATE_PATH}: {e}")
@@ -74,7 +74,7 @@ def _load_state() -> dict:
 def _save_state(state: dict) -> None:
     NONCE_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
     tmp = NONCE_STATE_PATH.with_suffix(".json.tmp")
-    with open(tmp, "w") as f:
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(state, f, separators=(",", ":"))
     os.replace(tmp, NONCE_STATE_PATH)
 

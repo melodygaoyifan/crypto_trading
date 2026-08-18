@@ -76,7 +76,7 @@ def main():
     for file_path, replacements in files_to_fix:
         path = Path(file_path)
         if path.exists():
-            content = path.read_text()
+            content = path.read_text(encoding="utf-8")
             modified = False
             
             for old, new in replacements:
@@ -86,7 +86,7 @@ def main():
                     modified = True
             
             if modified:
-                path.write_text(content)
+                path.write_text(content, encoding="utf-8")
             else:
                 print(f"  - {file_path}: 无需修复")
         else:

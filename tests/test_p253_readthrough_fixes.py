@@ -512,7 +512,7 @@ class TestDeployGateP253b:
         r = subprocess.run(
             [sys.executable, "-X", "utf8", "tools/ci_check_invariants.py",
              "--skip-mypy", "--require-all-gates"],
-            capture_output=True, text=True, cwd=REPO)
+            capture_output=True, text=True, cwd=REPO, encoding="utf-8")
         assert r.returncode == 2, (
             "--skip-mypy + --require-all-gates must refuse: one demands the "
             "gate runs, the other refuses to run it")
@@ -544,7 +544,7 @@ class TestDeployGateP253b:
         r = subprocess.run(
             [sys.executable, "-X", "utf8", "tools/ci_check_invariants.py",
              "--skip-mypy"],
-            capture_output=True, text=True, cwd=REPO)
+            capture_output=True, text=True, cwd=REPO, encoding="utf-8")
         assert "SKIPPED BY FLAG" in r.stderr, (
             "the explicit mypy skip must announce itself — a silent skip is "
             "the exact P187 hole this flag exists to avoid recreating")

@@ -286,7 +286,7 @@ class ExecutionQualityReportGenerator:
         """保存为 JSON"""
         filepath = os.path.join(self.output_dir, f"{report.report_id}.json")
         
-        with open(filepath, "w") as f:
+        with open(filepath, "w", encoding="utf-8") as f:
             json.dump(report.to_dict(), f, indent=2)
         
         logger.info(f"Saved JSON report: {filepath}")
@@ -298,7 +298,7 @@ class ExecutionQualityReportGenerator:
         
         html = self._generate_html(report)
         
-        with open(filepath, "w") as f:
+        with open(filepath, "w", encoding="utf-8") as f:
             f.write(html)
         
         logger.info(f"Saved HTML report: {filepath}")

@@ -50,7 +50,7 @@ def _count_closed_trades() -> int:
         if path.exists():
             try:
                 count = 0
-                with open(path) as fh:
+                with open(path, encoding="utf-8") as fh:
                     for line in fh:
                         line = line.strip()
                         if not line:

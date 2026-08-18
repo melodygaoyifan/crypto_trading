@@ -221,7 +221,7 @@ class TestSetAssetsScript:
         env = dict(os.environ, HMATS_SET_ASSETS_DRY_RUN="1")
         return subprocess.run(["bash", str(SET_ASSETS), arg],
                               capture_output=True, text=True, timeout=60,
-                              cwd=str(REPO), env=env)
+                              cwd=str(REPO), env=env, encoding="utf-8")
 
     def test_the_dry_run_guard_exists_and_precedes_every_side_effect(self):
         # The guard is what makes this whole test class safe to run. If it

@@ -141,7 +141,7 @@ def test_p1_no_legacy_in_runtime_path() -> Tuple[bool, str]:
         if not os.path.exists(full_path):
             continue
             
-        with open(full_path, 'r') as f:
+        with open(full_path, 'r', encoding="utf-8") as f:
             content = f.read()
             
         # Check for legacy imports
@@ -174,7 +174,7 @@ def test_p2_main_has_canonical_banner() -> Tuple[bool, str]:
     base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     main_path = os.path.join(base_path, 'main.py')
     
-    with open(main_path, 'r') as f:
+    with open(main_path, 'r', encoding="utf-8") as f:
         content = f.read()
     
     if 'CANONICAL_ENTRYPOINT = main.py' in content:
@@ -187,7 +187,7 @@ def test_p2_main_has_live_protection() -> Tuple[bool, str]:
     base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     main_path = os.path.join(base_path, 'main.py')
 
-    with open(main_path, 'r') as f:
+    with open(main_path, 'r', encoding="utf-8") as f:
         content = f.read()
 
     checks = [
@@ -208,7 +208,7 @@ def test_p2_main_live_blocked_without_flag() -> Tuple[bool, str]:
     base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     main_path = os.path.join(base_path, 'main.py')
 
-    with open(main_path, 'r') as f:
+    with open(main_path, 'r', encoding="utf-8") as f:
         content = f.read()
 
     protection_patterns = [
@@ -277,7 +277,7 @@ def test_p3_sentiment_in_decision_summary() -> Tuple[bool, str]:
     base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     runtime_spine_path = os.path.join(base_path, 'core/runtime_spine.py')
     
-    with open(runtime_spine_path, 'r') as f:
+    with open(runtime_spine_path, 'r', encoding="utf-8") as f:
         content = f.read()
     
     # Check for sentiment mode in decision summary

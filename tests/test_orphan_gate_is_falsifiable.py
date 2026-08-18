@@ -62,7 +62,7 @@ def _baseline(paths):
         [sys.executable, "-X", "utf8", str(SCANNER), "--baseline-format",
          "--paths", *paths],
         capture_output=True, text=True,
-    )
+    encoding="utf-8")
     assert r.returncode == 0, r.stderr
     return json.loads(r.stdout)
 
@@ -117,7 +117,7 @@ class TestTheVacuityIsMeasuredNotAssumed:
 
     def test_the_real_repo_reports_its_own_vacuity_out_loud(self):
         r = subprocess.run([sys.executable, "-X", "utf8", str(SCANNER)],
-                           capture_output=True, text=True, cwd=str(REPO_ROOT))
+                           capture_output=True, text=True, cwd=str(REPO_ROOT), encoding="utf-8")
         assert r.returncode == 0, r.stderr
         assert "ORPHAN coverage:" in r.stdout, (
             "coverage must be printed with the findings. P171 buried the blind "
@@ -321,7 +321,7 @@ class TestTheCommittedBaselineMatchesReality:
         r = subprocess.run(
             [sys.executable, "-X", "utf8", str(SCANNER), "--baseline-format"],
             capture_output=True, text=True, cwd=str(REPO_ROOT),
-        )
+        encoding="utf-8")
         assert r.returncode == 0, r.stderr
         assert json.loads(r.stdout) == committed
 

@@ -334,7 +334,7 @@ def train_gmm_for_asset(asset: str, train_end: int = None, max_k: int = 8):
             "mean_confidence": conf_mean,
             "bic_search": bic_results,
         }
-        with open(out_dir / "gmm_config.json", "w") as f:
+        with open(out_dir / "gmm_config.json", "w", encoding="utf-8") as f:
             json.dump(config_data, f, indent=2)
 
         logger.info(f"  Saved to {out_dir}/")
@@ -374,7 +374,7 @@ def load_split_manifest(fold: int = 1) -> dict:
             f"--no-split if a full-sample fit is genuinely what you want."
         )
 
-    with open(manifest_path) as f:
+    with open(manifest_path, encoding="utf-8") as f:
         manifest = json.load(f)
 
     train_ends = {}

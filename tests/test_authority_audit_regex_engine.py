@@ -35,7 +35,7 @@ def _engine_supports(escape_pattern: str) -> bool:
     r = subprocess.run(
         ["git", "grep", "-l", _detect_grep_mode(), escape_pattern],
         capture_output=True, text=True, cwd=REPO_ROOT,
-    )
+    encoding="utf-8")
     return r.returncode == 0
 
 

@@ -440,7 +440,7 @@ def main():
     out_dir = Path(args.output_path)
     out_dir.mkdir(parents=True, exist_ok=True)
     out_file = out_dir / f"{args.asset}_validation.json"
-    out_file.write_text(json.dumps(summary, indent=2))
+    out_file.write_text(json.dumps(summary, indent=2), encoding="utf-8")
 
     # Pretty print
     print(f"\n{'='*70}")

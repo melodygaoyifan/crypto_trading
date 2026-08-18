@@ -66,7 +66,7 @@ def load_manifest():
     """Load feature manifest for no-scale info."""
     manifest_path = PROJECT_ROOT / "configs" / "feature_manifest.json"
     if manifest_path.exists():
-        with open(manifest_path) as f:
+        with open(manifest_path, encoding="utf-8") as f:
             return json.load(f)
     return None
 
@@ -227,7 +227,7 @@ def run_architecture(
     logger.info(f"  Time: {train_time:.0f}s | Params: {trainable_params:,}")
 
     # Save
-    with open(arch_dir / "result.json", "w") as f:
+    with open(arch_dir / "result.json", "w", encoding="utf-8") as f:
         json.dump(result, f, indent=2)
 
     # Cleanup
@@ -354,7 +354,7 @@ def main():
 
     # Save combined results
     results_path = output_dir / "results.json"
-    with open(results_path, "w") as f:
+    with open(results_path, "w", encoding="utf-8") as f:
         json.dump({
             "asset": args.asset,
             "timesteps": args.timesteps,

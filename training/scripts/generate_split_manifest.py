@@ -128,7 +128,7 @@ def main():
 
     out_path = PROJECT_ROOT / "configs" / "split_manifest.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(out_path, "w") as f:
+    with open(out_path, "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2)
     logger.info(f"\nSaved: {out_path}")
 

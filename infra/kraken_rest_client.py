@@ -290,7 +290,7 @@ class KrakenRESTClient:
         try:
             if not state_path.exists():
                 return 0
-            with open(state_path, "r") as f:
+            with open(state_path, "r", encoding="utf-8") as f:
                 state = json.load(f) or {}
             entry = state.get(fingerprint, {})
             persisted = int(entry.get("highest_nonce_ms", 0))
@@ -321,7 +321,7 @@ class KrakenRESTClient:
             existing: Dict[str, Any] = {}
             if nonce.state_path.exists():
                 try:
-                    with open(nonce.state_path, "r") as f:
+                    with open(nonce.state_path, "r", encoding="utf-8") as f:
                         existing = json.load(f) or {}
                 except Exception:  # noqa: silent-swallow
                     # Corrupt/missing state file — start fresh. Not a
@@ -334,7 +334,7 @@ class KrakenRESTClient:
                 "updated_at": int(time.time()),
             }
             tmp = nonce.state_path.with_suffix(".json.tmp")
-            with open(tmp, "w") as f:
+            with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(existing, f, separators=(",", ":"))
             os.replace(tmp, nonce.state_path)
             nonce.dirty = False

@@ -281,7 +281,7 @@ class SOTAFlags:
         config_path = Path(path)
         if config_path.exists():
             try:
-                with open(config_path) as f:
+                with open(config_path, encoding="utf-8") as f:
                     data = json.load(f)
                 
                 for key, value in data.items():
@@ -306,7 +306,7 @@ class SOTAFlags:
         config_path = Path(path)
         config_path.parent.mkdir(parents=True, exist_ok=True)
         
-        with open(config_path, 'w') as f:
+        with open(config_path, 'w', encoding="utf-8") as f:
             json.dump(self.to_dict(), f, indent=2)
         
         logger.info(f"Saved SOTA flags to {path}")

@@ -318,7 +318,7 @@ class TestRealConfigFile:
     def test_ultra_aggressive_5y_json_valid(self):
         """configs/ultra_aggressive_5y.json must be valid JSON with required fields."""
         path = Path("configs/ultra_aggressive_5y.json")
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
         assert data["risk_profile"] == "ULTRA_AGGRESSIVE_5Y"
         assert data["risk"]["hard_drawdown_halt"] == 0.25

@@ -158,7 +158,7 @@ class DataLeakageDetector:
         report = "\n".join(lines)
         
         if output_path:
-            with open(output_path, 'w') as f:
+            with open(output_path, 'w', encoding="utf-8") as f:
                 f.write(report)
             logger.info(f"报告已保存: {output_path}")
         

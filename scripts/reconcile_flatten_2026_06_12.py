@@ -116,15 +116,15 @@ def main():
     if not pp:
         print("\n[WARN] paper_positions.json not found; skipping tracker reset.")
         return 0
-    with open(pp) as f:
+    with open(pp, encoding="utf-8") as f:
         state = json.load(f)
     backup = pp + f".bak_{int(time.time())}"
-    with open(backup, "w") as f:
+    with open(backup, "w", encoding="utf-8") as f:
         json.dump(state, f, indent=2)
     state["positions"] = {}
     state["position_entry_times"] = {}
     state["saved_at"] = datetime.now(timezone.utc).isoformat() + "Z"
-    with open(pp, "w") as f:
+    with open(pp, "w", encoding="utf-8") as f:
         json.dump(state, f, indent=2)
     print(f"\nTracker reset to FLAT. Backup: {backup}")
     print("existence_fuse_state preserved. Restart hmats-engine to resume on clean state.")

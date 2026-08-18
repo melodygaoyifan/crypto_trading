@@ -48,7 +48,7 @@ def load_stats(path: Path) -> Dict[str, Any]:
         print("  (Waiting for first 4H heartbeat after instrumentation deploy.)")
         sys.exit(2)
     try:
-        return json.loads(path.read_text())
+        return json.loads(path.read_text(encoding="utf-8"))
     except Exception as exc:
         print(f"[KQ-DIAG] failed to parse {path}: {exc}")
         sys.exit(3)

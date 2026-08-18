@@ -72,7 +72,7 @@ def _is_alive(pid: int) -> bool:
                 capture_output=True,
                 text=True,
                 timeout=5,
-            )
+            encoding="utf-8")
             return str(pid) in result.stdout
         except Exception:
             return False

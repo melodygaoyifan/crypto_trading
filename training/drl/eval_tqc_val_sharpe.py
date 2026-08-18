@@ -38,7 +38,7 @@ def run(asset: str) -> None:
     split = int(len(df) * 0.85)
     val = df.iloc[split:].reset_index(drop=True)
 
-    manifest = json.load(open("configs/feature_manifest.json"))
+    manifest = json.load(open("configs/feature_manifest.json", encoding="utf-8"))
     feature_cols = manifest["all_features"]
     no_scale = set(manifest.get("no_scale_features", []))
     assert len(feature_cols) == 122

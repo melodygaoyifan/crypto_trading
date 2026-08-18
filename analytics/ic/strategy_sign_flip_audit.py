@@ -254,7 +254,7 @@ def main():
                 print(f"    {sig:<35} → {','.join(assets_with_flip)}")
 
     out = REPORT_DIR / f"strategy_sign_flip_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')}.json"
-    out.write_text(json.dumps(full, indent=2, default=str))
+    out.write_text(json.dumps(full, indent=2, default=str), encoding="utf-8")
     print(f"\n  Report: {out}")
 
 

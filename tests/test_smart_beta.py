@@ -241,7 +241,7 @@ class TestNoObsContractChange:
         from pathlib import Path
         manifest = Path("configs/feature_manifest.json")
         if manifest.exists():
-            with open(manifest) as f:
+            with open(manifest, encoding="utf-8") as f:
                 m = json.load(f)
             # obs_dim should still be 122 features + 4 env = 126
             total_features = m.get("total_feature_count", m.get("total_features", 0))

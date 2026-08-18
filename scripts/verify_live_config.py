@@ -65,7 +65,7 @@ def main(argv=None):
     print("-" * 50)
 
     try:
-        with open(config_path) as f:
+        with open(config_path, encoding="utf-8") as f:
             config = json.load(f)
         test("Config loads", PASS, config_path)
     except Exception as e:

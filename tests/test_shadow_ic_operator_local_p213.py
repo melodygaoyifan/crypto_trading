@@ -108,7 +108,7 @@ class TestEndToEnd:
         r = subprocess.run(
             [sys.executable, "-X", "utf8", str(_MOD),
              "--ledger-dir", str(led), "--window-days", "30"],
-            capture_output=True, text=True, cwd=str(_REPO), timeout=300)
+            capture_output=True, text=True, cwd=str(_REPO), timeout=300, encoding="utf-8")
         if r.returncode == 1 and "No shadow records" in (r.stderr or ""):
             pytest.skip("ledger schema differs; source-level tests cover the gate")
         assert r.returncode == 2, (

@@ -49,7 +49,7 @@ MANIFEST_PATH = PROJ / "configs" / "feature_manifest.json"
 
 def load_manifest() -> dict:
     """Load the canonical feature manifest used by training + runtime."""
-    with MANIFEST_PATH.open("r") as f:
+    with MANIFEST_PATH.open("r", encoding="utf-8") as f:
         return json.load(f)
 
 

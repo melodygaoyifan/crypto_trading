@@ -230,7 +230,7 @@ class TestManifestPathTraversal:
             "input_dim": 100,
             "hidden_dim": 64,
             "output_dim": 4,
-        }))
+        }), encoding="utf-8")
         # We don't need to actually load weights, just verify the path
         # validation logic doesn't raise. Get a policy instance via __new__
         # to bypass heavy __init__.
@@ -257,7 +257,7 @@ class TestManifestPathTraversal:
         outside the manifest dir → relative_to() raises."""
         manifest_file = tmp_path / "subdir" / "manifest.json"
         manifest_file.parent.mkdir(parents=True)
-        manifest_file.write_text("{}")  # contents irrelevant for this test
+        manifest_file.write_text("{}", encoding="utf-8")  # contents irrelevant for this test
 
         # Mimic the production resolution
         from pathlib import Path
@@ -279,7 +279,7 @@ class TestManifestPathTraversal:
         before relative_to() runs the escape check."""
         manifest_file = tmp_path / "a" / "b" / "manifest.json"
         manifest_file.parent.mkdir(parents=True)
-        manifest_file.write_text("{}")
+        manifest_file.write_text("{}", encoding="utf-8")
         from pathlib import Path
         weights_rel = Path("./../weights/model.pt")  # escapes by 1 level
         resolved = (manifest_file.parent / weights_rel).resolve()

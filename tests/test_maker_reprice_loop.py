@@ -568,7 +568,7 @@ class TestRealConfigJSON:
     @pytest.fixture
     def ultra_config(self) -> Dict:
         path = Path(__file__).parent.parent / "configs" / "ultra_aggressive_5y.json"
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             return json.load(f)
 
     def test_has_execution_section(self, ultra_config):

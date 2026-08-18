@@ -175,7 +175,7 @@ class TestRefusalExitCodes:
     def _run(self, *args):
         return subprocess.run(
             [sys.executable, "-X", "utf8", str(SCRIPT), *args],
-            capture_output=True, text=True, cwd=str(REPO))
+            capture_output=True, text=True, cwd=str(REPO), encoding="utf-8")
 
     def test_missing_pulled_dir_refuses_with_2(self, tmp_path):
         r = self._run("--ledger-dir", str(tmp_path / "nope"))

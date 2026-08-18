@@ -547,7 +547,7 @@ class UnifiedEventManager:
     
     def save_event_log(self, filepath: str):
         """保存事件日志"""
-        with open(filepath, 'w') as f:
+        with open(filepath, 'w', encoding="utf-8") as f:
             for event in self._event_log:
                 f.write(event.to_json() + '\n')
         logger.info(f"Event log saved: {filepath} ({len(self._event_log)} events)")
@@ -555,7 +555,7 @@ class UnifiedEventManager:
     def load_event_log(self, filepath: str) -> int:
         """加载事件日志 (用于回放)"""
         count = 0
-        with open(filepath, 'r') as f:
+        with open(filepath, 'r', encoding="utf-8") as f:
             for line in f:
                 try:
                     data = json.loads(line.strip())

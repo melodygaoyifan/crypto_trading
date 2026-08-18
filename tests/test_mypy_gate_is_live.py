@@ -103,7 +103,7 @@ class TestTheScannerStillCountsErrors:
             [sys.executable, "-X", "utf8", str(SCANNER),
              "--baseline-format", "--paths", str(path)],
             capture_output=True, text=True, cwd=str(REPO_ROOT),
-        )
+        encoding="utf-8")
         assert r.returncode == 0, r.stderr
         return json.loads(r.stdout)
 

@@ -24,10 +24,10 @@ fills = [e for e in entries if e.get("entry_type") == "FILL"]
 intents = [e for e in entries if e.get("entry_type") == "INTENT"]
 positions = [e for e in entries if e.get("entry_type") == "POSITION"]
 
-with open(TRANCHE_FILE, "r") as f:
+with open(TRANCHE_FILE, "r", encoding="utf-8") as f:
     tranche = json.load(f)
 
-with open(POSITIONS_FILE, "r") as f:
+with open(POSITIONS_FILE, "r", encoding="utf-8") as f:
     paper_pos = json.load(f)
 
 SEP = "=" * 120

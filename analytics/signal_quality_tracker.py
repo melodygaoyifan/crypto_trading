@@ -132,7 +132,7 @@ class SignalQualityTracker:
         """Append single record to JSONL."""
         try:
             self.PERSIST_FILE.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.PERSIST_FILE, "a") as f:
+            with open(self.PERSIST_FILE, "a", encoding="utf-8") as f:
                 f.write(json.dumps(record, default=str) + "\n")
                 f.flush()  # P68 (P37 follow-up): survive Docker SIGKILL
         except Exception as e:
@@ -143,7 +143,7 @@ class SignalQualityTracker:
         if not self.PERSIST_FILE.exists():
             return
         try:
-            with open(self.PERSIST_FILE) as f:
+            with open(self.PERSIST_FILE, encoding="utf-8") as f:
                 for line in f:
                     try:
                         r = json.loads(line)

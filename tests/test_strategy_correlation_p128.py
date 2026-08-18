@@ -114,7 +114,7 @@ class TestP131OutputContract:
         report_path = Path("analytics/ic/reports") / f"agent_correlation_matrix_{datetime.now().strftime('%Y-%m-%d')}.json"
         if not report_path.exists():
             pytest.skip(f"No report at {report_path} — run script first")
-        with open(report_path) as f:
+        with open(report_path, encoding="utf-8") as f:
             report = json.load(f)
         assert "per_asset" in report
         assert "version" in report

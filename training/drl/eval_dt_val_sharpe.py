@@ -87,7 +87,7 @@ def run(asset: str, days: int = 14) -> None:
 
     # Feature manifest — must match training
     import json
-    manifest = json.load(open("configs/feature_manifest.json"))
+    manifest = json.load(open("configs/feature_manifest.json", encoding="utf-8"))
     feature_cols = manifest.get("all_features") or manifest.get("features")
     no_scale = set(manifest.get("no_scale_features", []))
     assert feature_cols is not None and len(feature_cols) == 122, (

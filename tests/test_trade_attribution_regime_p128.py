@@ -81,7 +81,7 @@ class TestP129TradeAttributorOrphanMetadata:
                 mode="NORMAL",
             )
             # Read back the persisted record
-            persisted = (Path(tmp) / "attr.jsonl").read_text()
+            persisted = (Path(tmp) / "attr.jsonl").read_text(encoding="utf-8")
             assert "STEADY_UPTREND" in persisted, (
                 f"P129: orphan record persisted without regime. Content: "
                 f"{persisted[:300]}"

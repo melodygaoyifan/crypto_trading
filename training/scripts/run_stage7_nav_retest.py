@@ -157,7 +157,7 @@ def load_data() -> Tuple[pd.DataFrame, List[str], set]:
     # Feature columns from manifest
     manifest_path = PROJECT_ROOT / "configs" / "feature_manifest.json"
     if manifest_path.exists():
-        with open(manifest_path) as f:
+        with open(manifest_path, encoding="utf-8") as f:
             manifest = json.load(f)
         feature_cols = [c for c in manifest["all_features"] if c in data.columns]
         no_scale = set(manifest.get("no_scale_features", []))
@@ -670,7 +670,7 @@ def main():
 
         # Save feature_cols for reference
         fc_path = OUTPUT_DIR / "feature_cols.json"
-        with open(fc_path, "w") as f:
+        with open(fc_path, "w", encoding="utf-8") as f:
             json.dump(feature_cols, f, indent=2)
 
         # Select experiments
@@ -683,7 +683,7 @@ def main():
         existing_results = []
         if results_path.exists():
             try:
-                with open(results_path) as f:
+                with open(results_path, encoding="utf-8") as f:
                     saved = json.load(f)
                 existing_results = saved.get("results", [])
                 logger.info(f"  Loaded {len(existing_results)} existing results from {results_path}")
@@ -723,7 +723,7 @@ def main():
         if not results_path.exists():
             logger.error(f"No results file: {results_path}")
             sys.exit(1)
-        with open(results_path) as f:
+        with open(results_path, encoding="utf-8") as f:
             saved = json.load(f)
         results = saved.get("results", [])
 
@@ -750,7 +750,7 @@ def _save_results(
 
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
-    with open(tmp, "w") as f:
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(output, f, indent=2, default=str)
     tmp.replace(path)
     logger.info(f"  Results saved: {path}")

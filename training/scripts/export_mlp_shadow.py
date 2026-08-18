@@ -68,7 +68,7 @@ def main() -> int:
     try:
         sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"],
                              capture_output=True, text=True,
-                             cwd=REPO).stdout.strip()
+                             cwd=REPO, encoding="utf-8").stdout.strip()
     except Exception:
         sha = "unknown"
     payload = {

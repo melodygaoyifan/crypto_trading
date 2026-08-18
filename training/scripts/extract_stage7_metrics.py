@@ -32,7 +32,7 @@ def load_val_data():
         data = smoother.smooth_column(data, "regime")
 
     manifest_path = PROJECT_ROOT / "configs" / "feature_manifest.json"
-    with open(manifest_path) as f:
+    with open(manifest_path, encoding="utf-8") as f:
         manifest = json.load(f)
     feature_cols = [c for c in manifest["all_features"] if c in data.columns]
 
@@ -111,7 +111,7 @@ def main():
 
     # Load results JSON for best reward info
     results_json = OUTPUT_DIR / "stage7_nav_retest_results.json"
-    with open(results_json) as f:
+    with open(results_json, encoding="utf-8") as f:
         saved = json.load(f)
     saved_by_name = {r["experiment"]: r for r in saved["results"]}
 
