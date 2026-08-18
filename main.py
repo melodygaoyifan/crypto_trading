@@ -7562,8 +7562,13 @@ class HMATSProductionRunner:
                 logger.info(
                     f"[CASCADE-OBSERVE] {asset}: 24h=${_liq_vol_24h:,.0f} | "
                     f"fed_1h(avg)=${_liq_vol_24h / 24.0:,.0f} vs "
-                    f"observed_since_last=${(_liq_obs if _liq_obs is not None else 0.0):,.0f} "
-                    f"| threshold=$10,000,000 "
+                    # [P304b] "no previous reading" prints as n/a, NOT as $0.
+                    # This instrument exists to expose an absent-vs-zero
+                    # conflation; printing None as $0 would reproduce it in
+                    # the readout (P2).
+                    f"observed_since_last="
+                    f"{('$%s' % format(_liq_obs, ',.0f')) if _liq_obs is not None else 'n/a(first reading)'}"
+                    f" | threshold=$10,000,000 "
                     f"({'ARMED' if _cascade_real else 'shadow'})")
                 _liq_1h = (_liq_obs if (_cascade_real and _liq_obs is not None)
                            else _liq_vol_24h / 24.0)
