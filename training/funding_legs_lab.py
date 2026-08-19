@@ -106,6 +106,36 @@ def per_leg_cost_bps(asset: str) -> float:
     return CDE_SPREAD_BPS.get(asset.upper(), 5.0) / 2.0 + COINBASE_TAKER_FEE_BPS
 
 
+# [P315] CDE charges a FLAT FEE PER CONTRACT, not a percentage of notional.
+# Measured from the venue's own reported fees (data/fill_quality.jsonl):
+# BTC ~$0.60/ct -> 9.4bps at $64k, ETH ~$0.26/ct -> 13.8bps at $1.9k. The
+# constant above (3bps) understates the real charge ~3x, and because the fee
+# is flat its bps cost moves INVERSELY with price: at BTC $10k a 0.01 nano
+# contract is ~$100 of notional, so the same $0.60 is ~60bps. No single bps
+# constant can price six years of history — hence a per-bar SERIES.
+FEE_MODEL = "per_contract"          # "legacy_3bps" reproduces the P297 run
+
+
+def per_leg_cost_series(asset: str, closes):
+    """Per-leg cost as a FRACTION, per bar. Half-spread + the honest fee."""
+    import pandas as pd  # local: keeps the legacy path import-free
+    half_spread = CDE_SPREAD_BPS.get(asset.upper(), 5.0) / 2.0 / 1e4
+    if FEE_MODEL == "legacy_3bps":
+        return pd.Series(half_spread + COINBASE_TAKER_FEE_BPS / 1e4,
+                         index=closes.index)
+    from core.cde_fees import CDE_FEE_PER_CONTRACT_USD, _contract_sizes
+    a = asset.upper()
+    per_ct = CDE_FEE_PER_CONTRACT_USD.get(a, {}).get("taker")
+    cs = _contract_sizes().get(a)
+    if not per_ct or not cs:
+        raise SystemExit(
+            f"[P315] no per-contract fee/contract size for {a}. Refusing to "
+            f"fall back to the 3bps constant silently — that is the defect "
+            f"this model exists to correct (P167: never undercharge).")
+    fee_frac = per_ct / (cs * closes.astype(float))
+    return half_spread + fee_frac
+
+
 # =============================================================================
 # DATA
 # =============================================================================
@@ -172,7 +202,8 @@ def build_positions(asset: str, closes: pd.Series,
 def pnl(asset: str, pos: pd.Series, closes: pd.Series,
         funding: pd.Series) -> pd.DataFrame:
     ret = closes.pct_change().shift(-1).reindex(pos.index)
-    leg = per_leg_cost_bps(asset) / 1e4
+    # [P315] price-dependent per-leg cost (see per_leg_cost_series).
+    leg = per_leg_cost_series(asset, closes).reindex(pos.index).ffill()
     turn = pos.diff().abs().fillna(pos.abs())
     f_bar = funding.reindex(pos.index, method="ffill") / 2.0   # [P245]
     df = pd.DataFrame({
@@ -330,8 +361,15 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("  => the BTC book should be TREND-ONLY (the P262-certified")
         print("     mechanism). This removes a component; it does not stop trading.")
 
+    # [P315] The report name carries the FEE MODEL. Before this, any re-run
+    # overwrote `funding_legs_lab_p297_{A}.json` in place — so re-pricing the
+    # lab silently replaced the very artifact that recorded P297's verdict,
+    # and the two numbers could never be compared afterwards. A verdict whose
+    # inputs can be overwritten without trace is not auditable (the P299/P309
+    # rule about archives, applied to the lab's own output).
+    _suffix = "p297" if FEE_MODEL == "legacy_3bps" else "p315_per_contract"
     out = args.output or str(REPO / "training" / "reports" /
-                             f"funding_legs_lab_p297_{A}.json")
+                             f"funding_legs_lab_{_suffix}_{A}.json")
     Path(out).parent.mkdir(parents=True, exist_ok=True)
     Path(out).write_text(json.dumps({
         "asset": A, "rows": rows, "era_increment": era_inc,

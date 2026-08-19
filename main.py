@@ -1787,6 +1787,12 @@ class ProductionConfig:
     # preserved here so any profile that omits the key is byte-identical.
     trend_min_abs_signal: float = 0.30
     coinbase_whale_filter_enforce: bool = False
+    # [P315] Price CDE fees PER CONTRACT (measured ~$0.60/ct BTC,
+    # ~$0.26/ct ETH) instead of the 0/3bps VENUE_FEE_STD model, which
+    # understates the real charge ~3x. Strictly TIGHTENING (max() at
+    # the site), but arming it can stop an asset trading, so it is an
+    # operator decision (P141) — see the P291 precedent.
+    coinbase_per_contract_fees: bool = False
     whale_seat_mode: str = "off"
     whale_seat_assets: Optional[List[str]] = None
     fusion_conviction_to_sleeve: bool = False
@@ -2217,6 +2223,9 @@ class ProductionConfig:
                 data.get("trend_min_abs_signal", 0.30) or 0.30),
             coinbase_whale_filter_enforce=bool(
                 data.get("coinbase_whale_filter_enforce", False)),
+            # [P315] declared + parsed together (the P201 rule)
+            coinbase_per_contract_fees=bool(
+                data.get("coinbase_per_contract_fees", False)),
             whale_seat_mode=(
                 str(data.get("whale_seat_mode", "off") or "off").lower()
                 if str(data.get("whale_seat_mode", "off") or "off").lower()
@@ -11413,6 +11422,46 @@ class HMATSProductionRunner:
                         venue_aware_enabled=_vf_enabled,
                         is_coinbase_routed=_vf_routed,
                     )
+                    # [P315] CDE fees are PER CONTRACT, not a percentage.
+                    # VENUE_FEE_STD says maker 0.0 / taker 3.0bps; the venue's
+                    # own reported fees in data/fill_quality.jsonl say BTC
+                    # maker 9.37 / taker 9.87 and ETH maker 13.76 — because
+                    # the charge is a flat ~$0.60 (BTC) / ~$0.26 (ETH) per
+                    # contract, so its bps cost is fee/(contract_size*price)
+                    # and no bps constant can express it. Undercharging is the
+                    # direction that spends money (P167): at the modeled 3bps
+                    # the gate cleared BTC at alpha 22 vs threshold 18, while
+                    # the honest fee puts that threshold near 33.
+                    # Default OFF — arming it is a live behaviour change that
+                    # can stop an asset trading, so it is an operator decision
+                    # (P141), exactly like P291's venue-true hold cost.
+                    if (_vf_venue == "coinbase" and bool(getattr(
+                            self.config, "coinbase_per_contract_fees", False))):
+                        try:
+                            from core.cde_fees import cde_fee_bps as _cfb
+                            _px_fee = float(market_data.get("price", 0.0) or 0.0)
+                            _mk = _cfb(asset, _px_fee, is_maker=True)
+                            _tk = _cfb(asset, _px_fee, is_maker=False)
+                            if _mk and _tk:
+                                # Never CHEAPER than the modeled figure: this
+                                # correction exists to stop undercharging, so
+                                # it may only ever raise the cost (P167).
+                                maker_fee_bps = max(maker_fee_bps, _mk[0])
+                                taker_fee_bps = max(taker_fee_bps, _tk[0])
+                                logger.info(
+                                    f"[P315-FEE] {asset}: per-contract CDE fee "
+                                    f"maker={_mk[0]:.2f}bps taker={_tk[0]:.2f}bps "
+                                    f"@ px={_px_fee:,.2f} ({_mk[1]})")
+                            else:
+                                logger.warning(
+                                    f"[P315-FEE] {asset}: per-contract fee not "
+                                    f"priceable (px={_px_fee}) — keeping the "
+                                    f"modeled figure (absence is not zero)")
+                        except Exception as _pcf_e:  # noqa: silent-swallow — logged
+                            logger.warning(
+                                f"[P315-FEE] {asset}: per-contract fee lookup "
+                                f"failed ({type(_pcf_e).__name__}: {_pcf_e}) — "
+                                f"keeping the modeled figure")
                     _venue_fee_resolved = (maker_fee_bps, taker_fee_bps, _vf_venue, _vf_source)
                     _venue_fee_applied = (_vf_venue == "coinbase")
                 except Exception as _vf_err:
