@@ -169,18 +169,37 @@ class CascadeExhaustionConfig:
     # 12.5x. That similarity is what licenses a dimensionless constant, and
     # it is the finding that made this fixable at all.
     #
-    # 5.0 chosen by a rule stated before reading the table it picks from:
-    # the smallest multiple that puts EVERY asset at or below ~2.5% of ticks
-    # while still leaving the SMALLEST asset able to fire at all. Measured
-    # firing rates at 5x: BTC 2.4%, ETH 1.2%, SOL 1.2% (4x put BTC at 3.5%).
+    # [P316] The level is now calibrated on 1,039 bars per asset rather than
+    # 85, and the DETECT itself was replayed against forward returns over the
+    # same window. At 5x a spike carries NO information (|t| <= 0.93 on all
+    # three vs the unconditional mean); at 20x there is a weak, BTC-ONLY hint
+    # (-1.09% over 24h, t=-2.31, n=21) which does not survive being one of 12
+    # cells looked at. So the multiple is set where the firing rate is
+    # exceptional, and the WINDOW FLAG IS OFF: an exceptional firing rate is
+    # a precondition, not evidence that a DETECT helps.
     #
-    # HONEST LIMIT: 85 rate observations per asset over 11 days, so "1.2%"
-    # is a single event. This fixes the two STRUCTURAL failures — routine on
-    # BTC, unreachable on SOL — it does not finely calibrate the level. The
-    # multiplier is the revert knob; raising it can only make DETECT rarer.
-    cascade_detect_liq_multiple: float = 5.0
+    # The structural fixes stand and are what this constant is for — a single
+    # dollar threshold was routine on BTC and unreachable on SOL, and any
+    # future arming needs a threshold expressed in each asset's own units.
+    # [P316] 5.0 -> 20.0, and the reason is a correction to P311's own
+    # calibration basis. P311 derived 5.0 from 11 days of the derivflow
+    # ledger (85 rate observations per asset) using the CHANGE in the rolling
+    # 24h total between irregular ticks — a noisy estimator whose median is
+    # 0. Six months of proper per-4H-bar liquidation history
+    # (training_data/coinglass_history, 1,039 bars x 3 assets) says the same
+    # multiple fires on 11-14% of bars, not the 1-2% that measurement
+    # implied. A ~6x error, and 13% is "routine", which is the exact failure
+    # the re-calibration existed to remove.
+    #
+    # On the 6-month basis the firing rates are:
+    #     C      BTC     ETH     SOL
+    #     5    13.7%   10.7%   11.1%
+    #    10     5.1%    4.8%    4.4%
+    #    20     2.1%    1.0%    1.5%   <- exceptional, and p99 is 20-27x on
+    #    30     0.9%    0.3%    0.7%      all three, so one multiple still fits
+    cascade_detect_liq_multiple: float = 20.0
     # Same 2.5x ratio the absolute pair carried (25M/10M), in the 4h window.
-    cascade_accelerate_liq_multiple: float = 12.5
+    cascade_accelerate_liq_multiple: float = 50.0
     exhaustion_decel_threshold: float = 0.5  # Liquidation rate drops 50%
     
     # Timing

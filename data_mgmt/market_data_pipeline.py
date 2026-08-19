@@ -238,7 +238,24 @@ class MarketDataPipeline:
         self._ta_cache: Dict[str, Dict] = {}
 
         # OFI z-score: rolling history of order_book_imbalance per asset (42 bars = 7 days at 4H)
+        #
+        # [P316] PERSISTED. This buffer needs >= 5 samples before it can emit
+        # a z at all, and at ONE sample per 4H tick that is ~20 HOURS of
+        # uninterrupted uptime — which this engine has repeatedly not had
+        # (the 2026-08-08 operator note records exactly that). Being RAM-only
+        # it restarted at zero on every deploy, so `ofi_zscore` was
+        # STRUCTURALLY 0.0 and two consumers went with it:
+        #   * microstructure_v5_1 reported `z_below_threshold(+0.00)` on
+        #     6,168 of 6,168 rows — read as "the market is quiet" when it
+        #     means "the input never arrived";
+        #   * the SOL toxicity veto at execution/sol_execution.py:422
+        #     (`abs(ofi_zscore) > 3.0`) could never fire. P265e made that
+        #     consumer reachable; the input still was not.
+        # Same class as P301 (funding warmups) and P302 (kyle_lambda), in a
+        # third location the earlier fixes did not cover — a warmup that
+        # re-arms on restart is not a warmup, it is a permanent NEUTRAL.
         self._ofi_history: Dict[str, deque] = {a: deque(maxlen=42) for a in assets}
+        self._restore_rolling_buffer("ofi_history", self._ofi_history)
 
         _wavelet_targets = [
             "rsi_14",
@@ -252,9 +269,15 @@ class MarketDataPipeline:
             for a in assets
         }
 
+        # [P316] PERSISTED for the same reason: the depth MEDIAN needs >= 3
+        # samples and the collapse detector >= 5, so on a fresh process
+        # `orderbook_depth` is exactly 1.0 by construction (the median falls
+        # back to the current reading, making the ratio 1.0) and the
+        # collapse branch is blind. Both read as "depth is normal".
         self._depth_history: Dict[str, deque] = {
             a: deque(maxlen=120) for a in assets
         }
+        self._restore_rolling_buffer("depth_history", self._depth_history)
         self._bootstrap_ohlcv_cache: Dict[str, pd.DataFrame] = {}
         self._binance_vision_recent_cache: Dict[str, Dict[str, Any]] = {}
         self._requests_session = None
@@ -1835,6 +1858,10 @@ class MarketDataPipeline:
                             (order_book_imbalance - _ofi_mean) / _ofi_std, -5.0, 5.0
                         ))
 
+            # [P316] Both rolling buffers have been appended for this asset
+            # by now; persist so the >=5-sample warmup survives a deploy.
+            self._persist_rolling_buffers()
+
             returns_4h = 0.0
             if len(prices) >= 2 and prices[-2] > 0:
                 returns_4h = (prices[-1] - prices[-2]) / prices[-2]
@@ -2125,6 +2152,59 @@ class MarketDataPipeline:
             fallback["orderbook_cache_age_seconds"] = None
             fallback["orderbook_failure_streak"] = self._orderbook_failure_streak.get(asset, 1)
             return fallback
+
+    # ---- [P316] rolling-buffer persistence -----------------------------
+    #
+    # Deliberately reuses strategies/_warmup_state (P301) rather than a
+    # second implementation: one atomic writer, one staleness rule, one set
+    # of fail directions (P172). A missing, unreadable, version-mismatched or
+    # stale file restores NOTHING and the buffer warms up exactly as it does
+    # today, so every failure path here is a no-op rather than a risk.
+    _BUFFER_MAX_AGE_SEC = 7 * 24 * 3600.0
+
+    def _restore_rolling_buffer(self, name, buffers) -> None:
+        try:
+            from strategies._warmup_state import load as _wload
+            saved = _wload(name, max_age_sec=self._BUFFER_MAX_AGE_SEC)
+            if not saved:
+                # Deliberately LOGGED rather than a silent return: "nothing
+                # to restore" is precisely the state that made ofi_zscore
+                # read as a flat 0.00 for the life of the system, and a
+                # cold start that announces itself is the difference between
+                # a warmup and a permanent NEUTRAL.
+                logger.info("[BUFFER] %s: no saved state — warming up from "
+                            "scratch (needs ~20h of uptime to emit)", name)
+                return
+            n = 0
+            for asset, dq in buffers.items():
+                vals = saved.get(asset) or []
+                for v in vals[-dq.maxlen:]:
+                    dq.append(float(v))
+                n += len(dq)
+            if n:
+                logger.info("[BUFFER] %s: restored %s", name,
+                            ", ".join(f"{a}={len(d)}"
+                                      for a, d in sorted(buffers.items())))
+        except Exception as e:  # noqa: silent-swallow — logged; cold start is today's behaviour
+            logger.warning("[BUFFER] %s: restore failed (%s: %s) — warming up "
+                           "from scratch", name, type(e).__name__, e)
+
+    def _persist_rolling_buffers(self) -> None:
+        """Called once per tick, after the buffers have been appended to.
+
+        Never raises: a buffer that cannot be saved must not take a tick
+        down, and the only cost of a failed save is the warmup this exists
+        to end.
+        """
+        try:
+            from strategies._warmup_state import save as _wsave
+            for name, buf in (("ofi_history", getattr(self, "_ofi_history", None)),
+                              ("depth_history", getattr(self, "_depth_history", None))):
+                if buf:
+                    _wsave(name, {a: list(d) for a, d in buf.items() if len(d)})
+        except Exception as e:  # noqa: silent-swallow — logged; persistence only
+            logger.debug("[BUFFER] persist skipped (%s: %s)",
+                         type(e).__name__, e)
 
     def _predict_gmm_regime(self, df, raw: Dict, _np) -> Optional[tuple]:
         """Predict regime using pretrained 12-feature GMM model (v3)."""

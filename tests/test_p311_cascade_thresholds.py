@@ -60,25 +60,34 @@ class TestTheResolver:
         assert d > 0 and a > 0
 
     def test_the_small_asset_becomes_able_to_fire_at_all(self):
-        """SOL's maximum ever observed hourly rate is $2.09M. Under the old
-        global $10M it could not fire in any market condition."""
+        """[P316] Expressed as a RATIO, which is the invariant this constant
+        exists to hold. The old form pinned "< $2,087,611/h" — SOL's largest
+        burst on 11 days of the derivflow estimator — and that literal rotted
+        the moment the calibration moved to a 6-month basis, where SOL's
+        largest observed spike is 51.9x its own baseline. What must stay true
+        is that the multiple sits BELOW what the smallest asset has actually
+        produced (so it is reachable) and well ABOVE 1x (so it is not
+        routine)."""
         g = _gov()
+        m = g.config.cascade_detect_liq_multiple
+        assert m < 51.9, (
+            f"detect multiple {m}x exceeds the largest spike SOL has produced "
+            f"in six months (51.9x) — the detector is unreachable there")
+        assert m > 5.0, (
+            "at 5x the measured firing rate is 11-14% of bars, which is "
+            "routine, not exceptional")
         detect, _ = g.effective_liq_thresholds(BASELINE_1H["SOL"])
-        assert detect < 2_087_611, (
-            f"SOL detect ${detect:,.0f}/h still exceeds the largest burst "
-            f"ever observed ($2,087,611/h) — the detector remains unreachable")
-        assert detect > BASELINE_1H["SOL"] * 2, (
-            "the threshold must still be well above SOL's normal rate, or "
-            "DETECT becomes routine instead of exceptional")
+        assert detect == BASELINE_1H["SOL"] * m
 
     def test_the_large_asset_stops_firing_routinely(self):
-        """BTC's p95 hourly rate is $10.06M — the old global threshold sat
-        right on it, so DETECT fired on ~7% of ticks."""
+        """[P316] BTC's p99 spike is 26.8x its own baseline on six months of
+        4H liquidation history; a multiple at or below its p95 (10.2x) is
+        routine. Pinned in ratio terms for the same reason as above."""
         g = _gov()
-        detect, _ = g.effective_liq_thresholds(BASELINE_1H["BTC"])
-        assert detect > 10_491_944, (
-            f"BTC detect ${detect:,.0f}/h is at or below its measured p90/p95 "
-            f"band — DETECT would stay routine")
+        m = g.config.cascade_detect_liq_multiple
+        assert m > 10.2, (
+            f"detect multiple {m}x is at or below BTC's p95 spike (10.2x) — "
+            f"DETECT would fire on >5% of bars")
 
     def test_accelerate_stays_above_detect_on_every_asset(self):
         g = _gov()
@@ -87,13 +96,13 @@ class TestTheResolver:
             assert acc > d, f"{a}: accelerate {acc} <= detect {d}"
 
     def test_the_multiple_is_the_one_the_measurement_chose(self):
-        """5.0 was picked by a rule stated before reading the table: the
-        smallest multiple putting every asset at or below ~2.5% of ticks
-        while leaving the smallest asset able to fire. A different value is a
-        different calibration and needs its own replay."""
+        """[P316] 20.0, calibrated on 1,039 bars per asset rather than 85.
+        At 20x the measured firing rates are BTC 2.1% / ETH 1.0% / SOL 1.5%;
+        at the P311 value of 5.0 they are 13.7 / 10.7 / 11.1%. A different
+        value is a different calibration and needs its own replay."""
         g = _gov()
-        assert g.config.cascade_detect_liq_multiple == 5.0
-        assert g.config.cascade_accelerate_liq_multiple == 12.5
+        assert g.config.cascade_detect_liq_multiple == 20.0
+        assert g.config.cascade_accelerate_liq_multiple == 50.0
 
 
 class TestTheStateMachine:
@@ -106,9 +115,11 @@ class TestTheStateMachine:
     def test_a_burst_detects_on_the_small_asset(self):
         from risk.cascade_exhaustion_governor import CascadePhase
         g = _gov("SOL")
-        self._feed(g, BASELINE_1H["SOL"] * 6, BASELINE_1H["SOL"])
+        # 25x: above the 20x gate and well inside what SOL has produced
+        # (51.9x max over six months)
+        self._feed(g, BASELINE_1H["SOL"] * 25, BASELINE_1H["SOL"])
         assert g._phase != CascadePhase.NONE, (
-            "a 6x burst on SOL did not detect — the threshold is still "
+            "a 25x burst on SOL did not detect — the threshold is still "
             "expressed in units SOL cannot reach")
 
     def test_a_normal_hour_does_not_detect_on_the_large_asset(self):
@@ -123,7 +134,7 @@ class TestTheStateMachine:
         cascade, because the numerator is its dollars and the denominator is
         a market-wide constant."""
         g = _gov("SOL")
-        self._feed(g, BASELINE_1H["SOL"] * 6, BASELINE_1H["SOL"])
+        self._feed(g, BASELINE_1H["SOL"] * 60, BASELINE_1H["SOL"])
         assert g._current_metrics.cascade_intensity > 0.5, (
             f"intensity {g._current_metrics.cascade_intensity:.3f} — the "
             f"denominator is not normalised to the asset")
@@ -141,12 +152,21 @@ class TestTheDecision:
             (REPO / "configs" / "live_high_risk.json").read_text(
                 encoding="utf-8"))
 
-    def test_the_window_is_armed_with_its_evidence_recorded(self):
+    def test_the_window_decision_is_recorded_either_way(self):
+        """[P316 supersedes P311's ARMED assertion.] P311 armed this on 85
+        observations per asset; six months of 4H liquidation history says
+        that calibration understated the firing rate ~6x and that a spike at
+        the armed level carries no forward information. It is disarmed, and
+        what is pinned is that the decision — in whichever direction — is
+        written down beside the flag."""
         cfg = self._live()
-        assert cfg.get("cascade_real_liquidation_window") is True
-        note = cfg.get("_p311_cascade_note", "")
-        for token in ("5x", "REVERT", "2.4%"):
-            assert token in note, f"the arming note lost {token!r}"
+        armed = cfg.get("cascade_real_liquidation_window")
+        note = (cfg.get("_p316_cascade_disarmed_note", "")
+                or cfg.get("_p311_cascade_note", ""))
+        assert note, "the window's state changed with no recorded reason"
+        if armed:
+            assert "PRECONDITION" not in note, (
+                "armed while carrying the note that explains why it is off")
 
     def test_the_caller_supplies_the_baseline_before_it_is_read(self):
         """The first draft defined `_liq_base_1h` AFTER the log line that
