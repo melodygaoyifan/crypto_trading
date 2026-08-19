@@ -55,7 +55,61 @@ RSS_SOURCES: Tuple[Tuple[str, str], ...] = (
     ("decrypt", "https://decrypt.co/feed"),
     ("bitcoinmagazine", "https://bitcoinmagazine.com/feed"),
     ("theblock", "https://www.theblock.co/rss.xml"),
+    # [P314] Added because the original four are a CORPUS, not a firehose.
+    # Measured 2026-08-19: 95 items across them, median age 15-29h, and only
+    # TWO inside the agent's 4h freshness window — per asset BTC 0, ETH 1,
+    # SOL 0. That is why `[LLM_SENTIMENT]` read `headlines=0 tradeable=False`
+    # on BTC and SOL while `[RSS] 94 headline(s) relevant {BTC: 23}` sat four
+    # lines above it in the same log. I had recorded that as "a data fact"
+    # and it was not: the window was fine, the ARRIVAL RATE was too low.
+    #
+    # Each entry below was probed for http status, item count, dated-item
+    # count and in-window yield BEFORE being added (the P218 rule), and the
+    # numbers are the reason it is here:
+    #     gnews_*      100-102 items, 4-6 inside 4h  <- the decisive ones
+    #     bitcoincom   10 items,  4 inside 4h, median  5.1h
+    #     cryptoslate  10 items,  3 inside 4h, median  7.1h
+    #     ambcrypto    16 items,  2 inside 4h, median  7.2h
+    #     coindesk     25 items,  2 inside 4h, median 12.7h
+    # coindesk is back: P293c omitted it because the bare domain 308-redirects
+    # and "an unverified redirect target is not a source"; the arc
+    # outboundfeeds URL answers 200 directly and is now verified.
+    ("gnews_btc",
+     "https://news.google.com/rss/search?q=bitcoin&hl=en-US&gl=US&ceid=US:en"),
+    ("gnews_eth",
+     "https://news.google.com/rss/search?q=ethereum&hl=en-US&gl=US&ceid=US:en"),
+    ("gnews_sol",
+     "https://news.google.com/rss/search?q=solana&hl=en-US&gl=US&ceid=US:en"),
+    ("bitcoincom", "https://news.bitcoin.com/feed/"),
+    ("cryptoslate", "https://cryptoslate.com/feed/"),
+    ("ambcrypto", "https://ambcrypto.com/feed/"),
+    ("coindesk", "https://www.coindesk.com/arc/outboundfeeds/rss/"),
 )
+
+# [P314] PROBED AND REJECTED, recorded so they are not re-added on a hunch:
+#     newsbtc   https://www.newsbtc.com/feed/   median age 174.9h, 0 inside 4h
+#     utoday    https://u.today/rss             97 items but median 64.4h,
+#                                               only 1 inside 4h
+# Both answer HTTP 200 with well-formed XML, so they LOOK healthy — a source
+# whose items are days old adds corpus and no freshness, which is the exact
+# failure this change exists to fix.
+REJECTED_SOURCES: Dict[str, str] = {
+    "newsbtc": "median item age 174.9h, 0 inside the 4h window (P314)",
+    "utoday": "97 items but median age 64.4h, 1 inside the 4h window (P314)",
+}
+
+# [P314] Sources whose URL is an ASSET QUERY. Their relevance is established
+# by the request, not by the words in the title: a Google-News "bitcoin"
+# result headlined "Crypto market rallies as ETF inflows resume" is about BTC
+# even though the word-bounded matcher cannot see it. Attributing those by
+# title alone would silently discard most of what makes these feeds worth
+# adding. Title matching still runs on top, so one item can serve several
+# assets.
+SOURCE_ASSET_SCOPE: Dict[str, str] = {
+    "gnews_btc": "BTC",
+    "gnews_eth": "ETH",
+    "gnews_sol": "SOL",
+}
 
 # Word-bounded so "solution"/"sold"/"console" cannot match SOL.
 _ASSET_PATTERNS: Dict[str, re.Pattern] = {
@@ -76,7 +130,13 @@ class RSSNewsItem:
     link: str = ""
 
     def matches(self, asset: str) -> bool:
-        pat = _ASSET_PATTERNS.get(asset.upper().replace("/USD", ""))
+        a = asset.upper().replace("/USD", "")
+        # [P314] An asset-scoped source answers for its own asset: the QUERY
+        # is the relevance claim. Word matching still applies so a scoped
+        # item mentioning another asset is attributed to that one too.
+        if SOURCE_ASSET_SCOPE.get(self.source) == a:
+            return True
+        pat = _ASSET_PATTERNS.get(a)
         return bool(pat and pat.search(self.title or ""))
 
 
