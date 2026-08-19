@@ -412,6 +412,12 @@ POOLABLE_FAMILIES = frozenset({
     # P294 lesson, committed by the author who had just quoted it: the thing
     # that separates two claims is whatever the SCORER groups by.
     "regimebook", "regimebook_adj", "regimebook_volskip",
+    # [P307e] the funding-gated-short variant. Pooled deliberately: it is
+    # ONE rule applied across three assets, and P293g measured that a
+    # per-asset 16h exam needs ~330 days to certify while pooling three
+    # cuts it to ~123. On BTC the variant is identical to the book by
+    # construction, so the pooled series is carried by ETH and SOL.
+    "regimebook_fgshort",
     "donchian", "emaens", "xsmom",
     "ma_filtered", "whale_filtered",
     "sent_momentum_linear", "sent_momentum_hist", "sent_contrarian",

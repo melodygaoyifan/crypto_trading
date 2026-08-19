@@ -292,6 +292,76 @@ def book_target(asset: str, regime: str, funding_z: Optional[float]) -> tuple:
     return 0.0, "flat"
 
 
+# [P307e] FUNDING-GATED SHORT — the P307d candidate, as a forward ledger.
+#
+# P307d isolated the one structural difference between the live trend seat
+# and the book: trend is always in the market, the book refuses to short.
+# Holding the long leg constant and varying only the short cells, the
+# UNCONDITIONAL short (what the trend seat holds) flips sign across eras on
+# BTC/ETH and is negative in BOTH on SOL — so the book's refusal is right.
+# But a short gated on causal funding z > 1.0 was positive in BOTH eras on
+# ALL THREE and beat a same-cell turnover-matched random control:
+#
+#     increment over long_flat      design      pre-design
+#     BTC                           +0.117        +0.007
+#     ETH                           +0.452        +0.050
+#     SOL                           +0.136        +0.009
+#
+# Today ETH's and SOL's books go FLAT in every non-bull cell, so this is a
+# change TO the book, not a defence of it.
+#
+# THE RULE FILLS FLAT CELLS ONLY. It never overrides an opinion the book
+# already has, so the ledger measures exactly the increment under test and
+# nothing else. A consequence worth keeping, because it is a free control:
+# on BTC this is IDENTICAL to the deployed book by construction (BTC already
+# shorts every non-bull cell at z > 1.0 via its bear leg, and its peace leg
+# shorts from z > 0.5), so ANY divergence in the BTC ledger is a bug rather
+# than a signal — pinned by test. ETH and SOL carry the entire claim.
+#
+# WHY IT IS A LEDGER AND NOT A CONFIG FLIP (P141): the out-of-selection
+# increments are +0.007 / +0.050 / +0.009 — "not harmful and mildly
+# positive", not an edge — and the z > 1.0 threshold was designed on BTC in
+# the design era, so the ETH/SOL design figures are partly in-family. It
+# earns a forward exam, nothing more.
+#
+# NOT a resurrection of the P250-deleted SOL bear ridge: that was a FITTED
+# model whose result was the leaked feature. This is a one-threshold rule
+# with no free parameter beyond the one it inherits.
+FGSHORT_FUNDING_Z = 1.0
+FGSHORT_ASSETS = ("BTC", "ETH", "SOL")
+
+
+# [P307e] Book legs whose 0.0 means "no opinion is POSSIBLE", not "flat is
+# the position". The variant must not fill these — doing so would convert an
+# absence into a short, which is the P2 collapse this file already documents
+# for `available`. Caught by the BTC parity control on the first run: without
+# this the variant shorted every WARMUP bar, and BTC diverged from its own
+# book in exactly the cells where no book existed yet.
+_FGSHORT_ABSENCE_LEGS = frozenset({
+    "warmup",
+    "flat_no_funding_history",
+})
+
+
+def fgshort_target(book_target_value: float, book_leg: str,
+                   funding_z: Optional[float]) -> tuple:
+    """(target, leg) for the funding-gated-short variant.
+
+    Fills a book cell that CHOSE flat with a short when causal funding z
+    clears the threshold. It never overrides an opinion the book already
+    has, and never fills a cell where the book could not form one.
+    """
+    if abs(float(book_target_value)) > 1e-9:
+        return float(book_target_value), "book"
+    if book_leg in _FGSHORT_ABSENCE_LEGS:
+        return 0.0, f"flat_book_absent({book_leg})"
+    if funding_z is None:
+        return 0.0, "flat_no_funding_history"
+    if funding_z > FGSHORT_FUNDING_Z:
+        return -1.0, "funding_gated_short"
+    return 0.0, "flat_below_funding_gate"
+
+
 KRAKEN_PAIRS = {"BTC": "XBTUSD", "ETH": "ETHUSD", "SOL": "SOLUSD",
                 # [P271] breadth — all five probed OK at interval=240
                 "XRP": "XRPUSD", "ADA": "ADAUSD", "LTC": "LTCUSD",
@@ -871,6 +941,24 @@ class RegimeBookShadow:
                 except Exception as _adj_e:  # noqa: silent-swallow — the adjusted ledger is an overlay; its failure must not lose the raw record (logged)
                     logger.warning("[REGIMEBOOK] %s adjusted-ledger write "
                                    "failed: %s", asset, type(_adj_e).__name__)
+            # [P307e] The funding-gated-short variant's forward ledger. Same
+            # glob prefix, distinct strategy name, so the scorer groups it as
+            # its own candidate with zero scorer changes. Fail-soft: the raw
+            # record above is already written.
+            if asset in FGSHORT_ASSETS:
+                try:
+                    _fg, _fgleg = fgshort_target(float(target), leg, fz)
+                    frec = dict(rec, strategy="regimebook_fgshort",
+                                direction=float(_fg),
+                                confidence=abs(float(_fg)),
+                                leg=_fgleg,
+                                fgshort_z=FGSHORT_FUNDING_Z)
+                    fpath = self._dir / f"regimebook_fgshort_{asset}.jsonl"
+                    with open(fpath, "a", encoding="utf-8") as f:
+                        f.write(json.dumps(frec) + "\n")
+                except Exception as _fg_e:  # noqa: silent-swallow — an overlay ledger's failure must not lose the raw record (logged)
+                    logger.warning("[REGIMEBOOK] %s fgshort-ledger write "
+                                   "failed: %s", asset, type(_fg_e).__name__)
             # [P259] The banded-forecast OVERLAY ledger (BTC/ETH exports only
             # — the lab earners). Same glob prefix, distinct strategy name.
             try:
