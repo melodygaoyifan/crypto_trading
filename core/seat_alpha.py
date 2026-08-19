@@ -103,7 +103,10 @@ def regimebook_alpha_bps(asset: str) -> Tuple[float, str]:
         return 0.0, f"no_calibration_for:{a}"
     v = REGIMEBOOK_ALPHA_BPS_PER_ROUND_TRIP[a]
     eras = REGIMEBOOK_ALPHA_BY_ERA.get(a, {})
-    worst = min(eras, key=eras.get) if eras else "?"
+    # `key=eras.get` is an overloaded signature and mypy rejects it; the
+    # lambda is the same lookup with a single concrete type (P287g: fix the
+    # finding at source, never by re-baselining).
+    worst = min(eras, key=lambda k: eras[k]) if eras else "?"
     return v, f"era_min({worst})@{_MEASURED_ON}"
 
 
