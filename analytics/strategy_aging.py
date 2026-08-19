@@ -49,7 +49,21 @@ STRATEGY_GROUPS = {
     "bear": ["mean_reversion", "volatility_breakout", "rsi_divergence"],
     "bull": ["trend_following", "momentum", "obv_confirmation"],
     "volatile": ["range_breakout", "vwap_deviation", "volume_profile"],
-    "universal": ["orderbook_imbalance", "funding_rate", "liquidation_cascade"],
+    # [P317] `regimebook` is what main.py:10294 writes into
+    # `primary_strategy` whenever the regimebook seat is enforced
+    # (P298 armed it). This vocabulary is the v3.2 set and never
+    # learned the seat names, so record_signal took its unknown-name
+    # branch and returned "" — the strategy actually DRIVING the book
+    # was the one strategy this tracker recorded nothing about, three
+    # times per tick. "universal" because a regime book is
+    # regime-agnostic by construction: it picks its leg FROM the regime.
+    #
+    # ONLY `regimebook` is added. `trend` already arrives as
+    # `trend_following`, and the whale seat does not overwrite
+    # `primary_strategy` at all — a vocabulary entry no producer emits
+    # is the inverse defect (P310), so nothing is added speculatively.
+    "universal": ["orderbook_imbalance", "funding_rate",
+                  "liquidation_cascade", "regimebook"],
 }
 
 ALL_STRATEGIES = [s for group in STRATEGY_GROUPS.values() for s in group]
@@ -246,7 +260,30 @@ class StrategyAgingManager:
         strategy_name = self._normalize_strategy_name(strategy_name)
 
         if strategy_name not in ALL_STRATEGIES:
-            logger.warning(f"Unknown strategy: {raw_strategy_name}")
+            # [P317] Latched per NAME. This fires once per asset per
+            # tick, so an unrecognised decider produced ~18 identical
+            # lines a day forever — noise that says nothing new after the
+            # first, which is how a log stops being read (P202). Per NAME
+            # and not globally, or the first unknown silences every later
+            # one (the P193 latch bug).
+            if not hasattr(self, "_unknown_warned"):
+                self._unknown_warned = set()
+            if raw_strategy_name not in self._unknown_warned:
+                self._unknown_warned.add(raw_strategy_name)
+                logger.warning(
+                    "[STRATEGY_AGING] unknown strategy %r — NOTHING is "
+                    "being recorded for it, so it can never appear in the "
+                    "weekly degraded-strategy report. This vocabulary is "
+                    "the v3.2 set (ALL_STRATEGIES); add the name there if "
+                    "it is a real decider (P317). Once per name.",
+                    raw_strategy_name)
+            # [P317] This early exit is UNLOGGED on the repeat path BY
+            # DESIGN: the warning above is latched per name, so the scanner
+            # correctly counts a return with no log. Logging it every time is
+            # exactly the condition this change removed (~18 identical lines
+            # a day, P202). Counted in the swallow baseline with attribution
+            # rather than suppressed — the noqa tag only applies to 
+            # handlers, not to this finding kind.
             return ""
         
         record = StrategySignalRecord(
@@ -413,12 +450,18 @@ class StrategyAgingManager:
         """
         Get weight modifiers for all strategies.
         
-        WHERE CONSUMED:
-            - Quant Agent: Applies to strategy weights
-            
-        HOW APPLIED:
-            effective_weight = base_regime_weight * aging_modifier
-        
+        WHERE CONSUMED — [P317] CORRECTED; this was a claim, not a fact:
+            The only caller outside this module is
+            `core/execution_service.py:~3292`, a WEEKLY (168h) block that LOGS
+            a CRITICAL when a modifier falls below 0.7 and an INFO above 1.1.
+            Nothing multiplies a weight by it. The old text ("Quant Agent:
+            Applies to strategy weights / effective_weight =
+            base_regime_weight * aging_modifier") described an intended wiring
+            that does not exist in the tree — the P177 shape, where a
+            docstring asserts a connection and readers reason from it.
+            Re-verify with `grep -rn "get_weight_modifiers" --include=*.py .`
+            before trusting any statement about what consumes this.
+
         CRITICAL: Modifier is bounded [0.5, 1.2].
         Strategies are NEVER disabled, only reduced.
         """
