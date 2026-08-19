@@ -113,3 +113,94 @@ class TestTheWriterEmitsAParseableStamp:
         src = io.open(REPO / "main.py", encoding="utf-8").read()
         i = src.index("_runtime_ts = datetime.now(timezone.utc)")
         assert '.replace("+00:00", "Z")' in src[i:i + 160]
+
+
+class TestTheClassIsClosedNotJustTheInstance:
+    """[P323b] P323 fixed paper_positions.json; the same `isoformat() + "Z"`
+    shape survived at seven further sites. That is exactly how P323 happened —
+    the 2026-04-22 fix for dashboard_state.json was applied to one instance and
+    not to the class (P171, P226). This guard closes it with a MECHANISM rather
+    than another lesson (P280).
+    """
+
+    # Directories that actually run in production. tests/ and archive/ are
+    # excluded: a test may legitimately construct the malformed shape to prove
+    # the reader tolerates it (this file does).
+    _DIRS = ("agents", "api", "core", "defense", "risk", "signals", "execution",
+             "data_mgmt", "exchange", "infra", "analytics", "scripts",
+             "integration", "market", "orchestration", "strategies")
+
+    def _offenders(self):
+        from tests._source_scan import code_only
+        bad = []
+        for d in self._DIRS:
+            for f in (REPO / d).rglob("*.py"):
+                if "archive" in f.parts or f.name.startswith("test_"):
+                    continue
+                # strip comments AND docstrings: every remaining mention of the
+                # pattern in this repo is an explanation of the fix, and a
+                # scanner that matches its own explanation is worthless (P177).
+                src = code_only(f, strip_docstrings=True)
+                if 'isoformat() + "Z"' in src or "isoformat() + 'Z'" in src:
+                    bad.append(str(f.relative_to(REPO)))
+        for f in (REPO / "main.py",):
+            src = code_only(f, strip_docstrings=True)
+            if 'isoformat() + "Z"' in src:
+                bad.append("main.py")
+        return sorted(bad)
+
+    def test_no_production_site_appends_Z_to_an_isoformat(self):
+        assert self._offenders() == [], (
+            f"these append \"Z\" to isoformat(), producing the malformed "
+            f"\"+00:00Z\" on an aware datetime (or mislabelling local time as "
+            f"UTC on a naive one): {self._offenders()}. Use "
+            f".isoformat().replace(\"+00:00\", \"Z\") or an _iso_utc() helper.")
+
+    def test_the_scanner_can_actually_see_the_pattern(self):
+        """ANTI-VACUITY (P174): if the stripper removed too much, the guard
+        above would pass forever. Prove it fires on a constructed offender."""
+        import tempfile
+        from tests._source_scan import code_only
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "offender.py"
+            p.write_text(
+                'from datetime import datetime, timezone\n'
+                'x = datetime.now(timezone.utc).isoformat() + "Z"\n',
+                encoding="utf-8")
+            assert 'isoformat() + "Z"' in code_only(p, strip_docstrings=True)
+
+    def test_the_reconcile_script_cannot_reintroduce_the_broken_stamp(self):
+        """That script writes the SAME `saved_at` field api/server._is_fresh
+        parses, into the SAME paper_positions.json — so the malformed form
+        there would re-break positions_fresh the next time an operator ran it.
+        It is the one of the seven that was NOT merely latent."""
+        src = io.open(REPO / "scripts" / "reconcile_flatten_2026_06_12.py",
+                      encoding="utf-8").read()
+        i = src.index('state["saved_at"]')
+        assert '.replace("+00:00", "Z")' in src[i:i + 220]
+
+
+class TestTheHelperNormalisesRatherThanRelabels:
+
+    @pytest.mark.parametrize("mod", [
+        "agents.microstructure_agent", "agents.model_alpha_agent",
+        "agents.onchain_graph_alpha", "agents.onchain_sentiment_fusion",
+        "agents.risk_agent",
+    ])
+    def test_iso_utc_emits_one_marker_and_fixes_naive(self, mod):
+        import importlib
+        f = importlib.import_module(mod)._iso_utc
+        aware = datetime(2026, 8, 19, 7, 0, 0, tzinfo=timezone.utc)
+        naive = datetime(2026, 8, 19, 7, 0, 0)
+        assert f(aware) == "2026-08-19T07:00:00Z"
+        # naive is NORMALISED to UTC, not merely reformatted: naive + "Z"
+        # labels local time as UTC (P40/P97) — wrong, not just malformed.
+        assert f(naive) == "2026-08-19T07:00:00Z"
+        assert "+00:00" not in f(aware) and f(aware).endswith("Z")
+
+    def test_the_envelope_contract_still_holds(self):
+        """Existing agent tests assert asof_ts endswith("Z"). The fix must keep
+        that contract while removing the double marker."""
+        import importlib
+        for mod in ("agents.risk_agent", "agents.model_alpha_agent"):
+            assert importlib.import_module(mod)._iso_utc().endswith("Z")

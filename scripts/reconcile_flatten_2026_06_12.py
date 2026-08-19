@@ -123,7 +123,10 @@ def main():
         json.dump(state, f, indent=2)
     state["positions"] = {}
     state["position_entry_times"] = {}
-    state["saved_at"] = datetime.now(timezone.utc).isoformat() + "Z"
+    # [P323b] writes the SAME saved_at field api/server._is_fresh parses, so
+    # the malformed form here would re-break positions_fresh (P323).
+    state["saved_at"] = (datetime.now(timezone.utc).isoformat()
+                         .replace("+00:00", "Z"))
     with open(pp, "w", encoding="utf-8") as f:
         json.dump(state, f, indent=2)
     print(f"\nTracker reset to FLAT. Backup: {backup}")

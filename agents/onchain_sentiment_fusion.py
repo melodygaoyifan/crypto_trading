@@ -1188,7 +1188,7 @@ class OnChainSentimentAlphaEngine:
             "ocs_direction": 0.0,      # v6: no pre-fused direction
             "ocs_confidence": 0.0,     # v6: no pre-fused confidence
             "data_quality": pkt.get("data_quality_str", "ok" if pkt["data_quality"] > 0 else "missing"),
-            "asof_ts": datetime.now().isoformat() + "Z",
+            "asof_ts": _iso_utc(),
             "data_age_seconds": 0.0,
             "provenance": ["onchain_sentiment_fusion", token],
             "asset": token,
@@ -1360,3 +1360,19 @@ if __name__ == "__main__":
     print(f"   Stats: {dashboard['stats']}")
     
     print("\n✓ All tests passed!")
+
+
+def _iso_utc(ts=None):
+    """[P323b] ISO-8601 UTC with a SINGLE "Z" marker.
+
+    `isoformat()` on an aware datetime already emits "+00:00", so the old
+    `isoformat() + "Z"` produced "+00:00Z" — which broke /health's freshness
+    parse for four months (P323). A NAIVE value is normalised to UTC first
+    rather than merely reformatted: naive + "Z" labels local time as UTC
+    (P40/P97), which is wrong, not just malformed.
+    """
+    from datetime import datetime as _dt, timezone as _tz
+    t = ts or _dt.now(_tz.utc)
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=_tz.utc)
+    return t.isoformat().replace("+00:00", "Z")

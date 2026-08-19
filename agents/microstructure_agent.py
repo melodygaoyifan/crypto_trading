@@ -983,7 +983,7 @@ class MicrostructureArbitrageAgent:
                 "flash_crash_active": flash_crash,
                 "price_move_pct": round(price_move, 4),
                 "data_quality": dq,
-                "asof_ts": (now_ts or datetime.now(timezone.utc)).isoformat() + "Z",
+                "asof_ts": _iso_utc(now_ts),
                 "data_age_seconds": round(age_s, 3),
                 "provenance": ["microstructure_agent", asset],
             }
@@ -997,7 +997,7 @@ class MicrostructureArbitrageAgent:
                 "flash_crash_active": False,
                 "price_move_pct": 0.0,
                 "data_quality": "error",
-                "asof_ts": (now_ts or datetime.now(timezone.utc)).isoformat() + "Z",
+                "asof_ts": _iso_utc(now_ts),
                 "data_age_seconds": 0.0,
                 "provenance": ["microstructure_agent", asset, f"error:{exc}"],
             }
@@ -1178,3 +1178,19 @@ def reset_microstructure_agent():
     """Reset microstructure agent singleton."""
     global _microstructure_agent
     _microstructure_agent = None
+
+
+def _iso_utc(ts=None):
+    """[P323b] ISO-8601 UTC with a SINGLE "Z" marker.
+
+    `isoformat()` on an aware datetime already emits "+00:00", so the old
+    `isoformat() + "Z"` produced "+00:00Z" — which broke /health's freshness
+    parse for four months (P323). A NAIVE value is normalised to UTC first
+    rather than merely reformatted: naive + "Z" labels local time as UTC
+    (P40/P97), which is wrong, not just malformed.
+    """
+    from datetime import datetime as _dt, timezone as _tz
+    t = ts or _dt.now(_tz.utc)
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=_tz.utc)
+    return t.isoformat().replace("+00:00", "Z")

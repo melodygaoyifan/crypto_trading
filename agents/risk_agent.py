@@ -494,7 +494,7 @@ class RiskAssessment:
             "accelerate_exit": self.accelerate_exit,
             "reasons": reasons,
             # v6.4 standard metadata
-            "asof_ts": self.timestamp.isoformat() + "Z",
+            "asof_ts": _iso_utc(self.timestamp),
             "data_age_seconds": 0.0,
             "data_quality": "ok" if not self.veto_active else "ok",
             "provenance": ["risk_agent_v34"],
@@ -731,3 +731,19 @@ def get_risk_agent() -> RiskAgentV34:
 def reset_risk_agent():
     global _risk_agent
     _risk_agent = None
+
+
+def _iso_utc(ts=None):
+    """[P323b] ISO-8601 UTC with a SINGLE "Z" marker.
+
+    `isoformat()` on an aware datetime already emits "+00:00", so the old
+    `isoformat() + "Z"` produced "+00:00Z" — which broke /health's freshness
+    parse for four months (P323). A NAIVE value is normalised to UTC first
+    rather than merely reformatted: naive + "Z" labels local time as UTC
+    (P40/P97), which is wrong, not just malformed.
+    """
+    from datetime import datetime as _dt, timezone as _tz
+    t = ts or _dt.now(_tz.utc)
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=_tz.utc)
+    return t.isoformat().replace("+00:00", "Z")

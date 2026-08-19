@@ -959,7 +959,7 @@ class ModelAlphaAgent:
         data_quality: float = 0.0,
         data_age_seconds: float = 0.0,
     ) -> Dict[str, Any]:
-        now_iso = datetime.now(timezone.utc).isoformat() + "Z"
+        now_iso = _iso_utc()
         # Map gating reason to data_quality string
         dq_map = {
             "no_state": "missing",
@@ -1376,3 +1376,19 @@ def reset_model_alpha_agent():
     """重置单例"""
     global _model_alpha_agent_instance
     _model_alpha_agent_instance = None
+
+
+def _iso_utc(ts=None):
+    """[P323b] ISO-8601 UTC with a SINGLE "Z" marker.
+
+    `isoformat()` on an aware datetime already emits "+00:00", so the old
+    `isoformat() + "Z"` produced "+00:00Z" — which broke /health's freshness
+    parse for four months (P323). A NAIVE value is normalised to UTC first
+    rather than merely reformatted: naive + "Z" labels local time as UTC
+    (P40/P97), which is wrong, not just malformed.
+    """
+    from datetime import datetime as _dt, timezone as _tz
+    t = ts or _dt.now(_tz.utc)
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=_tz.utc)
+    return t.isoformat().replace("+00:00", "Z")
