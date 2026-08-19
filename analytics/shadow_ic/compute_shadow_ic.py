@@ -428,6 +428,21 @@ POOLABLE_FAMILIES = frozenset({
     # rule applied across assets.
 })
 
+# [P310] Scored PER ASSET on purpose — not poolable, not dead. Named
+# explicitly so that "nobody classified this yet" is distinguishable from
+# "deliberately per-asset", which is the same missing-vs-neutral distinction
+# this file enforces everywhere else (P2). The conformance test requires every
+# producer-declared name to appear in exactly one of the three sets.
+PER_ASSET_FAMILIES = {
+    "mlpshadow": "a BTC-only EXPORTED model, not one rule across assets",
+    "ml_factor": "v5.1 per-asset autoencoder factor (alive: 924/2082)",
+    "funding_mean_reversion": "v5.1 per-asset funding rule (alive: 50/2082)",
+    "funding_post_etf_regime": "v5.1 per-asset funding rule (alive: 93/2082)",
+    "regimebook_banded": "P259b WITHDRAWN; the exports were deleted, so this "
+                         "path is inert unless a model file reappears",
+}
+
+
 # [P309] Measured over the full pulled ledger history (2026-04-30 -> 08-18),
 # total records vs records carrying a non-zero direction:
 #     cascade_anticipation   2/2082      funding_extreme      0/2082

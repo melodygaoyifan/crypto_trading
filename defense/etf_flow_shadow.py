@@ -53,6 +53,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Tuple
 
+# [P310] SINGLE SOURCE for the names this module writes into a record's
+# `strategy` field. Consumers (analytics/shadow_ic) must not restate
+# them: P309 keyed its allowlists on LEDGER-FILE PREFIXES instead, so
+# two families were silently never pooled and an archive section never
+# rendered. A conformance test asserts every consumer name is one of
+# these, and that every one of these is classified by a consumer.
+SHADOW_STRATEGY_NAMES = frozenset({"etfflow"})
+
+
 logger = logging.getLogger(__name__)
 
 # CoinGlass v4, probed live 2026-08-15 (P218 rule: probe before design).

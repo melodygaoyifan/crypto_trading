@@ -159,3 +159,8 @@ class LiquidationExhaustionStrategy(_BaseLiquidationFlowStrategy):
 def build_derivatives_flow_strategies():
     """The two opposite readings. At most one can be right."""
     return [LiquidationSqueezeStrategy(), LiquidationExhaustionStrategy()]
+
+
+# [P310] SINGLE SOURCE — see the note in defense/regime_book_shadow.py.
+SHADOW_STRATEGY_NAMES = frozenset({"liquidation_squeeze",
+                                   "liquidation_exhaustion"})

@@ -49,6 +49,17 @@ SMA_W, MOM_W = 200, 540
 FUND_Z_WINDOW = 30
 MIN_BARS = MOM_W + 20
 
+# [P310] SINGLE SOURCE for the names this module writes into a record's
+# `strategy` field. Consumers (analytics/shadow_ic) must not restate
+# them: P309 keyed its allowlists on LEDGER-FILE PREFIXES instead, so
+# two families were silently never pooled and an archive section never
+# rendered. A conformance test asserts every consumer name is one of
+# these, and that every one of these is classified by a consumer.
+SHADOW_STRATEGY_NAMES = frozenset({
+    "regimebook", "regimebook_adj", "regimebook_banded",
+    "regimebook_volskip", "regimebook_fgshort",
+})
+
 BOOKS_VERSION = {
     "BTC": "v1_full",
     "ETH": "v1_full",           # trend-only IS the full measured ETH book

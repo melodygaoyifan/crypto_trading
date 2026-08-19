@@ -53,6 +53,17 @@ logger = logging.getLogger(__name__)
 STABLE_URL = ("https://open-api-v4.coinglass.com/api/index/"
               "stableCoin-marketCap-history")
 FETCH_TTL_SEC = 3600.0
+# [P310] SINGLE SOURCE for the names this module writes into a record's
+# `strategy` field. Consumers (analytics/shadow_ic) must not restate
+# them: P309 keyed its allowlists on LEDGER-FILE PREFIXES instead, so
+# two families were silently never pooled and an archive section never
+# rendered. A conformance test asserts every consumer name is one of
+# these, and that every one of these is classified by a consumer.
+SHADOW_STRATEGY_NAMES = frozenset({
+    "stablecoinflow", "oidiv_confirm", "oidiv_fade", "calbasis",
+    "xsmom", "eventfilter",
+})
+
 XS_ASSETS = ("BTC", "ETH", "SOL", "XRP", "ADA", "LTC", "DOGE", "BNB")
 XS_LOOKBACK_BARS = 180          # 30d of 4H bars
 XS_TOP_K = 2

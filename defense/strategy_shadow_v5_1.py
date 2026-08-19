@@ -380,3 +380,16 @@ def build_whale_filter_shadow_harness(
         log_dir=log_dir,
         log_prefix="whale_filter",
     )
+
+
+# [P310] SINGLE SOURCE — see the note in defense/regime_book_shadow.py.
+# The echo harnesses write these two; the v5.1 strategy objects carry
+# their own `strategy_name` and are listed so the conformance test can
+# see the ARCHIVED (P199-KILL) families too.
+SHADOW_STRATEGY_NAMES = frozenset({
+    "ma_filtered", "whale_filtered",
+    "ofi", "vpin_spike", "kyle_lambda", "stop_hunt_defense",
+    "cascade_anticipation", "ml_factor",
+    "funding_extreme", "funding_mean_reversion",
+    "funding_post_etf_regime",
+})

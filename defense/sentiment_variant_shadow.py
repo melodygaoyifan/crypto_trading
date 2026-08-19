@@ -60,6 +60,16 @@ STRATEGY_MOMENTUM_LINEAR = "sent_momentum_linear"
 STRATEGY_MOMENTUM_HIST = "sent_momentum_hist"
 STRATEGY_CONTRARIAN = "sent_contrarian"
 
+# [P310] SINGLE SOURCE for the names this module writes into a record's
+# `strategy` field. Consumers (analytics/shadow_ic) must not restate
+# them: P309 keyed its allowlists on LEDGER-FILE PREFIXES instead, so
+# two families were silently never pooled and an archive section never
+# rendered. A conformance test asserts every consumer name is one of
+# these, and that every one of these is classified by a consumer.
+SHADOW_STRATEGY_NAMES = frozenset({
+    STRATEGY_MOMENTUM_LINEAR, STRATEGY_MOMENTUM_HIST, STRATEGY_CONTRARIAN,
+})
+
 
 def momentum_direction(zscore: Optional[float]) -> float:
     """The LIVE rule, verbatim: |z| > 1.0 -> sign(z), else flat.
