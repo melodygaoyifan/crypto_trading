@@ -317,12 +317,51 @@ class TestTheDisableReachesTheSingletonsOtherCallers:
             "callers only see the module switch")
 
     def test_an_unreadable_switch_defaults_to_ON(self):
-        """Fail direction: a broken import must not silently disable a feed
-        the operator is paying for (P2 — absence is not a decision)."""
-        src = (REPO / "agents" / "sentiment_llm_agent.py").read_text(
-            encoding="utf-8-sig")
-        i = src.index("is_feed_enabled")
-        assert "_cp_on = True" in src[i:i + 400]
+        """Fail direction: a broken switch must not silently disable a feed
+        the operator is paying for (P2 — absence is not a decision).
+
+        [P322f] Was a source-text pin (`"_cp_on = True" in src[i:i+400]`),
+        which broke the moment a SECOND call site gained the same guard — the
+        index found the other function. A pin on source proves the code was
+        written, not that it runs (P234). Asserted behaviourally instead, on
+        BOTH callers, by making the switch itself raise.
+        """
+        import asyncio
+        import data_mgmt.feeds.cryptopanic_feed as cp
+        import data_mgmt.feeds.rss_news_feed as rss
+        import agents.sentiment_llm_agent as mod
+
+        used = {"n": 0}
+        real_get = cp.get_cryptopanic_feed
+
+        def _boom():
+            raise RuntimeError("switch unreadable")
+
+        def _spy(*a, **k):
+            used["n"] += 1
+            return real_get(*a, **k)
+
+        class _RSS:
+            async def fetch_if_stale(self):
+                return None
+
+            def get_items(self, asset):
+                return []
+
+        o_enabled, o_rss = cp.is_feed_enabled, rss.get_rss_news_feed
+        cp.is_feed_enabled = _boom
+        cp.get_cryptopanic_feed = _spy
+        rss.get_rss_news_feed = lambda *a, **k: _RSS()
+        try:
+            asyncio.run(mod.fetch_headlines_with_meta("BTC"))
+            asyncio.run(mod.fetch_headlines("BTC"))
+            assert used["n"] >= 2, (
+                "an unreadable switch must leave the feed ENABLED on every "
+                "caller — failing closed would silently stop a paid feed")
+        finally:
+            cp.is_feed_enabled = o_enabled
+            cp.get_cryptopanic_feed = real_get
+            rss.get_rss_news_feed = o_rss
 
 
 # =============================================================================
@@ -406,3 +445,74 @@ class TestADecliningCryptoPanicDoesNotTakeTheBlendDown:
         filtered."""
         meta = self._run(enabled=False, mock=False, data_none=True)
         assert meta["window_seconds"], "the blend's window must always be reported"
+
+
+# =============================================================================
+# 6. [P322f] A disabled feed is never CONSTRUCTED, only muted
+# =============================================================================
+
+class TestDisabledMeansUnbuilt:
+    """Construction issues no requests, so this is not about cost.
+
+    It is about whether the config is VERIFIABLE. A disabled feed that still
+    prints `[CRYPTOPANIC] Initialized: mock=False` and `restored backoff ...`
+    at every boot is indistinguishable in the log from one that ignored the
+    flag — which is exactly the reading that sent this session chasing a
+    working disable for a second round.
+    """
+
+    def _count_constructions(self, *, enabled: bool):
+        import asyncio
+        import data_mgmt.feeds.cryptopanic_feed as cp
+        import data_mgmt.feeds.rss_news_feed as rss
+        import agents.sentiment_llm_agent as mod
+
+        built = {"n": 0}
+        real = cp.get_cryptopanic_feed
+
+        def _spy(*a, **k):
+            built["n"] += 1
+            return real(*a, **k)
+
+        class _RSS:
+            async def fetch_if_stale(self):
+                return None
+
+            def get_items(self, asset):
+                return []
+
+        o_rss = rss.get_rss_news_feed
+        cp.get_cryptopanic_feed = _spy
+        rss.get_rss_news_feed = lambda *a, **k: _RSS()
+        cp.set_feed_enabled(enabled)
+        try:
+            asyncio.run(mod.fetch_headlines_with_meta("BTC"))
+            asyncio.run(mod.fetch_headlines("BTC"))
+            return built["n"]
+        finally:
+            cp.get_cryptopanic_feed = real
+            rss.get_rss_news_feed = o_rss
+            cp.set_feed_enabled(True)
+
+    def test_disabled_never_builds_the_singleton(self):
+        assert self._count_constructions(enabled=False) == 0, (
+            "the switch must be read BEFORE construction — otherwise the "
+            "boot log is identical to a feed that ignored the flag")
+
+    def test_the_switch_is_not_one_way(self):
+        """The mute must be reversible in-process, or the disable is really a
+        permanent teardown wearing a config flag's name."""
+        assert self._count_constructions(enabled=True) >= 1
+
+    def test_the_cryptopanic_only_helper_returns_no_headlines_when_disabled(self):
+        """`fetch_headlines` has no CC News and no RSS, so declining there
+        genuinely means no headlines — the opposite of its sibling, where the
+        same shape was the P322d bug. Stated so the asymmetry is deliberate."""
+        import asyncio
+        import data_mgmt.feeds.cryptopanic_feed as cp
+        import agents.sentiment_llm_agent as mod
+        cp.set_feed_enabled(False)
+        try:
+            assert asyncio.run(mod.fetch_headlines("BTC")) == []
+        finally:
+            cp.set_feed_enabled(True)

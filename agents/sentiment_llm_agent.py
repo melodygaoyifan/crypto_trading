@@ -1220,6 +1220,19 @@ async def fetch_headlines(
     Deduplicates by title.
     """
     try:
+        # [P322f] Same switch, same reason as fetch_headlines_with_meta: read
+        # it before constructing, so a disabled feed leaves no startup lines
+        # that look like it ignored the flag. This function is CryptoPanic-only
+        # (no CC News, no RSS), so declining here really is "no headlines" —
+        # unlike its sibling, where an early return also killed two other
+        # sources (P322d).
+        try:
+            from data_mgmt.feeds.cryptopanic_feed import is_feed_enabled
+            if not is_feed_enabled():
+                return []
+        except Exception:  # noqa: silent-swallow — an unreadable switch must not disable a working feed; default to ON
+            pass
+
         from data_mgmt.feeds.cryptopanic_feed import get_cryptopanic_feed
         feed = get_cryptopanic_feed()
         now = datetime.now(timezone.utc)
@@ -1335,14 +1348,27 @@ async def fetch_headlines_with_meta(
     headlines: List[str] = []
     newest_age: Optional[float] = None
     try:
-        from data_mgmt.feeds.cryptopanic_feed import get_cryptopanic_feed
-        feed = get_cryptopanic_feed()
-        meta["is_mock"] = bool(getattr(feed, "_mock_mode", False))
+        # [P322f] The switch is read BEFORE the singleton is built, so a
+        # disabled feed is never CONSTRUCTED — not merely muted.
+        #
+        # Construction is cheap and issues no requests, so this is not about
+        # cost. It is about the log: a disabled feed that still prints
+        # `[CRYPTOPANIC] Initialized: mock=False` and `restored backoff ...`
+        # at every boot reads exactly like a feed that ignored the flag, and
+        # an operator checking whether the disable took effect has no way to
+        # tell those apart from four INFO lines. Silence is the observable
+        # that makes the config verifiable.
         try:
             from data_mgmt.feeds.cryptopanic_feed import is_feed_enabled
             _cp_on = is_feed_enabled()
         except Exception:  # noqa: silent-swallow — an unreadable switch must not disable a working feed; default to ON
             _cp_on = True
+
+        feed = None
+        if _cp_on:
+            from data_mgmt.feeds.cryptopanic_feed import get_cryptopanic_feed
+            feed = get_cryptopanic_feed()
+            meta["is_mock"] = bool(getattr(feed, "_mock_mode", False))
         if not _cp_on:
             # [P322c] The operator disabled this feed. This function is one of
             # TWO sites that reach the singleton directly, which is why the
@@ -1375,7 +1401,7 @@ async def fetch_headlines_with_meta(
         else:
             _cp_usable = True
 
-        data = feed.get_latest() if _cp_usable else None
+        data = feed.get_latest() if (_cp_usable and feed is not None) else None
         data_age_s = None
         cache_is_empty = False
         if data is not None and getattr(data, "timestamp", None) is not None:
@@ -1383,11 +1409,13 @@ async def fetch_headlines_with_meta(
             cache_is_empty = not bool(getattr(data, "recent_news", None))
 
         # A declined source must never issue a request.
-        needs_refresh = _cp_usable and (
+        needs_refresh = _cp_usable and feed is not None and (
             data is None
             or (data_age_s is not None and data_age_s > min(win.total_seconds(), 3600))
         )
-        if needs_refresh:
+        # `feed is not None` is implied by needs_refresh and restated so
+        # the narrowing survives the bool — same reason as the branch above.
+        if needs_refresh and feed is not None:
             refreshed = await feed.fetch()
             if refreshed is not None:
                 data = refreshed
