@@ -37,10 +37,18 @@ FAIL DIRECTIONS
       strategy warms up exactly as it does today. Never a fabricated history:
       a synthetic distribution would give the z-score a scale nobody measured
       (P2/P199).
-    * Observations carry timestamps and anything older than `max_age_sec` is
-      DROPPED on restore. A funding distribution from two months ago is not
-      the current regime, and silently treating it as such would be worse
-      than warming up again.
+    * The FILE carries one write timestamp and the whole history is DROPPED
+      on restore once it is older than `max_age_sec`. A funding distribution
+      from two months ago is not the current regime, and silently treating it
+      as such would be worse than warming up again.
+      [P313] Per-OBSERVATION timestamps are deliberately NOT stored, and this
+      paragraph used to claim they were — a comment asserting a safety
+      property the code did not have (the P294 shape). They are unnecessary
+      here because the consumer restores into a BOUNDED deque
+      (`deque(vals[-maxlen:], maxlen=maxlen)`), so stale observations roll off
+      structurally rather than by age. If a consumer ever restores into an
+      UNBOUNDED container, this becomes a real gap and the timestamps have to
+      be added with it.
     * Writes are atomic (os.replace) so a crash mid-write cannot leave a
       truncated history that parses.
 ================================================================================

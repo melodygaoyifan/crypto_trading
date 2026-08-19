@@ -383,12 +383,47 @@ class PerTickInvariantChecker:
         return report
 
     def _t1_alpha_estimate_nonzero(self, asset, intent, market_data, agent_signals) -> HealthCheck:
-        """Alpha gate should produce nonzero estimates when strategy != HOLD."""
+        """Alpha gate should produce nonzero estimates when a position is INTENDED.
+
+        [P313] The gate used to be `strategy != "hold"`, which was right while
+        the strategy label and the edge came from one producer. It stopped
+        being right when the P298 regimebook seat began overwriting
+        direction/edge without touching `primary_strategy`: a certified-FLAT
+        book (ETH/SOL trend-only outside bull) reports edge=0 under the label
+        "trend_following", so this WARNed every tick on 2 of 3 assets for the
+        system working exactly as designed.
+
+        That is not merely noise. T1 exists to catch the P155-era condition
+        "a strategy is live but edge is 0, so nothing can trade" — and a
+        permanent benign WARN on two assets makes a REAL edge=0 fault on
+        those assets indistinguishable from the standing one (P202/P240: an
+        alert whose only resolution is to ignore it stops being an alert).
+        So the check now keys on the thing it actually cares about — is a
+        position intended? — instead of on a label. A nonzero direction with
+        zero edge still WARNs, which is the fault worth hearing.
+        """
         strategy = str(agent_signals.get("primary_strategy", "")).lower()
         edge = float(market_data.get("signal_edge_bps", 0))
+        # [P313] ABSENCE IS NOT FLAT (P2). A missing intent — or one with no
+        # direction — tells us nothing about whether a position is intended,
+        # and reading that as 0.0 would PASS the check whenever the direction
+        # is merely unknown, i.e. silence T1 exactly when we can see least.
+        # Unknown falls through to the old label-based behaviour instead.
+        # Caught by tests/test_health_validator.py's pre-existing
+        # test_warn_when_momentum_zero_edge, which passes intent=None.
+        _raw_dir = getattr(intent, "direction", None) if intent is not None else None
+        try:
+            direction = None if _raw_dir is None else float(_raw_dir)
+        except (TypeError, ValueError):  # noqa: silent-swallow — unknown, see above
+            direction = None
         if strategy == "hold":
             return HealthCheck("T1", f"{asset} alpha estimate", "PASS",
                                "strategy=hold, edge=0 is expected", "Bug #10")
+        if direction is not None and abs(direction) < 1e-9:
+            return HealthCheck("T1", f"{asset} alpha estimate", "PASS",
+                               f"flat (direction=0, strategy={strategy}) — "
+                               f"no position intended, so edge=0 is expected",
+                               "Bug #10")
         if edge > 0:
             return HealthCheck("T1", f"{asset} alpha estimate", "PASS",
                                f"edge={edge:.1f}bps, strategy={strategy}", "Bug #10")

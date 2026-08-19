@@ -1373,7 +1373,7 @@ from core.constants import (
 # =============================================================================
 
 # =============================================================================
-# [P311] CONFIG FIELDS THAT WERE DECLARED AND READ BUT NEVER PARSED
+# [P313] CONFIG FIELDS THAT WERE DECLARED AND READ BUT NEVER PARSED
 # =============================================================================
 # 28 ProductionConfig fields were declared, defaulted (17 of them to True),
 # read on the live path — and assigned NOWHERE in from_file. An operator
@@ -1432,7 +1432,7 @@ _LATE_CONFIG_KEYS = {
     # switch did not.
     "thesis_budget_enabled": ("thesis_budget", "enabled"),
     # --- Regime leverage / power / aggression. NOTE the switch below is the
-    # one whose absence hid the P311-A funding coupling; read that comment
+    # one whose absence hid the P313-A funding coupling; read that comment
     # before changing anything here.
     "regime_leverage_enabled": "regime_leverage_enabled",
     "regime_power_enabled": "regime_power_enabled",
@@ -2075,7 +2075,15 @@ class ProductionConfig:
         # C5: Schema validation on merged config
         try:
             from configs.config_resolver import validate_loaded_config
-            _schema_errors = validate_loaded_config(data)
+            # [P313] The dataclass is the authority on what a top-level key
+            # may be, so it is PASSED IN rather than restated in the schema
+            # module (P310: import the producer's declaration). Without this
+            # argument the top-level check is skipped entirely, which is what
+            # let `profit_max_enabled: false` be both inert and silent.
+            _schema_errors = validate_loaded_config(
+                data,
+                known_toplevel={_f.name for _f in dataclasses.fields(cls)},
+            )
             for _se in _schema_errors:
                 logger.warning(f"[CONFIG_SCHEMA] {_se}")
         except Exception as e:
@@ -2334,7 +2342,7 @@ class ProductionConfig:
             sentiment_gate_config=data.get("sentiment_gate_config") or None,
             smart_beta_config=data.get("smart_beta_config") or None,
         )
-        # [P311] Apply the fields that were declared + read but never parsed.
+        # [P313] Apply the fields that were declared + read but never parsed.
         # Runs on the CONSTRUCTED object so an absent key keeps the dataclass
         # default by construction — no restated defaults, nothing to drift.
         cls._apply_late_config_overrides(_cfg, data)
@@ -2342,11 +2350,11 @@ class ProductionConfig:
 
     @staticmethod
     def _apply_late_config_overrides(cfg: 'ProductionConfig', data: Dict) -> List[str]:
-        """[P311] Set the `_LATE_CONFIG_KEYS` fields from `data`, if present.
+        """[P313] Set the `_LATE_CONFIG_KEYS` fields from `data`, if present.
 
         Returns the list of "field=value" strings applied (for logging and for
         tests). Absent key -> untouched, so a profile that sets none of these
-        is byte-identical to the pre-P311 behaviour.
+        is byte-identical to the pre-P313 behaviour.
 
         Coercion follows the CURRENT default's runtime type rather than the
         annotation: `bool` is checked before `int` because bool is an int
@@ -2388,14 +2396,14 @@ class ProductionConfig:
                     _val = _raw
             except (TypeError, ValueError) as _e:
                 logger.warning(
-                    f"[P311] config key '{_where}' could not be applied to "
+                    f"[P313] config key '{_where}' could not be applied to "
                     f"{_field} ({type(_e).__name__}: {_e}) — KEEPING the "
                     f"default {_cur!r}")
                 continue
             setattr(cfg, _field, _val)
             applied.append(f"{_field}={_val!r} (from {_where})")
         if applied:
-            logger.info(f"[P311] applied {len(applied)} config override(s): "
+            logger.info(f"[P313] applied {len(applied)} config override(s): "
                         + "; ".join(applied))
         return applied
 
@@ -10275,7 +10283,7 @@ class HMATSProductionRunner:
                     # tick the seated signal would be silently excluded.
                     market_data["quant_data_quality"] = 1.0
                     agent_signals["quant_data_quality"] = 1.0
-                    # [P311] Report the DECIDER honestly. The seat overwrites
+                    # [P313] Report the DECIDER honestly. The seat overwrites
                     # direction/confidence/edge but used to leave
                     # `primary_strategy` reading "trend_following" (set by
                     # core/trend_decision_layer.py), so every downstream
@@ -12347,7 +12355,7 @@ class HMATSProductionRunner:
             except Exception:
                 pass
 
-        # [P311] The funding wire is DELIBERATELY OUTSIDE the leverage gate.
+        # [P313] The funding wire is DELIBERATELY OUTSIDE the leverage gate.
         #
         # It used to sit inside the `regime_leverage_enabled` block above, and
         # `update_funding_rate` has exactly ONE production caller — this one.
@@ -12362,7 +12370,7 @@ class HMATSProductionRunner:
         # "regime leverage" would reasonably expect to stop LEVERAGING, not to
         # stop charging for CARRY.
         #
-        # Latent until P311 made these flags settable at all — which is exactly
+        # Latent until P313 made these flags settable at all — which is exactly
         # why it had to be decoupled in the SAME change (arming the config
         # surface without this would have shipped the trap, not closed it).
         #

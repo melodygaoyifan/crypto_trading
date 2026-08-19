@@ -15,7 +15,7 @@ import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -427,8 +427,59 @@ def validate_config_section(
     return errors
 
 
-def validate_loaded_config(data: Dict) -> List[str]:
-    """Validate a full loaded config dict. Returns list of issues."""
+# [P313] Top-level keys that are NOT ProductionConfig field names: config
+# SECTIONS (`risk`, `profit_max`, `thesis_budget`, ...) and JSON-only aliases
+# that from_file reads under a different field name (`regime_leverage` ->
+# regime_leverage_map, `short_control` -> short_control_config). Every entry
+# was harvested from a real profile in configs/, so none of them is a typo —
+# which is the whole point: a schema that cannot tell a real key from a typo
+# makes the operator ignore the one line that would flag a REAL typo (P303).
+_TOPLEVEL_ALIAS_KEYS = frozenset({
+    "allocation", "allowed_venues", "alpha_gate", "auto_recovery",
+    "cascade_permissions", "cash_and_carry", "confidence_gate", "data_source",
+    "drl", "dynamic_limits", "end_date", "execution", "existence_fuse",
+    "fees", "g6", "gambler", "heavy_model", "leverage", "logging",
+    "passive_aggressive", "portfolio", "profit_max", "regime_leverage",
+    "risk", "risk_profiles", "sentiment", "short_control", "signal_quality",
+    "single_exchange_mode", "slippage_bps", "slippage_model", "start_date",
+    "structure_gate", "thesis_budget", "timing", "timing_engine",
+    "trade_gate", "tranche", "weekend_manager",
+    # from_file's own overlay selector.
+    "risk_profile",
+})
+
+
+def validate_toplevel_keys(data: Dict, known_fields: Iterable[str]) -> List[str]:
+    """[P313] Flag unknown TOP-LEVEL keys.
+
+    Before this, validate_loaded_config only inspected the `risk` and
+    `tranche` sections, so a top-level key was unvalidated in both
+    directions: `profit_max_enabled: false` neither took effect (it was
+    never parsed — see main.py `_LATE_CONFIG_KEYS`) nor produced a warning.
+    A key that can do nothing AND says nothing is the worst of both.
+
+    `known_fields` is passed in by the caller rather than restated here: the
+    authority on what a config key may be is the ProductionConfig dataclass,
+    and a copy of that list in this module would drift from it the first time
+    a field is added (P310's rule — import the producer's declaration, never
+    restate it).
+    """
+    known = set(known_fields) | _TOPLEVEL_ALIAS_KEYS
+    return [f"Unknown top-level key (typo?): {k}"
+            for k in sorted(data)
+            if not k.startswith("_") and k not in known]
+
+
+def validate_loaded_config(
+    data: Dict,
+    known_toplevel: Optional[Iterable[str]] = None,
+) -> List[str]:
+    """Validate a full loaded config dict. Returns list of issues.
+
+    [P313] `known_toplevel` is OPTIONAL and additive: when omitted, top-level
+    keys are not checked and the behaviour is exactly as before, so existing
+    callers and tests are unaffected.
+    """
     all_errors: List[str] = []
 
     risk = data.get("risk", {})
@@ -440,5 +491,8 @@ def validate_loaded_config(data: Dict) -> List[str]:
         all_errors.extend(
             validate_config_section(tranche, _TRANCHE_SCHEMA, "tranche")
         )
+
+    if known_toplevel is not None:
+        all_errors.extend(validate_toplevel_keys(data, known_toplevel))
 
     return all_errors

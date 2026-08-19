@@ -152,14 +152,38 @@ class TestNameContract:
                         break
         return found
 
+    # [P313] Every module that ACTUALLY builds a ledger record inline. This is
+    # deliberately not `PRODUCER_MODULES`: that tuple serves two roles, and
+    # `strategies.derivatives_flow_v1` is in it for its NAME DECLARATION only
+    # — it returns FlowSignal objects and the writing is done by
+    # strategy_shadow_v5_1's harness. So the writer roster is its own list.
+    _KNOWN_WRITERS = (
+        "defense.regime_book_shadow",
+        "defense.etf_flow_shadow",
+        "defense.mlp_shadow",
+        "defense.enhancement_shadows",
+        "defense.trend_rule_shadow",
+        "defense.sentiment_variant_shadow",
+        "defense.strategy_shadow_v5_1",
+    )
+
     def test_the_detector_actually_finds_the_known_writers(self):
         """Anti-vacuity: if the shape detector matches nothing, the rot check
-        below passes forever (P174)."""
+        below passes forever (P174).
+
+        [P313] Pinned against EVERY known writer, not two of them. The old
+        version asserted only regime_book_shadow and mlp_shadow, so the
+        detector could quietly stop matching the other five — its three
+        narrowing preconditions (directory list, the literal `strategy_shadow`
+        string, an inline 3-key dict) each shrink coverage, and a guard that
+        samples two modules cannot notice that shrinkage. Coverage loss in a
+        rot detector is exactly the failure it exists to prevent.
+        """
         found = self._ledger_writers()
-        for known in ("defense.regime_book_shadow", "defense.mlp_shadow"):
-            assert known in found, (
-                f"the record-shape detector missed {known}; it would then "
-                f"miss a NEW producer too")
+        missed = [m for m in self._KNOWN_WRITERS if m not in found]
+        assert not missed, (
+            f"the record-shape detector missed {missed}; it would then "
+            f"miss a NEW producer too")
 
     def test_every_ledger_writer_is_registered_here(self):
         """The registry must not rot: a module that builds a shadow record has
