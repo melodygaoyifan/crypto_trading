@@ -1792,6 +1792,26 @@ class ProductionConfig:
     # understates the real charge ~3x. Strictly TIGHTENING (max() at
     # the site), but arming it can stop an asset trading, so it is an
     # operator decision (P141) — see the P291 precedent.
+    #
+    # [P318] DO NOT ARM THIS ALONE — P315's own "arm it" recommendation is
+    # WITHDRAWN. The gate is wrong on BOTH sides, and the alpha side is
+    # understated MORE than the fee side was. Measured per position change
+    # at honest fees (training/funding_legs_lab, 6y):
+    #     BTC un-damped   40.1 bps/leg gross vs 16.2 cost   = 2.5x
+    #     BTC bands       137.4                             = 8.5x
+    #     ETH un-damped   112.5                             = 7.5x
+    #     ETH bands       450.2                             = 27.1x
+    # The gate asserts a FLAT 30bps of edge per trade (the regimebook seat's
+    # `30.0 * |dir|`) against 27.7bps of round-trip friction — ~1.08x, i.e.
+    # break-even. That constant was calibrated for the TREND seat's fast
+    # signal (P231: "base_edge_bps = 40, a constant chosen to clear the
+    # gate"); the regime book holds ~40 bars and captures 40-450bps per leg,
+    # so the same constant understates it 4-15x. Arming the honest fee while
+    # the alpha side still asserts 30bps would REJECT trades whose realized
+    # edge is 2.5-27x their cost — a units mismatch (per-tick alpha vs
+    # per-round-trip cost), not a risk control.
+    # Arming it therefore requires the alpha side to be calibrated to the
+    # SEAT'S OWN holding horizon first, with its own evidence and P-entry.
     coinbase_per_contract_fees: bool = False
     whale_seat_mode: str = "off"
     whale_seat_assets: Optional[List[str]] = None

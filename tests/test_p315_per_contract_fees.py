@@ -174,13 +174,40 @@ class TestGateWiring:
         src = self._src()
         assert 'data.get("coinbase_per_contract_fees", False)' in src
 
-    def test_not_yet_armed_in_the_live_profile(self):
-        """Arming it IS the decision. This test failing means someone turned
-        it on — which is fine, but it must come with a recorded P-entry
-        stating that BTC is expected to stop entering."""
+    def test_not_armed_because_the_alpha_side_is_understated_more(self):
+        """[P318] P315 recommended arming this. That recommendation is
+        WITHDRAWN and this test is the guard.
+
+        The gate is wrong on BOTH sides. Measured per position change at
+        honest fees, the book's realized gross is 40-450 bps/leg against
+        ~16 bps/leg of cost (2.5x-27x). The gate asserts a FLAT 30bps of
+        edge per trade against 27.7bps round-trip friction (~1.08x) — a
+        constant calibrated for the TREND seat's fast signal (P231),
+        applied to a book that holds ~40 bars.
+
+        So arming the honest FEE while the alpha side still asserts 30bps
+        would reject trades whose realized edge is many times their cost.
+        The fee correction is right; shipping it alone is not.
+
+        Arming requires the alpha side calibrated to the seat's own holding
+        horizon, with its own evidence and P-entry — at which point this
+        test becomes a DECIDED-value pin (the P237/P270 pattern)."""
         live = json.loads(
             (REPO / "configs" / "live_high_risk.json").read_text(encoding="utf-8"))
-        assert "coinbase_per_contract_fees" not in live
+        assert "coinbase_per_contract_fees" not in live, (
+            "the per-contract fee is armed while the gate still asserts a flat "
+            "30bps of alpha — that combination REJECTS trades measured at "
+            "2.5x-27x edge/cost. Calibrate the alpha side first (P318).")
+
+    def test_the_asserted_alpha_is_still_the_uncalibrated_constant(self):
+        """ANTI-ROT for the reason above: if the seat's asserted edge ever
+        becomes horizon-calibrated, the objection in the test above no
+        longer applies and the arming decision must be re-opened rather
+        than left blocked by a stale comment."""
+        src = io.open(REPO / "main.py", encoding="utf-8").read()
+        assert "_rb_edge = 30.0 * abs(_rb_dir)" in src, (
+            "the regimebook seat no longer asserts a flat 30bps — re-open the "
+            "coinbase_per_contract_fees arming decision (P318)")
 
 
 # =============================================================================
