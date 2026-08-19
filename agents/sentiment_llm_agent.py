@@ -1312,6 +1312,28 @@ async def fetch_headlines_with_meta(
         "window_unknown": False,
         "error": "",
     }
+    # [P322d] THE THREE SOURCES ARE INDEPENDENT, and the shared locals are
+    # hoisted here so they cannot stop being reachable.
+    #
+    # This function blends CryptoPanic + CC News + RSS, but every one of the
+    # CryptoPanic bail-outs below used to `return meta` — including the
+    # PRE-EXISTING `data is None` branch. So whenever the FIRST source had
+    # nothing, the other two never ran: a curated-feed outage silently took
+    # the whole agent dark rather than degrading to the free sources that
+    # exist precisely for that case. Latent while CryptoPanic answered;
+    # permanent the moment it is disabled (P322b), which is how it surfaced —
+    # SOL went `headlines=0 tradeable=False` on a deploy whose only intent
+    # was to stop paying a vendor.
+    #
+    # CryptoPanic is now ONE OPTIONAL SOURCE OF THREE: it can decline, and
+    # the blend continues.
+    now = datetime.now(timezone.utc)
+    win = window or _HEADLINE_WINDOW
+    cutoff = now - win
+    meta["window_seconds"] = win.total_seconds()
+    seen_titles: set = set()
+    headlines: List[str] = []
+    newest_age: Optional[float] = None
     try:
         from data_mgmt.feeds.cryptopanic_feed import get_cryptopanic_feed
         feed = get_cryptopanic_feed()
@@ -1325,10 +1347,9 @@ async def fetch_headlines_with_meta(
             # [P322c] The operator disabled this feed. This function is one of
             # TWO sites that reach the singleton directly, which is why the
             # switch is module-level rather than a main.py handle.
-            meta["headlines"] = []
             meta["reason"] = "cryptopanic_disabled_by_config"
-            return meta
-        if meta["is_mock"]:
+            _cp_usable = False
+        elif meta["is_mock"]:
             # [P322] MOCK HEADLINES MUST NEVER REACH HAIKU.
             #
             # `_fetch_mock` invents 3-10 items per currency titled
@@ -1349,20 +1370,20 @@ async def fetch_headlines_with_meta(
             #
             # Mock therefore means NO NEWS, never FAKE NEWS. The RSS blend
             # (P314) is unaffected and continues to carry the agent.
-            meta["headlines"] = []
             meta["reason"] = "cryptopanic_mock_mode_no_headlines"
-            return meta
-        now = datetime.now(timezone.utc)
-        win = window or _HEADLINE_WINDOW
+            _cp_usable = False
+        else:
+            _cp_usable = True
 
-        data = feed.get_latest()
+        data = feed.get_latest() if _cp_usable else None
         data_age_s = None
         cache_is_empty = False
         if data is not None and getattr(data, "timestamp", None) is not None:
             data_age_s = (now - data.timestamp).total_seconds()
             cache_is_empty = not bool(getattr(data, "recent_news", None))
 
-        needs_refresh = (
+        # A declined source must never issue a request.
+        needs_refresh = _cp_usable and (
             data is None
             or (data_age_s is not None and data_age_s > min(win.total_seconds(), 3600))
         )
@@ -1375,54 +1396,54 @@ async def fetch_headlines_with_meta(
                     data_age_s = (now - data.timestamp).total_seconds()
 
         if data is None:
+            # [P322d] CryptoPanic contributed nothing. This is RECORDED, not
+            # returned: CC News and RSS below are independent sources and the
+            # whole point of having them is this case. `error` keeps its
+            # historical value so any consumer reading it is unaffected.
             meta["error"] = "no_data"
-            return meta
+            _cp_usable = False
 
-        cutoff = now - win
-        meta["window_seconds"] = win.total_seconds()
-        meta["data_age_s"] = round(data_age_s, 1) if data_age_s is not None else None
-        _asset = asset.upper().replace("/USD", "")
-        meta["metrics"] = {
-            "sentiment_consensus": float(getattr(data, "sentiment_consensus", {}).get(_asset, 0.0) or 0.0),
-            "panic_score": float(getattr(data, "panic_score", {}).get(_asset, 0.0) or 0.0),
-            "news_velocity": float(getattr(data, "news_velocity", {}).get(_asset, 0.0) or 0.0),
-            "narrative_intensity": float(getattr(data, "narrative_intensity", {}).get(_asset, 0.0) or 0.0),
-        }
+        if _cp_usable:
+            meta["data_age_s"] = round(data_age_s, 1) if data_age_s is not None else None
+            _asset = asset.upper().replace("/USD", "")
+            meta["metrics"] = {
+                "sentiment_consensus": float(getattr(data, "sentiment_consensus", {}).get(_asset, 0.0) or 0.0),
+                "panic_score": float(getattr(data, "panic_score", {}).get(_asset, 0.0) or 0.0),
+                "news_velocity": float(getattr(data, "news_velocity", {}).get(_asset, 0.0) or 0.0),
+                "narrative_intensity": float(getattr(data, "narrative_intensity", {}).get(_asset, 0.0) or 0.0),
+            }
 
-        seen_titles: set = set()
-        headlines: List[str] = []
-        newest_age: Optional[float] = None
 
-        for item in data.recent_news:
-            if asset not in item.currencies:
-                continue
+            for item in data.recent_news:
+                if asset not in item.currencies:
+                    continue
 
-            # Check if published_at is usable
-            if item.published_at is None:
-                meta["window_unknown"] = True
+                # Check if published_at is usable
+                if item.published_at is None:
+                    meta["window_unknown"] = True
+                    title_lower = item.title.strip().lower()
+                    if title_lower not in seen_titles:
+                        seen_titles.add(title_lower)
+                        headlines.append(item.title)
+                    continue
+
+                # Time filter
+                if item.published_at < cutoff:
+                    continue
+
+                age_s = (now - item.published_at).total_seconds()
+                if newest_age is None or age_s < newest_age:
+                    newest_age = age_s
+
                 title_lower = item.title.strip().lower()
                 if title_lower not in seen_titles:
                     seen_titles.add(title_lower)
                     headlines.append(item.title)
-                continue
 
-            # Time filter
-            if item.published_at < cutoff:
-                continue
-
-            age_s = (now - item.published_at).total_seconds()
-            if newest_age is None or age_s < newest_age:
-                newest_age = age_s
-
-            title_lower = item.title.strip().lower()
-            if title_lower not in seen_titles:
-                seen_titles.add(title_lower)
-                headlines.append(item.title)
-
-        meta["headlines"] = headlines[:50]
-        meta["newest_headline_age_s"] = round(newest_age, 1) if newest_age is not None else None
-        if not meta["headlines"] and cache_is_empty:
-            meta["error"] = "empty_cache"
+            meta["headlines"] = headlines[:50]
+            meta["newest_headline_age_s"] = round(newest_age, 1) if newest_age is not None else None
+            if not meta["headlines"] and cache_is_empty:
+                meta["error"] = "empty_cache"
 
         # [CC_NEWS_BLEND] Add CryptoCompare News as secondary source (redundancy +
         # different editorial bias). Dedup by title, cap at 50 combined.

@@ -43,9 +43,21 @@ sys.path.insert(0, str(REPO))
 # 1. Mock means NO news, never FAKE news
 # =============================================================================
 
+def _rss_item(title: str):
+    """A fresh, well-dated RSS item — the shape the blend expects."""
+    from datetime import datetime, timedelta, timezone
+
+    class _RssItem:
+        def __init__(self, t):
+            self.title = t
+            self.published_at = datetime.now(timezone.utc) - timedelta(minutes=5)
+
+    return _RssItem(title)
+
+
 class TestMockHeadlinesNeverReachHaiku:
 
-    def _meta(self, mock: bool):
+    def _meta(self, mock: bool, rss_items=None):
         import asyncio
         from datetime import datetime, timedelta, timezone
         import agents.sentiment_llm_agent as mod
@@ -74,14 +86,31 @@ class TestMockHeadlinesNeverReachHaiku:
             async def fetch_if_stale(self):
                 return _Data()
 
+        # [P322d] Isolate the CRYPTOPANIC contribution. RSS is a real network
+        # feed and legitimately supplies headlines, so without stubbing it the
+        # assertions below would pass or fail on the wrong source — which is
+        # exactly how the first version of this test came to pin the bug
+        # (it asserted `headlines == []`, a claim that is only true while the
+        # CryptoPanic bail-out ALSO kills RSS).
+        class _EmptyRSS:
+            async def fetch_if_stale(self):
+                return None
+
+            def get_items(self, asset):
+                return list(rss_items or [])
+
         mod_feed = _Feed()
         import data_mgmt.feeds.cryptopanic_feed as cp
+        import data_mgmt.feeds.rss_news_feed as rss
         orig = cp.get_cryptopanic_feed
+        orig_rss = rss.get_rss_news_feed
         cp.get_cryptopanic_feed = lambda *a, **k: mod_feed
+        rss.get_rss_news_feed = lambda *a, **k: _EmptyRSS()
         try:
             return asyncio.run(mod.fetch_headlines_with_meta("BTC"))
         finally:
             cp.get_cryptopanic_feed = orig
+            rss.get_rss_news_feed = orig_rss
 
     def test_mock_mode_yields_no_headlines(self):
         """THE HAZARD. 'Mock BTC News 0' stamped 30 minutes ago passes the 4h
@@ -91,6 +120,18 @@ class TestMockHeadlinesNeverReachHaiku:
             "fabricated titles must never reach the model — mock means NO "
             "news, not FAKE news")
         assert meta.get("reason") == "cryptopanic_mock_mode_no_headlines"
+
+    def test_mock_suppression_is_scoped_to_the_fabricated_titles(self):
+        """[P322d] The suppression must remove the MOCK titles, not the blend.
+
+        Stated separately from the test above because the two are easy to
+        satisfy with the same wrong implementation (an early return), and
+        that implementation is what shipped and took SOL dark.
+        """
+        real = _rss_item("A genuine RSS headline")
+        meta = self._meta(mock=True, rss_items=[real])
+        assert "A genuine RSS headline" in meta["headlines"]
+        assert not any("Mock BTC News" in h for h in meta["headlines"])
 
     def test_real_mode_still_returns_headlines(self):
         """The guard must not become a blanket disable — a real feed with real
@@ -246,12 +287,25 @@ class TestTheDisableReachesTheSingletonsOtherCallers:
         import asyncio
         import agents.sentiment_llm_agent as mod
         import data_mgmt.feeds.cryptopanic_feed as cp
+        import data_mgmt.feeds.rss_news_feed as rss
+
+        class _EmptyRSS:
+            async def fetch_if_stale(self):
+                return None
+
+            def get_items(self, asset):
+                return []
+
+        orig_rss = rss.get_rss_news_feed
+        rss.get_rss_news_feed = lambda *a, **k: _EmptyRSS()
         try:
             cp.set_feed_enabled(False)
             meta = asyncio.run(mod.fetch_headlines_with_meta("BTC"))
+            # RSS stubbed empty, so anything here would be CryptoPanic's.
             assert meta["headlines"] == []
             assert meta.get("reason") == "cryptopanic_disabled_by_config"
         finally:
+            rss.get_rss_news_feed = orig_rss
             self._reset()
 
     def test_main_sets_the_switch_when_the_flag_is_false(self):
@@ -269,3 +323,86 @@ class TestTheDisableReachesTheSingletonsOtherCallers:
             encoding="utf-8-sig")
         i = src.index("is_feed_enabled")
         assert "_cp_on = True" in src[i:i + 400]
+
+
+# =============================================================================
+# 5. [P322d] The three sources are INDEPENDENT
+# =============================================================================
+
+class TestADecliningCryptoPanicDoesNotTakeTheBlendDown:
+    """The regression that shipped, found by reading the live log.
+
+    `fetch_headlines_with_meta` blends CryptoPanic + CC News + RSS, but every
+    CryptoPanic bail-out was a `return meta` — including the PRE-EXISTING
+    `data is None` branch. So whenever the first source had nothing, the other
+    two never ran. Disabling CryptoPanic (P322b) made that permanent and SOL
+    went `headlines=0 tradeable=False` on a deploy whose only intent was to
+    stop paying a vendor.
+
+    Parameterised over all three declines because they are three separate
+    branches that each looked locally correct.
+    """
+
+    def _run(self, *, enabled: bool, mock: bool, data_none: bool):
+        import asyncio
+        import agents.sentiment_llm_agent as mod
+        import data_mgmt.feeds.cryptopanic_feed as cp
+        import data_mgmt.feeds.rss_news_feed as rss
+
+        class _Feed:
+            _mock_mode = mock
+
+            def get_latest(self):
+                return None if data_none else _Data()
+
+            async def fetch(self):
+                if not enabled:
+                    raise AssertionError(
+                        "a DISABLED feed must never issue a request")
+                return None if data_none else _Data()
+
+        from datetime import datetime, timezone
+
+        class _Data:
+            timestamp = datetime.now(timezone.utc)
+            recent_news = []
+            sentiment_consensus = {"BTC": 0.0}
+            panic_score = {"BTC": 0.0}
+            news_velocity = {"BTC": 0.0}
+            narrative_intensity = {"BTC": 0.0}
+
+        class _RSS:
+            async def fetch_if_stale(self):
+                return None
+
+            def get_items(self, asset):
+                return [_rss_item("RSS carried the agent")]
+
+        o_cp, o_rss = cp.get_cryptopanic_feed, rss.get_rss_news_feed
+        cp.get_cryptopanic_feed = lambda *a, **k: _Feed()
+        rss.get_rss_news_feed = lambda *a, **k: _RSS()
+        cp.set_feed_enabled(enabled)
+        try:
+            return asyncio.run(mod.fetch_headlines_with_meta("BTC"))
+        finally:
+            cp.get_cryptopanic_feed, rss.get_rss_news_feed = o_cp, o_rss
+            cp.set_feed_enabled(True)
+
+    @pytest.mark.parametrize("kw", [
+        pytest.param(dict(enabled=False, mock=False, data_none=True), id="disabled"),
+        pytest.param(dict(enabled=True, mock=True, data_none=False), id="mock"),
+        pytest.param(dict(enabled=True, mock=False, data_none=True), id="no_data"),
+    ])
+    def test_rss_still_reaches_the_output(self, kw):
+        meta = self._run(**kw)
+        assert "RSS carried the agent" in meta["headlines"], (
+            "a CryptoPanic decline must not suppress the free sources that "
+            "exist precisely for that case — headline_count==0 is what makes "
+            "llm_sentiment untradeable (main.py's _c3_live gate)")
+
+    def test_the_window_is_published_even_when_cryptopanic_declines(self):
+        """`window_seconds` used to be set inside the CryptoPanic body, so a
+        decline left it None and the consumer could not tell how the blend was
+        filtered."""
+        meta = self._run(enabled=False, mock=False, data_none=True)
+        assert meta["window_seconds"], "the blend's window must always be reported"
