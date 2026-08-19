@@ -1813,6 +1813,11 @@ class ProductionConfig:
     # Arming it therefore requires the alpha side to be calibrated to the
     # SEAT'S OWN holding horizon first, with its own evidence and P-entry.
     coinbase_per_contract_fees: bool = False
+    # [P320] Replace the regimebook seat's flat 30bps per-TICK assertion
+    # with its MEASURED gross bps per ROUND TRIP in its worst era
+    # (core/seat_alpha.py). INTERLOCKED with the flag above — either
+    # alone is a half-correction that moves the gate the wrong way.
+    seat_alpha_calibrated: bool = False
     whale_seat_mode: str = "off"
     whale_seat_assets: Optional[List[str]] = None
     fusion_conviction_to_sleeve: bool = False
@@ -2246,6 +2251,9 @@ class ProductionConfig:
             # [P315] declared + parsed together (the P201 rule)
             coinbase_per_contract_fees=bool(
                 data.get("coinbase_per_contract_fees", False)),
+            # [P320] declared + parsed together (the P201 rule)
+            seat_alpha_calibrated=bool(
+                data.get("seat_alpha_calibrated", False)),
             whale_seat_mode=(
                 str(data.get("whale_seat_mode", "off") or "off").lower()
                 if str(data.get("whale_seat_mode", "off") or "off").lower()
@@ -10300,7 +10308,11 @@ class HMATSProductionRunner:
                     self._rb_seat_stale_logged = getattr(
                         self, "_rb_seat_stale_logged", set())
                     self._rb_seat_stale_logged.discard(asset)
-                    _rb_edge = 30.0 * abs(_rb_dir)
+                    # [P320] calibrated seat alpha; see core/seat_alpha.py
+                    from core.seat_alpha import resolve_seat_edge as _rse
+                    _rb_edge = _rse(asset, "regimebook", _rb_dir, 30.0,
+                        bool(getattr(self.config, "seat_alpha_calibrated", False)),
+                        bool(getattr(self.config, "coinbase_per_contract_fees", False)))
                     market_data["quant_direction"] = float(_rb_dir)
                     market_data["quant_confidence"] = 0.9 if _rb_dir else 0.4
                     market_data["signal_edge_bps"] = _rb_edge

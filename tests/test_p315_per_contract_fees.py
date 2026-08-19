@@ -199,15 +199,31 @@ class TestGateWiring:
             "30bps of alpha — that combination REJECTS trades measured at "
             "2.5x-27x edge/cost. Calibrate the alpha side first (P318).")
 
-    def test_the_asserted_alpha_is_still_the_uncalibrated_constant(self):
-        """ANTI-ROT for the reason above: if the seat's asserted edge ever
-        becomes horizon-calibrated, the objection in the test above no
-        longer applies and the arming decision must be re-opened rather
-        than left blocked by a stale comment."""
-        src = io.open(REPO / "main.py", encoding="utf-8").read()
-        assert "_rb_edge = 30.0 * abs(_rb_dir)" in src, (
-            "the regimebook seat no longer asserts a flat 30bps — re-open the "
-            "coinbase_per_contract_fees arming decision (P318)")
+    def test_the_alpha_side_is_now_calibrated_so_arming_is_re_opened(self):
+        """[P320] This guard was written by P318 to fire exactly here: "if the
+        seat's asserted edge ever becomes horizon-calibrated, the objection no
+        longer applies and the arming decision must be RE-OPENED rather than
+        left blocked by a stale comment." It fired, and this is the update.
+
+        The alpha side IS now calibrated (core/seat_alpha.py: measured gross
+        bps per round trip, era-minimum), and the two corrections are
+        INTERLOCKED so neither can ship alone. So P318's objection is
+        resolved — what remains is a live decision, not a defect:
+
+            with both armed, BTC -32.9, ETH -3.9, SOL -80.3 vs threshold
+            -> the book goes ~flat, which is the honest answer on this
+               evidence and is an operator call (P141).
+        """
+        import dataclasses
+        import main
+        names = {f.name for f in dataclasses.fields(main.ProductionConfig)}
+        assert "seat_alpha_calibrated" in names, (
+            "the calibrated-alpha flag vanished; P318's objection to arming "
+            "the fee alone is live again")
+        from core.seat_alpha import resolve_seat_edge
+        # interlocked: neither half alone changes the asserted edge
+        assert resolve_seat_edge("ETH", "regimebook", 1.0, 30.0, True, False) == 30.0
+        assert resolve_seat_edge("ETH", "regimebook", 1.0, 30.0, False, True) == 30.0
 
 
 # =============================================================================

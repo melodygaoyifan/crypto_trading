@@ -139,12 +139,30 @@ class TestSeatBlockWiring:
                 f"pre-inject snapshot")
 
     def test_alpha_constant_is_not_looser_than_the_trend_seat(self, src):
+        """[P320] The literal `30.0 * abs(_rb_dir)` moved INTO
+        core.seat_alpha.resolve_seat_edge (the seat block had to shrink to
+        stay inside this file's own 5000-char window guards). The PROPERTY is
+        unchanged and is now pinned behaviourally rather than by substring,
+        which is strictly stronger — a substring cannot tell 30.0 being
+        asserted from 30.0 merely appearing.
+
+        The default path must still assert exactly the trend seat's effective
+        30bps. A calibrated value may only replace it when BOTH the
+        calibration and the honest-fee flags are on (P318's interlock), and
+        that combination is a TIGHTENING on the measured table, never a
+        loosening — so this guard's original intent survives intact.
+        """
         i = src.index("REGIMEBOOK SEAT")
         blk = src[i:i + 5000]
-        assert "30.0 * abs(" in blk, (
-            "the seat's asserted edge must stay at the trend seat's "
-            "effective 30bps (40 x 0.75) — a looser constant would loosen "
-            "the alpha gate as a side effect of a direction-source swap")
+        assert 'resolve_seat_edge' in blk and '30.0' in blk, (
+            "the seat no longer passes the 30bps base to the resolver")
+        from core.seat_alpha import resolve_seat_edge
+        for d in (1.0, -1.0, 0.5):
+            assert resolve_seat_edge("BTC", "regimebook", d, 30.0,
+                                     False, False) == pytest.approx(30.0 * abs(d)), (
+                "the DEFAULT asserted edge is no longer 30bps x |dir| — a "
+                "looser constant would loosen the alpha gate as a side effect "
+                "of a direction-source swap")
 
     def test_absence_takes_no_seat(self, src):
         i = src.index("REGIMEBOOK SEAT")
