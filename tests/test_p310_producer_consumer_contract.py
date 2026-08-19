@@ -237,3 +237,94 @@ class TestShapeContract:
         assert set(out) == {("ma_filtered", "BTC")}, (
             "if this ever groups by something else, every allowlist in the "
             "consumer is keyed on the wrong thing")
+
+
+# =============================================================================
+# 3. The SECOND boundary: agent_ic_review -> seat_check (the P295d class)
+# =============================================================================
+
+class TestSeatCheckReadsWhatAgentIcReviewWrites:
+    """[P312] P310 covered the shadow-ledger boundary and explicitly left this
+    one out, pinned only by a hand-copied literal fixture — which is the very
+    pattern that let P295d through (fixture and reader written by the same
+    hand, agreeing with each other).
+
+    So the report here is built through the PRODUCER's own shape functions.
+    If the nesting ever moves, this report moves with it and the reader fails,
+    instead of the reader silently parsing every agent to n=0 and the seat
+    controller recommending that a live book go flat.
+    """
+
+    def _seat_check(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "seat_check_p311", REPO / "scripts" / "seat_check.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def _producer_report(self):
+        from analytics.ic.agent_ic_review import build_agent_entry, build_report
+        rep = build_report(30, {1: 64.05, 4: 117.69},
+                           "2026-08-19T06:10:00+00:00")
+        for agent, cells in (
+            ("quant", {1: {"n": 713, "ic": -0.0326, "t": -0.87},
+                       4: {"n": 704, "ic": -0.086, "t": -1.14}}),
+            ("whale", {1: {"n": 226, "ic": -0.0698, "t": -1.05},
+                       4: {"n": 225, "ic": -0.0651, "t": -0.48}}),
+        ):
+            rep["agents"][agent] = build_agent_entry(cells, "HOLD")
+        return rep
+
+    def test_the_reader_parses_a_producer_built_report(self, tmp_path):
+        """THE P295d BUG. A hand-written fixture cannot catch the nesting."""
+        import json
+        p = tmp_path / "agent_ic.json"
+        p.write_text(json.dumps(self._producer_report()), encoding="utf-8")
+
+        parsed = self._seat_check()._from_ic_report(p)
+        assert parsed, "the reader must see the producer's agents"
+        assert parsed["quant"][4] == (-0.086, -1.14, 704), (
+            "n=0 here is the defect that made the seat controller recommend "
+            "flattening a live book from nothing")
+        assert parsed["whale"][1] == (-0.0698, -1.05, 226)
+
+    def test_the_reader_never_silently_returns_zero_samples(self, tmp_path):
+        """A shape mismatch shows up as n=0, which the seat controller treats
+        as 'below the evidence floor' — indistinguishable from a genuinely
+        thin window. That collapse is what made the bug invisible."""
+        import json
+        p = tmp_path / "agent_ic.json"
+        p.write_text(json.dumps(self._producer_report()), encoding="utf-8")
+        parsed = self._seat_check()._from_ic_report(p)
+        for agent, series in parsed.items():
+            for h, (_ic, _t, n) in series.items():
+                assert n > 0, f"{agent}@{h} parsed to n=0 from a real report"
+
+    def test_the_producer_actually_uses_its_own_shape_functions(self):
+        """A seam nothing calls is decorative (P170) — the report would drift
+        away from the contract the consumer is tested against."""
+        from tests._source_scan import code_only
+        src = code_only(REPO / "analytics" / "ic" / "agent_ic_review.py")
+        assert "build_report(" in src and "build_agent_entry(" in src
+        assert '{"horizons": rows' not in src, (
+            "the nesting must exist in exactly one place")
+
+    def test_an_end_to_end_seat_verdict_comes_out_of_a_producer_report(
+            self, tmp_path):
+        """The whole chain, since P295d's failure was only visible end to end:
+        producer shape -> reader -> decide_seat. These are the real 30d
+        numbers; both candidates are negative on both horizons, so flat wins
+        BY COMPARISON (exit 3) rather than by refusal (exit 2)."""
+        import json
+        import subprocess
+        p = tmp_path / "agent_ic.json"
+        p.write_text(json.dumps(self._producer_report()), encoding="utf-8")
+        r = subprocess.run(
+            [sys.executable, "-X", "utf8", str(REPO / "scripts" / "seat_check.py"),
+             "--ic-report", str(p), "--incumbent", "whale"],
+            capture_output=True, text=True, encoding="utf-8", cwd=str(REPO))
+        assert r.returncode == 3, (
+            f"expected a measured verdict, got rc={r.returncode} — rc=2 means "
+            f"the reader saw nothing\n{r.stdout}\n{r.stderr}")
+        assert "REFUSING" not in r.stderr

@@ -142,6 +142,33 @@ def required_ic(fwd_vol_bps: float) -> float | None:
     return 6.0 / math.pi * math.asin(x)
 
 
+# =============================================================================
+# [P312] THE REPORT SHAPE, owned by the PRODUCER
+# =============================================================================
+# P295d: `scripts/seat_check.py` read `agents.<name>.<h>` while this file emits
+# `agents.<name>.horizons.<h>`. Every agent parsed to n=0, and the seat
+# controller recommended vacating every seat on a live book from nothing. It
+# passed its own tests because the fixture and the reader were written by the
+# same hand and agreed with each other — the P310 class.
+#
+# So the nesting lives HERE, in one place, and the consumer's contract test
+# builds a report through THESE functions rather than hand-writing one. If the
+# shape ever moves, the test's report moves with it and the reader fails.
+HORIZON_CONTAINER_KEY = "horizons"
+AGENTS_CONTAINER_KEY = "agents"
+
+
+def build_agent_entry(rows: dict, verdict: str) -> dict:
+    """One agent's block: per-horizon cells under HORIZON_CONTAINER_KEY."""
+    return {HORIZON_CONTAINER_KEY: rows, "verdict": verdict}
+
+
+def build_report(window_days: int, fwd_vol: dict, generated: str) -> dict:
+    """The report skeleton. `agents` is filled with build_agent_entry values."""
+    return {"generated": generated, "window_days": window_days,
+            "fwd_vol_bps": fwd_vol, AGENTS_CONTAINER_KEY: {}}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--log-dir", default=None)
@@ -191,9 +218,8 @@ def main() -> int:
         h: (math.sqrt(sum(r * r for r in v) / len(v)) * 1e4 if v else 0.0)
         for h, v in vol_samples.items()
     }
-    report = {"generated": datetime.now(timezone.utc).isoformat(),
-              "window_days": args.window_days,
-              "fwd_vol_bps": fwd_vol, "agents": {}}
+    report = build_report(args.window_days, fwd_vol,
+                          datetime.now(timezone.utc).isoformat())
 
     print(f"\n{'agent':<14}{'h':>3}{'n':>6}{'IC':>8}{'t':>7}"
           f"{'edge_bps':>9}{'req_IC':>8}  verdict")
@@ -237,7 +263,7 @@ def main() -> int:
                          else ("INSUFFICIENT" if all(
                              v == "INSUFFICIENT" for v in verdict_bits)
                              else "HOLD")))
-        report["agents"][agent] = {"horizons": rows, "verdict": verdict}
+        report[AGENTS_CONTAINER_KEY][agent] = build_agent_entry(rows, verdict)
         for h in HORIZON_BARS:
             r = rows[h]
             print(f"{agent:<14}{h:>3}{r['n']:>6}"
