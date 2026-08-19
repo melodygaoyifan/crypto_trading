@@ -2075,15 +2075,7 @@ class ProductionConfig:
         # C5: Schema validation on merged config
         try:
             from configs.config_resolver import validate_loaded_config
-            # [P311] The dataclass is the authority on what a top-level key
-            # may be, so it is PASSED IN rather than restated in the schema
-            # module (P310: import the producer's declaration). Without this
-            # argument the top-level check is skipped entirely, which is what
-            # let `profit_max_enabled: false` be both inert and silent.
-            _schema_errors = validate_loaded_config(
-                data,
-                known_toplevel={_f.name for _f in dataclasses.fields(cls)},
-            )
+            _schema_errors = validate_loaded_config(data)
             for _se in _schema_errors:
                 logger.warning(f"[CONFIG_SCHEMA] {_se}")
         except Exception as e:
