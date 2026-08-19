@@ -1,0 +1,232 @@
+{
+  "generated": "2026-08-19T00:16:22.042466+00:00",
+  "sma": 200,
+  "eras": {
+    "design": [
+      3000,
+      9100
+    ],
+    "pre_design": [
+      800,
+      3000
+    ]
+  },
+  "assets": {
+    "BTC": {
+      "cost_rt_bps": 6.0,
+      "bars_where_they_differ": 6867,
+      "share_differing": 0.5244,
+      "candidates": {
+        "trend_sma200": {
+          "design": {
+            "net": 1.1251,
+            "net_ex_carry": 1.2051,
+            "carry": -0.08,
+            "gross": 1.3089,
+            "cost": 0.1038,
+            "turnover": 346.0,
+            "exposure": 1.0
+          },
+          "pre_design": {
+            "net": 0.0838,
+            "net_ex_carry": 0.3241,
+            "carry": -0.2403,
+            "gross": 0.3655,
+            "cost": 0.0414,
+            "turnover": 138.0,
+            "exposure": 1.0
+          }
+        },
+        "book": {
+          "design": {
+            "net": 0.9702,
+            "net_ex_carry": 1.0697,
+            "carry": -0.0995,
+            "gross": 1.2002,
+            "cost": 0.1305,
+            "turnover": 435.0,
+            "exposure": 0.584
+          },
+          "pre_design": {
+            "net": 0.4007,
+            "net_ex_carry": 0.6858,
+            "carry": -0.2851,
+            "gross": 0.7119,
+            "cost": 0.0261,
+            "turnover": 87.0,
+            "exposure": 0.725
+          }
+        },
+        "buy_and_hold": {
+          "design": {
+            "net": 0.383,
+            "net_ex_carry": 0.6058,
+            "carry": -0.2228,
+            "gross": 0.6058,
+            "cost": 0.0,
+            "turnover": 0.0,
+            "exposure": 1.0
+          },
+          "pre_design": {
+            "net": 0.7878,
+            "net_ex_carry": 1.1216,
+            "carry": -0.3338,
+            "gross": 1.1216,
+            "cost": 0.0,
+            "turnover": 0.0,
+            "exposure": 1.0
+          }
+        }
+      },
+      "book_minus_trend": {
+        "design": -0.1549,
+        "pre_design": 0.3169
+      },
+      "verdict": "SPLIT (era-dependent \u2014 not settled)"
+    },
+    "ETH": {
+      "cost_rt_bps": 8.0,
+      "bars_where_they_differ": 8730,
+      "share_differing": 0.6667,
+      "candidates": {
+        "trend_sma200": {
+          "design": {
+            "net": 0.8277,
+            "net_ex_carry": 0.9154,
+            "carry": -0.0877,
+            "gross": 1.0322,
+            "cost": 0.1168,
+            "turnover": 292.0,
+            "exposure": 1.0
+          },
+          "pre_design": {
+            "net": 1.0245,
+            "net_ex_carry": 1.3676,
+            "carry": -0.3431,
+            "gross": 1.4132,
+            "cost": 0.0456,
+            "turnover": 114.0,
+            "exposure": 1.0
+          }
+        },
+        "book": {
+          "design": {
+            "net": -0.024,
+            "net_ex_carry": 0.088,
+            "carry": -0.112,
+            "gross": 0.144,
+            "cost": 0.056,
+            "turnover": 140.0,
+            "exposure": 0.272
+          },
+          "pre_design": {
+            "net": 1.1111,
+            "net_ex_carry": 1.4728,
+            "carry": -0.3617,
+            "gross": 1.4956,
+            "cost": 0.0228,
+            "turnover": 57.0,
+            "exposure": 0.59
+          }
+        },
+        "buy_and_hold": {
+          "design": {
+            "net": -0.1125,
+            "net_ex_carry": 0.0844,
+            "carry": -0.1969,
+            "gross": 0.0844,
+            "cost": 0.0,
+            "turnover": 0.0,
+            "exposure": 1.0
+          },
+          "pre_design": {
+            "net": 2.0519,
+            "net_ex_carry": 2.4505,
+            "carry": -0.3986,
+            "gross": 2.4505,
+            "cost": 0.0,
+            "turnover": 0.0,
+            "exposure": 1.0
+          }
+        }
+      },
+      "book_minus_trend": {
+        "design": -0.8517,
+        "pre_design": 0.0866
+      },
+      "verdict": "SPLIT (era-dependent \u2014 not settled)"
+    },
+    "SOL": {
+      "cost_rt_bps": 13.0,
+      "bars_where_they_differ": 8596,
+      "share_differing": 0.6595,
+      "candidates": {
+        "trend_sma200": {
+          "design": {
+            "net": 1.3569,
+            "net_ex_carry": 1.6066,
+            "carry": -0.2497,
+            "gross": 1.8939,
+            "cost": 0.2873,
+            "turnover": 442.0,
+            "exposure": 1.0
+          },
+          "pre_design": {
+            "net": 2.9493,
+            "net_ex_carry": 3.2225,
+            "carry": -0.2732,
+            "gross": 3.3187,
+            "cost": 0.0962,
+            "turnover": 148.0,
+            "exposure": 1.0
+          }
+        },
+        "book": {
+          "design": {
+            "net": 1.0787,
+            "net_ex_carry": 1.2104,
+            "carry": -0.1317,
+            "gross": 1.3027,
+            "cost": 0.0923,
+            "turnover": 142.0,
+            "exposure": 0.3
+          },
+          "pre_design": {
+            "net": 2.975,
+            "net_ex_carry": 3.3025,
+            "carry": -0.3275,
+            "gross": 3.3571,
+            "cost": 0.0546,
+            "turnover": 84.0,
+            "exposure": 0.647
+          }
+        },
+        "buy_and_hold": {
+          "design": {
+            "net": 1.3764,
+            "net_ex_carry": 1.3631,
+            "carry": 0.0133,
+            "gross": 1.3631,
+            "cost": 0.0,
+            "turnover": 0.0,
+            "exposure": 1.0
+          },
+          "pre_design": {
+            "net": 5.9551,
+            "net_ex_carry": 6.2501,
+            "carry": -0.295,
+            "gross": 6.2501,
+            "cost": 0.0,
+            "turnover": 0.0,
+            "exposure": 1.0
+          }
+        }
+      },
+      "book_minus_trend": {
+        "design": -0.2782,
+        "pre_design": 0.0257
+      },
+      "verdict": "SPLIT (era-dependent \u2014 not settled)"
+    }
+  }
+}
