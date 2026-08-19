@@ -72,6 +72,17 @@ def _is_fresh(state: Dict, max_age_seconds: int = 600) -> bool:
         return False
     try:
         if isinstance(ts, str):
+            # [P323] Tolerate the malformed "...+00:00Z" (double tz marker) a
+            # writer can emit via `isoformat() + "Z"`. The naive
+            # replace("Z", "+00:00") turns it into "+00:00+00:00", which
+            # fromisoformat rejects — so freshness read False FOREVER rather
+            # than reporting a stale file. Strip a trailing Z only when the
+            # string already carries an explicit offset. Belt-and-braces with
+            # the writer fix (main.py): files already on the volume keep the
+            # old shape until they are next rewritten.
+            ts = ts.strip()
+            if ts.endswith("Z") and ("+00:00" in ts[:-1] or "+" in ts[:-1]):
+                ts = ts[:-1]
             ts = ts.replace("Z", "+00:00")
             dt = datetime.fromisoformat(ts)
         else:

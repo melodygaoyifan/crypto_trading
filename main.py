@@ -1723,7 +1723,7 @@ class ProductionConfig:
     #     path that has never executed needs its own operator decision.
     sentiment_zscore_mode: str = "linear"
     options_use_deribit: bool = False
-    # [P322] Default TRUE: absent key => byte-identical behaviour. Setting it
+    # [P323] Default TRUE: absent key => byte-identical behaviour. Setting it
     # false is the safe way to stop paying for CryptoPanic — see the note at
     # the construction site for why deleting the API key is NOT.
     cryptopanic_enabled: bool = True
@@ -1817,7 +1817,7 @@ class ProductionConfig:
     # Arming it therefore requires the alpha side to be calibrated to the
     # SEAT'S OWN holding horizon first, with its own evidence and P-entry.
     coinbase_per_contract_fees: bool = False
-    # [P322] Replace the regimebook seat's flat 30bps per-TICK assertion
+    # [P323] Replace the regimebook seat's flat 30bps per-TICK assertion
     # with its MEASURED gross bps per ROUND TRIP in its worst era
     # (core/seat_alpha.py). INTERLOCKED with the flag above — either
     # alone is a half-correction that moves the gate the wrong way.
@@ -2257,7 +2257,7 @@ class ProductionConfig:
             # [P315] declared + parsed together (the P201 rule)
             coinbase_per_contract_fees=bool(
                 data.get("coinbase_per_contract_fees", False)),
-            # [P322] declared + parsed together (the P201 rule)
+            # [P323] declared + parsed together (the P201 rule)
             seat_alpha_calibrated=bool(
                 data.get("seat_alpha_calibrated", False)),
             whale_seat_mode=(
@@ -5568,7 +5568,7 @@ class HMATSProductionRunner:
                 self.fred_feed = get_fred_feed(api_key=fred_key, mock_mode=not bool(fred_key))
                 self.coinglass_feed = get_coinglass_feed(api_key=coinglass_key, mock_mode=not bool(coinglass_key))
                 self.lunarcrush_feed = get_lunarcrush_feed(api_key=lunarcrush_key, mock_mode=not bool(lunarcrush_key))
-                # [P322] `cryptopanic_enabled` (default TRUE — absent key
+                # [P323] `cryptopanic_enabled` (default TRUE — absent key
                 # changes nothing) is the SAFE way to stop using this feed.
                 # The obvious alternative, deleting CRYPTOPANIC_API_KEY, does
                 # NOT disable it: `mock_mode` is derived as `not
@@ -10330,7 +10330,7 @@ class HMATSProductionRunner:
                     self._rb_seat_stale_logged = getattr(
                         self, "_rb_seat_stale_logged", set())
                     self._rb_seat_stale_logged.discard(asset)
-                    # [P322] calibrated seat alpha; see core/seat_alpha.py
+                    # [P323] calibrated seat alpha; see core/seat_alpha.py
                     from core.seat_alpha import resolve_seat_edge as _rse
                     _rb_edge = _rse(asset, "regimebook", _rb_dir, 30.0,
                         bool(getattr(self.config, "seat_alpha_calibrated", False)),
@@ -18721,7 +18721,7 @@ class HMATSProductionRunner:
                 }
 
             payload = {
-                # [P322] was `.isoformat() + "Z"`, producing the malformed
+                # [P323] was `.isoformat() + "Z"`, producing the malformed
                 # "...+00:00Z" (double tz marker) — api/server._is_fresh does
                 # ts.replace("Z", "+00:00") and then fromisoformat, which sees
                 # "+00:00+00:00" and raises, so `positions_fresh` was
