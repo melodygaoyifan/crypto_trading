@@ -1,0 +1,382 @@
+{
+  "generated": "2026-08-19T00:37:39.323958+00:00",
+  "sma": 200,
+  "funding_z_short": 1.0,
+  "eras": {
+    "design": [
+      3000,
+      9100
+    ],
+    "pre_design": [
+      800,
+      3000
+    ]
+  },
+  "n_random": 200,
+  "seed": 20260818,
+  "assets": {
+    "BTC": {
+      "cost_rt_bps": 6.0,
+      "short_cells_design": 3156,
+      "short_cells_pre": 918,
+      "arms": {
+        "long_flat": {
+          "design": {
+            "net": 0.7541,
+            "price_pnl": 0.9574,
+            "cost": 0.0519,
+            "carry": -0.1514,
+            "turnover": 173.0,
+            "exposure": 0.483
+          },
+          "pre_design": {
+            "net": 0.4359,
+            "price_pnl": 0.7436,
+            "cost": 0.0207,
+            "carry": -0.287,
+            "turnover": 69.0,
+            "exposure": 0.583
+          }
+        },
+        "long_short": {
+          "design": {
+            "net": 1.1251,
+            "price_pnl": 1.3089,
+            "cost": 0.1038,
+            "carry": -0.08,
+            "turnover": 346.0,
+            "exposure": 1.0
+          },
+          "pre_design": {
+            "net": 0.0838,
+            "price_pnl": 0.3655,
+            "cost": 0.0414,
+            "carry": -0.2403,
+            "turnover": 138.0,
+            "exposure": 1.0
+          }
+        },
+        "funding_gated": {
+          "design": {
+            "net": 0.8715,
+            "price_pnl": 1.0882,
+            "cost": 0.0783,
+            "carry": -0.1384,
+            "turnover": 261.0,
+            "exposure": 0.53
+          },
+          "pre_design": {
+            "net": 0.4432,
+            "price_pnl": 0.7473,
+            "cost": 0.0249,
+            "carry": -0.2792,
+            "turnover": 83.0,
+            "exposure": 0.594
+          }
+        },
+        "buy_and_hold": {
+          "design": {
+            "net": 0.383,
+            "price_pnl": 0.6058,
+            "cost": 0.0,
+            "carry": -0.2228,
+            "turnover": 0.0,
+            "exposure": 1.0
+          },
+          "pre_design": {
+            "net": 0.7878,
+            "price_pnl": 1.1216,
+            "cost": 0.0,
+            "carry": -0.3338,
+            "turnover": 0.0,
+            "exposure": 1.0
+          }
+        }
+      },
+      "increment_vs_long_flat": {
+        "long_short": {
+          "design": 0.371,
+          "pre_design": -0.3521
+        },
+        "funding_gated": {
+          "design": 0.1174,
+          "pre_design": 0.0073
+        },
+        "buy_and_hold": {
+          "design": -0.3711,
+          "pre_design": 0.3519
+        }
+      },
+      "decomposition": {
+        "design": {
+          "bars": 3156,
+          "price_pnl_from_shorts": 0.3515,
+          "carry_collected": 0.0714
+        },
+        "pre_design": {
+          "bars": 917,
+          "price_pnl_from_shorts": -0.378,
+          "carry_collected": 0.0468
+        }
+      },
+      "random_samecell_increment": {
+        "design": {
+          "mean": -0.8786,
+          "p05": -1.9092,
+          "p95": 0.1597
+        },
+        "pre_design": {
+          "mean": -0.2401,
+          "p05": -1.1492,
+          "p95": 0.8018
+        }
+      },
+      "verdict": {
+        "long_short": "FLAT STANDS",
+        "funding_gated": "SHORT EARNS"
+      }
+    },
+    "ETH": {
+      "cost_rt_bps": 8.0,
+      "short_cells_design": 3456,
+      "short_cells_pre": 753,
+      "arms": {
+        "long_flat": {
+          "design": {
+            "net": 0.3576,
+            "price_pnl": 0.5583,
+            "cost": 0.0584,
+            "carry": -0.1423,
+            "turnover": 146.0,
+            "exposure": 0.433
+          },
+          "pre_design": {
+            "net": 1.5383,
+            "price_pnl": 1.9319,
+            "cost": 0.0228,
+            "carry": -0.3708,
+            "turnover": 57.0,
+            "exposure": 0.658
+          }
+        },
+        "long_short": {
+          "design": {
+            "net": 0.8277,
+            "price_pnl": 1.0322,
+            "cost": 0.1168,
+            "carry": -0.0877,
+            "turnover": 292.0,
+            "exposure": 1.0
+          },
+          "pre_design": {
+            "net": 1.0245,
+            "price_pnl": 1.4132,
+            "cost": 0.0456,
+            "carry": -0.3431,
+            "turnover": 114.0,
+            "exposure": 1.0
+          }
+        },
+        "funding_gated": {
+          "design": {
+            "net": 0.8094,
+            "price_pnl": 1.0304,
+            "cost": 0.0928,
+            "carry": -0.1282,
+            "turnover": 232.0,
+            "exposure": 0.482
+          },
+          "pre_design": {
+            "net": 1.5882,
+            "price_pnl": 1.9819,
+            "cost": 0.0236,
+            "carry": -0.3701,
+            "turnover": 59.0,
+            "exposure": 0.66
+          }
+        },
+        "buy_and_hold": {
+          "design": {
+            "net": -0.1125,
+            "price_pnl": 0.0844,
+            "cost": 0.0,
+            "carry": -0.1969,
+            "turnover": 0.0,
+            "exposure": 1.0
+          },
+          "pre_design": {
+            "net": 2.0519,
+            "price_pnl": 2.4505,
+            "cost": 0.0,
+            "carry": -0.3986,
+            "turnover": 0.0,
+            "exposure": 1.0
+          }
+        }
+      },
+      "increment_vs_long_flat": {
+        "long_short": {
+          "design": 0.4701,
+          "pre_design": -0.5138
+        },
+        "funding_gated": {
+          "design": 0.4518,
+          "pre_design": 0.0499
+        },
+        "buy_and_hold": {
+          "design": -0.4701,
+          "pre_design": 0.5136
+        }
+      },
+      "decomposition": {
+        "design": {
+          "bars": 3455,
+          "price_pnl_from_shorts": 0.4739,
+          "carry_collected": 0.0546
+        },
+        "pre_design": {
+          "bars": 752,
+          "price_pnl_from_shorts": -0.5186,
+          "carry_collected": 0.0277
+        }
+      },
+      "random_samecell_increment": {
+        "design": {
+          "mean": -1.3907,
+          "p05": -2.7625,
+          "p95": -0.0294
+        },
+        "pre_design": {
+          "mean": -0.3442,
+          "p05": -1.562,
+          "p95": 0.8783
+        }
+      },
+      "verdict": {
+        "long_short": "FLAT STANDS",
+        "funding_gated": "SHORT EARNS"
+      }
+    },
+    "SOL": {
+      "cost_rt_bps": 13.0,
+      "short_cells_design": 3323,
+      "short_cells_pre": 655,
+      "arms": {
+        "long_flat": {
+          "design": {
+            "net": 1.3666,
+            "price_pnl": 1.6285,
+            "cost": 0.1436,
+            "carry": -0.1182,
+            "turnover": 221.0,
+            "exposure": 0.455
+          },
+          "pre_design": {
+            "net": 4.4522,
+            "price_pnl": 4.7844,
+            "cost": 0.0481,
+            "carry": -0.2841,
+            "turnover": 74.0,
+            "exposure": 0.702
+          }
+        },
+        "long_short": {
+          "design": {
+            "net": 1.3569,
+            "price_pnl": 1.8939,
+            "cost": 0.2873,
+            "carry": -0.2497,
+            "turnover": 442.0,
+            "exposure": 1.0
+          },
+          "pre_design": {
+            "net": 2.9493,
+            "price_pnl": 3.3187,
+            "cost": 0.0962,
+            "carry": -0.2732,
+            "turnover": 148.0,
+            "exposure": 1.0
+          }
+        },
+        "funding_gated": {
+          "design": {
+            "net": 1.503,
+            "price_pnl": 1.7856,
+            "cost": 0.1696,
+            "carry": -0.1129,
+            "turnover": 261.0,
+            "exposure": 0.476
+          },
+          "pre_design": {
+            "net": 4.4609,
+            "price_pnl": 4.7926,
+            "cost": 0.0507,
+            "carry": -0.281,
+            "turnover": 78.0,
+            "exposure": 0.711
+          }
+        },
+        "buy_and_hold": {
+          "design": {
+            "net": 1.3764,
+            "price_pnl": 1.3631,
+            "cost": 0.0,
+            "carry": 0.0133,
+            "turnover": 0.0,
+            "exposure": 1.0
+          },
+          "pre_design": {
+            "net": 5.9551,
+            "price_pnl": 6.2501,
+            "cost": 0.0,
+            "carry": -0.295,
+            "turnover": 0.0,
+            "exposure": 1.0
+          }
+        }
+      },
+      "increment_vs_long_flat": {
+        "long_short": {
+          "design": -0.0097,
+          "pre_design": -1.5029
+        },
+        "funding_gated": {
+          "design": 0.1364,
+          "pre_design": 0.0087
+        },
+        "buy_and_hold": {
+          "design": 0.0098,
+          "pre_design": 1.5029
+        }
+      },
+      "decomposition": {
+        "design": {
+          "bars": 3323,
+          "price_pnl_from_shorts": 0.2654,
+          "carry_collected": -0.1315
+        },
+        "pre_design": {
+          "bars": 654,
+          "price_pnl_from_shorts": -1.4657,
+          "carry_collected": 0.0109
+        }
+      },
+      "random_samecell_increment": {
+        "design": {
+          "mean": -1.9477,
+          "p05": -4.2465,
+          "p95": 0.092
+        },
+        "pre_design": {
+          "mean": -0.2971,
+          "p05": -1.8102,
+          "p95": 1.1412
+        }
+      },
+      "verdict": {
+        "long_short": "FLAT STANDS",
+        "funding_gated": "SHORT EARNS"
+      }
+    }
+  }
+}
