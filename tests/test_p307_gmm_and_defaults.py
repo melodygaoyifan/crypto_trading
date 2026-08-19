@@ -136,14 +136,19 @@ _ROOTS = ("core", "defense", "risk", "signals", "execution", "agents",
 # changes nothing while reading like an armed control. The trade_gate one is
 # the reason this roster exists: that component binds the sleeve (P275), and
 # `use_maker_fee` reads as "the gate prices maker fills", which it does not.
+# [P311] Down from seven to five. `proof_log_enabled` and
+# `use_vol_percentile_adjustment` were DELETED rather than annotated: a
+# config file was setting the first, and a caller was passing the second, so
+# in both cases something believed it was configuring behaviour. The three
+# remaining have neither a reader nor a writer, and `use_maker_fee` is the
+# one that matters — it sits on a component that binds the sleeve and reads
+# as "the gate prices maker fills", which it does not.
 NO_READER_DEFAULT_TRUE = {
     ("agents/onchain_solana_agent.py", "use_birdeye"),
     ("agents/onchain_solana_agent.py", "use_solscan"),
     ("core/runtime_spine.py", "enable_proof_logs"),
     ("defense/trade_gate.py", "use_maker_fee"),
-    ("main.py", "proof_log_enabled"),
     ("orchestration/sota_integration.py", "alert_popup_enabled"),
-    ("risk/adaptive_stop.py", "use_vol_percentile_adjustment"),
 }
 
 
@@ -226,6 +231,17 @@ _COND_PIN = re.compile(
     r"""assert\s+["']([^"']*(?:==|!=|>=|<=|\s>\s|\s<\s|\bnot\b|\band\b|\bor\b|\bis\b)[^"']*)["']\s+in\s+""",
     re.M)
 
+# [P311] 14 -> 9. The five DEFEATABLE ones (a bare `if ...:` line, where
+# `if False and ...` keeps the substring) now go through
+# tests/_guard_pins.assert_guard_live, which requires the condition to be the
+# WHOLE condition of its statement. Converting them immediately paid: the
+# feed-degradation pin turned out to be one clause of a conjunction, which
+# the substring form could not distinguish and now has to state.
+#
+# The ten that remain pin EXPRESSIONS (ternaries, comparisons inside a
+# return) rather than guards, so the `if False and` trap does not apply to
+# them; the ceiling stays as an anti-rot bound.
+#
 # Accepted 2026-08-18. A pin of the shape `assert "<condition>" in src`
 # survives `if False and <condition>` — it proves the code was WRITTEN, not
 # that it RUNS. That has now bitten three times (P234's gate-hysteresis block,
@@ -235,7 +251,7 @@ _COND_PIN = re.compile(
 # for guards that are currently correct. So the roster is frozen instead: it
 # may SHRINK, never grow, and a new one sends its author to the fix that
 # works (extract the predicate into a pure function and CALL it).
-_ACCEPTED_COND_PINS = 14
+_ACCEPTED_COND_PINS = 9
 
 
 def _cond_pins():

@@ -24,6 +24,11 @@ from pathlib import Path
 
 import pytest
 
+# [P311] Guard pins go through assert_guard_live: a plain substring
+# assertion survives `if False and <condition>`, which is how P234,
+# P251 and P307 each shipped a neutered guard that still read as pinned.
+from tests._guard_pins import assert_guard_live  # noqa: E402
+
 REPO = Path(__file__).resolve().parents[1]
 SKIP_DIRS = {"venv", "archive", "__pycache__", ".git", "node_modules",
              "models", "training_data", "dashboard"}
@@ -303,8 +308,12 @@ class TestFeedDegradationCountsOnlyLiveFeeds:
 
     def test_escalation_reads_the_live_subset(self):
         src = _src(REPO / "main.py")
-        assert "if len(_live_failures) >= 2:" in src
-        assert "len(_live_failures) >= 3" in src
+        assert_guard_live(src, "if len(_live_failures) >= 2:")
+        # [P311] the real guard is a CONJUNCTION — assert_guard_live made
+        # that explicit, where the old substring pin could not tell a
+        # whole condition from one clause of one.
+        assert_guard_live(
+            src, "if self.alert_manager and len(_live_failures) >= 3:")
         assert "if len(_feed_failures) >= 2:" not in src, (
             "the raw count must not drive the escalation any more"
         )

@@ -28,6 +28,11 @@ from pathlib import Path
 
 import pytest
 
+# [P311] Guard pins go through assert_guard_live: a plain substring
+# assertion survives `if False and <condition>`, which is how P234,
+# P251 and P307 each shipped a neutered guard that still read as pinned.
+from tests._guard_pins import assert_guard_live  # noqa: E402
+
 REPO = Path(__file__).resolve().parents[1]
 MAIN = REPO / "main.py"
 
@@ -919,7 +924,8 @@ class TestRssNewsFeed:
         i_cc = src.find("cc_news_added")
         i_rss = src.find("rss_added")
         assert i_cc > 0 and i_rss > i_cc, "the RSS blend must come after CC News"
-        assert "if not tl or tl in seen_titles:" in src, "dedup against prior sources"
+        assert_guard_live(src, "if not tl or tl in seen_titles:",
+                          "dedup against prior sources")
 
     def test_blend_respects_the_same_window(self):
         """An RSS item older than the window must age out exactly like a CC

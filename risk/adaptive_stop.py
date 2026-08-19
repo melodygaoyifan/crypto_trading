@@ -213,16 +213,6 @@ class StopConfiguration:
     # Breakeven settings
     breakeven_r_trigger: float = 2.0
     use_calmar_adjustment: bool = True
-    # [P307b] NO READER. `use_calmar_adjustment` beside it IS consulted;
-    # this one is only ever WRITTEN (from `enable_volatility_adjustment`
-    # at the v4.5 compatibility constructor below), so half of that
-    # caller's intent evaporates silently. The percentile itself is
-    # computed and used for vol_regime classification — what is missing
-    # is any stop-sizing branch gated on this flag. Deliberately NOT
-    # wired: the whole adaptive_stop stack is Kraken-only and dormant
-    # (P275), so arming an untested stop-sizing path here would be a
-    # P141 activation, not a fix.
-    use_vol_percentile_adjustment: bool = True
     
     # Trailing settings
     trailing_r_offset: float = 0.5
@@ -1049,8 +1039,14 @@ class AdaptiveStopManager(EnhancedAdaptiveStopManager):
             breakeven_r_trigger=breakeven_r_trigger,
             trailing_r_offset=trailing_r_offset,
             max_holding_hours=max_holding_hours,
+            # [P311] `use_vol_percentile_adjustment` REMOVED. It was written
+            # here and read nowhere, so half of this caller's intent
+            # evaporated silently while the other half (use_calmar_adjustment)
+            # landed. Deleted rather than wired: no stop-sizing branch was
+            # ever gated on it, and adding one would arm untested sizing on a
+            # path that is Kraken-only and dormant (P275) — a P141
+            # activation, not a fix.
             use_calmar_adjustment=enable_volatility_adjustment,
-            use_vol_percentile_adjustment=enable_volatility_adjustment
         )
         
         # Wrap legacy ATR calculator

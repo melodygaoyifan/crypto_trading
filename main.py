@@ -67,6 +67,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Set, Tuple
 from collections import deque
+import dataclasses
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -1371,6 +1372,89 @@ from core.constants import (
 # CONFIGURATION
 # =============================================================================
 
+# =============================================================================
+# [P311] CONFIG FIELDS THAT WERE DECLARED AND READ BUT NEVER PARSED
+# =============================================================================
+# 28 ProductionConfig fields were declared, defaulted (17 of them to True),
+# read on the live path — and assigned NOWHERE in from_file. An operator
+# writing `profit_max_enabled: false` got True back, silently, and
+# validate_loaded_config only checked the `risk` and `tranche` SECTIONS, so a
+# top-level key raised no "unknown key" warning either. Silent in both
+# directions: the config could neither take effect nor complain. All 28 date
+# to the initial commit, so this was never a regression — it was born unwired
+# (the P16 shape, inverted: gated but never settable).
+#
+# THE SHAPE THAT MADE IT INVISIBLE: the config exposed the DIAL but not the
+# SWITCH. `regime_leverage` (a real map putting the two dominant regimes at
+# 2.0x) parses fine; `regime_leverage_enabled`, which decides whether that map
+# is applied at all, did not. Same for `thesis_budget`: its sub-parameters
+# parse from a nested section, only its master `enabled` did not. And
+# `profit_max` was ALREADY parsed as a nested section — but only 3 of its 12
+# keys, so `ultra_aggressive_5y.json`'s documented `false_breakout_action:
+# SCALE` works while a sibling `enabled` key would not have.
+#
+# So this roster EXTENDS the conventions already in the file rather than
+# inventing one: nested section keys where a section exists (profit_max,
+# thesis_budget), top-level otherwise.
+#
+# Values are applied AFTER construction, deliberately: an absent key then
+# falls through to the dataclass default BY CONSTRUCTION, so there is exactly
+# ONE copy of every default and this table cannot drift from it (the P265
+# lesson — a restated parse default silently reverted `thesis_budget_max_
+# reentry` on every boot — and P172's single-source rule).
+#
+# DELIBERATELY EXCLUDED, each with its reason:
+#   mode                    documentation-only; the CLI overwrites it
+#                           unconditionally (P227). Parsing it would make a
+#                           key that every profile already sets suddenly
+#                           load-bearing — a live behaviour change wearing a
+#                           hygiene fix's clothes.
+#   simulate_disconnect_tick  a TEST hook. It is readable and defaulted to 0;
+#                           making it config-settable would hand a live
+#                           profile the ability to simulate an exchange
+#                           disconnect. That is a P141 activation, not
+#                           plumbing.
+_LATE_CONFIG_KEYS = {
+    # --- ProfitMax: extends the existing `profit_max` section (3/12 -> 12/12).
+    # P287 traced these vetoes to the sleeve; they are classified HOLD, not
+    # liquidate (P307 pinned that), but the operator's only off switch for
+    # them was a code edit.
+    "profit_max_enabled": ("profit_max", "enabled"),
+    "profit_max_signal_quality_enabled": ("profit_max", "signal_quality_enabled"),
+    "profit_max_regime_quality_enabled": ("profit_max", "regime_quality_enabled"),
+    "profit_max_transition_risk_enabled": ("profit_max", "transition_risk_enabled"),
+    "profit_max_phase_filter_enabled": ("profit_max", "phase_filter_enabled"),
+    "profit_max_loss_streak_enabled": ("profit_max", "loss_streak_enabled"),
+    "profit_max_funding_bias_enabled": ("profit_max", "funding_bias_enabled"),
+    "profit_max_extreme_funding_threshold": ("profit_max", "extreme_funding_threshold"),
+    "profit_max_false_breakout_enabled": ("profit_max", "false_breakout_enabled"),
+    # --- Thesis budget: the section's params already parse; only the master
+    # switch did not.
+    "thesis_budget_enabled": ("thesis_budget", "enabled"),
+    # --- Regime leverage / power / aggression. NOTE the switch below is the
+    # one whose absence hid the P311-A funding coupling; read that comment
+    # before changing anything here.
+    "regime_leverage_enabled": "regime_leverage_enabled",
+    "regime_power_enabled": "regime_power_enabled",
+    "regime_power_multipliers": "regime_power_multipliers",
+    "regime_power_allow_scale_in": "regime_power_allow_scale_in",
+    "regime_aggression_enabled": "regime_aggression_enabled",
+    "regime_aggression_params": "regime_aggression_params",
+    # --- Lead-lag amplifier (EXECUTE authority: modulates confidence).
+    "lead_lag_amplifier_enabled": "lead_lag_amplifier_enabled",
+    "lead_lag_min_confidence_floor": "lead_lag_min_confidence_floor",
+    "lead_lag_on_alignment_multiplier": "lead_lag_on_alignment_multiplier",
+    "lead_lag_on_misalignment_multiplier": "lead_lag_on_misalignment_multiplier",
+    # --- Infra / plumbing.
+    "backtest_start": "backtest_start",
+    "backtest_end": "backtest_end",
+    "kraken_api_key_env": "kraken_api_key_env",
+    "kraken_api_secret_env": "kraken_api_secret_env",
+    "log_dir": "log_dir",
+    "master_tick_seconds": "master_tick_seconds",
+}
+
+
 @dataclass
 class ProductionConfig:
     """Production configuration."""
@@ -1426,11 +1510,6 @@ class ProductionConfig:
     
     # Logging
     log_dir: Path = field(default_factory=lambda: LOG_DIR)  # [FIX-37]
-    # [P307b] NO READER, and configs/sota_config.json SETS it to true —
-    # so a config file is configuring a switch nothing consults. Kept
-    # (removing a field a config sets is a contract change) but it must
-    # not be read as controlling proof logging: it does not.
-    proof_log_enabled: bool = True
     
     # TASK C (P1): Simulate disconnect for testing (0 = disabled)
     simulate_disconnect_tick: int = 0
@@ -1996,7 +2075,15 @@ class ProductionConfig:
         # C5: Schema validation on merged config
         try:
             from configs.config_resolver import validate_loaded_config
-            _schema_errors = validate_loaded_config(data)
+            # [P311] The dataclass is the authority on what a top-level key
+            # may be, so it is PASSED IN rather than restated in the schema
+            # module (P310: import the producer's declaration). Without this
+            # argument the top-level check is skipped entirely, which is what
+            # let `profit_max_enabled: false` be both inert and silent.
+            _schema_errors = validate_loaded_config(
+                data,
+                known_toplevel={_f.name for _f in dataclasses.fields(cls)},
+            )
             for _se in _schema_errors:
                 logger.warning(f"[CONFIG_SCHEMA] {_se}")
         except Exception as e:
@@ -2049,7 +2136,7 @@ class ProductionConfig:
         if _primary_asset not in _assets:
             _assets.insert(0, _primary_asset)
 
-        return cls(
+        _cfg = cls(
             assets=_assets,
             primary_asset=_primary_asset,
             exchange=data.get("exchange", {}).get("primary", "kraken"),
@@ -2255,6 +2342,70 @@ class ProductionConfig:
             sentiment_gate_config=data.get("sentiment_gate_config") or None,
             smart_beta_config=data.get("smart_beta_config") or None,
         )
+        # [P311] Apply the fields that were declared + read but never parsed.
+        # Runs on the CONSTRUCTED object so an absent key keeps the dataclass
+        # default by construction — no restated defaults, nothing to drift.
+        cls._apply_late_config_overrides(_cfg, data)
+        return _cfg
+
+    @staticmethod
+    def _apply_late_config_overrides(cfg: 'ProductionConfig', data: Dict) -> List[str]:
+        """[P311] Set the `_LATE_CONFIG_KEYS` fields from `data`, if present.
+
+        Returns the list of "field=value" strings applied (for logging and for
+        tests). Absent key -> untouched, so a profile that sets none of these
+        is byte-identical to the pre-P311 behaviour.
+
+        Coercion follows the CURRENT default's runtime type rather than the
+        annotation: `bool` is checked before `int` because bool is an int
+        subclass, and a dict-typed field REFUSES a non-dict rather than
+        wrapping it. A value that cannot be coerced is logged and SKIPPED,
+        keeping the default: a malformed config line must not take the boot
+        down (P85's restart-loop lesson), and must not silently install a
+        wrong-typed value either.
+        """
+        applied: List[str] = []
+        for _field, _loc in _LATE_CONFIG_KEYS.items():
+            if isinstance(_loc, tuple):
+                _section, _key = _loc
+                _src = data.get(_section)
+                if not isinstance(_src, dict) or _key not in _src:
+                    continue
+                _raw = _src[_key]
+                _where = f"{_section}.{_key}"
+            else:
+                if _loc not in data:
+                    continue
+                _raw = data[_loc]
+                _where = _loc
+            _cur = getattr(cfg, _field, None)
+            try:
+                if isinstance(_cur, bool):
+                    _val = bool(_raw)
+                elif isinstance(_cur, int) and not isinstance(_cur, bool):
+                    _val = int(_raw)
+                elif isinstance(_cur, float):
+                    _val = float(_raw)
+                elif isinstance(_cur, Path):
+                    _val = Path(str(_raw))
+                elif isinstance(_cur, dict):
+                    if not isinstance(_raw, dict):
+                        raise TypeError(f"expected an object, got {type(_raw).__name__}")
+                    _val = dict(_raw)
+                else:
+                    _val = _raw
+            except (TypeError, ValueError) as _e:
+                logger.warning(
+                    f"[P311] config key '{_where}' could not be applied to "
+                    f"{_field} ({type(_e).__name__}: {_e}) — KEEPING the "
+                    f"default {_cur!r}")
+                continue
+            setattr(cfg, _field, _val)
+            applied.append(f"{_field}={_val!r} (from {_where})")
+        if applied:
+            logger.info(f"[P311] applied {len(applied)} config override(s): "
+                        + "; ".join(applied))
+        return applied
 
 
 # =============================================================================
@@ -7663,6 +7814,15 @@ class HMATSProductionRunner:
                 # (authority_fusion.py:851), so arming a detector that has
                 # never fired is a P141 decision, not a side effect.
                 _liq_obs = self._cascade_liq_delta(asset, _liq_vol_24h)
+                # [P311] The asset's OWN normal hourly rate. A single dollar
+                # threshold across assets was wrong in both directions —
+                # measured over 11 days, $10M/h is ~3x BTC's normal rate (it
+                # fired on 7% of ticks) and ~38x SOL's maximum EVER observed.
+                # Passing the baseline makes DETECT mean "liquidations are
+                # running 5x this market's normal", which is what a cascade
+                # is, and removes the dollar figure that goes stale as
+                # volumes drift.
+                _liq_base_1h = (_liq_vol_24h / 24.0) if _liq_vol_24h > 0 else None
                 _cascade_real = bool(getattr(
                     self.config, "cascade_real_liquidation_window", False))
                 logger.info(
@@ -7674,7 +7834,7 @@ class HMATSProductionRunner:
                     # the readout (P2).
                     f"observed_since_last="
                     f"{('$%s/h' % format(_liq_obs, ',.0f')) if _liq_obs is not None else 'n/a(first reading)'}"
-                    f" | threshold=$10,000,000 "
+                    f" | detect>=${_cascade_gov.effective_liq_thresholds(_liq_base_1h)[0]:,.0f}/h "
                     f"({'ARMED' if _cascade_real else 'shadow'})")
                 # [P305] `_liq_obs` is a per-HOUR rate; scale it to each
                 # window rather than passing one figure to both slots.
@@ -7690,6 +7850,7 @@ class HMATSProductionRunner:
                     price_change_1h_pct=_price_chg_1h,
                     price_change_4h_pct=_price_chg_4h,
                     volume_spike_ratio=_vol_spike,
+                    baseline_liq_1h=_liq_base_1h,
                 )
                 _cascade_status = _cascade_gov.get_status()
                 _cascade_phase = _cascade_status.get("phase", "NONE")
@@ -10122,6 +10283,16 @@ class HMATSProductionRunner:
                     # tick the seated signal would be silently excluded.
                     market_data["quant_data_quality"] = 1.0
                     agent_signals["quant_data_quality"] = 1.0
+                    # [P311] Report the DECIDER honestly. The seat overwrites
+                    # direction/confidence/edge but used to leave
+                    # `primary_strategy` reading "trend_following" (set by
+                    # core/trend_decision_layer.py), so every downstream
+                    # consumer — attribution, and HEALTH_T1's message — named
+                    # a producer that did not make the decision. Written to
+                    # BOTH dicts (the P170 two-dict trap: fusion and the
+                    # health checker read different ones).
+                    market_data["primary_strategy"] = "regimebook"
+                    agent_signals["primary_strategy"] = "regimebook"
                     # [P149] sleeve bridge — same reason as the trend seat
                     self._last_quant_directions[asset] = float(_rb_dir)
                     # [P298] Record a DIRECTIONAL book target so the whale
@@ -12181,7 +12352,34 @@ class HMATSProductionRunner:
                 _t2_regime = agent_signals.get("regime_state", "UNKNOWN").upper()
                 _t2_lev = self.config.regime_leverage_map.get(_t2_regime, 1.0)
                 self.engine.guarantees.alpha_calculator.FRICTION.update_for_leverage(asset, _t2_lev)
-                # Wire live funding_rate into cost model
+            except Exception:
+                pass
+
+        # [P311] The funding wire is DELIBERATELY OUTSIDE the leverage gate.
+        #
+        # It used to sit inside the `regime_leverage_enabled` block above, and
+        # `update_funding_rate` has exactly ONE production caller — this one.
+        # So P291b's venue-true hold cost was transitively gated on a flag
+        # named for LEVERAGE. With that flag off, `update_for_leverage` never
+        # runs (so margin_opening_fee_bps / margin_rollover_bps_per_4h keep
+        # their 0.0 dataclass defaults) AND `_funding_bps_per_4h` stays None
+        # (so the venue-true branch in _margin_cost_bps cannot fire) — the
+        # whole hold-cost term collapses to 0.0. That is the UNDERCHARGE
+        # direction, which P167 names as the dangerous one: overcharging costs
+        # opportunity, undercharging spends money. An operator disabling
+        # "regime leverage" would reasonably expect to stop LEVERAGING, not to
+        # stop charging for CARRY.
+        #
+        # Latent until P311 made these flags settable at all — which is exactly
+        # why it had to be decoupled in the SAME change (arming the config
+        # surface without this would have shipped the trap, not closed it).
+        #
+        # ORDER IS LOAD-BEARING: update_funding_rate takes
+        # max(margin_rollover_bps_per_4h, funding) while update_for_leverage
+        # ASSIGNS that field, so funding must run AFTER the leverage block or
+        # the leverage write would clobber the funding floor.
+        if hasattr(self.engine, 'guarantees'):
+            try:
                 _t2_funding = float(market_data.get("funding_rate", 0.0) or 0.0)
                 if abs(_t2_funding) > 1e-8:
                     # [P291] asset= tags the reading so the venue-true hold

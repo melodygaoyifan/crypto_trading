@@ -149,8 +149,38 @@ class TrancheCheckResult:
 class CascadeExhaustionConfig:
     """Configuration for cascade governor."""
     # Detection thresholds
-    cascade_detect_liq_threshold: float = 10_000_000  # $10M liquidations = cascade
-    cascade_accelerate_threshold: float = 25_000_000  # $25M = accelerating
+    # [P311] ABSOLUTE fallbacks, used only when no per-asset baseline is
+    # supplied. A single dollar figure across assets is wrong in BOTH
+    # directions and was measured so over 11 days of the derivflow ledger:
+    # median 24h liquidations are BTC $79.6M / ETH $37.8M / SOL $6.4M, so
+    # $10M/h is ~3x BTC's normal hourly rate (it fired on 7% of ticks) and
+    # ~38x SOL's (its maximum EVER observed is $2.09M/h — structurally
+    # unreachable). See the multiples below.
+    cascade_detect_liq_threshold: float = 10_000_000
+    cascade_accelerate_threshold: float = 25_000_000
+
+    # [P311] SELF-NORMALISING thresholds: a multiple of the asset's OWN
+    # recent liquidation rate, which is what a cascade actually is —
+    # liquidations running far above this market's normal.
+    #
+    # One multiplier serves all three because the SHAPE of the burst
+    # distribution is comparable once normalised: peak-to-baseline over the
+    # replay was BTC 8.1x, ETH 12.0x, SOL 7.9x, while the LEVELS differ by
+    # 12.5x. That similarity is what licenses a dimensionless constant, and
+    # it is the finding that made this fixable at all.
+    #
+    # 5.0 chosen by a rule stated before reading the table it picks from:
+    # the smallest multiple that puts EVERY asset at or below ~2.5% of ticks
+    # while still leaving the SMALLEST asset able to fire at all. Measured
+    # firing rates at 5x: BTC 2.4%, ETH 1.2%, SOL 1.2% (4x put BTC at 3.5%).
+    #
+    # HONEST LIMIT: 85 rate observations per asset over 11 days, so "1.2%"
+    # is a single event. This fixes the two STRUCTURAL failures — routine on
+    # BTC, unreachable on SOL — it does not finely calibrate the level. The
+    # multiplier is the revert knob; raising it can only make DETECT rarer.
+    cascade_detect_liq_multiple: float = 5.0
+    # Same 2.5x ratio the absolute pair carried (25M/10M), in the 4h window.
+    cascade_accelerate_liq_multiple: float = 12.5
     exhaustion_decel_threshold: float = 0.5  # Liquidation rate drops 50%
     
     # Timing
@@ -208,6 +238,8 @@ class CascadeExhaustionGovernor:
                         f"{[p for p in permissions_override if not p.startswith('_')]}")
         
         # State machine
+        self._detect_thr = (config or CascadeExhaustionConfig()).cascade_detect_liq_threshold
+        self._accel_thr = (config or CascadeExhaustionConfig()).cascade_accelerate_threshold
         self._phase = CascadePhase.NONE
         self._phase_start: Optional[datetime] = None
         self._cascade_start: Optional[datetime] = None
@@ -246,6 +278,27 @@ class CascadeExhaustionGovernor:
             except (ImportError, Exception):
                 pass
     
+    def effective_liq_thresholds(self, baseline_liq_1h=None):
+        """[P311] (detect, accelerate) for THIS asset, in its own units.
+
+        With a baseline the thresholds are a multiple of the asset's own
+        recent hourly liquidation rate; without one they fall back to the
+        absolute dollar figures, which is exactly today's behaviour. A
+        non-finite or non-positive baseline is NOT a baseline — it falls
+        back rather than producing a zero threshold, which would make the
+        detector fire on every tick (P2: absence must never become a
+        permissive value).
+        """
+        try:
+            b = float(baseline_liq_1h)
+        except (TypeError, ValueError):
+            b = 0.0
+        if not (b > 0.0) or b != b or b == float("inf"):
+            return (self.config.cascade_detect_liq_threshold,
+                    self.config.cascade_accelerate_threshold)
+        return (self.config.cascade_detect_liq_multiple * b,
+                self.config.cascade_accelerate_liq_multiple * b)
+
     def update_metrics(
         self,
         liquidation_volume_1h: float = 0.0,
@@ -253,6 +306,7 @@ class CascadeExhaustionGovernor:
         price_change_1h_pct: float = 0.0,
         price_change_4h_pct: float = 0.0,
         volume_spike_ratio: float = 1.0,
+        baseline_liq_1h: float = None,
     ):
         """
         Update cascade metrics from market data.
@@ -273,7 +327,11 @@ class CascadeExhaustionGovernor:
             liq_acceleration = (liquidation_volume_1h - prev_metrics.liquidation_volume_1h) / prev_metrics.liquidation_volume_1h
         
         # Calculate cascade intensity (0-1)
-        intensity = min(liquidation_volume_4h / self.config.cascade_accelerate_threshold, 1.0)
+        # [P311] intensity is a FRACTION OF THE ACCELERATE LEVEL, so it has
+        # to use the same (possibly self-normalised) denominator or a
+        # small-cap asset reads ~0 intensity during its own cascade.
+        _accel_now = self.effective_liq_thresholds(baseline_liq_1h)[1]
+        intensity = min(liquidation_volume_4h / _accel_now, 1.0)
         
         # Calculate exhaustion signal
         exhaustion = 0.0
@@ -300,7 +358,15 @@ class CascadeExhaustionGovernor:
         )
         
         self._metrics_history.append(self._current_metrics)
-        
+
+        # [P311] Resolve the thresholds for THIS tick from this asset's own
+        # baseline, in update_metrics where the parameter is in scope, and
+        # BEFORE the transition reads them. Stored rather than recomputed
+        # inside _update_phase so the value that decided the phase is the
+        # value get_status() reports.
+        self._detect_thr, self._accel_thr = self.effective_liq_thresholds(
+            baseline_liq_1h)
+
         # Update state machine
         self._update_phase()
     
@@ -319,14 +385,14 @@ class CascadeExhaustionGovernor:
         # State transitions
         if self._phase == CascadePhase.NONE:
             # Check for cascade detection
-            if (metrics.liquidation_volume_1h >= self.config.cascade_detect_liq_threshold or
+            if (metrics.liquidation_volume_1h >= self._detect_thr or
                 metrics.price_change_1h_pct <= -self.config.price_drop_detect_pct):
                 self._transition_to(CascadePhase.DETECTED)
         
         elif self._phase == CascadePhase.DETECTED:
             if phase_duration_ok:
                 # Check for acceleration
-                if (metrics.liquidation_volume_4h >= self.config.cascade_accelerate_threshold or
+                if (metrics.liquidation_volume_4h >= self._accel_thr or
                     metrics.price_change_4h_pct <= -self.config.price_drop_accelerate_pct):
                     self._transition_to(CascadePhase.ACCELERATING)
                 # Check for end

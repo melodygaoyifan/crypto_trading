@@ -25,6 +25,11 @@ from pathlib import Path
 
 import pytest
 
+# [P311] Guard pins go through assert_guard_live: a plain substring
+# assertion survives `if False and <condition>`, which is how P234,
+# P251 and P307 each shipped a neutered guard that still read as pinned.
+from tests._guard_pins import assert_guard_live  # noqa: E402
+
 REPO = Path(__file__).resolve().parents[1]
 MAIN = REPO / "main.py"
 
@@ -490,7 +495,10 @@ class TestConfigTrio:
             r"_ws_mode = str\(getattr.*?incumbent signal stands\"\)", src, re.S)
         assert m, "whale seat block not found"
         blk = m.group(0)
-        assert "elif abs(whale_direction_from_pressure(_ws_press)) <= 1e-9:" in blk, (
+        assert_guard_live(
+            blk, "elif abs(whale_direction_from_pressure(_ws_press)) <= 1e-9:",
+            "a silent whale must be skipped, not seated as 0.0")
+        _unused_msg = (
             "a silent whale must be skipped, not seated as 0.0"
         )
         # and the seat write must come AFTER that guard

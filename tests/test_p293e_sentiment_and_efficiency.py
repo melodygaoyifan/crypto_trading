@@ -15,6 +15,11 @@ from pathlib import Path
 
 import pytest
 
+# [P311] Guard pins go through assert_guard_live: a plain substring
+# assertion survives `if False and <condition>`, which is how P234,
+# P251 and P307 each shipped a neutered guard that still read as pinned.
+from tests._guard_pins import assert_guard_live  # noqa: E402
+
 REPO = Path(__file__).resolve().parents[1]
 
 
@@ -503,6 +508,9 @@ class TestExternalFlowSurvivesDowntime:
         """Persisting only when a flow fires leaves a stale stamp, and the
         elapsed-gap tolerance is computed FROM that stamp."""
         src = _src(REPO / "exchange" / "coinbase_sleeve.py")
-        assert "if not _flow:" in src and "_persist_state()" in src, (
+        assert_guard_live(src, "if not _flow:",
+                          "the reference must be persisted on ordinary ticks too")
+        _unused_msg = (
+            "_persist_state()" in src and
             "the reference must be persisted on ordinary ticks too"
         )

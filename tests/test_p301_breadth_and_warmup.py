@@ -471,16 +471,41 @@ class TestCascadeCanDetectACascade:
         assert r2._cascade_liq_delta("BTC", 44_000_000) == pytest.approx(
             2_000_000, rel=1e-3)   # $8M over 4h = $2M/h
 
-    def test_arming_is_a_config_decision_and_defaults_off(self):
-        """cascade_phase reaches a fusion disable-condition
-        (authority_fusion.py:851), so a detector that has never fired is armed
-        deliberately or not at all (P141)."""
+    def test_arming_was_a_decision_and_its_precondition_still_holds(self):
+        """[P311 supersedes this pin's OFF assertion.] It used to require the
+        flag absent, because arming a detector that had never fired is a
+        P141 decision. That decision has now been made, on the measurement
+        that removed its blocker: the threshold was a single dollar figure
+        across assets, wrong in BOTH directions (BTC ~3x its normal rate,
+        SOL ~38x its maximum ever observed), and is now a multiple of each
+        asset's OWN rate.
+
+        So what is pinned is the DECIDED value together with the
+        precondition, because the flag being on WITHOUT the self-normalising
+        threshold is the state that must never exist — that is the
+        combination that made arming unsafe in the first place.
+        """
         import json
         from main import ProductionConfig
+        # the code default stays OFF: absence of the key must not arm it
         assert ProductionConfig().cascade_real_liquidation_window is False
         live = json.loads(
             (REPO / "configs" / "live_high_risk.json").read_text(encoding="utf-8"))
-        assert "cascade_real_liquidation_window" not in live
+        if live.get("cascade_real_liquidation_window"):
+            from risk.cascade_exhaustion_governor import (
+                get_cascade_exhaustion_governor, reset_cascade_exhaustion_governor)
+            reset_cascade_exhaustion_governor()
+            g = get_cascade_exhaustion_governor()
+            try:
+                # SOL's normal hourly rate; the detect level must sit below
+                # the largest burst SOL has ever produced, or the detector is
+                # armed and still structurally unreachable there.
+                detect, _ = g.effective_liq_thresholds(6_366_840 / 24)
+                assert detect < 2_087_611, (
+                    "the window is ARMED while the threshold remains "
+                    "unreachable on the smallest routed asset")
+            finally:
+                reset_cascade_exhaustion_governor()
 
     def test_both_numbers_are_logged_so_the_shadow_can_be_read(self):
         """[P300] an instrument gated behind the condition it is meant to

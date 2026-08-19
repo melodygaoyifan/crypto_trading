@@ -213,7 +213,6 @@
         },
         
         "decision_tracing": {
-            "proof_log_enabled": true,
             "full_trace_per_decision": true,
             "log_signal_breakdown": true
         }

@@ -280,15 +280,20 @@ class TestDecisions:
         assert cfg["real_1h_price_change"] is True
         assert cfg["dvol_to_market_data"] is True
 
-    def test_the_cascade_liquidation_window_stays_off(self):
-        """Measured on 10.5 days of the real derivflow ledger: the delta
-        estimator's p95 rate is $10.06M/h on BTC against a $10M threshold, so
-        arming it would DETECT on ~5% of BTC ticks, and SOL's maximum ever
-        observed is $2.09M/h so it could never fire at all. That is a
-        threshold that was never calibrated against a real short window - the
-        P265 volume-collapse lesson: re-arming needs a re-derived threshold,
-        not a predicate flip."""
-        assert "cascade_real_liquidation_window" not in self._cfg()
+    def test_the_cascade_window_was_armed_only_after_the_threshold_was_fixed(self):
+        """[P311 supersedes the OFF assertion here.] P306 measured that the
+        single $10M/h threshold would DETECT on ~5% of BTC ticks and could
+        never fire on SOL, and required "a re-derived, PER-ASSET threshold —
+        not a predicate flip". That was done: the threshold is now 5x the
+        asset's own recent hourly rate. The pin follows the reasoning rather
+        than the value — the flag may be on ONLY while the multiple-based
+        threshold is what the governor uses."""
+        if self._cfg().get("cascade_real_liquidation_window"):
+            src = _src("risk/cascade_exhaustion_governor.py")
+            assert "cascade_detect_liq_multiple" in src
+            assert ("self.config.cascade_detect_liq_multiple * b" in src), (
+                "armed while the threshold reverted to a global dollar "
+                "figure — the state P306 refused")
 
     def test_the_trend_regime_gate_stays_in_shadow(self):
         """training/trend_gate_lab.py, pre-committed verdict: the live gate
