@@ -124,13 +124,26 @@ class TestDisablingIsSafeAndDefaultsOff:
         from main import ProductionConfig
         assert ProductionConfig.cryptopanic_enabled is True
 
-    def test_the_live_profile_does_not_set_it_yet(self):
-        """Turning it off is an OPERATOR decision tied to a billing action
-        (P141); adding the key IS the act."""
+    def test_the_live_profile_pins_the_DECIDED_value(self):
+        """[P322b] Was "the key must be absent". The operator instructed the
+        disable on 2026-08-19, so the pin flips to the DECIDED value rather
+        than being deleted (the P237 pattern): now a silent REVERT to true and
+        a silent removal of the key both fail, because either is a live
+        behaviour change that should be argued for, not drifted into."""
         import json
         cfg = json.loads((REPO / "configs" / "live_high_risk.json").read_text(
             encoding="utf-8-sig"))
-        assert "cryptopanic_enabled" not in cfg
+        assert cfg.get("cryptopanic_enabled") is False, (
+            "the live profile must carry the decided value; re-enabling is a "
+            "spend decision and needs its own record")
+        assert "_cryptopanic_enabled_note" in cfg, (
+            "the decision must travel with its reason and its revert")
+
+    def test_the_default_still_protects_every_other_profile(self):
+        """Disabling it LIVE must not change the dataclass default — paper and
+        test profiles that never mention the key keep today's behaviour."""
+        from main import ProductionConfig
+        assert ProductionConfig.cryptopanic_enabled is True
 
     def test_disabling_leaves_the_feed_unbuilt_rather_than_mocked(self):
         """The whole point: `mock_mode = not bool(key)`, so the intuitive exit
