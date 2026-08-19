@@ -1403,7 +1403,11 @@ async def fetch_headlines_with_meta(
             meta["error"] = "no_data"
             _cp_usable = False
 
-        if _cp_usable:
+        # `data is not None` is redundant with `_cp_usable` (the branch above
+        # clears the flag on a None payload) and is stated anyway so the
+        # narrowing is visible to a reader and to the type checker — a bool
+        # cannot carry that fact.
+        if _cp_usable and data is not None:
             meta["data_age_s"] = round(data_age_s, 1) if data_age_s is not None else None
             _asset = asset.upper().replace("/USD", "")
             meta["metrics"] = {
