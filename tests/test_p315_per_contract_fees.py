@@ -153,6 +153,20 @@ class TestGateWiring:
     def _src(self):
         return io.open(REPO / "main.py", encoding="utf-8").read()
 
+    def test_the_gate_reads_the_price_key_a_producer_actually_writes(self):
+        """[P321b] It read market_data["price"], which no producer writes —
+        the price is under "current_price". So the honest fee silently fell
+        back to the modelled 3bps on EVERY tick while the calibrated alpha
+        applied: `[P315-FEE] BTC: per-contract fee not priceable (px=0.0)`
+        in production. The P2 reader/writer mismatch, in the fix for a
+        mispricing."""
+        src = self._src()
+        i = src.index("[P315-FEE]")
+        blk = src[max(0, i - 2500):i]
+        assert 'market_data.get("current_price"' in blk, (
+            "the fee block is not reading current_price — it will fall back "
+            "to the modelled fee on every tick")
+
     def test_the_gate_applies_it_with_max_so_it_can_only_tighten(self):
         """A fee correction that could LOWER the charge would re-open the
         undercharging this exists to end (P167)."""

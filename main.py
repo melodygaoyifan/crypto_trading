@@ -10312,7 +10312,8 @@ class HMATSProductionRunner:
                     from core.seat_alpha import resolve_seat_edge as _rse
                     _rb_edge = _rse(asset, "regimebook", _rb_dir, 30.0,
                         bool(getattr(self.config, "seat_alpha_calibrated", False)),
-                        bool(getattr(self.config, "coinbase_per_contract_fees", False)))
+                        bool(getattr(self.config, "coinbase_per_contract_fees", False)),
+                        price=market_data.get("current_price"))
                     market_data["quant_direction"] = float(_rb_dir)
                     market_data["quant_confidence"] = 0.9 if _rb_dir else 0.4
                     market_data["signal_edge_bps"] = _rb_edge
@@ -11471,7 +11472,13 @@ class HMATSProductionRunner:
                             self.config, "coinbase_per_contract_fees", False))):
                         try:
                             from core.cde_fees import cde_fee_bps as _cfb
-                            _px_fee = float(market_data.get("price", 0.0) or 0.0)
+                            # [P321b] market_data carries the price under
+                            # "current_price"; "price" is not a key any
+                            # producer writes, so this silently fell back to
+                            # the modelled fee on EVERY tick (P2 reader/writer
+                            # mismatch — caught on the first live tick).
+                            _px_fee = float(market_data.get("current_price",
+                                            market_data.get("price", 0.0)) or 0.0)
                             _mk = _cfb(asset, _px_fee, is_maker=True)
                             _tk = _cfb(asset, _px_fee, is_maker=False)
                             if _mk and _tk:

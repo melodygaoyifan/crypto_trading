@@ -149,7 +149,8 @@ def calibrated_seat_alpha(asset: str, seat: str,
 
 def resolve_seat_edge(asset: str, seat: str, direction: float,
                       base_bps: float, calibrated_enabled: bool,
-                      honest_fees_enabled: bool) -> float:
+                      honest_fees_enabled: bool,
+                      price: Optional[float] = None) -> float:
     """The whole arming decision as ONE pure call, so the seat block stays
     short enough for the P256/P265 window guards to see its dict writes.
 
@@ -167,6 +168,22 @@ def resolve_seat_edge(asset: str, seat: str, direction: float,
     fallback = float(base_bps) * abs(float(direction or 0.0))
     if not direction or not (calibrated_enabled and honest_fees_enabled):
         return fallback
+    # [P321b] INTERLOCK ON EFFECT, NOT ON FLAG. Both flags were on and the
+    # honest fee still did not apply — it read market_data["price"], a key no
+    # producer writes, so it fell back to the modelled 3bps while the
+    # calibrated alpha DID apply. That is precisely the half P318 warned
+    # about (calibrated alpha + cheap fees = pure loosening), and it went live
+    # for one tick. A flag being true is not evidence the correction took
+    # effect, so the alpha half now refuses unless the fee half can actually
+    # price THIS asset at THIS price.
+    if price is not None:
+        from core.cde_fees import cde_fee_bps
+        if cde_fee_bps(asset, price, is_maker=False) is None:
+            logger.warning(
+                "[P321b] %s: honest fee not priceable (px=%r) — NOT applying "
+                "the calibrated alpha either; the two must move together",
+                asset, price)
+            return fallback
     try:
         bps, prov = calibrated_seat_alpha(asset, seat, fallback)
     except Exception as e:  # noqa: silent-swallow — logged, keeps the constant

@@ -126,6 +126,34 @@ class TestInterlock:
                 f"calibrated={cal} honest_fees={fee} changed the edge; either "
                 f"half alone moves the gate the wrong way (P318)")
 
+    def test_interlock_gates_on_EFFECT_not_on_the_flag(self):
+        """[P321b] THE LIVE INCIDENT. Both flags were on and the honest fee
+        still did not apply — the gate block read market_data["price"], a key
+        no producer writes (it is "current_price"), so it fell back to the
+        modelled 3bps while the calibrated alpha DID apply. That is exactly
+        the half P318 warned about (calibrated alpha + cheap fees = pure
+        loosening) and it reached production for one tick.
+
+        A flag being true is not evidence the correction took effect, so the
+        alpha half must refuse whenever the fee half cannot price THIS asset.
+        """
+        from core.seat_alpha import resolve_seat_edge
+        assert resolve_seat_edge("ETH", "regimebook", 1.0, 30.0, True, True,
+                                 price=1916.5) == pytest.approx(88.1)
+        for bad in (0.0, -1.0, float("nan")):
+            assert resolve_seat_edge("ETH", "regimebook", 1.0, 30.0, True,
+                                     True, price=bad) == pytest.approx(30.0), (
+                f"px={bad!r}: the calibrated alpha applied while the honest "
+                f"fee could not — the two must move together")
+
+    def test_the_seat_passes_the_price_so_the_effect_check_can_run(self):
+        """Anti-vacuity: the effect-interlock is inert unless the call site
+        actually supplies a price."""
+        src = self._src()
+        i = src.index("resolve_seat_edge")
+        blk = src[max(0, i - 600):i + 800]
+        assert 'price=market_data.get("current_price")' in blk
+
     def test_a_flat_book_asserts_nothing(self):
         """A calibrated ROUND-TRIP value must never be asserted for a position
         the seat is not taking."""
