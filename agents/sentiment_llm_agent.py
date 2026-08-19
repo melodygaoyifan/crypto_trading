@@ -1316,6 +1316,18 @@ async def fetch_headlines_with_meta(
         from data_mgmt.feeds.cryptopanic_feed import get_cryptopanic_feed
         feed = get_cryptopanic_feed()
         meta["is_mock"] = bool(getattr(feed, "_mock_mode", False))
+        try:
+            from data_mgmt.feeds.cryptopanic_feed import is_feed_enabled
+            _cp_on = is_feed_enabled()
+        except Exception:  # noqa: silent-swallow — an unreadable switch must not disable a working feed; default to ON
+            _cp_on = True
+        if not _cp_on:
+            # [P322c] The operator disabled this feed. This function is one of
+            # TWO sites that reach the singleton directly, which is why the
+            # switch is module-level rather than a main.py handle.
+            meta["headlines"] = []
+            meta["reason"] = "cryptopanic_disabled_by_config"
+            return meta
         if meta["is_mock"]:
             # [P322] MOCK HEADLINES MUST NEVER REACH HAIKU.
             #

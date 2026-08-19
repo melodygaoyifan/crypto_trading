@@ -5579,6 +5579,17 @@ class HMATSProductionRunner:
                 # is already carrying it while the quota is exhausted.
                 if not bool(getattr(self.config, "cryptopanic_enabled", True)):
                     self.cryptopanic_feed = None
+                    # [P322c] The singleton has callers this handle does not
+                    # own (sentiment_llm_agent reaches it directly), so the
+                    # decision has to be set where the singleton lives.
+                    try:
+                        from data_mgmt.feeds.cryptopanic_feed import set_feed_enabled
+                        set_feed_enabled(False)
+                    except Exception as _cpd_err:
+                        logger.warning(
+                            f"  CryptoPanic: could not set the module switch "
+                            f"({type(_cpd_err).__name__}) — the feed may still "
+                            f"be reached by its direct callers")
                     logger.info(
                         "  CryptoPanic: DISABLED by config "
                         "(cryptopanic_enabled=false) — no requests, no mock; "

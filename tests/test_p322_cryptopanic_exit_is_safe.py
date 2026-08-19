@@ -151,7 +151,7 @@ class TestDisablingIsSafeAndDefaultsOff:
         entirely."""
         src = (REPO / "main.py").read_text(encoding="utf-8-sig")
         i = src.index('getattr(self.config, "cryptopanic_enabled"')
-        block = src[i:i + 500]
+        block = src[i:i + 1400]   # widened: P322c inserted the module-switch call between the two
         assert "self.cryptopanic_feed = None" in block
         assert "get_cryptopanic_feed" in block, "the else-branch must remain"
 
@@ -203,3 +203,69 @@ class TestSentimentDoesNotDependOnCryptoPanic:
             line = src[line_start:src.find("\n", m.start())]
             assert "panic_score" not in line, (
                 f"CryptoPanic now writes panic_score: {line.strip()[:110]}")
+
+
+class TestTheDisableReachesTheSingletonsOtherCallers:
+    """[P322c] P322 gated main.py's construction site and the feed kept
+    initialising on the live box — because `agents/sentiment_llm_agent.py`
+    calls `get_cryptopanic_feed()` DIRECTLY at two sites. Gating one handle
+    left the actual consumers untouched: the P152/P2 shape, inside the fix
+    written to close it. Caught by reading the live log after the deploy
+    rather than trusting the config (P295b)."""
+
+    def _reset(self):
+        import data_mgmt.feeds.cryptopanic_feed as cp
+        cp.set_feed_enabled(True)
+
+    def test_the_switch_is_module_level_not_a_handle(self):
+        import data_mgmt.feeds.cryptopanic_feed as cp
+        assert hasattr(cp, "set_feed_enabled") and hasattr(cp, "is_feed_enabled")
+
+    def test_default_is_enabled(self):
+        self._reset()
+        import data_mgmt.feeds.cryptopanic_feed as cp
+        assert cp.is_feed_enabled() is True
+
+    def test_a_disabled_feed_makes_no_request_and_no_mock(self, tmp_path,
+                                                          monkeypatch):
+        """Silent AND empty. Checked before the mock branch, or disabling
+        would turn the fabricator ON for a keyless instance."""
+        import asyncio
+        import data_mgmt.feeds.cryptopanic_feed as cp
+        monkeypatch.setenv("HMATS_DATA_DIR", str(tmp_path))
+        try:
+            cp.set_feed_enabled(False)
+            feed = cp.CryptoPanicFeed(api_key="", mock_mode=True)
+            assert asyncio.run(feed.fetch()) is None, (
+                "a disabled feed must return nothing — not mock data")
+        finally:
+            self._reset()
+
+    def test_the_agents_direct_caller_respects_it(self):
+        """The site that bypassed main.py entirely."""
+        import asyncio
+        import agents.sentiment_llm_agent as mod
+        import data_mgmt.feeds.cryptopanic_feed as cp
+        try:
+            cp.set_feed_enabled(False)
+            meta = asyncio.run(mod.fetch_headlines_with_meta("BTC"))
+            assert meta["headlines"] == []
+            assert meta.get("reason") == "cryptopanic_disabled_by_config"
+        finally:
+            self._reset()
+
+    def test_main_sets_the_switch_when_the_flag_is_false(self):
+        src = (REPO / "main.py").read_text(encoding="utf-8-sig")
+        i = src.index('getattr(self.config, "cryptopanic_enabled"')
+        block = src[i:i + 900]
+        assert "set_feed_enabled(False)" in block, (
+            "clearing the handle is not enough — the singleton's other "
+            "callers only see the module switch")
+
+    def test_an_unreadable_switch_defaults_to_ON(self):
+        """Fail direction: a broken import must not silently disable a feed
+        the operator is paying for (P2 — absence is not a decision)."""
+        src = (REPO / "agents" / "sentiment_llm_agent.py").read_text(
+            encoding="utf-8-sig")
+        i = src.index("is_feed_enabled")
+        assert "_cp_on = True" in src[i:i + 400]

@@ -286,6 +286,11 @@ class CryptoPanicFeed:
         """Fetch latest CryptoPanic data."""
         try:
             now = datetime.now(timezone.utc)
+            # [P322c] Disabled means SILENT and EMPTY — checked before the
+            # mock branch, or turning the feed off would turn the fabricator
+            # on for any instance that was built without a key.
+            if _cryptopanic_disabled:
+                return None
             if self._mock_mode:
                 return await self._fetch_mock()
 
@@ -1006,6 +1011,28 @@ class CryptoPanicFeed:
 # =============================================================================
 
 _cryptopanic_feed_instance: Optional[CryptoPanicFeed] = None
+
+# [P322c] MODULE-LEVEL, because the singleton has callers main.py does not
+# own. P322 gated main.py's construction site and the feed kept initialising
+# and would have kept fetching: `agents/sentiment_llm_agent.py` calls
+# `get_cryptopanic_feed()` DIRECTLY at two sites, so gating one handle left
+# the real consumers untouched — the P152/P2 shape ("a guard defined and never
+# reached"), in the fix meant to close it. Verified by reading the live log
+# after the deploy rather than trusting the config (P295b).
+#
+# The switch lives beside the singleton so that EVERY route through it obeys
+# the same decision, whoever imported it.
+_cryptopanic_disabled: bool = False
+
+
+def set_feed_enabled(enabled: bool) -> None:
+    """Turn the feed on/off process-wide. Called by main.py from config."""
+    global _cryptopanic_disabled
+    _cryptopanic_disabled = not bool(enabled)
+
+
+def is_feed_enabled() -> bool:
+    return not _cryptopanic_disabled
 
 
 def get_cryptopanic_feed(
