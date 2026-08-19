@@ -1723,6 +1723,10 @@ class ProductionConfig:
     #     path that has never executed needs its own operator decision.
     sentiment_zscore_mode: str = "linear"
     options_use_deribit: bool = False
+    # [P322] Default TRUE: absent key => byte-identical behaviour. Setting it
+    # false is the safe way to stop paying for CryptoPanic — see the note at
+    # the construction site for why deleting the API key is NOT.
+    cryptopanic_enabled: bool = True
     exchange_netflow_to_flow_agent: bool = False
     dvol_to_market_data: bool = False
     #   real_1h_price_change
@@ -1813,7 +1817,7 @@ class ProductionConfig:
     # Arming it therefore requires the alpha side to be calibrated to the
     # SEAT'S OWN holding horizon first, with its own evidence and P-entry.
     coinbase_per_contract_fees: bool = False
-    # [P320] Replace the regimebook seat's flat 30bps per-TICK assertion
+    # [P322] Replace the regimebook seat's flat 30bps per-TICK assertion
     # with its MEASURED gross bps per ROUND TRIP in its worst era
     # (core/seat_alpha.py). INTERLOCKED with the flag above — either
     # alone is a half-correction that moves the gate the wrong way.
@@ -2233,6 +2237,8 @@ class ProductionConfig:
                 in ("linear", "historical") else "linear"),
             options_use_deribit=bool(
                 data.get("options_use_deribit", False)),
+            cryptopanic_enabled=bool(
+                data.get("cryptopanic_enabled", True)),
             exchange_netflow_to_flow_agent=bool(
                 data.get("exchange_netflow_to_flow_agent", False)),
             dvol_to_market_data=bool(
@@ -2251,7 +2257,7 @@ class ProductionConfig:
             # [P315] declared + parsed together (the P201 rule)
             coinbase_per_contract_fees=bool(
                 data.get("coinbase_per_contract_fees", False)),
-            # [P320] declared + parsed together (the P201 rule)
+            # [P322] declared + parsed together (the P201 rule)
             seat_alpha_calibrated=bool(
                 data.get("seat_alpha_calibrated", False)),
             whale_seat_mode=(
@@ -5562,7 +5568,23 @@ class HMATSProductionRunner:
                 self.fred_feed = get_fred_feed(api_key=fred_key, mock_mode=not bool(fred_key))
                 self.coinglass_feed = get_coinglass_feed(api_key=coinglass_key, mock_mode=not bool(coinglass_key))
                 self.lunarcrush_feed = get_lunarcrush_feed(api_key=lunarcrush_key, mock_mode=not bool(lunarcrush_key))
-                self.cryptopanic_feed = get_cryptopanic_feed(api_key=cryptopanic_key, mock_mode=not bool(cryptopanic_key))
+                # [P322] `cryptopanic_enabled` (default TRUE — absent key
+                # changes nothing) is the SAFE way to stop using this feed.
+                # The obvious alternative, deleting CRYPTOPANIC_API_KEY, does
+                # NOT disable it: `mock_mode` is derived as `not
+                # bool(cryptopanic_key)`, so an empty key turns the feed into
+                # a generator of invented headlines. Setting this flag false
+                # leaves the feed UNBUILT: no requests, no mock, no warnings,
+                # and llm_sentiment runs on the free RSS blend (P314), which
+                # is already carrying it while the quota is exhausted.
+                if not bool(getattr(self.config, "cryptopanic_enabled", True)):
+                    self.cryptopanic_feed = None
+                    logger.info(
+                        "  CryptoPanic: DISABLED by config "
+                        "(cryptopanic_enabled=false) — no requests, no mock; "
+                        "headlines come from the RSS blend")
+                else:
+                    self.cryptopanic_feed = get_cryptopanic_feed(api_key=cryptopanic_key, mock_mode=not bool(cryptopanic_key))
                 
                 # V10: trading_economics_feed -dead code (instantiated but never consumed by macro_crowd_adapter)
                 # if trading_econ_key:
@@ -10308,7 +10330,7 @@ class HMATSProductionRunner:
                     self._rb_seat_stale_logged = getattr(
                         self, "_rb_seat_stale_logged", set())
                     self._rb_seat_stale_logged.discard(asset)
-                    # [P320] calibrated seat alpha; see core/seat_alpha.py
+                    # [P322] calibrated seat alpha; see core/seat_alpha.py
                     from core.seat_alpha import resolve_seat_edge as _rse
                     _rb_edge = _rse(asset, "regimebook", _rb_dir, 30.0,
                         bool(getattr(self.config, "seat_alpha_calibrated", False)),
@@ -18699,7 +18721,16 @@ class HMATSProductionRunner:
                 }
 
             payload = {
-                "saved_at": datetime.now(timezone.utc).isoformat() + "Z",
+                # [P322] was `.isoformat() + "Z"`, producing the malformed
+                # "...+00:00Z" (double tz marker) — api/server._is_fresh does
+                # ts.replace("Z", "+00:00") and then fromisoformat, which sees
+                # "+00:00+00:00" and raises, so `positions_fresh` was
+                # PERMANENTLY False. Identical to the bug fixed for
+                # dashboard_state.json on 2026-04-22 (see :20068, whose own
+                # comment describes this exact failure) — that fix was applied
+                # to one instance of the class and not to the class (P171/P226).
+                "saved_at": datetime.now(timezone.utc).isoformat().replace(
+                    "+00:00", "Z"),
                 "positions": active_positions,
                 "cumulative_pnl": cumulative_pnl,
                 "peak_equity": peak_equity,

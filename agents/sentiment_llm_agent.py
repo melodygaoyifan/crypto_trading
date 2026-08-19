@@ -1316,6 +1316,30 @@ async def fetch_headlines_with_meta(
         from data_mgmt.feeds.cryptopanic_feed import get_cryptopanic_feed
         feed = get_cryptopanic_feed()
         meta["is_mock"] = bool(getattr(feed, "_mock_mode", False))
+        if meta["is_mock"]:
+            # [P322] MOCK HEADLINES MUST NEVER REACH HAIKU.
+            #
+            # `_fetch_mock` invents 3-10 items per currency titled
+            # "Mock BTC News 0" and stamps them within the last 240 minutes —
+            # i.e. FRESH ENOUGH to pass the 4h window and satisfy the _c3_live
+            # starvation gate. `is_mock` was recorded in this meta dict and
+            # consulted only by the METRICS path (`if _cp_metrics and not
+            # _cp_is_mock`); the headline loop below never looked at it, so
+            # fabricated titles were sent to Haiku as real news and their
+            # reading came back labelled `status=live`.
+            #
+            # Latent today only because a key is configured — and the very
+            # next operator action under consideration (cancel the plan,
+            # remove the key) flips `mock_mode` on, because it is derived as
+            # `not bool(cryptopanic_key)`. That is the P2/P223 class: a
+            # fabricated value is indistinguishable from a measured one, and
+            # here it would arrive already stamped fresh.
+            #
+            # Mock therefore means NO NEWS, never FAKE NEWS. The RSS blend
+            # (P314) is unaffected and continues to carry the agent.
+            meta["headlines"] = []
+            meta["reason"] = "cryptopanic_mock_mode_no_headlines"
+            return meta
         now = datetime.now(timezone.utc)
         win = window or _HEADLINE_WINDOW
 
