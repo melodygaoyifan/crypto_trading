@@ -2911,6 +2911,35 @@ def stop_reconcile_intended_target(manage_status, intended_target):
     return None
 
 
+def fuse_flow_adjusted_delta(raw_delta, flow_cum, flow_at_anchor):
+    """[P325] Rule #3's PnL delta with external capital flows removed.
+
+    A bare equity difference counts a DEPOSIT as profit. Rule #3 suspends on a
+    NEGATIVE 28d window, so a transfer in does not merely mis-state the
+    number -- it BLINDS the fuse for the whole window. Measured live
+    2026-08-19: the 2026-08-16 deposit of ~$7,074 put the window at +186.88%
+    while the sleeve ledger correctly read -$252.56, because P293h subtracted
+    flows in log_pnl_point and this feed was left on the raw difference.
+
+    Returns (adjusted_delta, flow_delta_applied). An unusable reference
+    adjusts NOTHING and reports 0.0 -- the honest-but-noisy direction P293h
+    chose deliberately, never a silent adjustment that could hide a loss.
+    """
+    try:
+        raw = float(raw_delta)
+    except (TypeError, ValueError):  # noqa: silent-swallow — documented+tested fail direction: an unreadable delta records 0.0, never a gain
+        return 0.0, 0.0
+    if flow_cum is None or flow_at_anchor is None:
+        return raw, 0.0
+    try:
+        fd = float(flow_cum) - float(flow_at_anchor)
+    except (TypeError, ValueError):  # noqa: silent-swallow — documented+tested: an unusable reference adjusts NOTHING
+        return raw, 0.0
+    if fd != fd or fd in (float("inf"), float("-inf")):
+        return raw, 0.0
+    return raw - fd, fd
+
+
 def fuse_feed_freshness(reconcile_ok, equity, age_sec, max_age_sec=28800.0):
     """[P287] Gate for the P209 fuse feed — pure, the feed's skip/record
     decision flows THROUGH this function (P251 rule).
@@ -18760,6 +18789,13 @@ class HMATSProductionRunner:
                 # every loss that happened while the process was down).
                 "fuse_sleeve_anchor_equity": getattr(
                     self, "_fuse_sleeve_anchor_equity", None),
+                # [P325] The cumulative external flow AT that anchor. Persisted
+                # with it because the two are one reference pair: restoring the
+                # equity anchor alone would make the next tick re-subtract
+                # every transfer ever recorded (the P287 lesson about restoring
+                # half a reference, applied to the flow half).
+                "fuse_flow_cum_at_anchor": getattr(
+                    self, "_fuse_flow_cum_at_anchor", None),
                 # [P253] UTC-day equity anchor for the daily-loss kill switch's
                 # realized_pnl_today producer. Without persistence a mid-day
                 # restart re-anchors to current equity and silently forgives
@@ -20464,6 +20500,13 @@ class HMATSProductionRunner:
                         _anchor = data.get("fuse_sleeve_anchor_equity")
                         self._fuse_sleeve_anchor_equity = (
                             float(_anchor) if _anchor else None)
+                        # [P325] restored with the anchor it belongs to; None
+                        # means "no reference", and the feed then adjusts
+                        # nothing rather than treating the whole cumulative
+                        # flow as this tick's transfer.
+                        _fcum = data.get("fuse_flow_cum_at_anchor")
+                        self._fuse_flow_cum_at_anchor = (
+                            float(_fcum) if _fcum is not None else None)
                         logger.info(
                             f"[PAPER] Restored existence fuse: state={fuse_data.get('state', '?')}, "
                             f"starting_equity=${(fuse_data.get('starting_equity') or 0):,.0f}, "
@@ -22773,6 +22816,50 @@ class HMATSProductionRunner:
                                         _fz_delta = (
                                             _fz_eq - float(_fz_anchor)
                                             if _fz_anchor else 0.0)
+                                        # [P325] SUBTRACT EXTERNAL CAPITAL
+                                        # FLOWS. A bare equity difference
+                                        # counts a DEPOSIT as profit, and Rule
+                                        # #3 suspends on a NEGATIVE window — so
+                                        # a transfer in does not merely
+                                        # mis-state the number, it BLINDS the
+                                        # fuse for the whole 28d window.
+                                        # Measured live 2026-08-19: the
+                                        # 2026-08-16 deposit of ~$7,074 put the
+                                        # window at +186.88% while the sleeve's
+                                        # own ledger correctly read -$252.56.
+                                        # P293h fixed exactly this for
+                                        # log_pnl_point and the fuse feed --
+                                        # written the same day, four thousand
+                                        # lines away -- was left on the raw
+                                        # difference. Reuses the sleeve's
+                                        # cumulative detector (P172): one
+                                        # implementation, one set of fail
+                                        # directions. An unreadable flow total
+                                        # adjusts NOTHING, which is the
+                                        # honest-but-noisy direction P293h
+                                        # chose deliberately -- never a silent
+                                        # adjustment that could hide a loss.
+                                        try:
+                                            _fz_flow_cum = float(getattr(
+                                                _fz_sleeve,
+                                                "_external_flow_usd", 0.0)
+                                                or 0.0)
+                                        except (TypeError, ValueError):
+                                            _fz_flow_cum = None
+                                        _fz_flow_at_anchor = getattr(
+                                            self, "_fuse_flow_cum_at_anchor",
+                                            None)
+                                        _fz_delta, _fz_flow_delta = (
+                                            fuse_flow_adjusted_delta(
+                                                _fz_delta, _fz_flow_cum,
+                                                _fz_flow_at_anchor))
+                                        if _fz_flow_delta:
+                                            logger.warning(
+                                                "[P325][FUSE-FEED] external "
+                                                "flow %+,.2f excluded from "
+                                                "Rule #3's window (adjusted "
+                                                "delta %+,.2f)",
+                                                _fz_flow_delta, _fz_delta)
                                         # record_pnl ONLY. on_trade_close() is
                                         # deliberately NOT called: it counts a
                                         # CONSECUTIVE-LOSS streak and suspends at
@@ -22794,6 +22881,14 @@ class HMATSProductionRunner:
                                             trade_count=0,
                                         )
                                         self._fuse_sleeve_anchor_equity = _fz_eq
+                                        # [P325] The flow reference MUST move
+                                        # with the equity anchor: they are one
+                                        # reference pair, and advancing only
+                                        # one would re-subtract the same
+                                        # transfer on every later tick.
+                                        if _fz_flow_cum is not None:
+                                            self._fuse_flow_cum_at_anchor = (
+                                                _fz_flow_cum)
                                         self._fuse_equity_basis = "coinbase_sleeve"
                                         _fz_st = _fz.get_status()
                                         logger.info(
