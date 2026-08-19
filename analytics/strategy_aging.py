@@ -267,7 +267,7 @@ class StrategyAgingManager:
             # and not globally, or the first unknown silences every later
             # one (the P193 latch bug).
             if not hasattr(self, "_unknown_warned"):
-                self._unknown_warned = set()
+                self._unknown_warned: set = set()
             if raw_strategy_name not in self._unknown_warned:
                 self._unknown_warned.add(raw_strategy_name)
                 logger.warning(
