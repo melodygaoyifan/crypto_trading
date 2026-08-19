@@ -227,6 +227,12 @@ class CryptoPanicFeed:
         self._last_data: Optional[CryptoPanicData] = None
         self._last_fetch_time: Optional[datetime] = None
         self._backoff_until: Optional[datetime] = None
+        # [P319b] HTTP statuses already reported, so a rejected key does not
+        # log ~18 identical lines a day. Declared here rather than created
+        # lazily: an inferred `set[Never]` fails the type gate on every
+        # .add(), which is the second CI round-trip this pattern has cost
+        # (P317b was the first).
+        self._http_warned: set = set()
         self._last_status_code: Optional[int] = None
         self._running = False
         self._fetch_errors = 0
@@ -767,9 +773,37 @@ class CryptoPanicFeed:
                     # 429 and the end of the fetch, the restart forgets it and
                     # hammers the API that just rate-limited us.
                     self._persist_state()
-                logger.warning(
-                    f"[CRYPTOPANIC] {currency}: HTTP {resp.status} from API"
-                )
+                # [P319b] A CREDENTIAL failure is permanent, not transient.
+                # The old branch set NO backoff and logged on every fetch, so
+                # an invalid key (401) meant ~18 identical warnings a day
+                # forever with the request re-issued each time — the P202
+                # shape, and precisely what CANCELLING OR CHANGING THE PLAN
+                # would produce. A hardcoded credential that the API rejects
+                # cannot start working before someone edits the environment,
+                # so it gets the same daily re-probe as an exhausted quota.
+                #
+                # 401 ONLY. A 403 is ambiguous here — P293b measured
+                # Cloudflare returning `403 error code: 1010` for an
+                # unidentified client, which a User-Agent fixes and which must
+                # keep retrying. Treating 403 as permanent would turn a
+                # transient block into a self-inflicted outage.
+                if resp.status == 401:
+                    self._backoff_until = quota_backoff_until(
+                        datetime.now(timezone.utc))
+                    self._persist_state()
+                if resp.status not in self._http_warned:
+                    self._http_warned.add(resp.status)
+                    logger.warning(
+                        "[CRYPTOPANIC] HTTP %d from API — %s. Logged once per "
+                        "status per process; the corpus falls back to the "
+                        "cached items and to the free RSS blend (P314), which "
+                        "currently carries llm_sentiment on its own.",
+                        resp.status,
+                        ("the key is REJECTED: check CRYPTOPANIC_API_KEY and "
+                         "the plan is still active. Re-probing daily, because "
+                         "a bad credential cannot fix itself (P319b)"
+                         if resp.status == 401 else
+                         "retrying on the normal cadence"))
                 return []
 
             self._backoff_until = None

@@ -172,3 +172,113 @@ class TestTheOpenQuestionIsRecordedAsOperatorSide:
                / "cryptopanic_feed.py").read_text(encoding="utf-8-sig")
         assert "growth/v2" in src
         assert "BILLING" in src, "the tier-in-URL hazard must stay stated"
+
+
+class TestARejectedKeyDoesNotBecomePermanentNoise:
+    """[P319b] Found while costing the plan: a non-429 error set NO backoff
+    and logged on every fetch. An invalid key — exactly what cancelling or
+    changing the plan produces — meant ~18 identical warnings a day forever,
+    with the request re-issued each time (P202). Fixed BEFORE recommending any
+    plan change, so the recommendation cannot create a new problem."""
+
+    def test_401_is_treated_as_permanent(self):
+        src = (REPO / "data_mgmt" / "feeds"
+               / "cryptopanic_feed.py").read_text(encoding="utf-8-sig")
+        i = src.index("if resp.status == 401:")
+        assert "quota_backoff_until" in src[i:i + 220], (
+            "a rejected credential cannot fix itself before someone edits the "
+            "environment — it needs the same daily re-probe as a spent quota")
+
+    def test_403_keeps_retrying(self):
+        """P293b measured Cloudflare returning `403 error code: 1010` for an
+        unidentified client — transient, and fixed by a User-Agent. Treating
+        it as permanent would turn a passing block into a self-inflicted
+        outage."""
+        src = (REPO / "data_mgmt" / "feeds"
+               / "cryptopanic_feed.py").read_text(encoding="utf-8-sig")
+        i = src.index("if resp.status == 401:")
+        block = src[max(0, i - 900):i + 300]
+        assert "403" in block, "the 401/403 asymmetry must be stated at source"
+        assert "resp.status == 403" not in src[i:i + 300], (
+            "403 must NOT take the permanent branch")
+
+    def _drive(self, monkeypatch, tmp_path, statuses):
+        """Drive the REAL _fetch_posts against a fake session, collecting the
+        warnings it emits. Behavioural, because the source-text version stayed
+        green when the guard was replaced by `if True:` — it asserted strings
+        the guard removal does not touch."""
+        import asyncio
+        import logging
+        import data_mgmt.feeds.cryptopanic_feed as mod
+
+        monkeypatch.setenv("HMATS_DATA_DIR", str(tmp_path))
+        feed = mod.CryptoPanicFeed(api_key="k")
+        recs = []
+
+        class _H(logging.Handler):
+            def emit(self, r):
+                recs.append(r.getMessage())
+
+        class _Resp:
+            def __init__(self, st):
+                self.status = st
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            async def text(self):
+                return ""
+
+            async def json(self):
+                return {}
+
+        class _Session:
+            def __init__(self, sts):
+                self._sts = list(sts)
+
+            def get(self, *a, **k):
+                return _Resp(self._sts.pop(0))
+
+        lg = logging.getLogger("data_mgmt.feeds.cryptopanic_feed")
+        h = _H(level=logging.WARNING)
+        lg.addHandler(h)
+        try:
+            sess = _Session(statuses)
+            for _ in statuses:
+                asyncio.run(mod.CryptoPanicFeed._fetch_posts(feed, sess, "BTC"))
+        finally:
+            lg.removeHandler(h)
+        return feed, [r for r in recs if "HTTP" in r]
+
+    def test_a_repeated_401_warns_once(self, monkeypatch, tmp_path):
+        """Cancelling the plan yields 401 on every fetch — ~18 a day."""
+        _f, warns = self._drive(monkeypatch, tmp_path, [401] * 6)
+        assert len(warns) == 1, f"expected one warning, got {len(warns)}"
+
+    def test_a_401_arms_a_backoff(self, monkeypatch, tmp_path):
+        feed, _ = self._drive(monkeypatch, tmp_path, [401])
+        assert feed._backoff_until is not None, (
+            "a rejected credential must stop the per-tick retry")
+
+    def test_a_403_does_not_arm_a_backoff(self, monkeypatch, tmp_path):
+        """Cloudflare 1010 is transient and User-Agent-fixable (P293b)."""
+        feed, _ = self._drive(monkeypatch, tmp_path, [403])
+        assert feed._backoff_until is None
+
+    def test_a_different_status_still_gets_its_own_warning(
+            self, monkeypatch, tmp_path):
+        """Latched per STATUS, not globally — else the first error silences
+        every later, different one (the P193 latch bug)."""
+        _f, warns = self._drive(monkeypatch, tmp_path, [500, 500, 403, 403])
+        assert len(warns) == 2, f"expected one per status, got {len(warns)}"
+
+    def test_the_message_names_the_fallback_that_is_carrying_the_load(self):
+        """An operator reading this must know whether anything is degraded.
+        RSS currently carries llm_sentiment on its own (P314)."""
+        src = (REPO / "data_mgmt" / "feeds"
+               / "cryptopanic_feed.py").read_text(encoding="utf-8-sig")
+        i = src.index("Logged once per ")
+        assert "RSS" in src[i:i + 400]
