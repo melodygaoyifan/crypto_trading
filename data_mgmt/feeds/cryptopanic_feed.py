@@ -440,7 +440,36 @@ class CryptoPanicFeed:
 
             # Backoff first — this is the field whose loss actually costs money.
             # An already-expired value is harmless (fetch() compares against now).
-            self._backoff_until = self._parse_dt(st.get("backoff_until"))
+            # [P319] CAP A RESTORED BACKOFF AT THE RE-PROBE INTERVAL.
+            # P299 replaced the month-long monthly-quota lockout with a daily
+            # re-probe — but only for a backoff computed FROM NOW ON. The
+            # value already on disk was `2026-09-01T00:00:00Z`, restored
+            # verbatim on every boot, so the live feed stayed dark until
+            # September exactly as before and the fix was INERT where it
+            # mattered. That is P261b's lesson: a migration case is a
+            # first-boot case with pre-existing state, and "the new code
+            # computes it correctly" says nothing about the value already
+            # persisted.
+            #
+            # Capping only ever SHORTENS a wait, never lengthens one, so a
+            # legitimate short Retry-After backoff is untouched; the fail
+            # direction stays "retry sooner than necessary", which is what
+            # P293b said it wanted and P299 said again.
+            self._combined_probe_done = bool(st.get("combined_probe_done", False))
+            _restored_backoff = self._parse_dt(st.get("backoff_until"))
+            if _restored_backoff is not None:
+                _cap = datetime.now(timezone.utc) + timedelta(
+                    seconds=QUOTA_REPROBE_SEC)
+                if _restored_backoff > _cap:
+                    logger.info(
+                        "[CRYPTOPANIC] restored backoff %s is longer than the "
+                        "%dh re-probe interval — capping to %s. A stored "
+                        "month-long lockout predates P299 and would make its "
+                        "daily re-probe unreachable (P319).",
+                        _restored_backoff.isoformat(),
+                        int(QUOTA_REPROBE_SEC // 3600), _cap.isoformat())
+                    _restored_backoff = _cap
+            self._backoff_until = _restored_backoff
             self._last_fetch_time = self._parse_dt(st.get("last_fetch_time"))
 
             payload = st.get("data")
@@ -508,6 +537,9 @@ class CryptoPanicFeed:
                     "last_fetch_time": (
                         self._last_fetch_time.isoformat() if self._last_fetch_time else None
                     ),
+                    # [P319] one-shot marker for the combined-currency probe
+                    "combined_probe_done": bool(
+                        getattr(self, "_combined_probe_done", False)),
                     "backoff_until": (
                         self._backoff_until.isoformat() if self._backoff_until else None
                     ),
@@ -555,6 +587,50 @@ class CryptoPanicFeed:
                     _cp_errors += 1
                     _cp_failed.add(currency)
                     logger.warning(f"[CRYPTOPANIC] {currency}: {e}")
+
+        # [P319] ONE-SHOT: does `currencies=BTC,ETH,SOL` mean OR or AND?
+        #
+        # We issue THREE requests per fetch, one per currency. If the filter is
+        # an OR, a single combined request returns the same corpus for a THIRD
+        # of the quota — and on a plan whose real limit we cannot read (the
+        # vendor's plans page is JS-rendered and the API answers 429), a 3x
+        # reduction may be the difference between fitting and not.
+        #
+        # But if the filter is an AND, combining would silently return only
+        # posts tagged with all three — a coverage collapse that looks like a
+        # quiet news day (the P2 shape). Neither the API (429) nor the docs
+        # (JS-rendered) can settle it today, so the change is NOT made on a
+        # guess. This measures it exactly once, when the quota is healthy,
+        # LOGS the answer, and acts on nothing — converting "someone must
+        # remember to test this" into a mechanism (P230/P280).
+        if (not _cp_failed and not _cp_errors
+                and not getattr(self, "_combined_probe_done", False)
+                and data.recent_news):
+            try:
+                _combo = await self._fetch_posts(
+                    session, ",".join(SUPPORTED_CURRENCIES))
+                _seen = set()
+                for _it in _combo or []:
+                    for _c in (getattr(_it, "currencies", None) or []):
+                        if _c in SUPPORTED_CURRENCIES:
+                            _seen.add(_c)
+                self._combined_probe_done = True
+                logger.warning(
+                    "[CRYPTOPANIC][P319] combined-currency probe: "
+                    "`currencies=%s` returned %d post(s) covering %s. "
+                    "If that spans ALL of %s the filter is an OR and this "
+                    "feed can drop from 3 requests per fetch to 1 (a third of "
+                    "the quota); if it is a strict subset the filter is an AND "
+                    "and the per-currency loop must stay. Measured once ever; "
+                    "nothing was changed on the strength of it.",
+                    ",".join(SUPPORTED_CURRENCIES), len(_combo or []),
+                    sorted(_seen) or "NOTHING",
+                    SUPPORTED_CURRENCIES)
+            except Exception as _pe:  # noqa: silent-swallow — logged below; a measurement must never break the feed it measures
+                logger.warning(
+                    "[CRYPTOPANIC][P319] combined-currency probe failed "
+                    "(%s: %s) — will retry on a later healthy fetch",
+                    type(_pe).__name__, str(_pe)[:120])
 
         # [P265] The tick that ARMS the backoff must not destroy the cache the
         # backoff exists to serve. The old code ran _compute_metrics on the
