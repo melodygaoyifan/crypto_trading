@@ -3,20 +3,22 @@
 
 P318 established the gate compares a per-TICK alpha constant against a
 per-ROUND-TRIP friction. This replaces the regimebook seat's flat
-`30.0 * |dir|` with its MEASURED gross bps per round trip in its worst era.
+`30.0 * |dir|` with its MEASURED gross bps per round trip.
 
-The measurement is a verdict, not a knob:
+    asset   pre_design   design   validation    MIN   MEDIAN (asserted)
+    BTC            2.3     68.5         24.1    2.3               24.1
+    ETH          251.7     88.1         52.1   52.1               88.1
+    SOL          427.6    221.7        -20.8  -20.8              221.7
 
-    asset   pre_design   design   validation   MIN (asserted)
-    BTC            2.3     68.5         24.1              2.3
-    ETH          251.7     88.1         52.1             52.1
-    SOL          427.6    221.7        -20.8            -20.8
+[P321] The asserted statistic is the era-MEDIAN, changed from the MIN by
+explicit operator decision once the goal was stated as profit rather than
+pure capital preservation. The MIN stops every asset; the MEAN can be carried
+by one dominant era (the P243/P244 era-fragility). The median is the robust
+middle, and the STATISTIC is pinned so a silent switch to either extreme
+fails. On it, BTC stops trading (24.1 vs a ~35bps threshold) while ETH (88.1)
+and SOL (221.7) clear.
 
-SOL asserts a NEGATIVE edge and so can never clear friction; BTC's worst era
-is far below cost (profitable in one era of three); ETH clears in every era
-and is the certified, un-fitted P247 config.
-
-THE INTERLOCK IS THE POINT. Calibrated alpha alone raises ETH 22.5 -> 52.1
+THE INTERLOCK IS THE POINT. Calibrated alpha alone raises ETH's assertion
 while fees stay ~3x understated — a pure loosening. Honest fees alone reject
 trades earning 2.5x-27x cost (P318). They are halves of one correction.
 """
@@ -40,24 +42,36 @@ from core.seat_alpha import (  # noqa: E402
 )
 
 
-class TestTheCalibrationIsTheMinimum:
+class TestTheCalibrationIsTheEraMedian:
 
     @pytest.mark.parametrize("asset", ["BTC", "ETH", "SOL"])
-    def test_asserted_value_is_the_worst_era(self, asset):
-        """P167: a safety control must assume the worst era repeats. Using the
-        mean instead would be a deliberate loosening (BTC 2.3 -> 31.6,
-        SOL -20.8 -> +209.5) and needs its own P-entry."""
+    def test_asserted_value_is_the_era_median(self, asset):
+        """[P321] The STATISTIC is part of the decision. The MIN stops every
+        asset (BTC 2.3, SOL -20.8); the MEAN can be carried by one dominant
+        era (BTC 80.3, SOL 354.7) — the era-fragility P243/P244 disqualify on.
+        The median is the robust middle, and pinning it means a silent switch
+        to either extreme fails here."""
+        import statistics
         eras = REGIMEBOOK_ALPHA_BY_ERA[asset]
         assert REGIMEBOOK_ALPHA_BPS_PER_ROUND_TRIP[asset] == \
-            pytest.approx(min(eras.values()))
+            pytest.approx(statistics.median(eras.values()))
 
-    def test_sol_asserts_a_negative_edge_and_is_not_clamped(self):
-        """'This seat loses money per round trip' is information the gate
-        should act on. Clamping to 0 would silently upgrade it to merely
-        unprofitable, and SOL would then look like every other flat seat."""
-        v, prov = regimebook_alpha_bps("SOL")
-        assert v < 0
-        assert "validation" in prov
+    def test_a_negative_calibration_would_pass_through_unclamped(self):
+        """[P321] No asset's MEDIAN is negative now (SOL's validation era is,
+        its median is not), so this is a property of the FUNCTION rather than
+        of the current table — and it must stay, because a re-derivation can
+        produce one. Clamping to 0 would silently upgrade "this seat loses
+        money per round trip" to merely-unprofitable."""
+        import core.seat_alpha as sa
+        saved = dict(sa.REGIMEBOOK_ALPHA_BPS_PER_ROUND_TRIP)
+        try:
+            sa.REGIMEBOOK_ALPHA_BPS_PER_ROUND_TRIP["SOL"] = -20.8
+            assert sa.regimebook_alpha_bps("SOL")[0] == pytest.approx(-20.8)
+        finally:
+            sa.REGIMEBOOK_ALPHA_BPS_PER_ROUND_TRIP.clear()
+            sa.REGIMEBOOK_ALPHA_BPS_PER_ROUND_TRIP.update(saved)
+        # SOL's own worst era is still negative and still visible in the table
+        assert REGIMEBOOK_ALPHA_BY_ERA["SOL"]["validation"] < 0
 
     def test_btc_cannot_clear_its_own_friction(self):
         """The finding, pinned: BTC's worst era (2.3bps) is an order of
@@ -67,7 +81,7 @@ class TestTheCalibrationIsTheMinimum:
         friction = 2 * (cde_fee_bps("BTC", 64435.0, is_maker=False)[0] + 2.0 + 2.0)
         assert regimebook_alpha_bps("BTC")[0] < friction
 
-    def test_eth_is_the_only_seat_that_clears_in_every_era(self):
+    def test_eth_is_the_only_seat_positive_in_every_era(self):
         for era, v in REGIMEBOOK_ALPHA_BY_ERA["ETH"].items():
             assert v > 0, era
         assert min(REGIMEBOOK_ALPHA_BY_ERA["BTC"].values()) < 10
@@ -89,7 +103,7 @@ class TestFailDirections:
 
     def test_regimebook_dispatches_to_the_calibration(self):
         assert calibrated_seat_alpha("ETH", "regimebook", 30.0)[0] == \
-            pytest.approx(52.1)
+            pytest.approx(88.1)
 
 
 class TestInterlock:
@@ -105,7 +119,7 @@ class TestInterlock:
         against the defect it guarded)."""
         from core.seat_alpha import resolve_seat_edge
         assert resolve_seat_edge("ETH", "regimebook", 1.0, 30.0,
-                                 True, True) == pytest.approx(52.1)
+                                 True, True) == pytest.approx(88.1)
         for cal, fee in ((True, False), (False, True), (False, False)):
             assert resolve_seat_edge("ETH", "regimebook", 1.0, 30.0,
                                      cal, fee) == pytest.approx(30.0), (
@@ -125,7 +139,7 @@ class TestInterlock:
         from core.seat_alpha import resolve_seat_edge
         a = resolve_seat_edge("ETH", "regimebook", 1.0, 30.0, True, True)
         b = resolve_seat_edge("ETH", "regimebook", 0.5, 30.0, True, True)
-        assert a == pytest.approx(b) == pytest.approx(52.1), (
+        assert a == pytest.approx(b) == pytest.approx(88.1), (
             "the calibrated round-trip edge is being rescaled by |direction|")
 
     def test_the_seat_passes_both_flags_to_the_resolver(self):
@@ -145,14 +159,21 @@ class TestInterlock:
         assert cfg.coinbase_per_contract_fees is False
         assert 'data.get("seat_alpha_calibrated", False)' in self._src()
 
-    def test_neither_is_armed_in_the_live_profile(self):
-        """Arming BOTH takes the book to ~flat: BTC -32.9, ETH -3.9, SOL -80.3
-        against their thresholds. That is the correct answer on this evidence
-        and it is an operator decision (P141) — it stops trading."""
+    def test_both_are_armed_at_their_decided_values(self):
+        """[P321] ARMED by explicit operator instruction. Pinned at the DECIDED
+        value rather than at OFF, so a silent revert fails too — either
+        direction is a live-money change (the P237/P270 pattern).
+
+        Live effect of the pair: BTC stops entering (24.1 vs a ~35bps
+        threshold); ETH (88.1) and SOL (221.7) continue on honest economics."""
         live = json.loads(
             (REPO / "configs" / "live_high_risk.json").read_text(encoding="utf-8"))
-        assert "seat_alpha_calibrated" not in live
-        assert "coinbase_per_contract_fees" not in live
+        assert live.get("coinbase_per_contract_fees") is True
+        assert live.get("seat_alpha_calibrated") is True
+        assert "_p321_honest_economics_note" in live, (
+            "the note carrying the decision, the expected effect and the "
+            "revert must travel with the flags — a bare `true` loses why it "
+            "was armed")
 
 
 class TestTheUnitsFixIsReal:

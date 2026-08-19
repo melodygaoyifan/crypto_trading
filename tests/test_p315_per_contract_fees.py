@@ -174,7 +174,7 @@ class TestGateWiring:
         src = self._src()
         assert 'data.get("coinbase_per_contract_fees", False)' in src
 
-    def test_not_armed_because_the_alpha_side_is_understated_more(self):
+    def test_armed_now_that_the_alpha_side_is_calibrated(self):
         """[P318] P315 recommended arming this. That recommendation is
         WITHDRAWN and this test is the guard.
 
@@ -194,10 +194,15 @@ class TestGateWiring:
         test becomes a DECIDED-value pin (the P237/P270 pattern)."""
         live = json.loads(
             (REPO / "configs" / "live_high_risk.json").read_text(encoding="utf-8"))
-        assert "coinbase_per_contract_fees" not in live, (
-            "the per-contract fee is armed while the gate still asserts a flat "
-            "30bps of alpha — that combination REJECTS trades measured at "
-            "2.5x-27x edge/cost. Calibrate the alpha side first (P318).")
+        # [P321] ARMED — and the precondition this guard demanded is met: the
+        # alpha side IS calibrated (P320) and the two are interlocked in code,
+        # so the fee can no longer ship alone. Now a DECIDED-value pin, so a
+        # silent revert of EITHER half fails here (P237/P270).
+        assert live.get("coinbase_per_contract_fees") is True
+        assert live.get("seat_alpha_calibrated") is True, (
+            "the per-contract fee is armed while the calibrated alpha is NOT — "
+            "that combination REJECTS trades measured at 2.5x-27x edge/cost "
+            "(P318). Both halves move together or neither does.")
 
     def test_the_alpha_side_is_now_calibrated_so_arming_is_re_opened(self):
         """[P320] This guard was written by P318 to fire exactly here: "if the

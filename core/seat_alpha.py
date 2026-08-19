@@ -18,36 +18,42 @@ WHY THIS EXISTS
     rejected trades whose realized edge is 2.5x-27x their cost.
 
     This module replaces the constant with a MEASUREMENT: what the seat has
-    actually earned, gross, per round trip, in its WORST era.
+    actually earned, gross, per round trip, taken as its era-MEDIAN.
 
 THE MEASUREMENT (training/funding_legs_lab, 6y, honest per-contract fees,
 gross bps per round trip = 2 x gross per unit turnover)
 
-        asset   pre_design   design   validation   MIN (asserted)
-        BTC            2.3     68.5         24.1              2.3
-        ETH          251.7     88.1         52.1             52.1
-        SOL          427.6    221.7        -20.8            -20.8
+        asset   pre_design   design   validation    MIN   MEDIAN (asserted)
+        BTC            2.3     68.5         24.1    2.3               24.1
+        ETH          251.7     88.1         52.1   52.1               88.1
+        SOL          427.6    221.7        -20.8  -20.8              221.7
 
-WHY THE MINIMUM, AND WHAT IT DECIDES
+WHY THE MEDIAN, AND WHAT IT DECIDES
 
-    The gate is a safety control, so it must assume the worst era repeats
-    (P167: overcharging costs opportunity, undercharging spends money). Using
-    the mean instead would be a deliberate loosening and needs its own entry.
+    [P321] The gate prices EXPECTED edge against expected cost, so the robust
+    central estimate is the median across eras. The MINIMUM (BTC 2.3, ETH 52.1,
+    SOL -20.8) is the right statistic for a pure safety control and stops every
+    asset; the MEAN (BTC 80.3, ETH 224.9, SOL 354.7) can be carried by a single
+    dominant era, which is the era-fragility P243/P244 disqualify on. The median
+    is neither. This is a recorded risk-preference choice, not a measurement
+    upgrade, and it is still far stricter than the flat 22.5 the seat asserted
+    before any of this work.
 
     Read off the table, this is not a tuning knob — it is a verdict:
 
-      * SOL is NEGATIVE in the most recent era. The seat asserts a negative
-        edge, which can never clear friction, so SOL stops trading on its own
-        arithmetic. That independently confirms the risk-column reading
-        (hold beats the SOL book on return, Sharpe AND drawdown).
-      * BTC's worst era is 2.3bps against ~28bps of round-trip friction, and
-        even its validation era (24.1) sits below cost. The BTC book is
-        profitable in ONE era of three — era-fragility of exactly the kind
-        P243/P244 treat as disqualifying.
-      * ETH clears in every era (min 52.1) and is the only seat whose measured
-        edge survives its own worst window. It is also the certified,
-        un-fitted config (P247) that beats hold on Sharpe (0.72 vs 0.58) with
-        41% less drawdown.
+      * BTC asserts 24.1 against ~28bps of honest round-trip friction and a
+        ~35bps threshold, so BTC STOPS TRADING on its own arithmetic. Its edge
+        is concentrated in one era of three (2.3 / 68.5 / 24.1) — the
+        era-fragility P243/P244 treat as disqualifying — and the median is the
+        statistic that says so without needing a separate judgement.
+      * ETH asserts 88.1 and clears (threshold ~56). It is positive in EVERY
+        era, the only seat whose edge survives its own worst window, and the
+        certified un-fitted P247 config that beats hold on Sharpe (0.72 vs
+        0.58) with 41% less drawdown.
+      * SOL asserts 221.7 and clears (threshold ~60), on the strength of two
+        very large eras against one mildly negative one (-20.8). It carries the
+        widest dispersion of the three, so it is the entry most exposed to the
+        median being the wrong statistic — watch it first.
 
 FAIL DIRECTIONS (all resolve toward NOT trading)
 
@@ -55,6 +61,9 @@ FAIL DIRECTIONS (all resolve toward NOT trading)
     * A negative calibration is passed through NEGATIVE, not clamped to 0:
       "this seat loses money per round trip" is information the gate should
       act on, and clamping would silently upgrade it to merely-unprofitable.
+      No asset's MEDIAN is negative today (SOL's validation era is, its median
+      is not), so this is a property of the function rather than of the current
+      table — and it must stay, because a future re-derivation can produce one.
     * The value is per ROUND TRIP, matching what `check_alpha_gate` compares
       it against. Scaling it by |direction| would re-introduce the per-tick
       shape this module exists to remove, so it deliberately does NOT.
@@ -62,7 +71,8 @@ FAIL DIRECTIONS (all resolve toward NOT trading)
 PRE-COMMITTED REVISION RULE
 
     Re-derive only from the lab, only across ALL eras, and only by taking the
-    minimum. Raising an entry requires a new P-entry stating the window. This
+    MEDIAN (the statistic is part of the decision — see P321). Changing an
+    entry requires a new P-entry stating the window and the statistic. This
     table may never be edited to make a desired trade pass.
 ================================================================================
 """
@@ -73,11 +83,25 @@ from typing import Dict, Optional, Tuple
 
 logger = logging.getLogger("HMATS.SeatAlpha")
 
-# Gross bps per ROUND TRIP, era-minimum. Provenance in the module docstring.
+# Gross bps per ROUND TRIP, era-MEDIAN. Provenance in the module docstring.
+#
+# [P321] Changed from era-MINIMUM to era-MEDIAN by explicit operator decision
+# ("our goal is to let the system up and running, and can make profit").
+# The minimum is the right statistic for a pure safety control — it assumes the
+# worst era repeats — and it asserts BTC 2.3 / SOL -20.8, which stops every
+# asset. The gate's job here is to price EXPECTED edge against expected cost,
+# and the median is the robust central estimate: unlike the mean (BTC 80.3,
+# SOL 354.7) it cannot be carried by one dominant era, which is precisely the
+# era-fragility P243/P244 treat as disqualifying.
+#
+# This is a LOOSENING relative to the minimum and a TIGHTENING relative to the
+# flat 22.5 the seat asserted before any of this — recorded as a deliberate
+# risk-preference choice, not a measurement upgrade. The minimum remains
+# computable from REGIMEBOOK_ALPHA_BY_ERA below for anyone who wants it back.
 REGIMEBOOK_ALPHA_BPS_PER_ROUND_TRIP: Dict[str, float] = {
-    "BTC": 2.3,
-    "ETH": 52.1,
-    "SOL": -20.8,
+    "BTC": 24.1,
+    "ETH": 88.1,
+    "SOL": 221.7,
 }
 
 # Full per-era measurement, kept so a reader can see the dispersion the
@@ -106,8 +130,7 @@ def regimebook_alpha_bps(asset: str) -> Tuple[float, str]:
     # `key=eras.get` is an overloaded signature and mypy rejects it; the
     # lambda is the same lookup with a single concrete type (P287g: fix the
     # finding at source, never by re-baselining).
-    worst = min(eras, key=lambda k: eras[k]) if eras else "?"
-    return v, f"era_min({worst})@{_MEASURED_ON}"
+    return v, f"era_median@{_MEASURED_ON}"
 
 
 def calibrated_seat_alpha(asset: str, seat: str,
