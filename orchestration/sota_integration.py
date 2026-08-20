@@ -34,15 +34,33 @@ logger = logging.getLogger(__name__)
 # SAFE IMPORTS WITH FALLBACKS
 # =============================================================================
 
-def safe_import(module_path: str, class_name: str = None):
-    """Safely import a module or class."""
+def safe_import(module_path: str, class_name: str = None,
+                archived: str = ""):
+    """Safely import a module or class.
+
+    [P336] `archived` names where a module went when it was deliberately
+    retired. Two of the 21 targets here (`infra.event_replay`,
+    `core.plugin_registry`) live only under `archive/`, so every boot logged
+    two WARNINGs about modules nobody intends to have — an alert whose only
+    resolutions are theatre or ignoring it, which is how a real CRITICAL stops
+    being read (P202/P303). An expected absence is reported ONCE at INFO and
+    names the archive path; anything else still WARNs, so this cannot become a
+    blanket mute (a guard weakened to admit a known case stops catching the
+    unknown ones — P248).
+    """
     try:
         module = __import__(module_path, fromlist=[class_name] if class_name else [])
         if class_name:
             return getattr(module, class_name, None)
         return module
     except ImportError as e:
-        logger.warning(f"Failed to import {module_path}: {e}")
+        if archived:
+            logger.info(
+                "%s is ARCHIVED by decision (%s); the feature it backs is "
+                "inert and its config flag cannot take effect", module_path,
+                archived)
+        else:
+            logger.warning(f"Failed to import {module_path}: {e}")
         return None
 
 
@@ -76,13 +94,15 @@ MicrostructureArbitrageAgent = safe_import("agents.microstructure_agent", "Micro
 OnChainSolanaAgent = safe_import("agents.onchain_solana_agent", "OnChainSolanaAgent")
 
 # Event Replay
-EventReplayManager = safe_import("infra.event_replay", "EventReplayManager")
+EventReplayManager = safe_import("infra.event_replay", "EventReplayManager",
+                                archived="archive/infra/event_replay.py")
 
 # Explainability
 LLMDecisionExplainer = safe_import("analytics.llm_explainer", "LLMDecisionExplainer")
 
 # Plugin Registry
-PluginRegistry = safe_import("core.plugin_registry", "PluginRegistry")
+PluginRegistry = safe_import("core.plugin_registry", "PluginRegistry",
+                             archived="archive/core/plugin_registry.py")
 
 # Flow Signal Integrator (?
 FlowSignalIntegrator = safe_import("signals.flow_signal_integrator", "FlowSignalIntegrator")
@@ -132,6 +152,10 @@ class SOTAIntegrationConfig:
     enable_sentiment_agent: bool = True
     enable_microstructure_agent: bool = True
     enable_onchain_agent: bool = True
+    # [P336] INERT: infra.event_replay is archived, and the consumer is
+    # guarded by `and EventReplayManager`, so this flag reads as enabled
+    # and can never take effect. Kept (removing a config field is a
+    # contract change) but annotated, per the P307 no-effect-switch roster.
     enable_event_replay: bool = True
     enable_explainability: bool = True
     enable_plugins: bool = True
