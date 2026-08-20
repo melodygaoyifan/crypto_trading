@@ -25,6 +25,15 @@ both directions:
 Only the CLASSIFICATION is changed here. Nothing feeds sleeve state into
 position_state -- that would arm the whole dormant exit stack on a live
 account, which is a P141 activation and not a bug fix.
+
+[P341] And the classification is THREE-valued, not two. A binary
+HOLD/FLATTEN is right on a flat book and on a maintain tick, and WRONG on a
+flip: plain HOLD would keep a long while the book says short for as long as
+an entry filter keeps rejecting the short. The repo already had the right
+truth table one layer down (`sleeve_agent_filter_decision`, P236/P293d:
+block from flat, demote a flip to a flatten, never touch exits), so these
+vetoes now return a SLEEVE_ENTRY_BLOCKED sentinel that the driver resolves
+against the venue-reconciled book.
 """
 
 from __future__ import annotations
@@ -62,31 +71,74 @@ def _verdict(reason):
 
 class TestEntryQualityVetoesHold:
 
-    @pytest.mark.parametrize("reason", [
+    ENTRY_QUALITY = [
         "[VETO] SNR too low: 0.81 < 1.20; Volume 0.6x < 1.0x",
         "[VETO] Structure: no breakout confirmation",
         "[OP_BUDGET] global budget exhausted (3/3 active)",
         "[GAMBLER_GATE] cooldown: 2 bars remaining",
+        "[FLIP_GATE] alpha=12.0 < 30.0",
+        "[REBUILD_COOLDOWN] FLIP cooldown, 3.2h remaining",
+    ]
+
+    @pytest.mark.parametrize("reason", ENTRY_QUALITY)
+    def test_entry_filters_are_resolved_against_the_book(self, reason):
+        """[P341] NOT a plain HOLD. The answer depends on what is held and
+        which way the signal points, so the translator defers."""
+        tgt, why = m.sleeve_direction_from_intent(_Intent(reason), 0.9)
+        assert tgt is m.SLEEVE_ENTRY_BLOCKED, (
+            f"{reason!r} did not defer to the book. Plain FLATTEN makes an "
+            f"entry filter into an exit engine (the P287 category error); "
+            f"plain HOLD keeps a position the signal has abandoned on a FLIP")
+        assert why.startswith("entry_quality_veto"), why
+
+    @pytest.mark.parametrize("reason", ENTRY_QUALITY)
+    @pytest.mark.parametrize("pos,direction,expect", [
+        (0, 1.0, "HOLD"),      # flat: the refusal IS the whole effect
+        (0, -1.0, "HOLD"),
+        (1, 1.0, "HOLD"),      # maintain: the P338 bug -- must not liquidate
+        (-1, -1.0, "HOLD"),
+        (1, -1.0, "FLATTEN"),  # FLIP: close what the signal abandoned
+        (-1, 1.0, "FLATTEN"),
+        (1, 0.0, "HOLD"),      # no direction: absence is not an instruction
     ])
-    def test_entry_filters_hold_rather_than_flatten(self, reason):
-        got, why = _verdict(reason)
-        assert got == "HOLD", (
-            f"{reason!r} classified {got}. These three gates fire ONLY on a "
-            f"new entry, and because current_exposure is Kraken-shaped they "
-            f"fire on every actionable tick INCLUDING while the sleeve holds "
-            f"a position -- so veto_flat makes an entry filter into an exit "
-            f"engine (the P287 [FALSE_BREAKOUT_VETO] category error)")
-        assert why.startswith("hold_veto"), why
+    def test_the_full_truth_table(self, reason, pos, direction, expect):
+        tgt, why = m.sleeve_direction_from_intent(
+            _Intent(reason, direction=direction), 0.9)
+        tgt, why = m.sleeve_entry_blocked_resolve(pos, direction, why)
+        got = "HOLD" if tgt is m.SLEEVE_HOLD else "FLATTEN"
+        assert got == expect, f"pos={pos} dir={direction} {reason!r} -> {why}"
+
+    def test_it_can_never_open_a_position(self):
+        """The load-bearing safety property: an ENTRY-quality refusal may
+        decline to open, or close what was abandoned -- never open anything.
+        A directional return here would turn a veto into an entry."""
+        for pos in (-2, -1, 0, 1, 2):
+            for d in (-1.0, -0.2, 0.0, 0.2, 1.0):
+                tgt, _ = m.sleeve_entry_blocked_resolve(pos, d, "x")
+                assert tgt is m.SLEEVE_HOLD or tgt == 0.0, (pos, d, tgt)
 
     def test_the_guard_still_blocks_the_entry_it_exists_to_block(self):
-        """HOLD is not a loosening: from FLAT it leaves the book flat, so the
-        rejected entry is still rejected. This is the load-bearing half --
-        without it the fix would read as 'we disabled BitBeast'."""
-        tgt, _ = m.sleeve_direction_from_intent(
+        """Not a loosening: from FLAT the book stays flat, so the rejected
+        entry is still rejected. Without this the fix would read as 'we
+        disabled BitBeast'."""
+        tgt, why = m.sleeve_direction_from_intent(
             _Intent("[VETO] SNR too low", direction=1.0), fallback_dir=1.0)
-        assert tgt is m.SLEEVE_HOLD
-        # HOLD means the driver skips manage_to_signal entirely; a flat book
-        # stays flat and no entry is placed.
+        tgt, why = m.sleeve_entry_blocked_resolve(0, 1.0, why)
+        assert tgt is m.SLEEVE_HOLD and "flat" in why
+
+    def test_the_driver_resolves_the_sentinel(self):
+        """A sentinel nothing resolves would leave `float(SLEEVE_ENTRY_
+        BLOCKED)` to raise into the order path's handler -- a seam nothing
+        calls is decoration (P170), and here it would be worse than that."""
+        from tests._source_scan import code_only
+        src = code_only(REPO / "main.py", strip_docstrings=True)
+        assert "if _m_tgt is SLEEVE_ENTRY_BLOCKED:" in src
+        assert "sleeve_entry_blocked_resolve(" in src
+        i_resolve = src.index("_m_tgt is SLEEVE_ENTRY_BLOCKED")
+        i_hold = src.index("if _m_tgt is SLEEVE_HOLD:", i_resolve - 2000)
+        assert i_resolve < i_hold, (
+            "the sentinel must be resolved BEFORE the HOLD branch, or it "
+            "falls through to float(_m_tgt) and raises")
 
     @pytest.mark.parametrize("reason", [
         "[P0_SAFETY] force flat",
@@ -134,12 +186,13 @@ class TestExecutionLayerReasonsAreClassified:
         "[EXECUTION] EXPOSURE_BELOW_MINIMUM_VIABLE",
         "[EXECUTION] No active position quantity available",
         "[BUGFIX H3] Invalid quantity: 0.0",
-        "[REBUILD_COOLDOWN] FLIP cooldown, 3.2h remaining",
         "[EXECUTION] min hold: 1/2 ticks",
         "[EXECUTION] per-asset rate limit: 3/3",
         "[EXECUTION] global rate limit: 9/9",
         "[EXECUTION] ADDON_BLOCKED",
-        "[FLIP_GATE] alpha=12.0 < 30.0",
+        # [P341] [REBUILD_COOLDOWN] and [FLIP_GATE] moved to the
+        # entry-quality class above: both can arrive on a FLIP, where
+        # the abandoned leg must still close.
         "[AUDIT M3] Below Kraken min: 0.4",
         "[V10S] DynamicSlicer: ATR=1.2",
         "[PA_ABORT] Insufficient edge",

@@ -2573,7 +2573,9 @@ _SLEEVE_HOLD_VETOES = ("EXPOSURE_DELTA_BELOW_THRESHOLD", "FLIP_PERSIST_HOLD",
                        # P197 venue stop still guarding it and every real
                        # exit path (signal flatten, stop, FastRisk,
                        # FORCE_FLAT, fuse) untouched.
-                       "[VETO]", "[OP_BUDGET]", "[GAMBLER_GATE]",
+                       # (the three entry gates moved to
+                       # _SLEEVE_ENTRY_QUALITY_VETOES below in P341 -- plain
+                       # HOLD was wrong on a FLIP, see that roster)
                        # [P338] EXECUTION-LAYER reasons that mean "wait /
                        # smaller / not THIS order", never "liquidate". These
                        # reach the intent through main.py's ~:17053 stamping
@@ -2597,9 +2599,9 @@ _SLEEVE_HOLD_VETOES = ("EXPOSURE_DELTA_BELOW_THRESHOLD", "FLIP_PERSIST_HOLD",
                        "EXPOSURE_BELOW_MINIMUM_VIABLE",
                        "No active position quantity available",
                        "[BUGFIX H3] Invalid quantity:",
-                       "[REBUILD_COOLDOWN]", "min hold:",
+                       "min hold:",
                        "per-asset rate limit:", "global rate limit:",
-                       "ADDON_BLOCKED", "[FLIP_GATE] alpha=",
+                       "ADDON_BLOCKED",
                        "[AUDIT M3] Below Kraken min:",
                        "[V10S] DynamicSlicer:", "[PA_ABORT]")
 
@@ -2686,8 +2688,67 @@ _SLEEVE_FLATTEN_INTENDED_VETOES = (
                                 # in-tick latency check cannot fire at 6h bars
 )
 
+# [P341] ENTRY-QUALITY vetoes are THREE-valued, not two.
+#
+# P338 moved these into _SLEEVE_HOLD_VETOES because flattening a HELD position
+# on an ENTRY filter is a category error (P287). That is right for two of the
+# three cases and WRONG for the third, and the third is the one a binary
+# classification cannot express:
+#
+#   book flat        -> nothing to do; the entry stays refused        (HOLD)
+#   holding, signal AGREES (maintain / add) -> keep the position      (HOLD)
+#   holding, signal FLIPS  -> the entry is refused, but the leg the
+#                             signal ABANDONED must still close      (FLATTEN)
+#
+# Under plain HOLD the third case keeps a long while the book says short, for
+# as long as the entry filter keeps rejecting -- strictly worse than the
+# pre-P338 behaviour there. This repo already had the correct truth table one
+# layer down: `sleeve_agent_filter_decision` (P236/P293d) blocks an entry from
+# flat and DEMOTES A FLIP TO A FLATTEN, because "the closing leg is a reduce
+# and always free" (P195). Same rule, applied to vetoes.
+#
+# Membership rule: a veto belongs here iff it can arrive on a FLIP and is
+# about ENTRY QUALITY rather than about the market or the data. The three
+# pre-decide entry gates qualify; so do [FLIP_GATE] (a flip by definition --
+# and the Kraken path already re-executes it close-only, [FIX-FLIP-CLOSE])
+# and [REBUILD_COOLDOWN] (blocks entries and adds). Deliberately NOT here:
+# the rate limits (flattening would itself be an order, i.e. would violate the
+# limit it is reacting to), "min hold:" (it blocks an EXIT -- holding IS the
+# instruction), ADDON_BLOCKED (an add implies the direction already agrees),
+# and every data/mechanics fault, where flattening is the P265b bug.
+_SLEEVE_ENTRY_QUALITY_VETOES = ("[VETO]", "[OP_BUDGET]", "[GAMBLER_GATE]",
+                                "[FLIP_GATE]", "[REBUILD_COOLDOWN]")
+
 # Sentinel: "make no change to this asset this tick".
 SLEEVE_HOLD = object()
+
+# Sentinel: "an ENTRY was refused" -- resolved against the actual book by
+# sleeve_entry_blocked_resolve(), because the right answer depends on what is
+# held and which way the signal points.
+SLEEVE_ENTRY_BLOCKED = object()
+
+
+def sleeve_entry_blocked_resolve(current_contracts, intent_direction, reason):
+    """[P341] Resolve SLEEVE_ENTRY_BLOCKED against the venue-reconciled book.
+
+    Returns ``(SLEEVE_HOLD | 0.0, reason)``. Never returns a directional
+    target: an entry-quality veto can only ever decline to open or close what
+    the signal abandoned -- it must not be able to OPEN anything.
+    """
+    cur = float(current_contracts or 0.0)
+    d = float(intent_direction or 0.0)
+    if abs(cur) < 1e-9:
+        # Nothing held: the refusal is the whole effect. Identical to the
+        # pre-P338 behaviour on a flat book, which is why this fix has had no
+        # live effect while the sleeve has been flat.
+        return SLEEVE_HOLD, f"entry_blocked_flat:{reason}"
+    if abs(d) < 1e-9:
+        # No direction to compare against. Absence is not an instruction to
+        # liquidate (P2) -- hold, and let a real exit path act.
+        return SLEEVE_HOLD, f"entry_blocked_no_direction:{reason}"
+    if (d > 0) == (cur > 0):
+        return SLEEVE_HOLD, f"entry_blocked_maintain:{reason}"
+    return 0.0, f"entry_blocked_flip_to_flat:{reason}"
 
 
 def sleeve_direction_from_intent(intent, fallback_dir: float):
@@ -2724,6 +2785,11 @@ def sleeve_direction_from_intent(intent, fallback_dir: float):
     _reason = str(getattr(intent, "veto_reason", "") or "")
 
     if bool(getattr(intent, "veto_active", False)):
+        # [P341] entry-quality first: it is the only class whose answer
+        # depends on the book, so it must not be absorbed by a HOLD/FLATTEN
+        # substring match.
+        if any(v in _reason for v in _SLEEVE_ENTRY_QUALITY_VETOES):
+            return SLEEVE_ENTRY_BLOCKED, f"entry_quality_veto:{_reason[:60]}"
         if any(v in _reason for v in _SLEEVE_HOLD_VETOES):
             return SLEEVE_HOLD, f"hold_veto:{_reason[:60]}"
         # [P265] Data-integrity NO_TRADE subtypes hold; market-risk subtypes
@@ -23164,6 +23230,22 @@ class HMATSProductionRunner:
                                         if getattr(self.config, "coinbase_use_gated_intent", False):
                                             _m_tgt, _m_why = sleeve_direction_from_intent(
                                                 _live_intents.get(_m_a), _m_pre)
+                                            # [P341] Resolve an ENTRY-QUALITY
+                                            # refusal against the venue-
+                                            # reconciled book: flat or
+                                            # same-direction -> HOLD, a FLIP ->
+                                            # close the abandoned leg (never
+                                            # open the new one). Resolving to
+                                            # the existing two outcomes keeps
+                                            # the branches below unchanged.
+                                            if _m_tgt is SLEEVE_ENTRY_BLOCKED:
+                                                _m_tgt, _m_why = (
+                                                    sleeve_entry_blocked_resolve(
+                                                        _sl.signed_contracts(_m_a),
+                                                        float(getattr(
+                                                            _live_intents.get(_m_a),
+                                                            "direction", 0.0) or 0.0),
+                                                        _m_why))
                                             if _m_tgt is SLEEVE_HOLD:
                                                 # Leave the position exactly as it is.
                                                 # Never silently substitute the ungated

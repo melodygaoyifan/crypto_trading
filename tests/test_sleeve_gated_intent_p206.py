@@ -359,7 +359,10 @@ class TestVetoRosterCompleteness:
         import main as m
         rosters = (tuple(m._SLEEVE_HOLD_VETOES)
                    + tuple(m._SLEEVE_VENUE_NA_VETOES)
-                   + tuple(m._SLEEVE_FLATTEN_INTENDED_VETOES))
+                   + tuple(m._SLEEVE_FLATTEN_INTENDED_VETOES)
+                   # [P341] the third disposition: entry refused, resolved
+                   # against the book (flat/maintain -> hold, flip -> close)
+                   + tuple(m._SLEEVE_ENTRY_QUALITY_VETOES))
         unclassified = []
         for lit in sorted(self._extract_literals()):
             if not any(r in lit or lit in r for r in rosters):
@@ -452,6 +455,8 @@ class TestVetoStringCouplingDriftGuard:
         # Excise the definition statements themselves.
         src = re.sub(r"_SLEEVE_HOLD_VETOES\s*=\s*\([^)]*\)", "", src)
         src = re.sub(r"_SLEEVE_VENUE_NA_VETOES\s*=\s*\([^)]*\)", "", src)
+        src = re.sub(r"_SLEEVE_ENTRY_QUALITY_VETOES\s*=\s*\([^)]*\)", "",
+                     src)
         return src
 
     def test_every_hold_veto_has_a_live_write_site(self):
@@ -474,12 +479,24 @@ class TestVetoStringCouplingDriftGuard:
                 f"site emits it — the venue-inapplicable carve-out is dead"
             )
 
+    def test_every_entry_quality_veto_has_a_live_write_site(self):
+        import main as m
+        corpus = self._write_site_corpus()
+        for member in m._SLEEVE_ENTRY_QUALITY_VETOES:
+            assert member in corpus, (
+                f"{member!r} is in _SLEEVE_ENTRY_QUALITY_VETOES but no write "
+                f"site emits it -- a stale entry there is worse than in the "
+                f"other rosters, because it silently absorbs the next veto "
+                f"whose text happens to contain it and hands it "
+                f"flip-to-flat semantics")
+
     def test_sets_are_nonempty(self):
         """The guards above iterate the sets — empty sets would pass
         vacuously (P174)."""
         import main as m
         assert len(m._SLEEVE_HOLD_VETOES) >= 2
         assert len(m._SLEEVE_VENUE_NA_VETOES) >= 1
+        assert len(m._SLEEVE_ENTRY_QUALITY_VETOES) >= 3
 
 
 # ---------------------------------------------------------------------------
