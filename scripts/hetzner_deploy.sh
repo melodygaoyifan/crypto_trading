@@ -39,7 +39,17 @@ echo "=== HMATS Deploy to ${SERVER} ==="
 #
 #   0b. Local env-independent scanners (--skip-mypy). stdlib+git only, so
 #       they mean the same thing on every machine; kept because they catch
-#       a drifted local tree before any server churn (P111).
+#       a scanner regression before any server churn (P111).
+#
+#       [P328] They run against a WORKTREE AT THE DEPLOYED SHA, not against
+#       the working tree. Step 1 deploys whatever origin/main holds, so
+#       scanning the checkout answers a different question — and in a shared
+#       checkout it answers it about someone else's uncommitted edits. That
+#       happened: a clean commit was refused because a parallel session had
+#       four unrelated findings in files it was still editing. The working
+#       tree cannot tell you what you committed (P311b). If the worktree
+#       cannot be created the scan falls back to the checkout and SAYS SO —
+#       a silently different subject is what this fixes.
 #
 # Override for a genuine emergency (API outage while the box is on fire):
 #   HMATS_DEPLOY_SKIP_CI_CHECK=1 bash scripts/hetzner_deploy.sh hmats
@@ -118,8 +128,33 @@ else:
     echo "  CI: GREEN (codebase-invariants + test-suite) for ${DEPLOY_SHA:0:9}"
 fi
 
-echo "  Running local env-independent scanners (--skip-mypy)..."
-if ! "${PY_BIN}" -X utf8 tools/ci_check_invariants.py --skip-mypy; then
+# [P328] Scan the COMMIT that will deploy, not the checkout it is launched
+# from. A worktree gives the scanners a real .git, which they require: the
+# authority audit refuses to run without a git-grep engine rather than emit
+# false findings (P158), so a bare file copy is not a substitute.
+SCAN_TREE=""
+SCAN_TMP=""
+if git fetch -q origin main 2>/dev/null && [ -n "${DEPLOY_SHA}" ]; then
+    SCAN_TMP="$(mktemp -d 2>/dev/null || true)"
+    if [ -n "${SCAN_TMP}" ] && git worktree add --detach -q "${SCAN_TMP}" "${DEPLOY_SHA}" 2>/dev/null; then
+        SCAN_TREE="${SCAN_TMP}"
+    fi
+fi
+
+if [ -n "${SCAN_TREE}" ]; then
+    echo "  Running local env-independent scanners (--skip-mypy) on ${DEPLOY_SHA:0:9}..."
+    ( cd "${SCAN_TREE}" && "${PY_BIN}" -X utf8 tools/ci_check_invariants.py --skip-mypy )
+    SCAN_RC=$?
+    git worktree remove --force "${SCAN_TREE}" >/dev/null 2>&1 || true
+else
+    echo "  WARNING: could not build a worktree at the deployed sha."
+    echo "  Falling back to the WORKING TREE, which in a shared checkout"
+    echo "  measures uncommitted edits that will NOT deploy (P311b/P328)."
+    "${PY_BIN}" -X utf8 tools/ci_check_invariants.py --skip-mypy
+    SCAN_RC=$?
+fi
+
+if [ ${SCAN_RC} -ne 0 ]; then
     echo "ERROR: Local scanner gate FAILED (types are adjudicated by the"
     echo "  CI check above; this failure is a stdlib scanner regression)."
     echo "  Fix the findings, or rebaseline if intentional."
