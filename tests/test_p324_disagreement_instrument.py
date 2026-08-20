@@ -281,3 +281,46 @@ class TestTheSeamsAreNotDecorative:
         body = src[i:]
         assert 'bucket = "disagree"' not in body, (
             "main() classifies inline again; one implementation only (P172)")
+
+
+class TestTheBookDeciderMode:
+    """[P337] Measuring the filters against the decider they actually filter.
+
+    The filters were written off as "structurally forward-only because they
+    judge AGENT OUTPUTS, which were never stored". Half right, and it cost
+    three weeks of assumed waiting: the ADVISOR is stored (130 days of
+    attribution), and the DECIDER is the regimebook, whose direction is
+    deterministic from price and funding — so the pair reconstructs backwards.
+    """
+
+    def test_the_book_series_is_imported_from_the_lab_not_restated(self):
+        """[P172] A second copy of book_target would measure a book that is
+        not the deployed one."""
+        src = _src()
+        assert "import training.funding_legs_lab as lab" in src
+        assert "lab.build_positions" in src
+        assert "def book_target" not in src
+
+    def test_a_record_before_the_book_history_is_SKIPPED_not_flattened(self):
+        """P2: absence of a book direction is not a flat book — counting it as
+        flat would put pre-history ticks in the agree/disagree buckets."""
+        src = _src()
+        i = src.index("bi = bisect_right(bts, rec[")
+        blk = src[max(0, i - 400):i + 260]
+        assert "if bi < 0:" in blk and blk.split("if bi < 0:")[1].lstrip().startswith("continue")
+        assert "never defaulted to flat" in blk
+
+    def test_the_era_caption_does_not_claim_a_decider_change_in_book_mode(self):
+        """Under --decider book the decider is CONSTANT, so the seat-history
+        caption would describe a different measurement than the one that ran."""
+        import sys as _s
+        from pathlib import Path as _P
+        _s.path.insert(0, str(_P(__file__).resolve().parent))
+        from _guard_pins import assert_guard_live
+        src = _src()
+        assert "PER DATE BAND" in src
+        # the caption must be gated on the mode, and gated LIVE: a substring
+        # pin would survive `if False and book is not None` (P234/P307b), and
+        # the precise detector rightly flagged the first draft of this line.
+        assert_guard_live(src, "book is not None", near="PER DATE BAND",
+                          why="the date-band caption must be mode-gated")

@@ -119,6 +119,35 @@ def _stats(vals: list[float], horizon_bars: int) -> dict:
 
 
 
+def book_directions(assets, lookback_bars: int = 1800):
+    """[P337] The REGIMEBOOK's direction per 4H bar, recomputed from history.
+
+    The filters were recorded as "structurally forward-only because they judge
+    AGENT OUTPUTS, which were never stored" (P296's triage, repeated in P332).
+    That is half right and it cost three weeks of assumed waiting: the ADVISOR
+    is an agent output and IS stored — 130 days of it, in the attribution logs
+    — and the DECIDER is the regimebook, whose direction is DETERMINISTIC from
+    price and funding. So the pair can be reconstructed backwards, and the
+    filter can be judged against the decider it actually filters instead of
+    against the retired trend seat that happened to be in the seat during the
+    window (P320c: a claim whose premise moved is not evidence).
+
+    Reuses `training.funding_legs_lab` (P172) so this is the DEPLOYED book, not
+    a restatement of it. Returns {asset: (bar_open_epochs, directions)}.
+    """
+    import training.funding_legs_lab as lab
+    out = {}
+    for a in assets:
+        closes = lab.load_closes(a)
+        if lookback_bars and len(closes) > lookback_bars:
+            closes = closes.iloc[-lookback_bars:]
+        funding = lab.load_funding_daily(a)
+        pos = lab.build_positions(a, closes, funding)
+        ts = [t.timestamp() for t in pos.index]
+        out[a] = (ts, [float(v) for v in pos["book"].to_numpy()])
+    return out
+
+
 def classify_bucket(decider_dir, advisor_sig):
     """(bucket, decider_dir, advisor_dir, note); bucket None = skip.
 
@@ -216,7 +245,9 @@ def decide_verdict(pooled, horizons):
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--decider", default="quant")
+    ap.add_argument("--decider", default="quant",
+                    help='attribution agent name, or "book" to RECOMPUTE the '
+                         'regimebook direction from price+funding (P337)')
     ap.add_argument("--advisor", default="whale")
     ap.add_argument("--window-days", type=int, default=90)
     ap.add_argument("--log-dir", default=None)
@@ -230,6 +261,12 @@ def main() -> int:
 
     bars = {a: fetch_closes(a) for a in KRAKEN_PAIRS}
 
+    book = None
+    if args.decider == "book":
+        print("  recomputing the regimebook direction from price+funding "
+              "(this takes a few minutes)...", file=sys.stderr)
+        book = book_directions(sorted(KRAKEN_PAIRS))
+
     # bucket -> horizon -> list of decider signed forward returns (bps)
     buckets: dict = defaultdict(lambda: defaultdict(list))
     per_asset: dict = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
@@ -240,13 +277,24 @@ def main() -> int:
 
     for rec in records:
         sigs = {s.get("agent_name"): s for s in rec.get("signals", [])}
-        if args.decider not in sigs:
-            continue
+        if book is not None:
+            # [P337] decider direction comes from the RECOMPUTED book, matched
+            # to the bar containing this record. A record before the book's
+            # history starts is skipped, never defaulted to flat (P2).
+            bts, bdir = book.get(rec["asset"], ([], []))
+            bi = bisect_right(bts, rec["_ts"]) - 1
+            if bi < 0:
+                continue
+            _dec_dir = bdir[bi]
+        else:
+            if args.decider not in sigs:
+                continue
+            _dec_dir = sigs[args.decider].get("direction", 0.0)
         seen_decider += 1
         if args.advisor in sigs:
             seen_advisor += 1
         bucket, dd, _ad, note = classify_bucket(
-            sigs[args.decider].get("direction", 0.0), sigs.get(args.advisor))
+            _dec_dir, sigs.get(args.advisor))
         if note == "bad_decider":
             bad_decider += 1
         elif note == "bad_advisor":
@@ -313,9 +361,21 @@ def main() -> int:
             cells.append(f"h{h}: n={st['n']} {mb}bps")
         print(f"  {a:<5} " + "   ".join(cells))
 
-    print("\nPER SEAT ERA — the decider's identity changed mid-window "
-          "(trend -> whale 08-17 -> regimebook 08-18); a pooled number is "
-          "mostly the trend seat's behaviour, not the current book's.")
+    if book is not None:
+        # [P337] Under --decider book the decider is CONSTANT (recomputed),
+        # so the seat history is a DATE split, not a composition warning.
+        # Printing the usual caption would claim the decider changed when it
+        # did not - the output would describe a different measurement than
+        # the one that ran.
+        print("")
+        print("PER DATE BAND (seat-history boundaries) - the decider is the "
+              "RECOMPUTED book throughout, so these are date splits, not a "
+              "change of decider. The live seat differed; removing that is "
+              "precisely what this mode is for.")
+    else:
+        print("\nPER SEAT ERA — the decider's identity changed mid-window "
+              "(trend -> whale 08-17 -> regimebook 08-18); a pooled number is "
+              "mostly the trend seat's behaviour, not the current book's.")
     for name, _lo, _hi in SEAT_ERAS:
         cells = []
         for h in HORIZON_BARS:

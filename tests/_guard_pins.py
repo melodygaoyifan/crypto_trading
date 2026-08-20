@@ -28,12 +28,32 @@ import re
 _KEYWORDS = ("if", "elif", "while")
 
 
-def assert_guard_live(src: str, condition: str, why: str = "") -> None:
+def assert_guard_live(src: str, condition: str, why: str = "",
+                      near: str = "") -> None:
     """Fail unless `condition` is the whole condition of an if/elif/while.
 
     `condition` may be given with or without its leading keyword and
     trailing colon, so existing pins can be moved over verbatim.
+
+    [P337] `near` restricts the search to a window around a unique nearby
+    string. Without it the pin passes as long as SOME statement in the file
+    uses the condition — so a file with two `if book is not None:` sites is
+    pinned by whichever one the author did not mean, and neutering the other
+    stays green. The falsification harness caught exactly that; anchor
+    uniqueness is never something to assume (P238), and it is no more safe
+    inside a shared helper than in a one-off test.
     """
+    if near:
+        i = src.find(near)
+        if i < 0:
+            raise AssertionError(
+                "anchor %r is absent, so the guard could not be located. %s"
+                % (near, why))
+        if src.find(near, i + 1) >= 0:
+            raise AssertionError(
+                "anchor %r occurs more than once, so it cannot identify a "
+                "single guard site. %s" % (near, why))
+        src = src[max(0, i - 400):i + 400]
     cond = condition.strip().rstrip(":").strip()
     for kw in _KEYWORDS:
         if cond.startswith(kw + " "):
