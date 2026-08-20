@@ -1985,7 +1985,7 @@ class TrancheScheduler:
 
             # Guard: refuse NEW entry during volume collapse (but existing positions HOLD, see decide())
             #
-            # [P334] DELIBERATELY does NOT pass `is_4h_bar_close`, and that is
+            # [P339] DELIBERATELY does NOT pass `is_4h_bar_close`, and that is
             # the whole fix. The flag has NO PRODUCER (P173: nothing writes the
             # key, so `market_data.get("is_4h_bar_close", True)` in main.py is
             # always True), and `effective_volume_ratio` returns the RAW ratio

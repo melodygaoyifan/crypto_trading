@@ -1,5 +1,5 @@
 """
-[P334] The T1 volume-collapse guard was INVERTED at tick time, because it was
+[P339] The T1 volume-collapse guard was INVERTED at tick time, because it was
 the one call site in the tree that discarded the partial-bar correction.
 
 FOUND FROM DATA, not from reading. Live 2026-08-20 04:11:44:
@@ -153,7 +153,7 @@ class TestTheCallSiteIsFixed:
             if re.search(r"""\[["']is_4h_bar_close["']\]\s*=""", txt):
                 hits.append(str(p.relative_to(REPO)))
         assert not hits, (
-            f"is_4h_bar_close now has a producer ({hits}) — re-derive P334: "
+            f"is_4h_bar_close now has a producer ({hits}) — re-derive P339: "
             f"the guard's behaviour depended on the key being absent")
 
 

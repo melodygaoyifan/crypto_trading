@@ -1,4 +1,4 @@
-"""[P337] The sleeve halt and the certified drawdowns are in DIFFERENT UNITS.
+"""[P340] The sleeve halt and the certified drawdowns are in DIFFERENT UNITS.
 
 P325 recorded a gap: "halts tighter than the strategy's certified drawdown --
 SOL trend-only historical maxDD -199 pts at 1.0 exposure -> ~ -26% realized at
@@ -87,7 +87,7 @@ class TestTheTwoDrawdownsAreDifferentQuantities:
 
 
 class TestTheSleeveFormulaIsInceptionAnchored:
-    """If the sleeve ever switches to a trailing peak, P337's conclusion is
+    """If the sleeve ever switches to a trailing peak, P340's conclusion is
     void and the halt becomes far more binding — so pin the formula."""
 
     def test_dd_is_measured_against_start_plus_flows(self):
@@ -154,3 +154,36 @@ class TestTheProbeItself:
     def test_cost_constants_are_per_leg_and_nonzero(self):
         for a in ("BTC", "ETH", "SOL"):
             assert HALF_SPREAD_BPS[a] > 0 and PER_CONTRACT_FEE_BPS[a] > 0
+
+
+class TestTheHaltValueIsDeliberatelyLeftAbsent:
+    """[P340] I measured 0.15 as the right value and then did NOT write it in.
+
+    P239 pins both sleeve knobs ABSENT from the live profile: "absent = ctor
+    defaults = today's behavior. Setting them is an operator risk decision,
+    not a side effect of this wiring." My pin would have been byte-neutral
+    (0.15 IS the default), but the guard is about WHO DECIDES, not about the
+    value — and weakening a guard to admit your own change is never the fix
+    (P248). The measurement lives in P340; the config stays untouched until
+    an operator says so.
+    """
+
+    def _cfg(self):
+        import json
+        return json.loads((REPO / "configs" / "live_high_risk.json").read_text(
+            encoding="utf-8-sig"))
+
+    def test_the_key_is_still_absent_and_p239_still_owns_it(self):
+        assert "coinbase_max_sleeve_drawdown_pct" not in self._cfg()
+
+    def test_the_effective_value_is_the_one_that_was_measured(self):
+        """The absence is only safe while the default equals what P340
+        measured as acceptable — if the ctor default ever moves, the recorded
+        12%-cold-start figure no longer describes the live halt."""
+        import inspect
+        from exchange.coinbase_sleeve import CoinbaseSleeve
+        d = inspect.signature(CoinbaseSleeve.__init__).parameters[
+            "max_sleeve_drawdown_pct"].default
+        assert d == 0.15, (
+            "P340's cold-start measurement (12% of cold starts trip the halt) "
+            "was computed at 0.15; a different default needs it re-derived")

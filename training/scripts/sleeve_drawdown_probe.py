@@ -1,4 +1,4 @@
-"""[P337] What drawdown of SLEEVE EQUITY should each certified book produce?
+"""[P340] What drawdown of SLEEVE EQUITY should each certified book produce?
 
 WHY THIS EXISTS. The sleeve halt is a percentage of sleeve equity, but every
 certified figure in this repo is an ADDITIVE per-bar sum at 1.0 exposure (P301
