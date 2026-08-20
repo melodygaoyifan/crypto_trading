@@ -74,8 +74,10 @@ _BTC_TAKER_OVER_MAKER = 0.635 / 0.603          # 1.0531, measured
 # carries the producer command, the source data, the staleness horizon and the
 # revision rule. P315 found this model wrong for the life of the system, and
 # nothing recorded when it had last been checked against a fill.
-_MEASURED_ON = "2026-08-19"
-_MEASURED_BY = "data/fill_quality.jsonl via scripts/fill_quality_review.py (P290/P315)"
+_MEASURED_ON = "2026-08-20"
+_MEASURED_BY = ("data/fill_quality.jsonl (fills, P290/P315) + "
+                "scripts/coinbase_probe_stop_support.py venue previews "
+                "(P334, which refuted the flat-per-contract model)")
 
 
 # [P334] CORRECTED MODEL: per-asset BPS OF NOTIONAL, not flat dollars.

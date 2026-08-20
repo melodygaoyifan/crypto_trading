@@ -99,10 +99,14 @@ REGISTRY: Tuple[Calibration, ...] = (
     ),
     Calibration(
         symbol="core.cde_fees.CDE_FEE_BPS",
-        measured_on="2026-08-19",
-        producer=("python -X utf8 scripts/fill_quality_review.py "
-                  "  # reads data/fill_quality.jsonl (>=20 filled legs/asset)"),
-        source="data/fill_quality.jsonl — the venue's own reported fees",
+        measured_on="2026-08-20",
+        producer=("python -X utf8 scripts/coinbase_probe_stop_support.py "
+                  "  # venue PREVIEW quotes; fills via "
+                  "scripts/fill_quality_review.py"),
+        source=("data/fill_quality.jsonl (6 fills) + read-only CDE preview "
+                "quotes 2026-08-20 — the pair is what refuted the "
+                "flat-per-contract model (P334): fills alone spanned only "
+                "0.35% of price and could not tell flat from percentage"),
         staleness_days=90,
         staleness_reason=(
             "A venue can change its fee schedule quietly and the only way we "
