@@ -321,9 +321,32 @@ class MAFilterEchoStrategy:
         # must never saturate on a zero direction (P224). The opinion's own
         # strength lives in diagnostics.ma_dir.
         reason = str(market_data.get("_maf_reason", "") or "")
-        conf = min(1.0, abs(direction))
+        # [P352] THE CLAIM IS A SIGN, NOT A CONTRACT COUNT. The comment above
+        # is right about the intent and stopped being true about the code on
+        # 2026-08-16: `_maf_ledger_dir` is the sleeve TARGET, and until P274
+        # `target_for` returned +/-1, so `min(1.0, abs(direction))` WAS the
+        # sign indicator. P274 made the target equity-scaled, and this line
+        # silently began publishing a magnitude — measured live, x = direction
+        # x confidence read BTC {1,2}, ETH {7,8}, SOL {3}, i.e. the per-asset
+        # CONTRACT SIZE. `compute_shadow_ic` scores x by RANK and pools these
+        # two families across assets (POOLABLE_FAMILIES), and the pooled read
+        # is the one P332 pre-committed as GOVERNING, so ETH's claims outranked
+        # SOL's outranked BTC's for no reason but sizing — the exact defect the
+        # scorer's own docstring guards against on the RETURN side and nobody
+        # guarded on the SIGNAL side. Worse, BTC's magnitude moved 1 -> 2 as
+        # equity grew, so the series was tracking the account balance.
+        #
+        # These are the ONLY two of 30 shadow families whose |x| ever exceeded
+        # 1.0, which is why the fix belongs here and not in the scorer.
+        # The contract count is not lost: it is `ledger_target` below.
+        ledger_target = direction
+        direction = 1.0 if direction > 0 else (-1.0 if direction < 0 else 0.0)
+        conf = 1.0 if direction else 0.0
         diagnostics = {
             "raw_target": market_data.get("_maf_raw_target"),
+            # [P352] the filtered claim in CONTRACTS, kept because the sign is
+            # now what gets scored and the size is still worth auditing.
+            "ledger_target": ledger_target,
             "ma_dir": ma,
             "sleeve_dir": market_data.get("_maf_sleeve_dir"),
             "pos_contracts": market_data.get("_maf_pos"),
@@ -338,7 +361,13 @@ class MAFilterEchoStrategy:
         # would write a null into every ma_filter row and read as "measured
         # zero whales" rather than "not applicable" (P2 again, one level down).
         for _src_key, _dst_key in (("_maf_whale_count", "whale_count"),
-                                   ("_maf_whale_pressure", "whale_pressure")):
+                                   ("_maf_whale_pressure", "whale_pressure"),
+                                   # [P352] the sample-size gate's inputs and
+                                   # verdict, so a September reader can tell a
+                                   # veto that was withheld for want of
+                                   # evidence from one that never fired.
+                                   ("_maf_whale_min", "whale_min_count"),
+                                   ("_maf_whale_evidence_ok", "whale_evidence_ok")):
             if _src_key in market_data:
                 diagnostics[_dst_key] = market_data.get(_src_key)
         # [P350] A whitelist that DROPS SILENTLY is how an observation key gets
@@ -351,7 +380,8 @@ class MAFilterEchoStrategy:
         # never raised: a ledger must not be able to break a live tick.
         _known = {"_maf_ma_dir", "_maf_ledger_dir", "_maf_raw_target",
                   "_maf_sleeve_dir", "_maf_pos", "_maf_action", "_maf_reason",
-                  "_maf_enforce", "_maf_whale_count", "_maf_whale_pressure"}
+                  "_maf_enforce", "_maf_whale_count", "_maf_whale_pressure",
+                  "_maf_whale_min", "_maf_whale_evidence_ok"}
         for _k in market_data:
             if isinstance(_k, str) and _k.startswith("_maf_") and _k not in _known:
                 if _k not in self._dropped_keys_warned:

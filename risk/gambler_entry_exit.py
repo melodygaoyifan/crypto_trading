@@ -88,7 +88,7 @@ class GamblerEntryChecker:
     def check_entry_allowed(
         self,
         signal_confidence: float,
-        strategy_agreement: float,
+        strategy_agreement: Optional[float],
         composite_score: float,
         tranche_level: int = 1,
         is_opportunity: bool = False,
@@ -98,7 +98,11 @@ class GamblerEntryChecker:
         
         Args:
             signal_confidence: Confidence from signal (0-1)
-            strategy_agreement: Agreement between strategies (0-1)
+            strategy_agreement: Agreement between strategies (0-1), or
+                None when no agreement figure describes the CURRENT decider
+                — in which case the clause is NOT APPLICABLE and is skipped
+                rather than evaluated against a number about someone else
+                (P352). Confidence and composite score still bind.
             composite_score: Composite signal score (0-1)
             tranche_level: Which tranche (1-4)
             is_opportunity: True if in OPPORTUNITY mode
@@ -131,7 +135,16 @@ class GamblerEntryChecker:
         
         # Check all thresholds
         conf_ok = signal_confidence >= conf_threshold
-        agree_ok = strategy_agreement >= agree_threshold
+        # [P352] None => the caller has no agreement measure ABOUT THE DECIDER
+        # THAT PRODUCED THIS TRADE. Skipping is not a loosening dressed up as a
+        # fix: the alternative was judging the regimebook seat by the internal
+        # cohesion of the Best-of-N ensemble it replaced (P298), which is a
+        # claim about a component that no longer decides. `agreement 0.00`
+        # meant "the retired decider's four TA indicators split 2-2", and on
+        # the gate's first firing in 50,676 ticks that is what blocked an entry
+        # the alpha gate had passed at 66bps against 53.
+        _agree_na = strategy_agreement is None
+        agree_ok = True if _agree_na else (strategy_agreement >= agree_threshold)
         score_ok = composite_score >= score_threshold
         
         allowed = conf_ok and agree_ok and score_ok
@@ -151,7 +164,8 @@ class GamblerEntryChecker:
                 reason = "GAMBLER: early entry thresholds met"
                 self._log_gambler_action({
                     "signal_confidence": signal_confidence,
-                    "strategy_agreement": strategy_agreement,
+                    "strategy_agreement": ("n/a" if _agree_na
+                                           else strategy_agreement),
                     "composite_score": composite_score,
                     "conf_threshold": conf_threshold,
                     "agree_threshold": agree_threshold,

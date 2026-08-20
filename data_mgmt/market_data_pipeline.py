@@ -1362,6 +1362,15 @@ class MarketDataPipeline:
             # multiplier = 20 / 0.3 ≈ 65. Use 65 to align estimate with reality.
             raw["signal_edge_bps"] = abs(quant_dir) * 65
             raw["primary_strategy"] = best_name
+            # [P352] `strategy_agreement` is abs(sum(signs))/4 over the
+            # Best-of-N TA indicators — a statement about THIS selector and
+            # nothing else. Since P298 the direction usually comes from the
+            # regimebook seat, which overwrites `primary_strategy` downstream
+            # and consults none of those four. Stamping the producer here is
+            # what lets a consumer notice that the measure describes a
+            # different decider than the one that produced the trade (P346's
+            # own mitigation pattern, given a mechanism).
+            raw["strategy_agreement_producer"] = best_name
             raw["_strategy_selection"] = {
                 "best": best_name,
                 "best_signal": best["signal"],
@@ -2778,6 +2787,9 @@ class MarketDataPipeline:
             "crack_active": False, "crack_weight": 0.0,
             "quant_direction": 0.75, "quant_confidence": 0.70,
             "strategy_agreement": 0.5, "primary_strategy": "momentum",
+            # [P352] degraded path: the agreement is a placeholder
+            # for the same producer named beside it.
+            "strategy_agreement_producer": "momentum",
             "lead_lag_edge": 35.0, "lead_lag_confidence": 0.72,
             "sol_signal_strength": 0.78, "signal_edge_bps": 55.0,
             "spread_bps": 8.0, "orderbook_depth": 1.2,

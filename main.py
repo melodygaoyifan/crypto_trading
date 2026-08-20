@@ -1801,6 +1801,19 @@ class ProductionConfig:
     # preserved here so any profile that omits the key is byte-identical.
     trend_min_abs_signal: float = 0.30
     coinbase_whale_filter_enforce: bool = False
+    # [P352] Minimum whale COUNT behind `whale_net_pressure` before the whale
+    # filter is allowed to veto. `net_pressure` is a RATIO — (buy-sell)/(buy+sell)
+    # over the whales seen in the last hour — so it says which way they leaned
+    # and can say nothing about how many there were. Measured over every
+    # retained log (118 bucket-hours, 1,233 detections): at n=1 the ratio is
+    # +/-1.0 in 100% of buckets and emits a direction in 100% of them; at n=2,
+    # 83% saturated; saturation only breaks down at n>=5 (25%, then 18%).
+    #
+    # 2 is the arithmetically FORCED floor, not a preference: with a single
+    # observation there is no "net" to take, so the deadband tests nothing.
+    # Higher floors are progressively a risk preference — n>=3 removes 47% of
+    # would-be vetoes and n>=5 removes 63% — and are the operator's to set.
+    coinbase_whale_filter_min_whales: int = 2
     # [P315] Price CDE fees PER CONTRACT (measured ~$0.60/ct BTC,
     # ~$0.26/ct ETH) instead of the 0/3bps VENUE_FEE_STD model, which
     # understates the real charge ~3x. Strictly TIGHTENING (max() at
@@ -3007,6 +3020,18 @@ def sleeve_agent_filter_decision(current_contracts, raw_target, agent_dir,
         return 0, "", "no_target"            # exits/holds are never filtered
     if abs(a) <= 1e-9:
         return raw, "", f"{agent_tag}_silent"   # fail-open on no opinion
+    if not evidence_ok:
+        # [P352] The advisor HAS a direction and not enough evidence behind
+        # it to act on. Treated exactly like silence — fail-open — because
+        # "no usable opinion" is what both states are. The caller decides what
+        # counts as evidence, because only the caller knows what the advisor
+        # publishes; this function only knows a sign, which is precisely why
+        # the whale filter was vetoing on a `net_pressure` computed from ONE
+        # trade (P349: with n=1 the ratio is +/-1.0 by construction, and 100%
+        # of n=1 buckets emitted a full-conviction direction).
+        #
+        # Default True, so every existing caller is byte-identical.
+        return raw, "", f"{agent_tag}_low_evidence"
     if a * raw > 0:
         return raw, "", f"{agent_tag}_agrees"
     # Disagreement.
@@ -7437,7 +7462,9 @@ class HMATSProductionRunner:
         if not hasattr(self, "_last_whale_counts"):
             self._last_whale_counts = {}
             self._last_whale_pressures = {}
-        self._last_whale_counts[asset] = 0
+        # [P352] UNKNOWN, not "zero whales measured": 0 is now a MEASUREMENT
+        # the evidence gate acts on, and nothing has measured anything yet (P2).
+        self._last_whale_counts[asset] = None
         self._last_whale_pressures[asset] = 0.0
         # [P298] Per-tick seat marker, cleared here for the same reason the
         # stash is: a stale "the book took the seat" from a previous tick
@@ -11372,13 +11399,21 @@ class HMATSProductionRunner:
         if not hasattr(self, "_last_whale_counts"):
             self._last_whale_counts = {}
             self._last_whale_pressures = {}
-        try:
-            self._last_whale_counts[asset] = int(
-                market_data.get('whale_count', 0) or 0)
-        except (TypeError, ValueError):  # noqa: silent-swallow - 0 = unknown
-            self._last_whale_counts[asset] = 0
+        # [P352] UNKNOWN is None, never 0. P349 stashed both an absent key and
+        # an unparseable value as 0, which was harmless while nothing read it
+        # and is not harmless now that the filter's evidence gate does: a
+        # producer gap would read as "zero whales", fail the minimum, and
+        # SILENTLY DISARM an armed veto. Missing must never collapse into a
+        # value (P2) — least of all into the value that switches a control off.
+        _wh_cnt_raw = market_data.get('whale_count')
+        if _wh_cnt_raw is None:
+            self._last_whale_counts[asset] = None
+        else:
+            try:
+                self._last_whale_counts[asset] = int(_wh_cnt_raw)
+            except (TypeError, ValueError):  # noqa: silent-swallow - None = unknown
+                self._last_whale_counts[asset] = None
         self._last_whale_pressures[asset] = _wh_net
-
 
         # [v3.3-B18] OnChain Sentiment Fusion -per-asset on-chain + sentiment alpha
         if self._onchain_fusion:
@@ -13982,7 +14017,34 @@ class HMATSProductionRunner:
                 and getattr(intent, 'tranche_target', 1) == 1):
             try:
                 _g_conf = getattr(intent, 'quant_confidence', 0.5)
-                _g_agree = market_data.get('strategy_agreement', 0.5)
+                # [P352] The agreement figure must be ABOUT THE DECIDER that
+                # produced this trade. `strategy_agreement` is the internal
+                # cohesion of the Best-of-N ensemble; since P298 the direction
+                # usually comes from the regimebook seat, which overwrites
+                # `primary_strategy` and consults none of those indicators. On
+                # the gate's first firing in 50,676 ticks (P346) that mismatch
+                # is exactly what blocked an entry the alpha gate had passed at
+                # 66bps against 53. When the producer stamp disagrees with the
+                # decider the clause is NOT APPLICABLE (None) and is skipped;
+                # confidence and composite score, which ARE about the decider,
+                # still bind. An ABSENT stamp keeps today's behaviour — a
+                # missing field must never be the thing that skips a check.
+                _g_agree_prod = str(
+                    market_data.get('strategy_agreement_producer', '') or '')
+                _g_decider = str(market_data.get('primary_strategy', '') or '')
+                if _g_agree_prod and _g_decider and _g_agree_prod != _g_decider:
+                    _g_agree = None
+                    if not hasattr(self, '_g_agree_na_warned'):
+                        self._g_agree_na_warned = set()
+                    if asset not in self._g_agree_na_warned:
+                        self._g_agree_na_warned.add(asset)
+                        logger.info(
+                            "[GAMBLER] %s: strategy_agreement describes %r but "
+                            "the decider is %r — agreement clause NOT APPLIED "
+                            "(P352). Confidence and score still bind.",
+                            asset, _g_agree_prod, _g_decider)
+                else:
+                    _g_agree = market_data.get('strategy_agreement', 0.5)
                 _g_composite = abs(intent.direction) * _g_conf
                 _g_result = self.gambler_entry.check_entry_allowed(
                     signal_confidence=_g_conf,
@@ -23458,10 +23520,57 @@ class HMATSProductionRunner:
                                                 _sl.signed_contracts(_m_a) or 0)
                                             _wf_raw = int(
                                                 _sl.target_for(_m_a, _m_dir))
+                                            # [P352] SAMPLE SIZE reaches the
+                                            # decision. `whale_count` has been
+                                            # computed, stashed and written to
+                                            # this very ledger since P349 and
+                                            # the DECISION never saw it —
+                                            # computed-but-unenforced (P144),
+                                            # on an ARMED live veto. Measured:
+                                            # at n=1 the ratio is +/-1.0 in
+                                            # 100% of bucket-hours, so 100% of
+                                            # them emit a full-conviction
+                                            # direction off ONE ticket.
+                                            # UNKNOWN (None, or a direction
+                                            # with a count of 0, which means
+                                            # the count did not arrive rather
+                                            # than that no whales traded) keeps
+                                            # the veto ARMED and says so once:
+                                            # a producer gap must never be the
+                                            # thing that disarms a control.
+                                            _wf_cnt = (getattr(
+                                                self, "_last_whale_counts", {})
+                                                or {}).get(_m_a)
+                                            _wf_min = int(getattr(
+                                                self.config,
+                                                "coinbase_whale_filter_min_whales",
+                                                2) or 0)
+                                            _wf_unknown = (
+                                                _wf_cnt is None
+                                                or (int(_wf_cnt) == 0
+                                                    and abs(_wf_dir) > 1e-9))
+                                            if _wf_unknown:
+                                                _wf_ev = True
+                                                if not hasattr(self, "_wf_cnt_warned"):
+                                                    self._wf_cnt_warned = set()
+                                                if _m_a not in self._wf_cnt_warned:
+                                                    self._wf_cnt_warned.add(_m_a)
+                                                    logger.warning(
+                                                        "[WHALE-FILTER] %s: whale_count is "
+                                                        "UNAVAILABLE (%r) while whale reports "
+                                                        "dir=%+.2f — the P352 sample-size gate "
+                                                        "cannot be applied, so the veto stays "
+                                                        "ARMED (a producer gap must not disarm "
+                                                        "a control). Check the whale_count "
+                                                        "producer in market_data.",
+                                                        _m_a, _wf_cnt, _wf_dir)
+                                            else:
+                                                _wf_ev = int(_wf_cnt) >= _wf_min
                                             (_wf_led, _wf_act,
                                              _wf_why) = sleeve_agent_filter_decision(
                                                 _wf_pos, _wf_raw, _wf_dir,
-                                                agent_tag="whale")
+                                                agent_tag="whale",
+                                                evidence_ok=_wf_ev)
                                             _wf_enf = bool(getattr(
                                                 self.config,
                                                 "coinbase_whale_filter_enforce",
@@ -23478,8 +23587,14 @@ class HMATSProductionRunner:
                                                     "_maf_enforce": _wf_enf,
                                                     # [P349] sample size behind
                                                     # the whale direction
-                                                    "_maf_whale_count": int(
-                                                        getattr(self, "_last_whale_counts", {}).get(_m_a, 0) or 0),
+                                                    # [P352] None = not reported.
+                                                    # A fabricated 0 here would
+                                                    # read as "measured zero
+                                                    # whales" in the ledger the
+                                                    # September read consults.
+                                                    "_maf_whale_count": _wf_cnt,
+                                                    "_maf_whale_min": _wf_min,
+                                                    "_maf_whale_evidence_ok": bool(_wf_ev),
                                                     "_maf_whale_pressure": float(
                                                         getattr(self, "_last_whale_pressures", {}).get(_m_a, 0.0) or 0.0),
                                                 })

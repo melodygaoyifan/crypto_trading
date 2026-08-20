@@ -169,8 +169,13 @@ class TestObservationOnly:
         # falsification probe caught exactly that in this test's first draft.
         # [P350] Through the shared helper, which REFUSES an ambiguous needle
         # — that refusal is what would have caught the vacuous first draft.
+        # [P352] the reset value moved 0 -> None: 0 is now a MEASUREMENT the
+        # evidence gate acts on, and the reset runs before anything has been
+        # measured. The INVARIANT this test is about — a per-tick reset sitting
+        # beside the direction reset — is unchanged, so the pin follows it
+        # rather than being re-pinned to a fresh literal (P165).
         assert_text_pin(
-            src, "self._last_whale_counts[asset] = 0",
+            src, "self._last_whale_counts[asset] = None",
             near="self._last_whale_directions[asset] = 0.0",
             # wider than the default because the rationale comment sits
             # between anchor and needle; the SET half's sibling is ~12,000
@@ -179,12 +184,13 @@ class TestObservationOnly:
             why="the count stash has no per-tick reset beside the direction "
                 "reset it describes; without it a ledger row carries the "
                 "previous tick's sample size (P155-L5/P294)")
-        assert_text_pin(src, "_last_whale_counts[asset] = int(",
+        assert_text_pin(src, "self._last_whale_counts[asset] = int(_wh_cnt_raw)",
                         why="no set half")
 
     def test_the_count_comes_from_the_producer_key(self):
         src = _main_src()
-        assert "market_data.get('whale_count', 0)" in src
+        # [P352] the default dropped: an absent key must stash UNKNOWN, not 0.
+        assert "market_data.get('whale_count')" in src
 
 
 class TestThePremiseHolds:
