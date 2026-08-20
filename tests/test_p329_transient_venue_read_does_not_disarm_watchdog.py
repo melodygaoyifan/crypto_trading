@@ -334,3 +334,61 @@ class TestHaikuUsageLimitIsNotRetried:
         i = src.index("ACCOUNT USAGE LIMIT")
         blk = src[i:i + 600]
         assert "BILLING" in blk and "heuristic" in blk
+
+
+class TestTheFredHandlersActuallyCallTheHelper:
+    """[P329b] The tests above exercise `_report_endpoint_failure` directly,
+    which proves the helper works and says NOTHING about whether the except
+    handlers reach it — the P234 gap. These drive a REAL timeout through
+    `_fetch_series` / `_fetch_releases`.
+    """
+
+    def _feed_and_timing_out_session(self):
+        import asyncio
+        from data_mgmt.feeds.fred_feed import FREDFeed
+
+        class _Session:
+            def get(self, *a, **k):
+                raise asyncio.TimeoutError()
+
+        return FREDFeed(api_key="x", mock_mode=False), _Session()
+
+    def test_a_real_series_timeout_routes_through_the_helper(self, caplog):
+        import asyncio
+        f, sess = self._feed_and_timing_out_session()
+        with caplog.at_level("WARNING"):
+            out = asyncio.run(f._fetch_series(sess, "VIXCLS"))
+        assert out is None, "the caller contract (None on failure) must not move"
+        msgs = [r.getMessage() for r in caplog.records]
+        assert any("consecutive=" in m for m in msgs), (
+            "the handler still logs the bare pre-P329b line — the helper is "
+            "wired in the tests but not in the code path that runs")
+        assert any("VIXCLS" in m for m in msgs)
+
+    def test_a_real_releases_timeout_routes_through_the_helper(self, caplog):
+        import asyncio
+        f, sess = self._feed_and_timing_out_session()
+        with caplog.at_level("WARNING"):
+            out = asyncio.run(f._fetch_releases(sess))
+        assert out == [], "the caller contract ([] on failure) must not move"
+        assert any("consecutive=" in r.getMessage() for r in caplog.records)
+
+    def test_a_real_timeout_states_the_consequence(self, caplog):
+        import asyncio
+        f, sess = self._feed_and_timing_out_session()
+        with caplog.at_level("WARNING"):
+            asyncio.run(f._fetch_series(sess, "DGS10"))
+        joined = " ".join(r.getMessage() for r in caplog.records)
+        assert "NEUTRAL mock" in joined, (
+            "'Series DGS10 timed out' alone tells an operator nothing about "
+            "whether anything is now wrong")
+
+    def test_repeated_real_timeouts_escalate_once_then_go_quiet(self, caplog):
+        import asyncio
+        f, sess = self._feed_and_timing_out_session()
+        with caplog.at_level("WARNING"):
+            for _ in range(f.SUSTAINED_FAILURES + 5):
+                asyncio.run(f._fetch_series(sess, "DFF"))
+        errs = [r for r in caplog.records if r.levelname == "ERROR"]
+        assert len(errs) == 1, (
+            f"a dead endpoint must be heard once, not every refresh; got {len(errs)}")
