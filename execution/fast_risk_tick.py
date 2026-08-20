@@ -49,6 +49,14 @@ class FastRiskTick:
     # EXIT_FAILED_BACKOFF_SEC. set_4h_anchor() clears the backoff so the
     # next 4H tick gets a fresh attempt.
     EXIT_FAILED_BACKOFF_SEC = 1800.0  # 30 min
+    # [P329] ...but ONLY for a STRUCTURAL rejection. A transient failure to
+    # READ the venue is the opposite condition and must not suppress anything:
+    # it self-corrects on the next 30s cycle, and retrying costs exactly one
+    # reconcile call because the staleness guard in sleeve_fast_risk_action
+    # returns BEFORE execute_target — so a retry cannot place an order.
+    # Measured incident 2026-08-19 23:39:53: ONE Coinbase 502 disarmed ETH's
+    # inter-tick watchdog for 23m09s during a real 7% move.
+    TRANSIENT_ESCALATE_AFTER = 6   # ~3 min of an unreadable venue at 30s cadence
     # [P156] Every trigger below compares "now" against a reference captured by
     # set_4h_anchor(). That call sits at the END of the 4H decision path
     # (main.py:10166) and is skipped by every early return before it — notably
@@ -71,6 +79,8 @@ class FastRiskTick:
         self._exit_failed_at: Dict[str, float] = {}    # [P110] last REJECTED exit ts
         self._exit_failed_reason: Dict[str, str] = {}  # [P110] last REJECTED exit msg
         self._exit_suppress_log_at: Dict[str, float] = {}  # [P110] rate-limit suppression log
+        self._venue_unreadable_streak: Dict[str, int] = {}  # [P329] transient reads
+        self._venue_unreadable_log_at: Dict[str, float] = {}
         self._trigger_count = 0
         self._shadow_log: list = []
         logger.info(f"[FastRiskTick] Initialized (shadow={shadow_mode})")
@@ -107,17 +117,71 @@ class FastRiskTick:
             self._baseline_depth[asset] = new_depth
             logger.info(f"[FastRiskTick] {asset}: baseline depth refreshed to ${new_depth:,.0f} after REDUCE")
 
-    def on_exit_failed(self, asset: str, reason: str = ""):
-        """[P110] Called when an emergency EXIT/REDUCE returns REJECTED.
+    def on_venue_readable(self, asset: str) -> None:
+        """[P329] The venue answered — clear any transient-unreadable streak.
 
-        Records a backoff timestamp so subsequent evaluate() calls suppress
-        EXIT_ONLY (the only action that bypasses the normal cooldown). The
-        backoff is cleared by set_4h_anchor() OR after EXIT_FAILED_BACKOFF_SEC,
-        whichever comes first. Other triggers (vol spike, depth drop) still
-        compose REDUCE_50 normally — only the price_move EXIT_ONLY trigger
-        is suppressed.
+        Without this a long-lived process drifts into permanent escalation
+        after enough isolated blips (the P303/P265f lesson: a streak counter
+        that only ever counts up stops describing the present).
+        """
+        if self._venue_unreadable_streak.pop(asset, 0):
+            self._venue_unreadable_log_at.pop(asset, None)
+
+    def on_exit_failed(self, asset: str, reason: str = "",
+                       transient: bool = False):
+        """[P110] Called when an emergency EXIT/REDUCE could not be carried out.
+
+        [P329] TWO DIFFERENT CONDITIONS, and conflating them disarmed a live
+        safety control.
+
+        STRUCTURAL (`transient=False`, the default and P110's original case):
+        the venue REJECTED the order — spot locked by a stop-loss that cannot
+        be cancelled, insufficient funds, a rejected reduce. Retrying every 30s
+        will fail identically, so a backoff is right: it suppresses the
+        price-move EXIT_ONLY trigger (the only action that bypasses the normal
+        cooldown) until set_4h_anchor() or EXIT_FAILED_BACKOFF_SEC, whichever
+        comes first. Other triggers still compose REDUCE_50 normally.
+
+        TRANSIENT (`transient=True`): we could not READ the venue, so no exit
+        was ever attempted. This must NOT suppress anything:
+
+          - it self-corrects — the next 30s cycle usually reconciles fine;
+          - retrying is free of execution risk, because the staleness guard in
+            `sleeve_fast_risk_action` returns before `execute_target`, so a
+            retry cannot place an order;
+          - and suppressing it is precisely backwards: an unreadable venue
+            during a fast move is when the watchdog matters most.
+
+        Measured incident (2026-08-19 23:39:53): one Coinbase 502 lasting a
+        single 30s cycle engaged the 30-minute backoff and disarmed ETH's
+        watchdog for 23m09s while ETH moved 7% from its 4H anchor. Nothing was
+        lost only because the book happened to be flat.
+
+        The default stays False so the legacy Kraken order-rejection caller is
+        unchanged; the sleeve caller passes the flag explicitly.
         """
         now = time.time()
+        if transient:
+            # No `_exit_failed_at` write: the ACTION is never suppressed.
+            streak = self._venue_unreadable_streak.get(asset, 0) + 1
+            self._venue_unreadable_streak[asset] = streak
+            last = self._venue_unreadable_log_at.get(asset, 0.0)
+            if streak == 1 or streak == self.TRANSIENT_ESCALATE_AFTER or (now - last) > 300.0:
+                self._venue_unreadable_log_at[asset] = now
+                msg = (
+                    f"[FastRiskTick] {asset}: could not READ the venue, so the "
+                    f"emergency exit was NOT attempted (streak={streak}). "
+                    f"The watchdog stays ARMED and retries next cycle; a retry "
+                    f"cannot place an order. Reason: {reason or '(no message)'}"
+                )
+                # Sustained unreadability IS actionable — we may be holding
+                # risk we cannot see. An isolated blip is not (P202/P240).
+                if streak >= self.TRANSIENT_ESCALATE_AFTER:
+                    logger.critical(msg + " — SUSTAINED; check the venue API.")
+                else:
+                    logger.warning(msg)
+            return
+
         self._exit_failed_at[asset] = now
         self._exit_failed_reason[asset] = reason
         logger.critical(

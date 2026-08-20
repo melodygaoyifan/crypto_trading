@@ -221,6 +221,15 @@ class FREDFeed:
         self._last_data: Optional[FREDMacroData] = None
         self._running = False
         self._fetch_errors = 0
+        # [P329b] Per-endpoint consecutive-failure streaks. FRED is ADVISORY:
+        # a failed series degrades to a NEUTRAL mock that "contributes nothing
+        # to Macro" (the GCI says so in its own log), so an isolated 10s
+        # timeout is not something an operator can act on — and 9 of the 10
+        # FRED log lines in a 16h live window were ERROR-level timeouts
+        # forwarded to Discord. A SUSTAINED failure is different: it means the
+        # endpoint is not working at all, which is worth hearing exactly once
+        # per streak (P202/P240, the P303 pattern).
+        self._endpoint_fail_streak: Dict[str, int] = {}
         
         # Event window configuration
         self._event_window_minutes = 180  # 3 hours before/after
@@ -430,6 +439,7 @@ class FREDFeed:
                 if value_str == ".":
                     return None  # Missing value
 
+                self._report_endpoint_ok(f"series:{series_id}")
                 return FREDObservation(
                     series_id=series_id,
                     value=float(value_str),
@@ -438,13 +448,48 @@ class FREDFeed:
                     realtime_end=_aware_utc(datetime.fromisoformat(obs["realtime_end"])),
                 )
 
-        except asyncio.TimeoutError:
-            logger.error(f"[FRED_FEED] Series {series_id} timed out (10s)")
+        except asyncio.TimeoutError:  # noqa: silent-swallow — logs via _report_endpoint_failure (the linter cannot see method-call logging, P252)
+            self._report_endpoint_failure(
+                f"series:{series_id}", f"Series {series_id} timed out (10s)",
+                "that indicator degrades to a NEUTRAL mock and contributes "
+                "nothing to Macro; no other value is affected.")
             return None
-        except Exception as e:
-            logger.error(f"[FRED_FEED] Series {series_id} error: {e}")
+        except Exception as e:  # noqa: silent-swallow — logs via _report_endpoint_failure (the linter cannot see method-call logging, P252)
+            self._report_endpoint_failure(
+                f"series:{series_id}",
+                f"Series {series_id} error: {type(e).__name__}: {e}",
+                "that indicator degrades to a NEUTRAL mock and contributes "
+                "nothing to Macro; no other value is affected.")
             return None
     
+
+    # [P329b] ------------------------------------------------------------
+    SUSTAINED_FAILURES = 3   # ~3 consecutive macro refreshes
+
+    def _report_endpoint_failure(self, key: str, detail: str,
+                                 consequence: str) -> None:
+        """Isolated failure -> WARNING; sustained -> ERROR, once per streak.
+
+        The message states the CONSEQUENCE, because "Series DGS10 timed out"
+        tells an operator nothing about whether anything is now wrong.
+        """
+        streak = self._endpoint_fail_streak.get(key, 0) + 1
+        self._endpoint_fail_streak[key] = streak
+        msg = f"[FRED_FEED] {detail} (consecutive={streak}) — {consequence}"
+        if streak == self.SUSTAINED_FAILURES:
+            logger.error(
+                msg + " SUSTAINED: this endpoint is not answering at all.")
+        elif streak < self.SUSTAINED_FAILURES:
+            logger.warning(msg)
+        # Past the escalation point stay quiet: the ERROR above already said
+        # it, and repeating per refresh is the wallpaper P202 warns about.
+
+    def _report_endpoint_ok(self, key: str) -> None:
+        """A success resets the streak, or a long-lived process drifts into a
+        permanent ERROR that no longer describes the present (P303)."""
+        if self._endpoint_fail_streak.pop(key, 0):
+            logger.info(f"[FRED_FEED] {key}: recovered")
+
     async def _fetch_releases(
         self,
         session: aiohttp.ClientSession,
@@ -488,13 +533,22 @@ class FREDFeed:
                     ))
 
                 self._releases = releases
+                self._report_endpoint_ok("releases")
                 return releases
 
-        except asyncio.TimeoutError:
-            logger.error("[FRED_FEED] Releases fetch timed out (10s)")
+        except asyncio.TimeoutError:  # noqa: silent-swallow — logs via _report_endpoint_failure (the linter cannot see method-call logging, P252)
+            self._report_endpoint_failure(
+                "releases", "Releases fetch timed out (10s)",
+                "event_window stays INACTIVE. Measured 2026-08-19: this "
+                "endpoint timed out on every refresh, and event_window has no "
+                "consumer outside this module, so nothing downstream changes.")
             return []
-        except Exception as e:
-            logger.error(f"[FRED_FEED] Releases fetch error: {e}")
+        except Exception as e:  # noqa: silent-swallow — logs via _report_endpoint_failure (the linter cannot see method-call logging, P252)
+            self._report_endpoint_failure(
+                "releases",
+                f"Releases fetch error: {type(e).__name__}: {e}",
+                "event_window stays INACTIVE (no consumer outside this "
+                "module, so nothing downstream changes).")
             return []
     
     # =========================================================================

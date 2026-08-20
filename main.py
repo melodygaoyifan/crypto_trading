@@ -18089,6 +18089,15 @@ class HMATSProductionRunner:
                 self.config, "fast_risk_sleeve_enabled", False))
             _frs_st, _frs_why = await sleeve_fast_risk_action(
                 _frs_sleeve, asset, result.action.name, _frs_enabled)
+            # [P329] Any status other than these proves the reconcile SUCCEEDED,
+            # so the transient-unreadable streak is cleared. Without a reset a
+            # long-lived process accumulates isolated blips into a permanent
+            # CRITICAL that no longer describes the present (P303/P265f).
+            if (_frs_st not in ("SKIPPED_STALE", "ERROR", "DISABLED", "NO_SLEEVE")
+                    and self.fast_risk_tick is not None):
+                _frs_ok = getattr(self.fast_risk_tick, "on_venue_readable", None)
+                if _frs_ok is not None:
+                    _frs_ok(asset)
             if _frs_st == "DISABLED":
                 # once per asset per process — a 30s loop must not spam
                 if not hasattr(self, "_frs_disabled_logged"):
@@ -18137,7 +18146,14 @@ class HMATSProductionRunner:
                           and hasattr(self.fast_risk_tick, 'on_exit_failed')):
                         # [P110] failure-detection complement: an urgent
                         # trigger that cannot act must back off, not storm.
-                        self.fast_risk_tick.on_exit_failed(asset, _frs_why)
+                        # [P329] ...but SKIPPED_STALE is a failure to READ the
+                        # venue, not a rejected order, and suppressing the
+                        # watchdog for 30 min on a transient 502 is backwards.
+                        # ERROR stays structural: an exception inside the
+                        # helper is not evidence the next call will succeed.
+                        self.fast_risk_tick.on_exit_failed(
+                            asset, _frs_why,
+                            transient=(_frs_st == "SKIPPED_STALE"))
             if _frs_st != "FLAT":
                 # The sleeve holds (or held) the position; the Kraken branch
                 # below has nothing to act on either way.
