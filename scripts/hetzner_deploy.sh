@@ -138,6 +138,12 @@ if git fetch -q origin main 2>/dev/null && [ -n "${DEPLOY_SHA}" ]; then
     SCAN_TMP="$(mktemp -d 2>/dev/null || true)"
     if [ -n "${SCAN_TMP}" ] && git worktree add --detach -q "${SCAN_TMP}" "${DEPLOY_SHA}" 2>/dev/null; then
         SCAN_TREE="${SCAN_TMP}"
+        # [P328] Remove it even if this script is INTERRUPTED. Observed: a
+        # deploy whose stdout was piped through `head` took SIGPIPE partway
+        # through and left a full checkout behind, which then shows up in
+        # `git worktree list` forever. The explicit remove below is the happy
+        # path; this is the backstop.
+        trap 'git worktree remove --force "${SCAN_TREE}" >/dev/null 2>&1 || true; git worktree prune >/dev/null 2>&1 || true' EXIT INT TERM HUP PIPE
     fi
 fi
 

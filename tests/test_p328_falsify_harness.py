@@ -255,3 +255,15 @@ class TestTheDeployPreflightScansTheDeployedCommit:
                    cwd=str(REPO), capture_output=True)
             sp.run(["git", "worktree", "prune"], cwd=str(REPO),
                    capture_output=True)
+
+    def test_an_interrupted_deploy_still_removes_the_worktree(self):
+        """Observed while validating this very change: a deploy whose stdout
+        was piped through `head` took SIGPIPE partway through and left a full
+        checkout behind, which then appears in `git worktree list` forever.
+        The explicit remove is the happy path; the trap is the backstop."""
+        live = [ln for ln in self._src().splitlines()
+                if ln.strip().startswith("trap 'git worktree remove --force")]
+        assert live, (
+            "no LIVE trap line — a substring pin would pass on a commented-out "
+            "trap, which the falsification harness caught (P328)")
+        assert any("EXIT INT TERM HUP PIPE" in ln for ln in live)
