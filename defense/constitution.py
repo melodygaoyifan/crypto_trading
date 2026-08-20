@@ -1984,10 +1984,34 @@ class TrancheScheduler:
                 )
 
             # Guard: refuse NEW entry during volume collapse (but existing positions HOLD, see decide())
-            _vol_ratio = self._effective_volume_ratio(
-                market_data,
-                is_4h_bar_close=is_4h_bar_close,
-            )
+            #
+            # [P334] DELIBERATELY does NOT pass `is_4h_bar_close`, and that is
+            # the whole fix. The flag has NO PRODUCER (P173: nothing writes the
+            # key, so `market_data.get("is_4h_bar_close", True)` in main.py is
+            # always True), and `effective_volume_ratio` returns the RAW ratio
+            # when it is True — so this call site, alone of eleven in the tree,
+            # threw away the partial-bar correction its own producer had just
+            # computed.
+            #
+            # Why that inverts the guard. `volume_ratio` is
+            # current-bar-volume / SMA(FULL-bar volumes), and the 4H tick fires
+            # ~10 min into a new bar, so bar_progress is ~0.04 EVERY tick. With
+            # true volume pace k the raw ratio is ~k*0.04:
+            #     k=1.0 (normal)          raw 0.040 -> REFUSED (false positive)
+            #     k=0.5                   raw 0.020 -> REFUSED
+            #     k=0.2 (severe collapse) raw 0.008 -> ALLOWED (below the
+            #                                          >=0.01 artifact clause)
+            # i.e. normal volume was blocked and the worse the collapse the
+            # more likely it passed. Observed live 2026-08-20 04:11:44: ETH
+            # refused at raw=0.021 while its certified book was long and had
+            # cleared the alpha gate (66bps vs 55).
+            #
+            # The producer's correction fixes both directions (normal 0.040 ->
+            # 0.200 allow; severe 0.008 -> 0.040 refuse) and is SELF-DISABLING
+            # on a complete bar (`bar_progress >= 1.0` -> effective == raw), so
+            # the flag was redundant with information market_data already
+            # carries — which is why the other ten call sites never pass it.
+            _vol_ratio = self._effective_volume_ratio(market_data)
             _entry_volume_threshold = self._get_entry_volume_collapse_threshold(position.asset)
             if _vol_ratio < _entry_volume_threshold and _vol_ratio >= 0.01:
                 _raw_vol_ratio = float(market_data.get("volume_ratio", _vol_ratio) or 0.0)
