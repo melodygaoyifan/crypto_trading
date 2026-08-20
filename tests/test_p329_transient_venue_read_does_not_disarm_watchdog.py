@@ -294,9 +294,17 @@ class TestHaikuUsageLimitIsNotRetried:
     def test_a_usage_limit_400_is_non_retryable(self):
         code, non_retryable, reason = self._classify(
             400, "You have reached your specified API usage limits. "
-                 "You will regain access on 2026-09-01 at 00:00 UTC.")
+                 "You will regain access on 2099-09-01 at 00:00 UTC.")
         assert code == 400 and non_retryable is True
-        assert "2026-09-01T00:00Z" in reason
+        # [P345] The reason now carries the cooldown in SECONDS (the shared
+        # policy computes it) rather than a date the caller re-parses. The
+        # invariant is unchanged and asserted behaviourally: a STATED reset
+        # must produce a cooldown far larger than the no-date default.
+        assert "_cooldown=" in reason
+        secs = float(reason.split("_cooldown=", 1)[1])
+        from infra.failure_policy import DEFAULT_QUOTA_REPROBE_SEC
+        assert secs > DEFAULT_QUOTA_REPROBE_SEC, (
+            "a server-stated reset must beat the bounded re-probe default")
 
     def test_an_ordinary_400_is_left_alone(self):
         """A genuinely malformed request is a BUG we want to keep seeing —
@@ -304,26 +312,56 @@ class TestHaikuUsageLimitIsNotRetried:
         code, non_retryable, _ = self._classify(400, "messages.0: invalid field")
         assert not (code == 400 and non_retryable is True)
 
-    def test_the_reset_instant_parses(self):
-        from agents.sentiment_llm_agent import _parse_regain_utc
-        assert _parse_regain_utc(
-            "you will regain access on 2026-09-01 at 00:00 utc") == "2026-09-01T00:00Z"
+    def test_the_reset_instant_is_read_from_the_message(self):
+        """[P345] The parse lives in infra.failure_policy now — one
+        implementation, not a private copy per caller (P172)."""
+        from infra.failure_policy import (
+            classify_external_failure, DEFAULT_QUOTA_REPROBE_SEC)
+        p = classify_external_failure(
+            status=400,
+            message="you will regain access on 2099-09-01 at 00:00 UTC")
+        assert p.retry_after_sec > DEFAULT_QUOTA_REPROBE_SEC
 
-    def test_unparseable_wording_returns_none_not_a_guess(self):
-        """The fail direction: if Anthropic rewords the message we fall back to
-        the standard hard-disable cooldown, never to 'retry immediately'."""
-        from agents.sentiment_llm_agent import _parse_regain_utc
-        assert _parse_regain_utc("you have reached your limits, try later") is None
+    def test_unparseable_wording_falls_back_and_never_to_no_backoff(self):
+        """The fail direction: if the vendor rewords the message we fall back
+        to a bounded re-probe, never to 'retry immediately' and never to a
+        guessed calendar boundary (P319)."""
+        from infra.failure_policy import (
+            classify_external_failure, DEFAULT_QUOTA_REPROBE_SEC, FailureClass)
+        p = classify_external_failure(
+            status=400, message="you have reached your usage limit, try later")
+        assert p.failure_class is FailureClass.QUOTA_EXHAUSTED
+        assert p.retry_after_sec == DEFAULT_QUOTA_REPROBE_SEC
 
-    def test_the_caller_sizes_the_cooldown_from_the_stated_reset(self):
+    def test_the_reason_the_classifier_emits_is_the_one_the_caller_parses(self):
+        """[P345] The two halves now live in different modules, so the thing
+        that can break is the CONTRACT between them (P310). Was a source pin
+        on `total_seconds()`, which moved into infra.failure_policy and left
+        the pin asserting the absence of code that had simply relocated.
+
+        Asserted by round-tripping the classifier's reason through the
+        caller's own extraction, for both a stated and an unstated reset.
+        """
+        import re
         from tests._source_scan import code_only
+
+        stated = self._classify(
+            400, "usage limit; you will regain access on 2099-09-01 at 00:00 UTC")[2]
+        unstated = self._classify(400, "you have reached your usage limit")[2]
+
+        # the caller's extraction, verbatim from the source it runs
         src = code_only(REPO / "agents" / "sentiment_llm_agent.py",
                         strip_docstrings=True)
-        # The CALLER's occurrence, not the classifier's return statement.
-        i = src.rindex('usage_limit_400')
-        blk = src[i:i + 1600]
-        assert "_open_hard_disable" in blk, "a hard-dated cap must open a cooldown"
-        assert "total_seconds()" in blk, "the cooldown must come from the stated reset"
+        assert '_cooldown=' in src, "the caller must still key on this token"
+
+        def caller_parse(reason):
+            return float(reason.split("_cooldown=", 1)[1]) if "_cooldown=" in reason else None
+
+        a, b = caller_parse(stated), caller_parse(unstated)
+        assert a is not None and b is not None, (
+            "the caller cannot recover a cooldown from the reason the "
+            "classifier emits — the contract is broken")
+        assert a > b, "a server-stated reset must outlast the bounded re-probe"
 
     def test_the_message_says_it_is_a_billing_state(self):
         """P202: an alert an operator cannot fix by debugging must say so, and
