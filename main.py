@@ -20991,6 +20991,49 @@ class HMATSProductionRunner:
         wait = secs_to_boundary + offset_seconds
         return max(wait, 60.0)  # Minimum 60s to prevent tight loops
 
+    async def _refresh_equity_for_nav(self) -> bool:
+        """[P351] Make the equity reading FRESH before the drawdown snapshot.
+
+        `_update_drawdown_snapshot` calls `account_sync.get_equity()`, which
+        FAIL-CLOSES when the cached state is older than
+        `core.account_sync.MAX_EQUITY_AGE_SECONDS` (120s). The ONLY per-tick
+        `refresh()` lives at the top of `_process_4h_tick_inner`, i.e. INSIDE
+        the per-asset loop that runs AFTER this snapshot. So the freshest
+        equity available at snapshot time is always the PREVIOUS tick's — one
+        full 4H bar, ~120x the freshness bound — and the read raised on every
+        tick of every process.
+
+        Consequence, measured live on 4/4 ticks: `_equity_is_real` was never
+        True, so `_current_drawdown_pct` was never written, the LIVE 25%
+        drawdown halt could never fire, the regime-leverage de-risking ladder
+        and the DRL observation's `drawdown` dim read their getattr default
+        0.0 forever, and `[NAV-LIVE]` reported a fabricated
+        `initial_capital + sleeve` equity. P163 fixed the missing WRITER; the
+        writer was then unreachable for a different reason. The snapshot's own
+        comment predicted it would self-heal "until account_sync has
+        refreshed" — it cannot, because the refresh is always downstream.
+
+        Swallows every failure ON PURPOSE: a refresh that fails leaves the
+        snapshot exactly as it behaves today (hold the last known drawdown,
+        halt inert), which is the conservative direction. It must never take
+        the trading loop down.
+
+        Returns True when a refresh was actually performed.
+        """
+        if not self.account_sync:
+            return False
+        try:
+            await self.account_sync.refresh()
+            return True
+        except Exception as _nav_refresh_err:
+            logger.warning(
+                "[NAV] pre-snapshot equity refresh failed "
+                f"({type(_nav_refresh_err).__name__}: {_nav_refresh_err}); the "
+                "drawdown snapshot will hold its last known value and the halt "
+                "stays inert this tick"
+            )
+            return False
+
     def _update_drawdown_snapshot(self) -> Tuple[float, float]:
         """Refresh `_current_drawdown_pct` from account equity. Returns (equity, dd).
 
@@ -21698,6 +21741,10 @@ class HMATSProductionRunner:
                 # Periodic NAV/Drawdown snapshot (every round)
                 try:
                     # [P163] Shared with run_live — see _update_drawdown_snapshot.
+                    # [P351] Same staleness fix: without a refresh here the read
+                    # is one round old and the whole NAV block dies on an
+                    # AttributeError for `_peak_equity`, swallowed at DEBUG.
+                    await self._refresh_equity_for_nav()
                     current_equity, drawdown_pct = self._update_drawdown_snapshot()
 
                     logger.info(
@@ -22414,6 +22461,12 @@ class HMATSProductionRunner:
                 # Until this call existed, `_current_drawdown_pct` was never
                 # written in LIVE at all and they all read 0.0 forever.
                 try:
+                    # [P351] The snapshot's equity read FAIL-CLOSES above 120s and
+                    # the only other refresh runs later in this tick, so without
+                    # this the reading is always a full 4H bar stale and the halt
+                    # below can never fire. Failure here is swallowed and leaves
+                    # today's inert behaviour.
+                    await self._refresh_equity_for_nav()
                     _live_equity, _live_dd = self._update_drawdown_snapshot()
                     # [P201] getattr, not self._peak_equity: the snapshot now
                     # deliberately returns WITHOUT setting a peak when the equity
