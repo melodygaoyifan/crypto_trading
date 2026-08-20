@@ -104,3 +104,41 @@ class TestSeptemberKit:
         assert "Failure-of-everything" in doc, (
             "the all-fail branch must be pre-committed or it gets "
             "improvised under pressure")
+
+
+class TestBothReadsRun:
+    """[P332] september_check must run the POOLED read, not only per-asset.
+
+    P293g measured that an unpooled 30-day window cannot certify at 16h (needs
+    IC >= 0.302 against an economic bar of ~0.13), so a per-asset-only exam is
+    a clock that cannot fire — on the reads this entire roster is waiting for.
+    P299 built --pool-assets and nothing called it (P170).
+    """
+
+    def _src(self):
+        import io
+        from pathlib import Path
+        return io.open(Path(__file__).resolve().parents[1] / "scripts" /
+                       "september_check.py", encoding="utf-8").read()
+
+    def test_the_pooled_read_is_actually_invoked(self):
+        assert '"--pool-assets"' in self._src()
+
+    def test_the_per_asset_read_survives_as_diagnosis(self):
+        """Swapping one for the other would lose the per-asset breakdown that
+        P307c needed to explain two labs that appeared to disagree."""
+        src = self._src()
+        assert src.count("analytics.shadow_ic.compute_shadow_ic") >= 2
+
+    def test_a_refusal_in_either_read_is_a_refusal(self):
+        """A missing pooled read must not hide behind a healthy per-asset one
+        (P199, one level up)."""
+        assert "return rc_asset or rc_pooled" in self._src()
+
+    def test_the_decision_tree_states_which_read_governs(self):
+        import io
+        from pathlib import Path
+        doc = io.open(Path(__file__).resolve().parents[1] / "docs" /
+                      "SEPTEMBER_DECISION_TREE.md", encoding="utf-8").read()
+        assert "WHICH READ GOVERNS" in doc
+        assert "POOLABLE_FAMILIES" in doc

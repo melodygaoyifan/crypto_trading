@@ -166,10 +166,43 @@ def build_breadth_ohlcv() -> int:
 
 
 def run_scorer(window_days: int) -> int:
-    return _run([sys.executable, "-X", "utf8", "-m",
-                 "analytics.shadow_ic.compute_shadow_ic",
-                 "--ledger-dir", str(LEDGER_DIR),
-                 "--window-days", str(window_days)])
+    """[P332] Score BOTH ways: per-asset for diagnosis, POOLED for the verdict.
+
+    Until now this ran the per-asset read only, and P293g measured that such a
+    read CANNOT certify at the 16h horizon inside a 30-day window: it needs
+    IC >= 0.302 where the economic bar is ~0.13. So every 16h September verdict
+    would have been computed on a clock that cannot fire — the P174 shape, on
+    the reads the whole roster is waiting for. P299 built --pool-assets for
+    exactly this and nothing wired it in (P170: a mechanism nothing calls).
+
+    Measured on the pulled ledgers the day this landed, pooling roughly triples
+    n: ma_filtered 116 -> 348, regimebook 101 -> 573, regimebook_adj -> 300.
+
+    BOTH are printed rather than swapping one for the other, because they
+    answer different questions and only one of them can be a verdict:
+      * POOLED governs promote/kill for a POOLABLE family (declared same-rule,
+        standardized per asset before pooling — P299).
+      * PER-ASSET is diagnosis: it shows WHERE a family works, which is what
+        P307c needed to explain two labs that appeared to disagree.
+    """
+    rc_asset = _run([sys.executable, "-X", "utf8", "-m",
+                     "analytics.shadow_ic.compute_shadow_ic",
+                     "--ledger-dir", str(LEDGER_DIR),
+                     "--window-days", str(window_days)])
+    print("")
+    print("=" * 74)
+    print("  POOLED READ — this is the one the P166 gate can fire on for a")
+    print("  POOLABLE family; the per-asset table above is diagnosis (P299).")
+    print("=" * 74)
+    rc_pooled = _run([sys.executable, "-X", "utf8", "-m",
+                      "analytics.shadow_ic.compute_shadow_ic",
+                      "--ledger-dir", str(LEDGER_DIR),
+                      "--window-days", str(window_days),
+                      "--pool-assets"])
+    # A refusal in EITHER read is a refusal: a missing pooled read must not be
+    # invisible behind a healthy per-asset one (P199 — "no data" is not "no
+    # signal", one level up).
+    return rc_asset or rc_pooled
 
 
 def run_tripwire() -> int:

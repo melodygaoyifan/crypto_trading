@@ -19,6 +19,29 @@ overlap-corrected |t| ≥ 2, expected edge ≥ 2× round-trip cost. No candidate
 promotes on backtest, trajectory reads, or partial windows — that is the
 mistake this project has paid for twice (P147, P198).
 
+**WHICH READ GOVERNS — decided 2026-08-20, BEFORE any read (P332).** This was
+unspecified until now, and `september_check.py` ran the per-asset read only.
+That would have decided the whole roster on a clock that cannot fire: P293g
+measured that a 30-day window can certify only IC ≥ 0.302 at the 16h horizon,
+against an economic bar of ~0.13. P299 built `--pool-assets` for exactly this
+and nothing had wired it in.
+
+* For a family in `POOLABLE_FAMILIES` (declared same-rule, standardized per
+  asset before pooling), the **POOLED** read governs promote/kill. Measured on
+  the 2026-08-20 ledgers, pooling roughly triples n — ma_filtered 116 → 348,
+  regimebook 101 → 573, regimebook_adj → 300.
+* For any other family the **per-asset** read governs; merging genuinely
+  per-asset claims is the P294 defect.
+* The per-asset table is printed either way and is **diagnosis**: it shows
+  WHERE a family works, which is what P307c needed to reconcile two labs that
+  appeared to disagree. It cannot by itself promote a poolable family, and a
+  pooled PASS with a per-asset breakdown that is positive on one asset and
+  negative on the others is an era/asset-fragility finding to record, not a
+  reason to promote (P243/P244).
+
+Fixing this after seeing a verdict would be a goalpost move; that is why it is
+decided here, 18–27 days before the earliest read.
+
 ---
 
 ## ~Aug 28 — the mlp early-seat criterion (P285, operator-adopted 2026-08-16)
