@@ -98,7 +98,7 @@ REGISTRY: Tuple[Calibration, ...] = (
             "DATA moved or the CONVENTION did (P326)."),
     ),
     Calibration(
-        symbol="core.cde_fees.CDE_FEE_PER_CONTRACT_USD",
+        symbol="core.cde_fees.CDE_FEE_BPS",
         measured_on="2026-08-19",
         producer=("python -X utf8 scripts/fill_quality_review.py "
                   "  # reads data/fill_quality.jsonl (>=20 filled legs/asset)"),

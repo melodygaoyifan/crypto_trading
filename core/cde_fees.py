@@ -78,18 +78,48 @@ _MEASURED_ON = "2026-08-19"
 _MEASURED_BY = "data/fill_quality.jsonl via scripts/fill_quality_review.py (P290/P315)"
 
 
-CDE_FEE_PER_CONTRACT_USD: Dict[str, Dict[str, float]] = {
-    "BTC": {"maker": 0.603, "taker": 0.635},
-    "ETH": {"maker": 0.264, "taker": 0.264 * _BTC_TAKER_OVER_MAKER},
-    "SOL": {"maker": 0.635, "taker": 0.635},
+# [P334] CORRECTED MODEL: per-asset BPS OF NOTIONAL, not flat dollars.
+#
+# P315 concluded the fee is a flat ~$0.60/contract. That rested on 5 BTC fills
+# and 1 ETH fill spanning almost NO price range (BTC 64.1k-64.3k), which cannot
+# distinguish a flat dollar fee from a percentage. With ~8% of price variation
+# now available the flat model FAILS and the percentage model fits:
+#
+#     asset  source                px        notional   fee$    fee_bps
+#     BTC    fill  (maker)         64,105      641.05   0.601      9.38
+#     BTC    fill  (taker)         64,330      643.30   0.635      9.87
+#     BTC    PREVIEW 2026-08-20    69,280      692.80   0.670      9.67
+#     ETH    fill  (maker)          1,916      191.65   0.264     13.78
+#     ETH    PREVIEW 2026-08-20     2,252      225.23   0.300     13.32
+#     SOL    PREVIEW 2026-08-20        84.44   422.20   0.460     10.90
+#
+# The discriminator is the only within-asset price move we have: BTC price
+# +7.7%, fee +5.5%. A flat fee predicts +0.0%; a percentage predicts +7.7%.
+# bps are stable per asset across that move; dollars per contract are not.
+CDE_FEE_BPS: Dict[str, Dict[str, float]] = {
+    # highest measured value for each asset/side (P167)
+    "BTC": {"maker": 9.38, "taker": 9.87},
+    "ETH": {"maker": 13.78, "taker": 13.78 * _BTC_TAKER_OVER_MAKER},
+    # SOL still has NO FILL. A venue PREVIEW quotes 10.90bps, which is why the
+    # assumption below is now known-conservative rather than arbitrary — but a
+    # quote is not a fill, so the value stays at the worst measured figure and
+    # the provenance still says ASSUMED (P315's revision rule: LOWER only on
+    # >=20 filled legs).
+    "SOL": {"maker": 0.0, "taker": 0.0},      # filled in below
 }
 
 # Assets whose fee is ASSUMED rather than measured — surfaced, not hidden.
 CDE_FEE_ASSUMED = frozenset({"SOL"})
 
-# The most expensive measured per-contract fee, used for anything unknown.
-_WORST_PER_CONTRACT = max(
-    max(v["maker"], v["taker"]) for v in CDE_FEE_PER_CONTRACT_USD.values())
+# The most expensive measured fee in bps, used for anything unknown.
+_WORST_BPS = max(max(v["maker"], v["taker"])
+                 for a, v in CDE_FEE_BPS.items() if a not in CDE_FEE_ASSUMED)
+for _a in CDE_FEE_ASSUMED:
+    CDE_FEE_BPS[_a] = {"maker": _WORST_BPS, "taker": _WORST_BPS}
+
+# The venue's own preview quote for SOL, recorded so the assumption above is
+# auditable as conservative rather than merely large. NOT used for pricing.
+CDE_FEE_BPS_VENUE_QUOTE: Dict[str, float] = {"SOL": 10.90}
 
 
 def _contract_sizes() -> Dict[str, float]:
@@ -110,7 +140,7 @@ def _contract_sizes() -> Dict[str, float]:
         # absence, not an exception.
         pids = SYMBOL_MAP.get("coinbase", {}).get("perp", {})
         table = CoinbaseAdapter._CONTRACT_SIZE_FALLBACK
-        for asset in CDE_FEE_PER_CONTRACT_USD:
+        for asset in CDE_FEE_BPS:
             cs = table.get(pids.get(asset, ""))
             if cs:
                 out[asset] = float(cs)
@@ -149,15 +179,20 @@ def cde_fee_bps(asset: str, price: float, *, is_maker: bool,
     if not cs or cs <= 0:
         return None
 
-    sched = CDE_FEE_PER_CONTRACT_USD.get(a)
-    if sched is None:
-        per_ct, prov = _WORST_PER_CONTRACT, f"assumed_worst_unknown_asset:{a}"
-    else:
-        per_ct = sched["maker" if is_maker else "taker"]
-        prov = ("assumed_no_measured_fill" if a in CDE_FEE_ASSUMED
-                else "measured_fill_quality")
-
     notional_per_contract = cs * px
     if notional_per_contract <= 0:
         return None
-    return (per_ct / notional_per_contract) * 1e4, prov
+    # [P334] The price and contract size no longer enter the ARITHMETIC — the
+    # fee is a percentage — but they are still REQUIRED, and deliberately so:
+    # `core.seat_alpha.resolve_seat_edge` uses "can this asset be priced at
+    # all" as its effect-interlock (P321b), refusing the calibrated alpha
+    # whenever the fee side cannot price the asset. Dropping the price
+    # dependency here would silently make that interlock inert — a flag-based
+    # check that cannot tell "armed" from "took effect", which is the exact
+    # failure P321b exists to prevent. So this stays a liveness check.
+    sched = CDE_FEE_BPS.get(a)
+    if sched is None:
+        return _WORST_BPS, f"assumed_worst_unknown_asset:{a}"
+    prov = ("assumed_no_measured_fill" if a in CDE_FEE_ASSUMED
+            else "measured_fill_quality")
+    return sched["maker" if is_maker else "taker"], prov

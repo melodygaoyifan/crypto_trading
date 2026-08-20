@@ -34,7 +34,7 @@ sys.path.insert(0, str(REPO))
 
 from core.cde_fees import (  # noqa: E402
     CDE_FEE_ASSUMED,
-    CDE_FEE_PER_CONTRACT_USD,
+    CDE_FEE_BPS,
     _contract_sizes,
     cde_fee_bps,
 )
@@ -90,24 +90,37 @@ class TestReproducesMeasuredFills:
 
 class TestPerContractStructure:
 
-    def test_bps_cost_doubles_when_price_halves(self):
-        """This is why no bps constant can price six years: a flat fee on a
-        fixed-size contract is a rising % as price falls. At BTC $10k a 0.01
-        nano is ~$100 of notional, so $0.60 is ~60bps."""
-        hi = cde_fee_bps("BTC", 64000.0, is_maker=False)[0]
-        lo = cde_fee_bps("BTC", 32000.0, is_maker=False)[0]
-        assert lo == pytest.approx(hi * 2, rel=1e-6)
-        cheap = cde_fee_bps("BTC", 10000.0, is_maker=False)[0]
-        assert cheap > 50.0, "a $10k BTC nano contract must price above 50bps"
+    def test_the_fee_is_PRICE_INVARIANT(self):
+        """[P334] THE CORRECTION, reversing this class original claim.
 
-    def test_smaller_notional_contract_is_more_expensive_in_bps(self):
-        """ETH nano ($192 notional) costs more in bps than BTC nano ($644),
-        even though its per-contract fee is LOWER in dollars."""
-        btc = cde_fee_bps("BTC", 64435.0, is_maker=True)[0]
+        P315 read the fee as flat dollars per contract from 5 fills spanning
+        64.1k-64.3k -- no price range at all, so flat and percentage were
+        indistinguishable. With ~8% now available the flat model FAILS: BTC
+        price +7.7%, fee +5.5% (flat predicts +0.0%, percentage +7.7%); bps
+        are stable per asset across that move while dollars per contract are
+        not. The test that lived here asserted bps DOUBLE when price halves,
+        which is the property this refutes.
+        """
+        for a, px in (("BTC", 64330.0), ("ETH", 1916.5), ("SOL", 84.44)):
+            lo = cde_fee_bps(a, px, is_maker=False)[0]
+            hi = cde_fee_bps(a, px * 3.0, is_maker=False)[0]
+            assert lo == pytest.approx(hi), a
+
+    def test_the_old_3bps_model_is_still_far_too_cheap(self):
+        """What SURVIVES: paper_fee_service prices Coinbase at 0/3bps and the
+        measured rate is ~9.4-9.9bps on BTC, ~13.8 on ETH. The MAGNITUDE of
+        P315 finding stands; its STRUCTURE did not."""
+        assert cde_fee_bps("BTC", 64330.0, is_maker=False)[0] > 9.0
+        assert cde_fee_bps("BTC", 64330.0, is_maker=True)[0] > 5.0
+
+    def test_eth_is_dearer_than_btc_in_bps(self):
+        """Still true, now for the right reason: the per-asset RATE differs
+        (ETH ~13.8bps vs BTC ~9.4bps). P315 attributed this to ETH smaller
+        nano notional, which was the wrong explanation for a real reading."""
         eth = cde_fee_bps("ETH", 1916.5, is_maker=True)[0]
-        assert CDE_FEE_PER_CONTRACT_USD["ETH"]["maker"] < \
-            CDE_FEE_PER_CONTRACT_USD["BTC"]["maker"]
+        btc = cde_fee_bps("BTC", 64435.0, is_maker=True)[0]
         assert eth > btc
+        assert CDE_FEE_BPS["ETH"]["maker"] > CDE_FEE_BPS["BTC"]["maker"]
 
 
 # =============================================================================
@@ -126,8 +139,8 @@ class TestFailDirections:
         got = cde_fee_bps("DOGE", 0.25, is_maker=False, contract_size=5000.0)
         assert got is not None
         worst = max(max(v["maker"], v["taker"])
-                    for v in CDE_FEE_PER_CONTRACT_USD.values())
-        assert got[0] == pytest.approx(worst / (5000.0 * 0.25) * 1e4)
+                    for v in CDE_FEE_BPS.values())
+        assert got[0] == pytest.approx(worst)
         assert "assumed" in got[1]
 
     def test_sol_is_flagged_as_assumed_not_measured(self):
@@ -140,7 +153,7 @@ class TestFailDirections:
             "measured_fill_quality"
 
     def test_taker_is_never_cheaper_than_maker(self):
-        for a, sched in CDE_FEE_PER_CONTRACT_USD.items():
+        for a, sched in CDE_FEE_BPS.items():
             assert sched["taker"] >= sched["maker"], a
 
 
@@ -251,26 +264,30 @@ class TestGateWiring:
 
 class TestLabPricing:
 
-    def test_lab_uses_a_price_dependent_series_not_a_constant(self):
-        import training.funding_legs_lab as L
-        assert hasattr(L, "per_leg_cost_series")
-        assert L.FEE_MODEL == "per_contract", (
-            "the lab has been switched back to the 3bps constant that "
-            "mis-priced the P297 certification")
-
-    def test_lab_refuses_rather_than_silently_using_3bps(self):
-        """If the per-contract fee cannot be resolved, the lab must STOP.
-        Falling back to the constant is the defect it exists to correct."""
+    def test_lab_prices_a_CONSTANT_rate_not_a_price_dependent_one(self):
+        """[P334] Reversed. This asserted the series RISES as price falls,
+        which is the flat-fee property the correction refutes. The lab now
+        charges a constant per-asset rate, and the P315 re-pricing that
+        charged ~63bps/leg at BTC $10k must be re-run before it is cited."""
         import pandas as pd
         import training.funding_legs_lab as L
-        from core import cde_fees
-        saved = dict(cde_fees.CDE_FEE_PER_CONTRACT_USD)
-        try:
-            cde_fees.CDE_FEE_PER_CONTRACT_USD.clear()
-            with pytest.raises(SystemExit):
-                L.per_leg_cost_series("BTC", pd.Series([64000.0, 64100.0]))
-        finally:
-            cde_fees.CDE_FEE_PER_CONTRACT_USD.update(saved)
+        c = pd.Series([10000.0, 30000.0, 69000.0])
+        got = list(L.per_leg_cost_series("BTC", c))
+        assert got[0] == pytest.approx(got[1]) == pytest.approx(got[2])
+        assert 5e-4 < got[0] < 3e-3
+
+    def test_lab_refuses_rather_than_silently_using_3bps(self):
+        """If no MEASURED rate exists for the asset, the lab must STOP.
+
+        [P334] The refusal now also covers the unknown-asset fallback: that
+        path always returns a number (the worst measured rate), so a
+        None-only check would be unreachable — a dead guard reads exactly
+        like one that never fires (P174). Pricing six years of one asset on
+        another asset's fee is the same fabrication as the 3bps constant."""
+        import pandas as pd
+        import training.funding_legs_lab as L
+        with pytest.raises(SystemExit):
+            L.per_leg_cost_series("DOGE", pd.Series([0.25, 0.26]))
 
     def test_legacy_mode_still_reproduces_the_old_constant(self):
         """Kept so the P297 run can be reproduced exactly — a verdict whose

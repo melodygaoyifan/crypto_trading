@@ -248,5 +248,5 @@ class TestTheRegistryIsNotACopy:
 
     def test_resolve_reads_the_live_module(self):
         import core.cde_fees as m
-        cal = by_symbol("core.cde_fees.CDE_FEE_PER_CONTRACT_USD")
-        assert resolve(cal) is m.CDE_FEE_PER_CONTRACT_USD
+        cal = by_symbol("core.cde_fees.CDE_FEE_BPS")
+        assert resolve(cal) is m.CDE_FEE_BPS

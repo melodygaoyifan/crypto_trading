@@ -113,7 +113,7 @@ def per_leg_cost_bps(asset: str) -> float:
 # is flat its bps cost moves INVERSELY with price: at BTC $10k a 0.01 nano
 # contract is ~$100 of notional, so the same $0.60 is ~60bps. No single bps
 # constant can price six years of history — hence a per-bar SERIES.
-FEE_MODEL = "per_contract"          # "legacy_3bps" reproduces the P297 run
+FEE_MODEL = "venue_bps"             # "legacy_3bps" reproduces the P297 run
 
 
 def per_leg_cost_series(asset: str, closes):
@@ -123,17 +123,32 @@ def per_leg_cost_series(asset: str, closes):
     if FEE_MODEL == "legacy_3bps":
         return pd.Series(half_spread + COINBASE_TAKER_FEE_BPS / 1e4,
                          index=closes.index)
-    from core.cde_fees import CDE_FEE_PER_CONTRACT_USD, _contract_sizes
+    # [P334] The fee is a PERCENTAGE of notional, not flat dollars per
+    # contract — so it is price-INVARIANT and the series is constant. P315
+    # read it as flat from 5 fills spanning 64.1k-64.3k, which cannot tell the
+    # two apart; ~8% of price range now available refutes the flat model.
+    #
+    # CONSEQUENCE FOR THIS LAB, stated because it is large: the P315 re-pricing
+    # charged a flat $0.635/contract across BTC $10k-$69k, i.e. ~63bps/leg in
+    # the early years against a true ~9.9. Every number that run produced
+    # (book 243.90 -> 144.50, cost 32.56% -> 131.96%, "both certified
+    # strategies LOSE to buy-and-hold") is priced on the refuted model and
+    # must be RE-RUN before it is cited again.
+    from core.cde_fees import cde_fee_bps
     a = asset.upper()
-    per_ct = CDE_FEE_PER_CONTRACT_USD.get(a, {}).get("taker")
-    cs = _contract_sizes().get(a)
-    if not per_ct or not cs:
+    quote = cde_fee_bps(a, 1.0, is_maker=False, contract_size=1.0)
+    # Refuse on None (unpriceable) AND on the unknown-asset fallback: for a
+    # six-year backtest, silently charging ANOTHER asset's worst rate is the
+    # same fabrication the 3bps constant was (P2/P167). Checking only for None
+    # would leave this branch unreachable, since the fallback always returns a
+    # number — a dead guard reads exactly like a guard that never fires (P174).
+    if quote is None or "unknown_asset" in quote[1]:
         raise SystemExit(
-            f"[P315] no per-contract fee/contract size for {a}. Refusing to "
-            f"fall back to the 3bps constant silently — that is the defect "
-            f"this model exists to correct (P167: never undercharge).")
-    fee_frac = per_ct / (cs * closes.astype(float))
-    return half_spread + fee_frac
+            f"[P334] no measured fee rate for {a} "
+            f"({'unpriceable' if quote is None else quote[1]}). Refusing to "
+            f"price six years on another asset's fee or the 3bps constant "
+            f"(P167: never undercharge).")
+    return pd.Series(half_spread + quote[0] / 1e4, index=closes.index)
 
 
 # =============================================================================
