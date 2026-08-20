@@ -19,6 +19,7 @@ import asyncio
 import inspect
 import json
 import sys
+import io
 from pathlib import Path
 
 import pytest
@@ -532,7 +533,14 @@ class TestDeployGateP253b:
                 encoding="utf-8").splitlines())
         # 0a: the deployed sha is origin/main and its CI conclusions are read
         assert "git ls-remote origin refs/heads/main" in src
-        assert "actions/runs?head_sha=" in src
+        # [P344] The API query moved into tools/ci_status.py (ONE
+        # implementation). The PROPERTY is unchanged and is asserted
+        # where it now lives: the deploy passes the DEPLOYED sha to the
+        # tool, and the tool queries that sha.
+        assert '--sha "${DEPLOY_SHA}"' in src
+        tool = io.open(REPO / "tools" / "ci_status.py",
+                       encoding="utf-8").read()
+        assert "actions/runs?head_sha=" in tool
         assert "HMATS_DEPLOY_SKIP_CI_CHECK" in src, (
             "the emergency override is gone — an API outage would then "
             "permanently block deploys")

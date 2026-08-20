@@ -63,16 +63,39 @@ def scratch_worktree(ref: str, repo: Optional[Path] = None,
             remove(tmp, repo=repo)
 
 
-def remove(path: Path, repo: Optional[Path] = None) -> None:
-    """Remove a worktree this module created. Refuses anything else."""
+def remove(path: Path, repo: Optional[Path] = None) -> bool:
+    """Remove a worktree this module created. Refuses anything else.
+
+    Returns False and says so LOUDLY rather than raising: this runs inside a
+    `finally`, so raising would replace whatever exception the caller was
+    already handling. But it must not be silent -- a cleanup that cannot
+    report its own failure is how the leak becomes invisible (P160), and on
+    Windows a worktree holding a live file handle (a mypy cache, say) is a
+    real way for `git worktree remove` to fail.
+    """
     repo = Path(repo or Path(__file__).resolve().parents[1])
     path = Path(path)
     if path.resolve() == repo.resolve():
         raise WorktreeError(
             "refusing to remove the repository itself -- this helper only "
             "removes scratch worktrees it created")
-    _git("worktree", "remove", "--force", str(path), cwd=repo)
+    r = _git("worktree", "remove", "--force", str(path), cwd=repo)
     _git("worktree", "prune", cwd=repo)
+    # git prints forward slashes even on Windows, so compare as PATHS --
+    # a string compare here silently reports every failed removal as a success
+    still_listed = False
+    for p_listed, _ in list_worktrees(repo):
+        try:
+            still_listed = still_listed or Path(p_listed) == path
+        except (OSError, ValueError):  # noqa: silent-swallow -- best effort
+            pass
+    if r.returncode != 0 and still_listed:
+        print("WARNING: could not remove scratch worktree " + str(path) +
+              ": " + (r.stderr.strip()[:200] or "git said nothing") +
+              " -- remove it by hand: git worktree remove --force " +
+              str(path), file=sys.stderr)
+        return False
+    return True
 
 
 def list_worktrees(repo: Optional[Path] = None) -> list:

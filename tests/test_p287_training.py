@@ -325,11 +325,28 @@ class TestGmmProvenance:
 
 class TestDeployScriptCiCheck:
     def test_first_match_per_workflow_wins(self):
-        src = read_source(HDS)
-        assert "if n in need and n not in got:" in src, (
+        """[P344] The parser moved into tools/ci_status.py (ONE
+        implementation). The property is unchanged and is now asserted
+        BEHAVIOURALLY rather than as a source substring, which is strictly
+        stronger: a substring cannot tell live code from dead (P234/P320)."""
+        import sys as _sys
+        _sys.path.insert(0, str(REPO))
+        from tools.ci_status import GREEN, RED, classify
+
+        def _r(name, conclusion):
+            return {"name": name, "status": "completed",
+                    "conclusion": conclusion}
+
+        # newest-first: the RE-RUN failed. The old bug was an unconditional
+        # overwrite, which let the OLDEST (green) run win and deployed.
+        assert classify([_r("codebase-invariants", "failure"),
+                         _r("test-suite", "success"),
+                         _r("codebase-invariants", "success")]) [0] == RED, (
             "the CI-verdict parser overwrites per-workflow again — the API "
             "returns runs NEWEST-first, so the overwrite makes the OLDEST "
             "run win and a green-then-red re-run deploys")
+        assert classify([_r("codebase-invariants", "success"),
+                         _r("test-suite", "success")])[0] == GREEN
 
     def test_no_python_at_all_refuses(self):
         src = read_source(HDS)

@@ -188,6 +188,25 @@ class TestTheDeployUsesTheOneImplementation:
 
 
 class TestScratchWorktreeCannotLeak:
+    """These tests CREATE worktrees, so they must not depend on the code under
+    test to clean them up.
+
+    Found the hard way: the falsification probe that replaces the `finally`
+    with `pass` made the leak real, and the P328 harness restored the FILE
+    byte-identically while two worktrees survived in the temp dir -- a probe
+    that disables a cleanup leaks by construction, and file-level restore says
+    nothing about side effects. The fixture below is the mechanism.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _no_residue(self):
+        before = {p for p, _ in list_worktrees()}
+        try:
+            yield
+        finally:
+            for p, _ in list_worktrees():
+                if p not in before:
+                    remove(Path(p))
 
     def test_it_is_removed_on_the_happy_path(self):
         before = len(list_worktrees())
@@ -211,6 +230,31 @@ class TestScratchWorktreeCannotLeak:
         with pytest.raises(WorktreeError):
             remove(REPO)
         assert (REPO / ".git").exists()
+
+    def test_a_failed_removal_is_reported_not_swallowed(self, monkeypatch, capsys):
+        """A cleanup that cannot report its own failure is how a leak becomes
+        invisible (P160). On Windows a live file handle inside the worktree is
+        a real way for `git worktree remove` to fail."""
+        import tools.scratch_worktree as sw
+
+        class _Fail:
+            returncode = 1
+            stdout = ""
+            stderr = "fatal: worktree is dirty"
+
+        real_list = sw.list_worktrees
+        monkeypatch.setattr(sw, "_git", lambda *a, **k: _Fail())
+        monkeypatch.setattr(sw, "list_worktrees",
+                            lambda *a, **k: [("C:/nope", "abc")])
+        ok = sw.remove(Path("C:/nope"))
+        err = capsys.readouterr().err
+        assert ok is False
+        assert "could not remove" in err
+        # the message prints the NATIVE path, so compare it as one
+        assert str(Path("C:/nope")) in err
+        assert "git worktree remove --force" in err, (
+            "a cleanup failure must tell the operator how to finish it")
+        monkeypatch.setattr(sw, "list_worktrees", real_list)
 
     def test_a_bad_ref_raises_rather_than_yielding_an_empty_tree(self):
         with pytest.raises(WorktreeError):
