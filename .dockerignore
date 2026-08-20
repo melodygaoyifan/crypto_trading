@@ -39,6 +39,11 @@ scripts/
 # aged past its own horizon becomes a log line rather than a discovery
 # someone makes a year later (P315).
 !scripts/calibration_check.py
+# [P333] --countdown-only is pure date arithmetic (no ledgers, parquets or
+# network), so the ALARM half runs in-container on a cron while the exam
+# itself stays operator-local (P213). The September read dates otherwise
+# lived only in a doc and in a script nobody runs unless they remember.
+!scripts/september_check.py
 # [P295c] seat controller CLI — reads the attribution volume and the
 # regimebook ledgers, so it must run in-container (P213). Stdlib-only,
 # read-only, places no orders.

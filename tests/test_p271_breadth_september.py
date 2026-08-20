@@ -142,3 +142,62 @@ class TestBothReadsRun:
                       "SEPTEMBER_DECISION_TREE.md", encoding="utf-8").read()
         assert "WHICH READ GOVERNS" in doc
         assert "POOLABLE_FAMILIES" in doc
+
+
+class TestTheCountdownCanRaiseAnAlarm:
+    """[P333] The September read dates had no alarm.
+
+    The P237 trend tripwire is croned and shouts on its own date; the other
+    five (09-07 .. 09-16) lived only in a doc and in a script nobody runs
+    unless they remember. "A decision procedure that depends on someone
+    re-running a tool by hand quietly becomes never" is this repo's own finding
+    (P230) — it is why the P199 shadow-IC gate sat unrun for months.
+    """
+
+    SCRIPT = None
+
+    def _run(self, *args):
+        import subprocess
+        import sys
+        from pathlib import Path
+        repo = Path(__file__).resolve().parents[1]
+        return subprocess.run(
+            [sys.executable, "-X", "utf8",
+             str(repo / "scripts" / "september_check.py"), *args],
+            capture_output=True, text=True, encoding="utf-8", cwd=str(repo),
+            timeout=300)
+
+    def test_nothing_due_exits_zero(self):
+        r = self._run("--countdown-only", "--today", "2026-08-20")
+        assert r.returncode == 0, r.stdout[-400:]
+
+    def test_a_closed_window_exits_three_and_names_the_candidates(self):
+        r = self._run("--countdown-only", "--today", "2026-09-10")
+        assert r.returncode == 3
+        assert "READ(S) ARE DUE" in r.stdout
+        for name in ("regimebook", "derivflow", "ma_filter"):
+            assert name in r.stdout
+
+    def test_it_tells_the_reader_the_exam_does_not_run_itself(self):
+        """The alarm must not read as 'the read happened' — the scorer needs
+        the operator's parquets, and promotion is a human config change."""
+        r = self._run("--countdown-only", "--today", "2026-09-10")
+        assert "--window-days 30" in r.stdout
+        assert "P141" in r.stdout
+
+    def test_the_alarm_half_needs_no_data(self):
+        """It must run in-container, where there are no OHLCV parquets and no
+        pulled ledger dir — otherwise it cannot be croned at all."""
+        import sys as _s
+        from pathlib import Path as _P
+        _s.path.insert(0, str(_P(__file__).resolve().parent))
+        from _source_scan import code_only
+        # comments stripped: the block's own comment says "no pull, no refresh,
+        # no scoring", and a scanner that matches its own explanation is
+        # worthless (P177, and I hit it writing this test).
+        src = code_only(_P(__file__).resolve().parents[1] / "scripts" /
+                        "september_check.py")
+        i = src.index("if args.countdown_only:")
+        blk = src[i:i + 400]
+        for forbidden in ("pull_from_server", "run_scorer", "refresh_ohlcv"):
+            assert forbidden not in blk, forbidden

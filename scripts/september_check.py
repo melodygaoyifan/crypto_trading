@@ -211,8 +211,25 @@ def run_tripwire() -> int:
                  "--reports-dir", str(REPORTS_DIR)])
 
 
-def countdown() -> None:
-    today = datetime.now(timezone.utc).date()
+def countdown(return_due: bool = False, today_override=None):
+    """Print the per-candidate countdown; with `return_due`, report whether any
+    read is DUE.
+
+    [P333] Pure date arithmetic over the CANDIDATES table — no ledgers, no
+    parquets, no network — which is why it can run in-container while the rest
+    of this script cannot (the scorer needs the operator's OHLCV, P213).
+
+    That matters because the September reads had DATES and no alarm. The P237
+    trend tripwire is croned and shouts on its own date; the other five read
+    dates (09-07 through 09-16) lived only in a doc and in this script, which
+    nobody runs unless they remember to. "A decision procedure that depends on
+    someone re-running a tool by hand quietly becomes never" is this repo's own
+    finding (P230), and it is the reason the P199 shadow-IC gate sat unrun for
+    months.
+    """
+    today = (today_override
+             or datetime.now(timezone.utc).date())
+    due = []
     print("\n" + "=" * 74)
     print(f"  SEPTEMBER COUNTDOWN (today {today})   "
           f"decision tree: docs/SEPTEMBER_DECISION_TREE.md")
@@ -226,9 +243,26 @@ def countdown() -> None:
         read_s = datetime.fromordinal(read).date().isoformat()
         print(f"  {name:<16} {since:<13} {read_s:<14} "
               f"{max(0, left):<10} {action}")
+        if left <= 0:
+            due.append((name, read_s, action))
     print(f"  {'trend tripwire':<16} {'weekly crons':<13} {'2026-09-01':<14} "
           f"{max(0, datetime(2026, 9, 1).date().toordinal() - today.toordinal()):<10} "
           f"per-asset trend_assets removal (P237)")
+    if due:
+        print("")
+        print("!" * 74)
+        print(f"  {len(due)} READ(S) ARE DUE. They do NOT run themselves — the")
+        print("  scorer needs the operator's OHLCV parquets (P213). Run:")
+        print("      python -X utf8 scripts/september_check.py --window-days 30")
+        print("  then apply docs/SEPTEMBER_DECISION_TREE.md. Promotion is a")
+        print("  config change a human makes (P141); this only tells you the")
+        print("  window closed.")
+        for name, read_s, action in due:
+            print(f"    - {name}: read date {read_s} -> {action}")
+        print("!" * 74)
+    if return_due:
+        return due
+    return None
 
 
 def _final_rc(scorer_rc: int, tripwire_rc: int) -> int:
@@ -251,9 +285,22 @@ def main() -> int:
     ap.add_argument("--window-days", type=int, default=10,
                     help="scoring window (10 = weekly trajectory read; "
                          "30 = the P166 exam)")
+    ap.add_argument("--today", default=None,
+                    help="ISO date override (testing the DUE path)")
+    ap.add_argument("--countdown-only", action="store_true",
+                    help="[P333] print the countdown and exit 3 if any read is "
+                         "DUE; runs anywhere (no ledgers/parquets/network)")
     ap.add_argument("--no-pull", action="store_true",
                     help="score already-pulled ledgers")
     args = ap.parse_args()
+    if args.countdown_only:
+        # [P333] The alarm half: no pull, no refresh, no scoring — so it runs
+        # in-container on a cron. Exit 3 = a read window has CLOSED and a human
+        # must run the real exam; 0 = nothing due yet.
+        _t = (datetime.strptime(args.today, "%Y-%m-%d").date()
+              if args.today else None)
+        due = countdown(return_due=True, today_override=_t)
+        return 3 if due else 0
     if not args.no_pull:
         print("[1/5] pulling ledgers + reports from the server...")
         if not pull_from_server():
