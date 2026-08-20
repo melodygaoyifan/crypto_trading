@@ -70,6 +70,14 @@ logger = logging.getLogger("HMATS.CDEFees")
 #      measured per-contract fee (P167). One measured SOL fill closes this.
 _BTC_TAKER_OVER_MAKER = 0.635 / 0.603          # 1.0531, measured
 
+# [P327] MEASURED constant — registered in core.calibration_registry, which
+# carries the producer command, the source data, the staleness horizon and the
+# revision rule. P315 found this model wrong for the life of the system, and
+# nothing recorded when it had last been checked against a fill.
+_MEASURED_ON = "2026-08-19"
+_MEASURED_BY = "data/fill_quality.jsonl via scripts/fill_quality_review.py (P290/P315)"
+
+
 CDE_FEE_PER_CONTRACT_USD: Dict[str, Dict[str, float]] = {
     "BTC": {"maker": 0.603, "taker": 0.635},
     "ETH": {"maker": 0.264, "taker": 0.264 * _BTC_TAKER_OVER_MAKER},

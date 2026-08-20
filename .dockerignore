@@ -34,6 +34,11 @@ scripts/
 # reads the ledger + Kraken's PUBLIC OHLC endpoint; places no orders.
 !scripts/trend_regime_review.py
 !scripts/fill_quality_review.py
+# [P327] Reads only core/ + defense/ constants and the clock, so it runs
+# anywhere the engine runs; scheduled weekly so a measurement that has
+# aged past its own horizon becomes a log line rather than a discovery
+# someone makes a year later (P315).
+!scripts/calibration_check.py
 # [P295c] seat controller CLI — reads the attribution volume and the
 # regimebook ledgers, so it must run in-container (P213). Stdlib-only,
 # read-only, places no orders.

@@ -951,6 +951,20 @@ class OpportunityTriggerChecker:
 # ALPHA THRESHOLD GATING (v3.3-STABILIZED guarantee #3)
 # =============================================================================
 
+# [P327] MEASURED constant — registered in core.calibration_registry.
+# Provenance lives there (producer command, source data, staleness horizon and
+# revision rule) rather than in prose, because three separate incidents came
+# from a measurement whose derivation could not be re-run (P326), whose age was
+# invisible (P315), or whose source could not be questioned (P316).
+_MEASURED_ON = "2026-08-16"
+_MEASURED_BY = "scripts/coinbase_probe_stop_support.py (read-only CDE book probe, P289)"
+
+# [P289] FULL measured CDE spread, rounded UP (P167: a lookup failure or a
+# rounding choice must overcharge, never undercharge). The taker cost is the
+# HALF-spread; these are the full figures the friction model halves.
+CDE_SPREAD_BPS_MEASURED = {"BTC": 2.0, "ETH": 5.5, "SOL": 4.0}
+
+
 @dataclass
 class FrictionComponents:
     """
@@ -1028,7 +1042,10 @@ class FrictionComponents:
         # ABOVE the 30bps asserted-alpha ceiling, so this re-pricing does NOT
         # re-open ETH/SOL; only the P237 tripwire question can.
         if not self.CDE_SPREAD_BPS:
-            self.CDE_SPREAD_BPS = {"BTC": 2.0, "ETH": 5.5, "SOL": 4.0}
+            # [P327] one home for the measured values (P172). Copied, not
+            # aliased: this instance may be mutated per-venue at runtime and
+            # must never write back into the module-level measurement.
+            self.CDE_SPREAD_BPS = dict(CDE_SPREAD_BPS_MEASURED)
 
     def set_spread_venue(self, asset: str, venue: Optional[str]):
         """[P289] Remember which venue's book prices this asset's slippage.
