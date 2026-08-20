@@ -726,13 +726,54 @@ class ProfitMaxAdapter:
             phase_upper = phase.upper()
             
             if phase_upper == "EXHAUSTION":
-                # Check HTF alignment
+                # [P338] THREE cases, not two. `htf_trend_direction == 0` is
+                # NO READING, and it is the case that actually occurs: the key
+                # `htf_trend_direction` has NO PRODUCER anywhere in the tree
+                # (P174 recorded it as COPY_ONLY -- main.py:12497 relays a
+                # market_data key nothing writes), and its only fallback,
+                # `agent_signals["lead_lag_edge"]`, is a cross-exchange
+                # dislocation in bps rather than a daily trend and is itself
+                # frequently 0.
+                #
+                # With two branches, `is_aligned` was False whenever the
+                # reading was absent, so the "Counter-HTF" branch fired on
+                # EVERY exhaustion evaluation and stamped `htf_aligned: False`
+                # -- asserting a counter-trend position on the basis of a
+                # feature that does not exist. That is the P2/P223 collapse
+                # (a fabricated value is indistinguishable from a measured
+                # one) driving a live modulation, and it made the check
+                # unfalsifiable: it could never take its other branch.
+                #
+                # FAIL DIRECTION, stated because this is a LOOSENING vs the
+                # old behaviour (x0.7 -> x0.9) on the no-reading path: we
+                # cannot assert misalignment we never measured, so the
+                # unknown case takes the phase-generic exhaustion penalty and
+                # says so. The heavy counter-HTF penalty is preserved intact
+                # and becomes reachable the moment a real HTF producer
+                # exists. Measured inert on the venue that trades:
+                # conviction_multiplier reaches only `intent.quant_confidence`
+                # and execution_urgency only `core/execution_service.py`, both
+                # past the P152 early return -- so this changes no live order
+                # today, and would if the exposure channel is reconnected.
+                _htf_known = abs(float(htf_trend_direction or 0.0)) > 1e-9
                 is_aligned = (
                     (htf_trend_direction > 0 and direction > 0) or
                     (htf_trend_direction < 0 and direction < 0)
                 )
-                
-                if not is_aligned and self.config.exhaustion_requires_htf_alignment:
+
+                if not _htf_known:
+                    # No HTF reading at all -- neither aligned nor counter is
+                    # established. Phase-generic penalty; the absence is
+                    # RECORDED rather than relabelled as misalignment.
+                    result.conviction_multiplier *= 0.9
+                    result.breakdown["phase_filter"] = {
+                        "phase": phase,
+                        "htf_aligned": None,
+                        "htf_unknown": True,
+                        "htf_unknown_reason": "no htf_trend_direction producer",
+                        "penalty_applied": 0.1,
+                    }
+                elif not is_aligned and self.config.exhaustion_requires_htf_alignment:
                     # Counter-HTF in exhaustion: heavy penalty (NOT veto)
                     result.conviction_multiplier *= (1.0 - self.config.exhaustion_conviction_penalty)
                     result.execution_urgency *= 0.7

@@ -241,6 +241,45 @@ class TestFlipPersistHoldClassification:
         assert tgt == 0.0 and why.startswith("veto_flat")
 
 
+def _execution_service_stamped_reasons():
+    """[P338] The reasons `execute_intent_v2` returns, as the SLEEVE SEES THEM.
+
+    The P276 guard's corpus was main.py + integration_v36 + trade_gate, and
+    P287 widened it to profit_max_adapter + auto_recovery_gate. It never
+    included `core/execution_service.py` — the one file that MUTATES
+    `intent.veto_reason` in-tick (line ~1080) and the source of 23 further
+    reasons that reach the intent indirectly: main.py:~17053 stamps any
+    non-benign execution result onto `intent.veto_reason`, prefixing
+    "[EXECUTION] " when the reason is not already bracketed, and that is the
+    same object `_live_intents` hands the translator later in the loop.
+
+    So this models the ACTUAL path by which an execution reason becomes a
+    veto, rather than only the `veto_reason = "..."` assignment form the
+    original regex could see. The benign roster is IMPORTED from the producer
+    (P172) — restating it here is how the two would drift.
+    """
+    import re
+    from pathlib import Path
+    from tests._source_scan import code_only
+    from core.execution_service import BENIGN_EXEC_SKIP_REASONS
+
+    repo = Path(__file__).resolve().parents[1]
+    src = code_only(repo / "core" / "execution_service.py",
+                    strip_docstrings=True)
+    out = set()
+    _pat = '"reason"\\s*:\\s*f?"([^"]{2,})"'
+    for m in re.finditer(_pat, src):
+        lit = m.group(1).split("{")[0].strip()
+        if len(lit) < 4 or lit in BENIGN_EXEC_SKIP_REASONS:
+            continue
+        out.add(lit if lit.startswith("[") else f"[EXECUTION] {lit}")
+    assert len(out) >= 15, (
+        f"only {len(out)} execution reasons extracted — the regex stopped "
+        f"matching execute_intent_v2's returns (a guard that reads nothing "
+        f"passes on anything, P174)")
+    return out
+
+
 class TestVetoRosterCompleteness:
     """[P276] Every veto_reason WRITE SITE must be explicitly classified.
 
@@ -288,6 +327,14 @@ class TestVetoRosterCompleteness:
                          strip_docstrings=True)
         src += code_only(repo / "risk" / "auto_recovery_gate.py",
                          strip_docstrings=True)
+        # [P338] The blind spot that let 23 reasons default to LIQUIDATE:
+        # execute_intent_v2 mutates intent.veto_reason directly
+        # (EXPOSURE_BELOW_MINIMUM_VIABLE) AND supplies every reason main.py
+        # stamps onto the intent. Both forms are covered — this file for the
+        # assignment form, _execution_service_stamped_reasons() below for the
+        # returned-dict form.
+        src += code_only(repo / "core" / "execution_service.py",
+                         strip_docstrings=True)
         # excise the classification tuples themselves — a roster entry must
         # be justified by a REAL write site, not by its own definition
         src = re.sub(r"_SLEEVE_HOLD_VETOES\s*=\s*\([^)]*\)", "", src)
@@ -304,6 +351,8 @@ class TestVetoRosterCompleteness:
             f"only {len(lits)} veto literals extracted — the scan regex "
             f"stopped matching the corpus (a guard that reads nothing "
             f"passes on anything, P174)")
+        # [P338] the returned-dict form, stamped exactly as main.py stamps it
+        lits |= _execution_service_stamped_reasons()
         return lits
 
     def test_every_veto_write_site_is_classified(self):
@@ -394,6 +443,11 @@ class TestVetoStringCouplingDriftGuard:
         src += code_only(repo / "signals" / "profit_max_adapter.py",
                          strip_docstrings=True)
         src += code_only(repo / "risk" / "auto_recovery_gate.py",
+                         strip_docstrings=True)
+        # [P338] execute_intent_v2's reasons reach the intent via main.py's
+        # stamping site, so its source is a real write-site corpus for every
+        # roster member drawn from it.
+        src += code_only(repo / "core" / "execution_service.py",
                          strip_docstrings=True)
         # Excise the definition statements themselves.
         src = re.sub(r"_SLEEVE_HOLD_VETOES\s*=\s*\([^)]*\)", "", src)

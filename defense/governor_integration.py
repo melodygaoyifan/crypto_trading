@@ -117,8 +117,16 @@ class GovernorIntegration:
             self.config.enable_opportunity_budget = getattr(
                 flags, 'ENABLE_OPPORTUNITY_BUDGET_GOVERNOR', True
             )
+            # [P338] Default corrected True -> False to match the
+            # declaration. `configs/sota_flags.py` declares
+            # ENABLE_REGIME_TRANSITION_BUFFER = False; a getattr default of
+            # True meant that if the attribute ever went missing (a rename, a
+            # partial import) the governor would come up ENABLED -- the
+            # opposite of what the flags file says. A getattr default is a
+            # policy statement about the absent case, and it must agree with
+            # the declared value or it silently overrides it.
             self.config.enable_regime_transition = getattr(
-                flags, 'ENABLE_REGIME_TRANSITION_BUFFER', True
+                flags, 'ENABLE_REGIME_TRANSITION_BUFFER', False
             )
             self.config.enable_cascade_exhaustion = getattr(
                 flags, 'ENABLE_CASCADE_EXHAUSTION_GOVERNOR', True

@@ -716,6 +716,14 @@ class AuthorityFusionEngine:
         result.direction = decider_signal.direction
         
         # [FIX-L1] Base exposure from confidence, with configurable scale factor
+        # [P338] "configurable" is aspirational: `confidence_to_exposure_factor`
+        # has NO assignment anywhere in the tree, so this getattr has always
+        # resolved its 1.0 default and base_exposure is exactly
+        # decider_signal.confidence. Annotated rather than deleted -- the
+        # attribute is the seam a future config surface would use, and
+        # removing it would be a silent behaviour-preserving churn -- but it
+        # must not read as a knob somebody has set (the P307 no-effect-switch
+        # class, in the reader direction).
         _conf_to_exp_factor = getattr(self, 'confidence_to_exposure_factor', 1.0)
         base_exposure = decider_signal.confidence * _conf_to_exp_factor
         # [P293d option C] Baseline for the conviction ratio, captured BEFORE

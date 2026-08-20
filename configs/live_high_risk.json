@@ -293,7 +293,7 @@
     "short_mean_revert_strategies": ["mean_revert", "mean_reversion"]
   },
   "execution": {
-    "default_order_type": "LIMIT",
+    "_p338_note": "default_order_type ('LIMIT') removed 2026-08-20 (P338): zero consumers repo-wide, sitting among keys that ARE read (post_only, prefer_limit_orders, enable_maker_reprice) — so it read as configuring order type while controlling nothing. The real order-type decision is the P270 maker-first ladder in exchange/coinbase_sleeve.py (coinbase_maker_first) plus core/execution_service.py's urgency/prefer_limit branch on the dormant Kraken path.",
     "post_only": true,
     "market_fallback_enabled": true,
     "prefer_limit_orders": true,

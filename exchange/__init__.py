@@ -1,22 +1,34 @@
 """
 ================================================================================
-HMATS v5.3.0 - Exchange Module (SINGLE_EXCHANGE_MODE)
+HMATS - Exchange Module
 ================================================================================
 
-LOCKED CONFIGURATION:
-    ACTIVE_EXCHANGE: kraken
-    EXECUTION_VENUE: kraken ONLY
-    
-FROZEN (moved to legacy/data_only_exchanges/):
-    - binance (data bootstrap only - NOT for execution)
-    - deribit (DVOL data only - NOT for execution)
+[P338] THIS HEADER AND ITS BANNER WERE FALSIFIED ON 2026-06-13 AND STOOD.
 
-DO NOT:
-    - Add exchange routing/switching
-    - Add multi-venue order splitting
-    - Add cross-exchange arbitrage
-    - Import execution code from binance/deribit
-    - Route trades to DEX (Jupiter/Raydium/Orca) - monitoring only [P0-03]
+    They declared "EXECUTION_VENUE: kraken ONLY" and "DO NOT: Add exchange
+    routing/switching" -- printed to stdout on every import of the very
+    package that contains `coinbase_adapter.py`, `coinbase_sleeve.py`,
+    `routing.py` and `cutover.py`. Since the Phase B cutover the Coinbase US
+    perp sleeve has been the SOLE directional venue and Kraken has been
+    structurally flat (P152). Same class as the main.py header P239 corrected
+    ("SINGLE EXCHANGE MODE (LOCKED): Kraken ONLY", falsified for two months)
+    -- a mitigation applied to one instance of a class is not applied to the
+    class (P171/P226).
+
+EXECUTION VENUES (current):
+    - Coinbase Derivatives Exchange US perps -- the SOLE directional driver
+      (exchange/coinbase_sleeve.py, driven from main.py run_live).
+    - Kraken spot/margin -- structurally flat since 2026-06-13; P152 skips
+      every NEW entry for a Coinbase-routed asset, so this path can only ever
+      unwind legacy spot, of which there is none.
+
+DATA-ONLY (never execution):
+    - binance (bootstrap/flow data), deribit (DVOL/options data)
+
+STILL PROHIBITED, and actually enforced:
+    - Routing trades to a DEX (Jupiter/Raydium/Orca) -- monitoring only.
+      The enforcement lives in `core/exchange_guard.assert_not_dex_execution`,
+      which does NOT read the module constants below.
 ================================================================================
 """
 
@@ -28,9 +40,16 @@ logger = logging.getLogger(__name__)
 # SINGLE EXCHANGE MODE ENFORCEMENT (LOCKED)
 # ============================================================================
 
-SINGLE_EXCHANGE_MODE = True
-ACTIVE_EXCHANGE = "kraken"
-FROZEN_EXCHANGES = ["binance", "deribit"]  # Moved to legacy/data_only_exchanges/
+# [P338] These three have ZERO readers anywhere in the tree (verified by
+# grep across every production package): the real DEX prohibition is
+# enforced by core/exchange_guard.py, which never consults them. They are
+# KEPT rather than deleted because removing a module-level export is a
+# contract change, and annotated so the next reader does not mistake them
+# for live configuration. ACTIVE_EXCHANGE in particular is NOT the venue
+# that executes -- see the header.
+SINGLE_EXCHANGE_MODE = True          # unread; see core/exchange_guard.py
+ACTIVE_EXCHANGE = "kraken"           # unread; NOT the directional venue
+FROZEN_EXCHANGES = ["binance", "deribit"]  # unread; data-only exchanges
 
 # ============================================================================
 # KRAKEN EXPORTS (CANONICAL)
@@ -58,14 +77,15 @@ def print_exchange_banner():
     """Print single exchange mode banner at startup."""
     banner = """
 ============================================================
-[LOCK] SINGLE_EXCHANGE_MODE=ON
-   Active Exchange: KRAKEN
-   Frozen Exchanges: binance, deribit (moved to legacy/)
-   Execution Venue: KRAKEN ONLY
+[EXCHANGE] Directional venue: COINBASE US PERPS (sole driver)
+   Kraken: structurally flat since 2026-06-13 (P152) - unwind only
+   Data-only: binance, deribit
+   DEX execution: BLOCKED (core/exchange_guard.py)
 ============================================================
 """
     print(banner)
-    logger.info("[EXCHANGE] SINGLE_EXCHANGE_MODE=ON Active=KRAKEN")
+    logger.info("[EXCHANGE] directional=COINBASE_PERPS kraken=FLAT_UNWIND_ONLY "
+                "dex=BLOCKED")
 
 # Auto-print on import
 print_exchange_banner()

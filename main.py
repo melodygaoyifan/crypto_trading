@@ -1424,6 +1424,16 @@ _LATE_CONFIG_KEYS = {
     "profit_max_regime_quality_enabled": ("profit_max", "regime_quality_enabled"),
     "profit_max_transition_risk_enabled": ("profit_max", "transition_risk_enabled"),
     "profit_max_phase_filter_enabled": ("profit_max", "phase_filter_enabled"),
+    # [P338] The 13th profit_max key. P313 extended this roster from 3/12 to
+    # 12/12 and this one was missed on both halves: it was neither parsed
+    # here NOR passed into ProfitMaxConfig(...) below, while the adapter has
+    # an exact counterpart (`exhaustion_requires_htf_alignment`) that IS
+    # consumed at signals/profit_max_adapter.py:~735. So the field existed,
+    # read as configurable, and controlled nothing — the P307
+    # no-effect-switch class. Behaviour-neutral (both defaults are True), but
+    # it is the only switch that can turn off the EXHAUSTION HTF branch.
+    "profit_max_exhaustion_requires_htf_alignment": (
+        "profit_max", "exhaustion_requires_htf_alignment"),
     "profit_max_loss_streak_enabled": ("profit_max", "loss_streak_enabled"),
     "profit_max_funding_bias_enabled": ("profit_max", "funding_bias_enabled"),
     "profit_max_extreme_funding_threshold": ("profit_max", "extreme_funding_threshold"),
@@ -2531,7 +2541,67 @@ _SLEEVE_HOLD_VETOES = ("EXPOSURE_DELTA_BELOW_THRESHOLD", "FLIP_PERSIST_HOLD",
                        # the thing that realizes the loss). Exits still flow
                        # through every other path (signal flatten, venue
                        # stop, FastRisk, FORCE_FLAT, fuse).
-                       "[FALSE_BREAKOUT_VETO]", "[LOSS_STREAK_HALT]")
+                       "[FALSE_BREAKOUT_VETO]", "[LOSS_STREAK_HALT]",
+                       # [P338] ENTRY-QUALITY GATES, moved here from the
+                       # flatten roster. All three fire ONLY on a new entry
+                       # and each one was liquidating a HELD sleeve position:
+                       #   * "[VETO]"        BitBeast 3-in-1 (SNR / volume /
+                       #                     structure-breakout), main.py:~13661
+                       #   * "[OP_BUDGET]"   concurrent-OPPORTUNITY budget
+                       #   * "[GAMBLER_GATE]" gated on tranche_target == 1
+                       # The mechanism is worth stating because it is not
+                       # obvious from the guards: they decide "is this a NEW
+                       # entry?" from `position_state["current_exposure"]`,
+                       # which `_get_effective_position_state` sources in LIVE
+                       # from `market_data`, which the pipeline fills from
+                       # `_paper_positions` — the KRAKEN book, {} since the
+                       # 2026-06-13 flatten. So for a routed asset it is
+                       # structurally 0.0 no matter what the Coinbase sleeve
+                       # holds, every actionable tick reads as a new entry
+                       # even while a position is open, and a rejection then
+                       # market-flattened that position. An entry filter
+                       # acting as an exit engine — the exact category error
+                       # P287 fixed for [FALSE_BREAKOUT_VETO], in three more
+                       # guards. P275 recorded this Kraken-shaped position
+                       # state for the EXIT stack (dormant, harmless); nobody
+                       # traced it to the ENTRY gates, where it is not
+                       # dormant but wrong.
+                       #
+                       # HOLD is correct in BOTH cases and the guard keeps
+                       # its job: flat -> hold -> the entry is still blocked;
+                       # holding -> hold -> the position survives, with the
+                       # P197 venue stop still guarding it and every real
+                       # exit path (signal flatten, stop, FastRisk,
+                       # FORCE_FLAT, fuse) untouched.
+                       "[VETO]", "[OP_BUDGET]", "[GAMBLER_GATE]",
+                       # [P338] EXECUTION-LAYER reasons that mean "wait /
+                       # smaller / not THIS order", never "liquidate". These
+                       # reach the intent through main.py's ~:17053 stamping
+                       # site, which writes execute_intent_v2's `reason` onto
+                       # `intent.veto_reason` (prefixing "[EXECUTION] " when
+                       # it is not already bracketed) — the SAME object
+                       # `_live_intents` hands the sleeve translator later in
+                       # the same loop iteration. All 23 of that function's
+                       # rejection reasons were unclassified and defaulted to
+                       # veto_flat; measured by running every one through the
+                       # real translator, 23/23 FLATTEN.
+                       #
+                       # Most sit past the P152 early return and so are
+                       # unreachable while the Kraken book is empty — EXCEPT
+                       # "Invalid price" (execution_service.py:608), which is
+                       # BEFORE it: an unreadable current_price on an
+                       # actionable tick liquidated the perp book. That is
+                       # the P265b data-integrity class, through a door P265b
+                       # did not enumerate.
+                       "Verify mode", "Invalid price",
+                       "EXPOSURE_BELOW_MINIMUM_VIABLE",
+                       "No active position quantity available",
+                       "[BUGFIX H3] Invalid quantity:",
+                       "[REBUILD_COOLDOWN]", "min hold:",
+                       "per-asset rate limit:", "global rate limit:",
+                       "ADDON_BLOCKED", "[FLIP_GATE] alpha=",
+                       "[AUDIT M3] Below Kraken min:",
+                       "[V10S] DynamicSlicer:", "[PA_ABORT]")
 
 # [P265] NO_TRADE subtypes that are DATA-integrity conditions (state unknown ->
 # HOLD), as opposed to market-risk conditions (flash crash, extreme DVOL,
@@ -2578,9 +2648,36 @@ _SLEEVE_FLATTEN_INTENDED_VETOES = (
     "[REGIME_POWER_NO_TRADE]", "Deadlock abort:", "[PROD] Tranche deadlock",
     "[PROD] HARD VETO:", "[PROD] SOFT VETO", "[VETO]", "[TRADE_GATE]",
     "[WEEKEND]", "[V10S] Weekend gross cap:", "[V6 SHORT FILTER]",
-    "[GAMBLER_GATE]", "[OP_BUDGET]", "[VC-5] Notional",
+    "[VC-5] Notional",
+    # [P338] "[GAMBLER_GATE]" and "[OP_BUDGET]" moved to _SLEEVE_HOLD_VETOES
+    # with "[VETO]" — see the entry-quality block there.
+    #
+    # [P338] The two [STRUCTURE] entries are kept, and it is worth recording
+    # WHY they can never fire for a routed asset rather than deleting them:
+    # main.py:~14138 takes the T1-bypass whenever `_existing_exp < 0.001`,
+    # and `_existing_exp` reads `_paper_positions` — the Kraken book, {}
+    # since 2026-06-13 — so every tick bypasses with a permanent x0.75 size
+    # haircut and the fractal-break veto is unreachable. That is the SAME
+    # Kraken-shaped position state as the entry-gate block above, pointing
+    # the other way: there it made an entry filter liquidate, here it makes a
+    # real control dormant. Making structure sleeve-aware would arm a
+    # never-executed decision path on a live account (P141), so it is
+    # recorded, not fixed.
     "[STRUCTURE] LONG blocked", "[STRUCTURE] SHORT blocked",
     "[PATCH-5]", "[THESIS_BUDGET_ERROR]",
+    # [P338] Execution-layer reasons where FLAT genuinely IS the intended
+    # posture — classified explicitly so they stop arriving at the
+    # translator's default. Same stamping path as the HOLD block above.
+    "[P0_FAIL_CLOSED]", "[DYN_GROSS_CAP]", "[V10] GlobalExposureCap:",
+    "[V10A] CascadeExhaustion:", "[DD_GRADIENT]", "[LEVERAGE_GUARD]",
+    "[P0_UNIT_SYSTEM]",
+    # [P338] review candidates, classified AS-CURRENT (flatten) deliberately
+    # because each is a MIXED bag and splitting it needs its own analysis:
+    "ExecutionGuard:",   # stale-data half is data-unknown (HOLD-shaped);
+                         # the DVOL / SOL-risk half is market risk (flatten)
+    "[AUTHORITY_CHAIN]",  # four stages: data guard, trade gate, risk
+                          # manager, leverage guard — only the first is
+                          # data-unknown
     # review candidates, classified AS-CURRENT (flatten) deliberately —
     # flipping semantics needs its own P-entry with the P253/P265b analysis:
     "[PATCH-1] Schema fail:",   # constitution schema fail: data-shaped, but
@@ -4499,6 +4596,11 @@ class HMATSProductionRunner:
                     enabled=self.config.profit_max_enabled,
                     regime_quality_enabled=self.config.profit_max_regime_quality_enabled,
                     phase_filter_enabled=self.config.profit_max_phase_filter_enabled,
+                    # [P338] the missing half of the wiring — without this the
+                    # dataclass default governed and the config field above
+                    # could never take effect.
+                    exhaustion_requires_htf_alignment=(
+                        self.config.profit_max_exhaustion_requires_htf_alignment),
                     loss_streak_enabled=self.config.profit_max_loss_streak_enabled,
                     funding_bias_enabled=self.config.profit_max_funding_bias_enabled,
                     extreme_funding_threshold=self.config.profit_max_extreme_funding_threshold,
