@@ -2277,6 +2277,9 @@ class ProductionConfig:
                 data.get("trend_min_abs_signal", 0.30) or 0.30),
             coinbase_whale_filter_enforce=bool(
                 data.get("coinbase_whale_filter_enforce", False)),
+            # [P352] sample-size floor for the whale veto
+            coinbase_whale_filter_min_whales=int(
+                data.get("coinbase_whale_filter_min_whales", 2)),
             # [P315] declared + parsed together (the P201 rule)
             coinbase_per_contract_fees=bool(
                 data.get("coinbase_per_contract_fees", False)),
@@ -3000,8 +3003,9 @@ def whale_direction_from_pressure(net_pressure):
     return 0.0
 
 
+# [P352] `evidence_ok` — see the body; default True keeps every caller identical.
 def sleeve_agent_filter_decision(current_contracts, raw_target, agent_dir,
-                                 agent_tag="agent"):
+                                 agent_tag="agent", evidence_ok=True):
     """[P293d] Generic confirming-agent disagreement filter for the sleeve.
 
     Extracted verbatim from `sleeve_ma_filter_decision` so a second filter
