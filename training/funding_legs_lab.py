@@ -370,8 +370,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     verdict = "PASS" if not blockers else "FAIL"
 
     print(f"\nVERDICT: funding legs {verdict}")
-    for b in blockers:
-        print(f"  blocker: {b}")
+    # [P339] `b` is bound as the era end (int | None) at the era loop above,
+    # so reusing it here as a str tripped mypy the moment an analytics
+    # module imported this lab and pulled it into CRITICAL_DIRS.
+    for _blocker in blockers:
+        print(f"  blocker: {_blocker}")
     if verdict == "FAIL":
         print("  => the BTC book should be TREND-ONLY (the P262-certified")
         print("     mechanism). This removes a component; it does not stop trading.")
