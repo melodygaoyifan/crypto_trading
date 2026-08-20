@@ -261,7 +261,7 @@ class TestTheDeployPreflightScansTheDeployedCommit:
         was piped through `head` took SIGPIPE partway through and left a full
         checkout behind, which then appears in `git worktree list` forever.
         The explicit remove is the happy path; the trap is the backstop."""
-        # [P329] the hand-rolled version of this check became
+        # [P330] the hand-rolled version of this check became
         # tests/_guard_pins.assert_live_line, so the next author who pins a
         # line in a shell script gets the non-commented requirement for free.
         sys.path.insert(0, str(REPO / "tests"))
@@ -274,7 +274,7 @@ class TestTheDeployPreflightScansTheDeployedCommit:
 
 
 class TestAssertLiveLine:
-    """[P329] The generic half of the guard-pin trap: in a shell script, YAML
+    """[P330] The generic half of the guard-pin trap: in a shell script, YAML
     or Dockerfile the cheapest defeat is a `#`, and `assert "<line>" in src`
     stays green over dead code. `assert_guard_live` cannot help — it needs a
     Python condition."""

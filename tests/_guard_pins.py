@@ -53,7 +53,7 @@ def assert_guard_live(src: str, condition: str, why: str = "") -> None:
          "guard %r is absent from the source. %s") % (cond, why))
 
 
-# [P329] The same trap in a file the AST cannot help with.
+# [P330] The same trap in a file the AST cannot help with.
 #
 # `assert_guard_live` needs a Python condition. Shell scripts, YAML and
 # Dockerfiles have guards too, and there the equivalent defeat is simply
@@ -65,7 +65,7 @@ def assert_guard_live(src: str, condition: str, why: str = "") -> None:
 # line it was meant to protect: shell long flags (`--force`, `--detach`) are
 # preceded by whitespace and look exactly like a SQL comment, so the pinned
 # text vanished and every guard read as dead. Caught by the falsification
-# harness within minutes — the same over-broad-detector mistake P329 had just
+# harness within minutes — the same over-broad-detector mistake P330 had just
 # fixed in the condition-pin scanner. A caller that genuinely needs `--` or
 # `REM` passes `markers=`.
 _COMMENT_PREFIXES = ("#", "//")
@@ -116,4 +116,4 @@ def assert_live_line(src: str, text: str, why: str = "",
     if not live:
         raise AssertionError(
             f"{text!r} appears only on COMMENTED lines — the pin would pass "
-            f"over dead code (P328b/P329). {why}".strip())
+            f"over dead code (P328b/P330). {why}".strip())

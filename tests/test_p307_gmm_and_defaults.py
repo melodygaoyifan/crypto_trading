@@ -252,7 +252,7 @@ _COND_PIN = re.compile(
 # for guards that are currently correct. So the roster is frozen instead: it
 # may SHRINK, never grow, and a new one sends its author to the fix that
 # works (extract the predicate into a pure function and CALL it).
-# [P329] 9 -> 7. The detector now requires the captured text to PARSE as a
+# [P330] 9 -> 7. The detector now requires the captured text to PARSE as a
 # condition, which removed two PROSE entries that were never pins at all
 # ("reconnect loop is armed"; the bare word "not"). No real pin was lost —
 # recall is asserted explicitly in TestTheConditionPinDetectorIsPrecise.
@@ -260,7 +260,7 @@ _ACCEPTED_COND_PINS = 7
 
 
 def _is_condition(text):
-    """[P329] Does `text` PARSE as a Python condition?
+    """[P330] Does `text` PARSE as a Python condition?
 
     The regex above is a cheap candidate finder, and alone it cannot tell a
     condition from prose containing an English word. Measured on its own
@@ -293,7 +293,7 @@ def _cond_pins():
         t = io.open(p, encoding="utf-8").read()
         for m in _COND_PIN.finditer(t):
             if not _is_condition(m.group(1)):
-                continue  # [P329] prose, not a condition
+                continue  # [P330] prose, not a condition
             out.append((p.name, t[:m.start()].count("\n") + 1, m.group(1)))
     return out
 
@@ -324,7 +324,7 @@ def test_the_accepted_count_is_not_stale():
 
 
 class TestTheConditionPinDetectorIsPrecise:
-    """[P329] The detector must catch real condition pins and leave prose alone.
+    """[P330] The detector must catch real condition pins and leave prose alone.
 
     RECALL is the direction that matters most: a detector that stops seeing
     real pins goes quiet, and quiet reads exactly like clean. Every string
