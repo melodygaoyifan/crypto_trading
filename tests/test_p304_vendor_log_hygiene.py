@@ -243,3 +243,47 @@ class TestOurOwnSiteDoesNotEmbedTheBlobEither:
             "the P265a refusal to substitute the FCM subset must survive")
         assert "NOT substituted" in src
         assert "FCM-ONLY SUBSET" in src
+
+
+class TestTheClassIsClosedNotJustTheInstance:
+    """[P331] P304 stripped the vendor's HTML from the SDK logger and from the
+    sleeve's EQUITY warning, and left the RECONCILE warning raw — so a 502 on
+    2026-08-20 03:09:07 still pasted a full Cloudflare page (~30 lines of
+    markup around one status code) into the operator's log.
+
+    A mitigation applied to one instance of a class is not applied to the class
+    — P171 for the BOM, P226 for the scanners, P323 for the timestamps, here
+    for the HTML. So this asserts EVERY warning in the sleeve that formats an
+    exception goes through the stripper, rather than pinning the one that was
+    found.
+    """
+
+    def _src(self):
+        import io
+        from pathlib import Path
+        return io.open(Path(__file__).resolve().parents[1] / "exchange" /
+                       "coinbase_sleeve.py", encoding="utf-8").read()
+
+    def test_every_logged_exception_in_the_sleeve_is_stripped(self):
+        import re
+        src = self._src()
+        # a logged f-string that interpolates the exception itself
+        raw = re.findall(r'logger\.\w+\([^)]*\{e\}[^)]*\)', src, re.S)
+        assert not raw, (
+            f"{len(raw)} log call(s) interpolate the raw exception, which "
+            f"carries the vendor's full HTML page on a 5xx. Route them "
+            f"through infra.vendor_log_hygiene.strip_html_body, as the "
+            f"equity and reconcile paths do. Offenders: "
+            f"{[r[:70] for r in raw[:3]]}")
+
+    def test_the_reconcile_path_specifically_strips(self):
+        src = self._src()
+        i = src.index("reconcile failed: ")
+        assert "_shb(str(e))" in src[max(0, i - 400):i + 200]
+
+    def test_the_stripper_keeps_the_useful_prefix(self):
+        from infra.vendor_log_hygiene import strip_html_body
+        out = strip_html_body(
+            "502 Server Error: Bad Gateway <html><body>junk</body></html>")
+        assert out.startswith("502 Server Error: Bad Gateway")
+        assert "junk" not in out

@@ -285,7 +285,23 @@ class CoinbaseSleeve:
             return out
         except Exception as e:
             self._reconcile_ok = False
-            logger.warning(f"[COINBASE_SLEEVE] reconcile failed: {type(e).__name__}: {e}; "
+            # [P331] Same treatment as the equity path below. P304 stripped the
+            # venue's HTML error page from the SDK logger and from the equity
+            # warning, and left THIS one — so a 502 still pasted a full
+            # Cloudflare page into the log (observed 2026-08-20 03:09:07, ~30
+            # lines of markup around one useful status code). A mitigation
+            # applied to one instance of a class is not applied to the class
+            # (P171 for the BOM, P226 for the scanners, P323 for timestamps).
+            try:
+                from infra.vendor_log_hygiene import strip_html_body as _shb
+            except Exception:  # noqa: silent-swallow — hygiene helper is optional; fall back to raw text
+                def _shb(msg: str) -> str:
+                    # signature must MATCH strip_html_body, or mypy flags the
+                    # conditional variants [misc] — and a fallback that does
+                    # not type like the thing it replaces is a latent bug too.
+                    return msg
+            logger.warning(f"[COINBASE_SLEEVE] reconcile failed: "
+                           f"{type(e).__name__}: {_shb(str(e))}; "
                            f"returning last snapshot")
             return dict(self._last_positions)
 
@@ -396,8 +412,11 @@ class CoinbaseSleeve:
             try:
                 from infra.vendor_log_hygiene import strip_html_body as _shb
             except Exception:  # noqa: silent-swallow — hygiene helper is optional; fall back to raw text
-                def _shb(x):
-                    return x
+                def _shb(msg: str) -> str:
+                    # signature must MATCH strip_html_body, or mypy flags the
+                    # conditional variants [misc] — and a fallback that does
+                    # not type like the thing it replaces is a latent bug too.
+                    return msg
             logger.warning(
                 f"[COINBASE_SLEEVE] portfolio equity fetch failed: "
                 f"{type(e).__name__}: {_shb(str(e))}")
