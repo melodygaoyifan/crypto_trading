@@ -446,6 +446,22 @@ def _score_cryptopanic_metrics(
 # LLM SENTIMENT AGENT
 # ============================================================================
 
+def _parse_regain_utc(msg: str) -> Optional[str]:
+    """[P329c] Pull the reset instant out of an Anthropic usage-limit message.
+
+    "You will regain access on 2026-09-01 at 00:00 UTC." -> "2026-09-01T00:00Z"
+
+    Returns None when the wording changes, and the caller then falls back to
+    its normal hard-disable cooldown — a parse failure must never degrade to
+    "retry immediately", which is the behaviour being fixed.
+    """
+    import re
+    m = re.search(r"regain access on (\d{4}-\d{2}-\d{2})(?:\s+at\s+(\d{2}:\d{2}))?", msg)
+    if not m:
+        return None
+    return f"{m.group(1)}T{m.group(2) or '00:00'}Z"
+
+
 class LLMSentimentAgent:
     """
     Per-asset sentiment via Anthropic Haiku + CryptoPanic.
@@ -615,6 +631,21 @@ class LLMSentimentAgent:
             _resp = getattr(err, "response", None)
             status_code = getattr(_resp, "status_code", None) if _resp is not None else None
         msg = str(err).lower()
+        # [P329c] A 400 carrying "you have reached your specified API usage
+        # limits" is a HARD-DATED account cap, not a malformed request:
+        #
+        #   400 invalid_request_error: You have reached your specified API
+        #   usage limits. You will regain access on 2026-09-01 at 00:00 UTC.
+        #
+        # 400 was in neither the non-retryable list nor the 429 branch, so it
+        # fell to the bare-warning `else` with NO backoff — retried once per
+        # asset per tick (~18 calls/day) for the whole capped period. That is
+        # P293b/P319 exactly: a quota exhaustion retried like a transient.
+        # Unlike P319 the reset is not guessed — the API states it — so the
+        # cooldown is sized from the message when it can be parsed.
+        if status_code == 400 and (
+                "usage limit" in msg or "regain access" in msg):
+            return 400, True, f"usage_limit_400_until={_parse_regain_utc(msg) or 'unparsed'}"
         if status_code in (401, 403, 404, 422):
             return status_code, True, f"http_{status_code}"
         if status_code == 429 or "429" in msg or "rate limit" in msg or "rate_limit" in msg:
@@ -1147,6 +1178,29 @@ class LLMSentimentAgent:
                     logger.warning(
                         f"[LLM_SENTIMENT] Haiku 429 rate limit for {asset}: "
                         f"cooldown={retry_after:.0f}s"
+                    )
+                elif status_code == 400 and reason.startswith("usage_limit_400"):
+                    # [P329c] Back off until the instant the API named. A
+                    # parse failure falls through to the standard hard-disable
+                    # cooldown rather than to no backoff at all.
+                    _cd = None
+                    _until = reason.split("until=", 1)[1] if "until=" in reason else ""
+                    if _until and _until != "unparsed":
+                        try:
+                            _dt = datetime.fromisoformat(
+                                _until.replace("Z", "+00:00"))
+                            _cd = max(
+                                0.0,
+                                (_dt - datetime.now(timezone.utc)).total_seconds())
+                        except (ValueError, TypeError):
+                            _cd = None
+                    self._open_hard_disable(reason=reason, cooldown_sec=_cd)
+                    logger.warning(
+                        f"[LLM_SENTIMENT] Haiku ACCOUNT USAGE LIMIT for {asset} "
+                        f"(regain access {_until or 'unknown'}). This is a "
+                        f"BILLING state, not a fault: sentiment falls back to "
+                        f"the headline heuristic and stays tradeable. Not "
+                        f"retried until then."
                     )
                 elif non_retryable:
                     self._open_hard_disable(reason=reason)

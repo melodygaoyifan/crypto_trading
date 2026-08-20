@@ -262,3 +262,75 @@ class TestFredAdvisoryFailuresAreNotAllCriticals:
         assert src.count("_report_endpoint_ok(") >= 3, (
             "expected the definition plus a reset on BOTH success paths "
             "(series observation and releases)")
+
+
+# =============================================================================
+# [P329c] A hard-dated account cap is not a transient error
+# =============================================================================
+
+class TestHaikuUsageLimitIsNotRetried:
+    """Live 2026-08-20 03:05:08:
+
+        400 invalid_request_error: You have reached your specified API usage
+        limits. You will regain access on 2026-09-01 at 00:00 UTC.
+
+    400 was in neither the non-retryable list (401/403/404/422) nor the 429
+    branch, so it fell to a bare warning with NO backoff and would have been
+    retried once per asset per tick (~18/day) until September. P293b/P319, in
+    a third feed.
+    """
+
+    def _classify(self, status: int, message: str):
+        from agents.sentiment_llm_agent import LLMSentimentAgent
+
+        class _Err(Exception):
+            status_code = status
+
+            def __str__(self):
+                return message
+
+        return LLMSentimentAgent._classify_haiku_error(_Err())
+
+    def test_a_usage_limit_400_is_non_retryable(self):
+        code, non_retryable, reason = self._classify(
+            400, "You have reached your specified API usage limits. "
+                 "You will regain access on 2026-09-01 at 00:00 UTC.")
+        assert code == 400 and non_retryable is True
+        assert "2026-09-01T00:00Z" in reason
+
+    def test_an_ordinary_400_is_left_alone(self):
+        """A genuinely malformed request is a BUG we want to keep seeing —
+        silencing it behind a long cooldown would hide a real defect."""
+        code, non_retryable, _ = self._classify(400, "messages.0: invalid field")
+        assert not (code == 400 and non_retryable is True)
+
+    def test_the_reset_instant_parses(self):
+        from agents.sentiment_llm_agent import _parse_regain_utc
+        assert _parse_regain_utc(
+            "you will regain access on 2026-09-01 at 00:00 utc") == "2026-09-01T00:00Z"
+
+    def test_unparseable_wording_returns_none_not_a_guess(self):
+        """The fail direction: if Anthropic rewords the message we fall back to
+        the standard hard-disable cooldown, never to 'retry immediately'."""
+        from agents.sentiment_llm_agent import _parse_regain_utc
+        assert _parse_regain_utc("you have reached your limits, try later") is None
+
+    def test_the_caller_sizes_the_cooldown_from_the_stated_reset(self):
+        from tests._source_scan import code_only
+        src = code_only(REPO / "agents" / "sentiment_llm_agent.py",
+                        strip_docstrings=True)
+        # The CALLER's occurrence, not the classifier's return statement.
+        i = src.rindex('usage_limit_400')
+        blk = src[i:i + 1600]
+        assert "_open_hard_disable" in blk, "a hard-dated cap must open a cooldown"
+        assert "total_seconds()" in blk, "the cooldown must come from the stated reset"
+
+    def test_the_message_says_it_is_a_billing_state(self):
+        """P202: an alert an operator cannot fix by debugging must say so, and
+        must say what still works."""
+        from tests._source_scan import code_only
+        src = code_only(REPO / "agents" / "sentiment_llm_agent.py",
+                        strip_docstrings=True)
+        i = src.index("ACCOUNT USAGE LIMIT")
+        blk = src[i:i + 600]
+        assert "BILLING" in blk and "heuristic" in blk
