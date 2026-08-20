@@ -14,6 +14,7 @@ Two things are pinned here:
 """
 from __future__ import annotations
 
+import ast
 import io
 import json
 import re
@@ -251,7 +252,39 @@ _COND_PIN = re.compile(
 # for guards that are currently correct. So the roster is frozen instead: it
 # may SHRINK, never grow, and a new one sends its author to the fix that
 # works (extract the predicate into a pure function and CALL it).
-_ACCEPTED_COND_PINS = 9
+# [P329] 9 -> 7. The detector now requires the captured text to PARSE as a
+# condition, which removed two PROSE entries that were never pins at all
+# ("reconnect loop is armed"; the bare word "not"). No real pin was lost —
+# recall is asserted explicitly in TestTheConditionPinDetectorIsPrecise.
+_ACCEPTED_COND_PINS = 7
+
+
+def _is_condition(text):
+    """[P329] Does `text` PARSE as a Python condition?
+
+    The regex above is a cheap candidate finder, and alone it cannot tell a
+    condition from prose containing an English word. Measured on its own
+    roster, 2 of 9 entries were PROSE ("reconnect loop is armed"; the bare
+    word "not"), and it produced three author-facing false positives (P317
+    once, P328 twice), each "resolved" by rewording a log message. Three
+    reworded messages is how a guard gets weakened by the fourth author.
+
+    This raises PRECISION without touching RECALL: every genuine pin in the
+    roster parses as an expression containing a comparison, a boolean op or a
+    `not`, and prose does not parse at all. Both directions are pinned in
+    TestTheConditionPinDetectorIsPrecise, so a change that starts MISSING
+    real pins fails there rather than going quiet.
+    """
+    try:
+        tree = ast.parse(text.strip(), mode="eval")
+    except SyntaxError:
+        return False
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Compare, ast.BoolOp)):
+            return True
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+            return True
+    return False
 
 
 def _cond_pins():
@@ -259,6 +292,8 @@ def _cond_pins():
     for p in sorted((REPO / "tests").glob("test_p3*.py")) +             sorted((REPO / "tests").glob("test_p29*.py")):
         t = io.open(p, encoding="utf-8").read()
         for m in _COND_PIN.finditer(t):
+            if not _is_condition(m.group(1)):
+                continue  # [P329] prose, not a condition
             out.append((p.name, t[:m.start()].count("\n") + 1, m.group(1)))
     return out
 
@@ -286,3 +321,57 @@ def test_the_accepted_count_is_not_stale():
     assert n == _ACCEPTED_COND_PINS, (
         f"only {n} condition pins remain (accepted {_ACCEPTED_COND_PINS}) — "
         f"lower _ACCEPTED_COND_PINS to {n} so the guard keeps its teeth")
+
+
+class TestTheConditionPinDetectorIsPrecise:
+    """[P329] The detector must catch real condition pins and leave prose alone.
+
+    RECALL is the direction that matters most: a detector that stops seeing
+    real pins goes quiet, and quiet reads exactly like clean. Every string
+    below was an actual entry on this roster, so if a future change drops one,
+    it fails here rather than silently lowering the ceiling.
+    """
+
+    REAL_CONDITIONS = (
+        "resp.status == 304",
+        "i.source == name",
+        "_ws_press is None",
+        "ri.published_at < cutoff",
+        "_enf_usd if _enf_usd is not None else 0.0",
+        "-1.0 if _exf > 1e6 else (1.0 if _exf < -1e6 else 0.0)",
+        "(_live_intents or {}).get(_m_a)",
+        "c1 and c2 and c3",
+        "adv is None or abs(ad) < 1e-9",
+        "not enabled",
+    )
+
+    PROSE = (
+        "reconnect loop is armed",
+        "not",
+        "WARNING: could not build a worktree at the deployed sha.",
+        "NOTHING is being recorded",
+        "wiring gap, not a verdict",
+        "the ledger is what earns the flip",
+        "a wiring gap rather than a verdict",
+    )
+
+    @pytest.mark.parametrize("text", REAL_CONDITIONS)
+    def test_real_conditions_are_still_detected(self, text):
+        assert _is_condition(text), (
+            f"{text!r} is a genuine condition pin and the detector no longer "
+            f"sees it — recall regressed, which makes this guard go quiet")
+
+    @pytest.mark.parametrize("text", PROSE)
+    def test_prose_is_not_flagged(self, text):
+        assert not _is_condition(text), (
+            f"{text!r} is prose. Flagging it sends the author to reword a log "
+            f"message, and three such reworks is how the guard gets weakened "
+            f"by the fourth author (P317/P328)")
+
+    def test_the_roster_holds_only_real_conditions_now(self):
+        """Anti-vacuity in the useful direction: every surviving entry must be
+        a parseable condition, or the count was lowered for the wrong reason."""
+        pins = _cond_pins()
+        assert pins, "the scan found nothing — the guard is vacuous"
+        for _f, _ln, text in pins:
+            assert _is_condition(text), text

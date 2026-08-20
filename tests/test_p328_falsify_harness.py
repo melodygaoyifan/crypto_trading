@@ -261,9 +261,56 @@ class TestTheDeployPreflightScansTheDeployedCommit:
         was piped through `head` took SIGPIPE partway through and left a full
         checkout behind, which then appears in `git worktree list` forever.
         The explicit remove is the happy path; the trap is the backstop."""
-        live = [ln for ln in self._src().splitlines()
-                if ln.strip().startswith("trap 'git worktree remove --force")]
-        assert live, (
-            "no LIVE trap line — a substring pin would pass on a commented-out "
-            "trap, which the falsification harness caught (P328)")
-        assert any("EXIT INT TERM HUP PIPE" in ln for ln in live)
+        # [P329] the hand-rolled version of this check became
+        # tests/_guard_pins.assert_live_line, so the next author who pins a
+        # line in a shell script gets the non-commented requirement for free.
+        sys.path.insert(0, str(REPO / "tests"))
+        from _guard_pins import assert_live_line
+        src = self._src()
+        assert_live_line(src, "trap 'git worktree remove --force",
+                         why="the interrupt backstop must be live")
+        assert_live_line(src, "EXIT INT TERM HUP PIPE",
+                         why="the trap must cover the signals a pipe sends")
+
+
+class TestAssertLiveLine:
+    """[P329] The generic half of the guard-pin trap: in a shell script, YAML
+    or Dockerfile the cheapest defeat is a `#`, and `assert "<line>" in src`
+    stays green over dead code. `assert_guard_live` cannot help — it needs a
+    Python condition."""
+
+    def _f(self):
+        sys.path.insert(0, str(REPO / "tests"))
+        from _guard_pins import assert_live_line
+        return assert_live_line
+
+    def test_a_live_line_passes(self):
+        self._f()("    trap 'cleanup' EXIT\n", "trap 'cleanup'")
+
+    def test_a_line_commented_at_the_start_fails(self):
+        with pytest.raises(AssertionError, match="COMMENTED"):
+            self._f()("    # trap 'cleanup' EXIT\n", "trap 'cleanup'")
+
+    def test_a_line_commented_INLINE_fails(self):
+        """The case the falsification harness caught in the first version:
+        `true # trap ...` does not START with a comment, yet the text is dead."""
+        with pytest.raises(AssertionError, match="COMMENTED"):
+            self._f()("    true # trap 'cleanup' EXIT\n", "trap 'cleanup'")
+
+    def test_an_absent_line_fails_with_a_different_message(self):
+        """Absent and commented are different faults; collapsing them would
+        send the author looking for the wrong thing."""
+        with pytest.raises(AssertionError, match="does not appear at all"):
+            self._f()("echo hi\n", "trap 'cleanup'")
+
+    def test_a_long_flag_is_not_treated_as_a_comment(self):
+        """`--` was a default marker in the first version and cut the very line
+        it protected: shell long flags look exactly like a SQL comment, so the
+        pinned text vanished and every guard read as dead."""
+        self._f()("    git worktree remove --force /tmp/x\n",
+                  "git worktree remove --force")
+
+    def test_markers_stay_overridable_for_languages_that_need_them(self):
+        with pytest.raises(AssertionError, match="COMMENTED"):
+            self._f()("    -- DROP TABLE t\n", "DROP TABLE t",
+                      markers=("--",))

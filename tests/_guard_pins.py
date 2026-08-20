@@ -51,3 +51,69 @@ def assert_guard_live(src: str, condition: str, why: str = "") -> None:
          "substring pin cannot see. %s"
          if loose else
          "guard %r is absent from the source. %s") % (cond, why))
+
+
+# [P329] The same trap in a file the AST cannot help with.
+#
+# `assert_guard_live` needs a Python condition. Shell scripts, YAML and
+# Dockerfiles have guards too, and there the equivalent defeat is simply
+# COMMENTING THE LINE OUT — the substring survives, so `assert "<line>" in src`
+# stays green over dead code. Observed in P328b: a pin on the deploy script's
+# cleanup trap passed with the trap commented out, and the falsification
+# harness reported it VACUOUS.
+# Deliberately just these two. `--` was in the first version and cut the very
+# line it was meant to protect: shell long flags (`--force`, `--detach`) are
+# preceded by whitespace and look exactly like a SQL comment, so the pinned
+# text vanished and every guard read as dead. Caught by the falsification
+# harness within minutes — the same over-broad-detector mistake P329 had just
+# fixed in the condition-pin scanner. A caller that genuinely needs `--` or
+# `REM` passes `markers=`.
+_COMMENT_PREFIXES = ("#", "//")
+
+
+def _code_part(line: str, markers=_COMMENT_PREFIXES) -> str:
+    """The line with any trailing comment removed.
+
+    A leading-marker check alone is not enough: `true # trap ...` does not
+    START with a comment, yet the pinned text is dead. The falsification
+    harness caught exactly that in the first version of this helper.
+
+    A marker counts when it opens the line or follows whitespace, which is the
+    shell/Python convention. A marker inside a quoted string is therefore cut
+    too — deliberately, because for a PIN the safe error is "this looks
+    commented" (fails loudly) rather than "this looks live" (passes over dead
+    code).
+    """
+    out = line
+    for marker in markers:
+        idx = 0
+        while True:
+            i = out.find(marker, idx)
+            if i < 0:
+                break
+            if i == 0 or out[i - 1].isspace():
+                out = out[:i]
+                break
+            idx = i + 1
+    return out
+
+
+def assert_live_line(src: str, text: str, why: str = "",
+                     markers=_COMMENT_PREFIXES) -> None:
+    """Fail unless `text` appears on a line that is NOT commented out.
+
+    Deliberately narrow: it checks the line carrying `text` does not START
+    with a comment marker. It cannot see a block comment, a heredoc or an
+    `if false` wrapper — for a Python condition use `assert_guard_live`, and
+    for anything load-bearing extract the predicate and CALL it. What it does
+    close is the cheapest and most common defeat, which is a `#`.
+    """
+    hits = [ln for ln in src.splitlines() if text in ln]
+    if not hits:
+        raise AssertionError(
+            f"{text!r} does not appear at all. {why}".strip())
+    live = [ln for ln in hits if text in _code_part(ln, markers)]
+    if not live:
+        raise AssertionError(
+            f"{text!r} appears only on COMMENTED lines — the pin would pass "
+            f"over dead code (P328b/P329). {why}".strip())
