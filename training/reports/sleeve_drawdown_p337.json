@@ -1,0 +1,33 @@
+{
+  "halt": 0.15,
+  "carry_bps_per_bar": 0.5,
+  "rows": [
+    {
+      "asset": "BTC",
+      "fraction": 0.15,
+      "bars": 13260,
+      "net_pct": 36.49,
+      "max_dd_sleeve_pct": -8.28,
+      "breaches_halt": false,
+      "fraction_that_fits_halt": 0.2716
+    },
+    {
+      "asset": "ETH",
+      "fraction": 0.15,
+      "bars": 13260,
+      "net_pct": 56.44,
+      "max_dd_sleeve_pct": -8.52,
+      "breaches_halt": false,
+      "fraction_that_fits_halt": 0.2642
+    },
+    {
+      "asset": "SOL",
+      "fraction": 0.15,
+      "bars": 13199,
+      "net_pct": 115.36,
+      "max_dd_sleeve_pct": -24.75,
+      "breaches_halt": true,
+      "fraction_that_fits_halt": 0.0909
+    }
+  ]
+}
