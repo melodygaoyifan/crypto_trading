@@ -26,6 +26,23 @@ is what the previous eleven collisions all had.
 Deliberately NOT a committer: it stages and verifies, and you write the commit
 yourself. A tool that commits is one that will eventually commit the wrong
 thing unattended.
+
+[P352b] AND ITS VERIFICATION HAD A BLIND SPOT THAT COST A RED CI. Both clauses
+— "my marker is present" and "no foreign marker appeared" — are true of a
+PARTIAL commit. Two hunks of mine carried no marker (a function SIGNATURE line
+and a config PARSE line; the explaining comment sat in a neighbouring hunk),
+so they were dropped silently, the tool printed success, and HEAD went red with
+142 failures because every caller of the new kwarg hit a TypeError.
+
+The tool cannot know whose an UNMARKED hunk is — so it must not decide, it must
+SHOW. It now prints every dropped hunk with its location and added lines, and
+REFUSES when a dropped hunk carries no marker of any kind, which is exactly the
+ambiguous case. A dropped hunk that carries somebody else's marker is
+attributable and passes quietly. `--accept-unmarked` is the explicit escape for
+when you have read them and they are theirs.
+
+"3 hunks do not carry your marker" was a COUNT. A count is not a location
+(P293b/P349), and that is the whole of this fix.
 """
 from __future__ import annotations
 
@@ -77,6 +94,27 @@ def select_hunks(hunks: Sequence[str], marker: str) -> Tuple[List[str], List[str
     return mine, theirs
 
 
+def describe_dropped(theirs: Sequence[str], marker: str) -> List[str]:
+    """[P352b] Render the dropped hunks that carry NO marker of any kind.
+
+    Those are the ambiguous ones: a dropped hunk stamped with somebody else's
+    P-number is attributable and needs no attention, while an unmarked one may
+    be yours — which is the case that produced a partial commit and a red CI.
+    """
+    out: List[str] = []
+    for h in theirs:
+        lines = h.splitlines()
+        added = [ln for ln in lines if ln.startswith("+")]
+        if any(MARKER_RE.search(ln) for ln in added):
+            continue          # attributable to another session
+        loc = lines[0] if lines else "@@ ?"
+        shown = [("      " + ln) for ln in added[:6]]
+        if len(added) > 6:
+            shown.append("      ... %d more added line(s)" % (len(added) - 6))
+        out.append("  " + loc + "\n" + "\n".join(shown))
+    return out
+
+
 def foreign_markers(text: str, marker: str, baseline: str) -> List[str]:
     """Markers present in `text` that are neither yours nor already in HEAD."""
     base = set(MARKER_RE.findall(baseline))
@@ -84,7 +122,8 @@ def foreign_markers(text: str, marker: str, baseline: str) -> List[str]:
     return sorted(m for m in found - base if m != marker)
 
 
-def isolate(path: str, marker: str, apply: bool = True) -> int:
+def isolate(path: str, marker: str, apply: bool = True,
+            accept_unmarked: bool = False) -> int:
     head = _git("show", f"HEAD:{path}").stdout
     diff = _git("diff", "HEAD", "--", path).stdout
     if not diff.strip():
@@ -97,6 +136,21 @@ def isolate(path: str, marker: str, apply: bool = True) -> int:
     if not mine:
         print(f"REFUSING: no hunk carries {marker}. Mark your changes, or you "
               f"cannot tell them from anyone else's.")
+        return 2
+
+    # [P352b] A count is not a location. Show what is being LEFT OUT, because
+    # a dropped hunk of your own is invisible to every check below — all of
+    # them pass on a partial commit.
+    unmarked = describe_dropped(theirs, marker)
+    if unmarked and not accept_unmarked:
+        print(f"REFUSING: {len(unmarked)} dropped hunk(s) in {path} carry NO "
+              f"marker at all, so this tool cannot tell whether they are "
+              f"yours. A hunk of yours dropped here is silent — every check "
+              f"below still passes (P352b). Read them, then either add "
+              f"{marker} to the ones that are yours or pass "
+              f"--accept-unmarked:")
+        for d in unmarked:
+            print(d)
         return 2
     if not apply:
         return 0
@@ -139,10 +193,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--marker", required=True,
                     help='e.g. "[P350]" — must appear on your added lines')
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--accept-unmarked", action="store_true",
+                    help="proceed even though some dropped hunks carry no "
+                         "marker — only after reading the ones it lists")
     a = ap.parse_args(argv)
     rc = 0
     for p in a.paths:
-        rc = max(rc, isolate(p, a.marker, apply=not a.dry_run))
+        rc = max(rc, isolate(p, a.marker, apply=not a.dry_run,
+                             accept_unmarked=a.accept_unmarked))
     return rc
 
 

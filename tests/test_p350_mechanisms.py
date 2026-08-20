@@ -24,7 +24,7 @@ sys.path.insert(0, str(REPO))
 from tests._guard_pins import (  # noqa: E402
     assert_detector_is_precise, assert_text_pin)
 from tools.isolate_commit import (  # noqa: E402
-    foreign_markers, select_hunks, split_hunks)
+    describe_dropped, foreign_markers, select_hunks, split_hunks)
 
 
 # --------------------------------------------------------------------------
@@ -213,6 +213,81 @@ class TestIsolateCommit:
         # Either way it must never silently stage.
         assert r.returncode in (1, 2), r.stdout
         assert "staged" not in r.stdout
+
+    # ---- [P352b] the blind spot that cost a red CI --------------------
+    def test_an_unmarked_dropped_hunk_is_shown_not_counted(self):
+        """The incident: two hunks of mine carried no marker (a function
+        SIGNATURE line and a config PARSE line, whose explaining comments sat
+        in neighbouring hunks), so they were dropped and the tool printed
+        success — both of its checks pass on a PARTIAL commit. `3 hunks do not
+        carry your marker` was a COUNT; a count is not a location (P293b/P349).
+        """
+        _, hunks = split_hunks(self.DIFF)
+        _, theirs = select_hunks(hunks, "[P350]")
+        # theirs carries [P341b] -> attributable, nothing to show
+        assert describe_dropped(theirs, "[P350]") == []
+
+        unmarked = self.DIFF.replace("+    # [P341b] theirs",
+                                     "+    def f(self, x, evidence_ok=True):")
+        _, hunks2 = split_hunks(unmarked)
+        _, theirs2 = select_hunks(hunks2, "[P350]")
+        shown = describe_dropped(theirs2, "[P350]")
+        assert len(shown) == 1
+        assert "evidence_ok=True" in shown[0], (
+            "the dropped hunk must be rendered with its added lines — the "
+            "author cannot recognise their own code from a count"
+        )
+        assert shown[0].lstrip().startswith("@@"), "no location given"
+
+    def test_a_dropped_hunk_with_someone_elses_marker_stays_quiet(self):
+        """Refusing on every dropped hunk would fire on every shared-tree run
+        and become wallpaper (P202). Only the AMBIGUOUS ones stop you."""
+        _, hunks = split_hunks(self.DIFF)
+        _, theirs = select_hunks(hunks, "[P350]")
+        assert describe_dropped(theirs, "[P350]") == []
+
+    def test_the_tool_refuses_on_an_unmarked_dropped_hunk(self):
+        import subprocess, tempfile, os, shutil
+        NL = chr(10)
+        LINE = "a = 1" + NL
+        repo = tempfile.mkdtemp()
+        try:
+            def git(*a):
+                return subprocess.run(["git", *a], cwd=repo, capture_output=True,
+                                      text=True, encoding="utf-8", timeout=600)
+            git("init", "-q")
+            git("config", "user.email", "t@t")
+            git("config", "user.name", "t")
+            f = os.path.join(repo, "f.py")
+            io.open(f, "w", encoding="utf-8").write(LINE * 20)
+            git("add", "f.py")
+            git("commit", "-qm", "base")
+            lines = [LINE] * 20
+            lines[2] = "b = 2  # [P350] mine" + NL
+            lines[15] = "c = 3" + NL          # unmarked -> ambiguous
+            io.open(f, "w", encoding="utf-8").write("".join(lines))
+            r = subprocess.run(
+                [sys.executable, "-X", "utf8",
+                 str(REPO / "tools" / "isolate_commit.py"),
+                 "--marker", "[P350]", "f.py"],
+                cwd=repo, capture_output=True, text=True, encoding="utf-8",
+                timeout=600)
+            assert r.returncode == 2, r.stdout
+            assert "c = 3" in r.stdout, "the ambiguous hunk was not shown"
+            assert "staged" not in r.stdout
+
+            ok = subprocess.run(
+                [sys.executable, "-X", "utf8",
+                 str(REPO / "tools" / "isolate_commit.py"),
+                 "--marker", "[P350]", "--accept-unmarked", "f.py"],
+                cwd=repo, capture_output=True, text=True, encoding="utf-8",
+                timeout=600)
+            assert ok.returncode == 0, ok.stdout
+            assert "staged" in ok.stdout, (
+                "the escape hatch must still work once the author has read them"
+            )
+        finally:
+            shutil.rmtree(repo, ignore_errors=True)
 
     def test_it_never_commits_by_itself(self):
         """A tool that commits is one that eventually commits the wrong thing
