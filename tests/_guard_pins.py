@@ -137,3 +137,97 @@ def assert_live_line(src: str, text: str, why: str = "",
         raise AssertionError(
             f"{text!r} appears only on COMMENTED lines — the pin would pass "
             f"over dead code (P328b/P330). {why}".strip())
+
+
+# ---------------------------------------------------------------------------
+# [P350] Two more shapes, both from traps this repo has now hit repeatedly.
+# ---------------------------------------------------------------------------
+
+def assert_text_pin(src: str, needle: str, why: str = "",
+                    near: str = "", window: int = 400) -> None:
+    """Fail unless `needle` appears, and REFUSE when it is ambiguous.
+
+    THE TRAP (P349, and P293b one level up): a pin asserts a substring that a
+    SIBLING occurrence also satisfies, so the pin stays green when the site it
+    was written for is deleted. Mine asserted
+    `"self._last_whale_counts[asset] = 0" in src` while the set-half's
+    exception fallback assigns the identical text — the reset could be removed
+    and the test never noticed. **A count is not a location.**
+
+    So an ambiguous needle is an ERROR rather than a pass: either the pin is
+    about a specific site, in which case give `near` and it is checked inside
+    that window, or it is genuinely about "this text exists anywhere", in
+    which case say so with `near=""` AND a needle that occurs once.
+
+    `near` must itself be unique, for the same reason (P238/P337).
+
+    WHAT IT DOES NOT DO, stated because the first version of this docstring
+    implied otherwise and its own test caught it: `near` anchors the search,
+    it does not EXCLUDE a sibling that happens to sit inside the window. If
+    the site you meant is deleted and an identical string exists 200 chars
+    later, the scoped pin still passes. The load-bearing half is the
+    ambiguity REFUSAL above — that is what would have caught P349, whose pin
+    had no anchor at all — and the window is a convenience whose tightness is
+    the caller's judgement. Keep it small, and anchor on something adjacent.
+    """
+    n = src.count(needle)
+    if n == 0:
+        raise AssertionError(f"{needle!r} does not appear at all. {why}".strip())
+    if not near:
+        if n > 1:
+            raise AssertionError(
+                f"{needle!r} appears {n} times, so this pin cannot tell which "
+                f"occurrence survived — a sibling satisfies it and the site "
+                f"you meant can be deleted silently (P349). Pass near=<unique "
+                f"anchor> to scope it. {why}".strip())
+        return
+    a = src.count(near)
+    if a != 1:
+        raise AssertionError(
+            f"anchor {near!r} occurs {a} times; an ambiguous anchor scopes the "
+            f"pin to a window you did not read (P238). {why}".strip())
+    i = src.index(near)
+    if needle not in src[i:i + window]:
+        raise AssertionError(
+            f"{needle!r} does not appear within {window} chars of {near!r} — "
+            f"it exists elsewhere in the file, which is exactly the ambiguity "
+            f"this check exists to catch. {why}".strip())
+
+
+def assert_detector_is_precise(detector, must_catch, must_not_catch,
+                               why: str = "") -> None:
+    """Force a hand-rolled detector to declare BOTH directions.
+
+    THE TRAP, three sightings: P307 (a condition-pin scanner matching English
+    prose containing "not"), P330 (`--` treated as a comment marker, cutting
+    the shell long flags it was meant to protect), P349 (an observation-only
+    guard flagging a `hasattr` initialisation as a decision). Every one was an
+    over-broad detector, and the tempting fix is always to loosen it until the
+    author's own case passes — which is how a real guard dies (P248).
+
+    Recall is the direction that goes quiet: a detector that stops catching
+    anything reports clean, and clean is what a healthy tree also reports
+    (P174). So both lists are required and neither may be empty.
+
+    `detector` takes one string and returns something truthy when it fires.
+    """
+    if not must_catch:
+        raise AssertionError(
+            "must_catch is empty: a detector with no positive example cannot "
+            "be shown to fire at all (P174). " + why)
+    if not must_not_catch:
+        raise AssertionError(
+            "must_not_catch is empty: precision is the half that sends the "
+            "next author to loosen the detector (P248). " + why)
+    missed = [s for s in must_catch if not detector(s)]
+    if missed:
+        raise AssertionError(
+            f"detector FAILED TO CATCH {len(missed)} case(s) it must: "
+            f"{missed!r}. A detector that cannot fire reports clean. "
+            f"{why}".strip())
+    false_pos = [s for s in must_not_catch if detector(s)]
+    if false_pos:
+        raise AssertionError(
+            f"detector FIRED on {len(false_pos)} case(s) it must not: "
+            f"{false_pos!r}. Fix its PRECISION — do not relax it until your "
+            f"own case passes (P248/P330). {why}".strip())

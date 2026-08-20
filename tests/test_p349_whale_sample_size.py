@@ -28,6 +28,8 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
 from defense.strategy_shadow_v5_1 import MAFilterEchoStrategy  # noqa: E402
+from tests._guard_pins import (  # noqa: E402
+    assert_detector_is_precise, assert_text_pin)
 
 MAIN = REPO / "main.py"
 
@@ -139,19 +141,23 @@ class TestObservationOnly:
             "behaviour change on an armed filter (P141), not the "
             "observation-only wiring this entry shipped: " + repr(bad))
 
-    def test_that_guard_would_actually_catch_a_real_gate(self):
-        """Anti-vacuity (P174): a detector that cannot fire reports clean, and
-        clean is what a healthy tree also reports."""
-        synthetic = (
-            'x = 1\n'
-            '        if int(getattr(self, "_last_whale_counts", {}).get(a, 0)) < 3:\n'
-            '            _wf_dir = 0.0\n')
-        assert self._decision_lines(synthetic), (
-            "the observation-only guard cannot detect a real gate")
-
-    def test_the_guard_does_not_fire_on_the_hasattr_init(self):
-        benign = 'y = 2\n        if not hasattr(self, "_last_whale_counts"):\n'
-        assert not self._decision_lines(benign)
+    def test_the_decision_detector_is_precise_in_BOTH_directions(self):
+        """[P350] Through the shared helper, which REQUIRES both lists. This
+        detector was over-broad in its first draft — it flagged the `hasattr`
+        init — and the tempting fix is always to loosen until your own case
+        passes (P248). Recall is the half that goes quiet (P174)."""
+        assert_detector_is_precise(
+            lambda s: bool(self._decision_lines(s)),
+            must_catch=[
+                'x = 1\n        if int(getattr(self, "_last_whale_counts", {}).get(a, 0)) < 3:\n',
+                'x = 1\n        if self._last_whale_counts[a] >= 5:\n',
+            ],
+            must_not_catch=[
+                'y = 2\n        if not hasattr(self, "_last_whale_counts"):\n',
+                'y = 2\n        self._last_whale_counts[asset] = 0\n',
+            ],
+            why="the observation-only guard must catch a real gate on the "
+                "sample size and must not fire on the init")
 
     def test_both_the_reset_and_the_set_half_exist(self):
         """[P155-L5/P294] A stash with no per-tick reset carries the previous
@@ -161,14 +167,20 @@ class TestObservationOnly:
         # fallback also assigns 0, so `"... = 0" in src` stays true with the
         # reset deleted -- a count is not a location (P293b), and the
         # falsification probe caught exactly that in this test's first draft.
-        anchor = "self._last_whale_directions[asset] = 0.0"
-        assert src.count(anchor) == 1, "the sibling reset moved; re-anchor"
-        block = src[src.index(anchor):src.index(anchor) + 1500]
-        assert "self._last_whale_counts[asset] = 0" in block, (
-            "the count stash has no per-tick reset beside the direction reset "
-            "it describes; without it a ledger row carries the previous "
-            "tick's sample size (P155-L5/P294)")
-        assert "_last_whale_counts[asset] = int(" in src, "no set half"
+        # [P350] Through the shared helper, which REFUSES an ambiguous needle
+        # — that refusal is what would have caught the vacuous first draft.
+        assert_text_pin(
+            src, "self._last_whale_counts[asset] = 0",
+            near="self._last_whale_directions[asset] = 0.0",
+            # wider than the default because the rationale comment sits
+            # between anchor and needle; the SET half's sibling is ~12,000
+            # lines away, so this window cannot reach it
+            window=1200,
+            why="the count stash has no per-tick reset beside the direction "
+                "reset it describes; without it a ledger row carries the "
+                "previous tick's sample size (P155-L5/P294)")
+        assert_text_pin(src, "_last_whale_counts[asset] = int(",
+                        why="no set half")
 
     def test_the_count_comes_from_the_producer_key(self):
         src = _main_src()

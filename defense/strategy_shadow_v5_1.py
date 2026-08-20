@@ -35,7 +35,7 @@ import logging
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, Optional, Tuple
+from typing import Any, Dict, Iterable, Optional, Tuple, Set
 
 logger = logging.getLogger(__name__)
 
@@ -293,6 +293,8 @@ class MAFilterEchoStrategy:
     """
 
     def __init__(self, strategy_name: str = "ma_filtered"):
+        # [P350] warn-once-per-key latch for dropped observation keys
+        self._dropped_keys_warned: Set[str] = set()
         self._strategy_name = str(strategy_name)
 
     class _Sig:
@@ -339,6 +341,28 @@ class MAFilterEchoStrategy:
                                    ("_maf_whale_pressure", "whale_pressure")):
             if _src_key in market_data:
                 diagnostics[_dst_key] = market_data.get(_src_key)
+        # [P350] A whitelist that DROPS SILENTLY is how an observation key gets
+        # lost between a caller that sends it and a ledger that never carries
+        # it — the P2 reader/writer shape, inside the harness built to observe.
+        # P349 hit it: two keys were added at the call site and vanished here.
+        # Anything the caller offers under the `_maf_` prefix that this dict
+        # does not name is now reported ONCE per key, so the next author is
+        # told rather than left reading an empty column weeks later. Warned,
+        # never raised: a ledger must not be able to break a live tick.
+        _known = {"_maf_ma_dir", "_maf_ledger_dir", "_maf_raw_target",
+                  "_maf_sleeve_dir", "_maf_pos", "_maf_action", "_maf_reason",
+                  "_maf_enforce", "_maf_whale_count", "_maf_whale_pressure"}
+        for _k in market_data:
+            if isinstance(_k, str) and _k.startswith("_maf_") and _k not in _known:
+                if _k not in self._dropped_keys_warned:
+                    self._dropped_keys_warned.add(_k)
+                    logger.warning(
+                        "[SHADOW-LEDGER] %s: observation key %r is being "
+                        "DROPPED — this diagnostics dict is a whitelist, so a "
+                        "key the caller sends but it does not name never "
+                        "reaches the ledger (P349/P350). Add it to the dict "
+                        "in %s, or stop sending it.",
+                        self._strategy_name, _k, __name__)
         return self._Sig(
             direction=direction,
             confidence=conf,
