@@ -78,3 +78,100 @@ class TestExpectedAbsencesAreNotFaults:
         src = _src()
         i = src.index("enable_event_replay: bool = True")
         assert "INERT" in src[max(0, i - 500):i]
+
+
+# ---------------------------------------------------------------------------
+# [P343] The THIRD expected absence, left behind by P336.
+# ---------------------------------------------------------------------------
+
+class TestTheRegimeClassifierAbsenceIsExpected:
+    """P336 fixed two of three expected-absence WARNINGs and left this one --
+    on the very module the same session had just characterised as a deliberate
+    non-ship (P214). A mitigation applied to one instance of a class is not
+    applied to the class (P171/P226/P323).
+
+    The module IS in the repo, so this cannot be tested by deleting it: what
+    makes the absence expected is that `Dockerfile.engine` does not copy it,
+    which is a property of the IMAGE, not of the checkout.
+    """
+
+    COORD = REPO / "orchestration" / "strategic_coordinator.py"
+    TARGET = "training.regime.regime_classifier"
+
+    def _coord_src(self) -> str:
+        return io.open(self.COORD, encoding="utf-8").read()
+
+    def test_an_ImportError_logs_INFO_naming_the_decision(self, caplog):
+        """Behavioural, not a source pin: a comment proves the code was
+        written, not that it runs (P234)."""
+        import orchestration.strategic_coordinator as sc
+        # setting a sys.modules entry to None makes `import` raise ImportError
+        with caplog.at_level(logging.INFO):
+            saved = sys.modules.get(self.TARGET, "absent")
+            sys.modules[self.TARGET] = None  # type: ignore[assignment]
+            try:
+                c = sc.StrategicCoordinator()
+            finally:
+                if saved == "absent":
+                    sys.modules.pop(self.TARGET, None)
+                else:
+                    sys.modules[self.TARGET] = saved
+        assert c._regime_classifier is None
+        rec = [r for r in caplog.records if "Regime Classifier" in r.message]
+        assert rec, "the absence was not reported at all"
+        assert all(r.levelno < logging.WARNING for r in rec), (
+            [f"{r.levelname}:{r.message}" for r in rec])
+        msg = " ".join(r.message for r in rec)
+        assert "Dockerfile.engine" in msg, msg
+        assert "operator" in msg, msg
+
+    def test_a_REAL_init_failure_still_WARNs(self, caplog):
+        """The half that stops this becoming a blanket mute (P248): if the
+        module ever IS shipped and then fails to construct, that is a fault."""
+        import types
+        import orchestration.strategic_coordinator as sc
+
+        class _Boom:
+            def __init__(self, *a, **k):
+                raise RuntimeError("ctor exploded")
+
+        fake = types.ModuleType(self.TARGET)
+        fake.EnsembleRegimeClassifier = _Boom
+        fake.RegimeClassifierConfig = object
+        fake.RegimeFeatures = object
+        fake.MarketRegime = object
+        with caplog.at_level(logging.INFO):
+            saved = sys.modules.get(self.TARGET, "absent")
+            sys.modules[self.TARGET] = fake
+            try:
+                c = sc.StrategicCoordinator()
+            finally:
+                if saved == "absent":
+                    sys.modules.pop(self.TARGET, None)
+                else:
+                    sys.modules[self.TARGET] = saved
+        assert c._regime_classifier is None
+        assert any(r.levelno >= logging.WARNING and "Regime Classifier" in r.message
+                   for r in caplog.records), (
+            "a module that imported and then failed to construct is a real "
+            "fault and must stay loud")
+
+    def test_the_message_stays_true__it_is_NOT_in_the_image(self):
+        """Anti-rot. The INFO says 'not shipped by decision'; if someone ships
+        it, that message becomes a lie and the absence stops being expected --
+        so this must go red and send the author back to the arming decision
+        (the P318 anti-rot pattern)."""
+        for f in ("Dockerfile.engine", ".dockerignore"):
+            src = io.open(REPO / f, encoding="utf-8").read()
+            assert "training/regime" not in src, (
+                f"{f} now references training/regime -- if the Ensemble Regime "
+                f"Classifier is being shipped, its consumer at "
+                f"strategic_coordinator.py:~595 becomes LIVE for the first "
+                f"time. Re-open the P141 arming decision; do not just update "
+                f"this test.")
+
+    def test_the_consumer_is_still_gated_on_the_import(self):
+        """If the absence stopped gating the consumer, an unshipped module
+        would raise on the live path instead of staying inert."""
+        src = self._coord_src()
+        assert "if self._regime_classifier is not None:" in src

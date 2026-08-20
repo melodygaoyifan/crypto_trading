@@ -207,8 +207,25 @@ class StrategicCoordinator:
             self._MarketRegime = MarketRegime
             self._RegimeFeatures = RegimeFeatures
             logger.info("[OK] Ensemble Regime Classifier connected")
+        except ImportError:
+            # [P343] EXPECTED in the container, not a fault. The module is in
+            # the repo but is deliberately NOT copied into Dockerfile.engine
+            # (P214): its consumer at :595 has therefore never executed, and
+            # arming a never-run decision path on a live account is an operator
+            # call (P141), not a dependency fix. Logged at INFO naming the
+            # decision so it stops reading as a broken import -- an expected
+            # absence reported as a fault is how a real one stops being read
+            # (P202/P240), and P336 gave the same treatment to the two sibling
+            # archived imports while leaving this one behind.
+            logger.info(
+                "Ensemble Regime Classifier NOT SHIPPED by decision "
+                "(training/regime/regime_classifier.py is excluded from "
+                "Dockerfile.engine, P214) -- the classify() consumer stays "
+                "inert; shipping it is an operator decision, not a fix")
+            self._regime_classifier = None
         except Exception as e:
-            logger.warning(f"Ensemble Regime Classifier not available: {e}")
+            # a real fault: the module imported and then failed to construct
+            logger.warning(f"Ensemble Regime Classifier failed to init: {e}")
             self._regime_classifier = None
     
     # =========================================================================
