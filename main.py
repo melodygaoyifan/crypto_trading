@@ -7425,6 +7425,20 @@ class HMATSProductionRunner:
             self._last_whale_confidences = {}
         self._last_whale_directions[asset] = 0.0
         self._last_whale_confidences[asset] = 0.0
+        # [P349] Sample size behind the whale direction, stashed for the
+        # LEDGER only — nothing reads these for a decision. net_pressure is a
+        # RATIO, (buy-sell)/(buy+sell) over whales in the last hour, so it is
+        # exactly +/-1.0 whenever one or two whales are all that landed and
+        # clears the +/-0.3 deadband trivially. Measured: median 3 whales per
+        # (hour, asset) and 43% of buckets hold <=2. The deadband screens
+        # BALANCED flow and cannot screen THIN flow, and whale_count — the
+        # field that would — has no consumer anywhere (P144/P170 shape).
+        # Recording it makes that measurable without changing any behaviour.
+        if not hasattr(self, "_last_whale_counts"):
+            self._last_whale_counts = {}
+            self._last_whale_pressures = {}
+        self._last_whale_counts[asset] = 0
+        self._last_whale_pressures[asset] = 0.0
         # [P298] Per-tick seat marker, cleared here for the same reason the
         # stash is: a stale "the book took the seat" from a previous tick
         # would silently mute whale on a tick the book never ran (P155-L5).
@@ -11354,6 +11368,17 @@ class HMATSProductionRunner:
             agent_signals.get('whale_flow_direction', 0.0) or 0.0)
         self._last_whale_confidences[asset] = float(
             agent_signals.get('whale_confidence', 0.0) or 0.0)
+        # [P349] Ledger-only provenance for the direction just stashed.
+        if not hasattr(self, "_last_whale_counts"):
+            self._last_whale_counts = {}
+            self._last_whale_pressures = {}
+        try:
+            self._last_whale_counts[asset] = int(
+                market_data.get('whale_count', 0) or 0)
+        except (TypeError, ValueError):  # noqa: silent-swallow - 0 = unknown
+            self._last_whale_counts[asset] = 0
+        self._last_whale_pressures[asset] = _wh_net
+
 
         # [v3.3-B18] OnChain Sentiment Fusion -per-asset on-chain + sentiment alpha
         if self._onchain_fusion:
@@ -23398,6 +23423,12 @@ class HMATSProductionRunner:
                                                     "_maf_action": _wf_act,
                                                     "_maf_reason": _wf_why,
                                                     "_maf_enforce": _wf_enf,
+                                                    # [P349] sample size behind
+                                                    # the whale direction
+                                                    "_maf_whale_count": int(
+                                                        getattr(self, "_last_whale_counts", {}).get(_m_a, 0) or 0),
+                                                    "_maf_whale_pressure": float(
+                                                        getattr(self, "_last_whale_pressures", {}).get(_m_a, 0.0) or 0.0),
                                                 })
                                             if _wf_act:
                                                 logger.info(

@@ -320,18 +320,30 @@ class MAFilterEchoStrategy:
         # strength lives in diagnostics.ma_dir.
         reason = str(market_data.get("_maf_reason", "") or "")
         conf = min(1.0, abs(direction))
+        diagnostics = {
+            "raw_target": market_data.get("_maf_raw_target"),
+            "ma_dir": ma,
+            "sleeve_dir": market_data.get("_maf_sleeve_dir"),
+            "pos_contracts": market_data.get("_maf_pos"),
+            "action": market_data.get("_maf_action"),
+            "enforce": market_data.get("_maf_enforce"),
+        }
+        # [P349] This dict is a WHITELIST, so a caller that adds an observation
+        # key gets it silently dropped unless it is named here — the P2
+        # reader/writer shape inside the harness itself. The whale sample size
+        # is added CONDITIONALLY because this class is shared with the
+        # ma_filter (P294), which has no such quantity: an unconditional key
+        # would write a null into every ma_filter row and read as "measured
+        # zero whales" rather than "not applicable" (P2 again, one level down).
+        for _src_key, _dst_key in (("_maf_whale_count", "whale_count"),
+                                   ("_maf_whale_pressure", "whale_pressure")):
+            if _src_key in market_data:
+                diagnostics[_dst_key] = market_data.get(_src_key)
         return self._Sig(
             direction=direction,
             confidence=conf,
             reason=reason,
-            diagnostics={
-                "raw_target": market_data.get("_maf_raw_target"),
-                "ma_dir": ma,
-                "sleeve_dir": market_data.get("_maf_sleeve_dir"),
-                "pos_contracts": market_data.get("_maf_pos"),
-                "action": market_data.get("_maf_action"),
-                "enforce": market_data.get("_maf_enforce"),
-            },
+            diagnostics=diagnostics,
             strategy_name=self._strategy_name,
         )
 
