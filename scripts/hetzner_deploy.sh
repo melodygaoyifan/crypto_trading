@@ -86,46 +86,34 @@ if [ "${HMATS_DEPLOY_SKIP_CI_CHECK:-0}" = "1" ]; then
     echo "  !! CI-green check SKIPPED by HMATS_DEPLOY_SKIP_CI_CHECK=1 —"
     echo "  !! deploying ${DEPLOY_SHA:0:9} with UNVERIFIED CI status."
 else
-    ORIGIN_URL="$(git remote get-url origin)"
-    REPO_SLUG="$(echo "${ORIGIN_URL}" | sed -E 's#(git@github.com:|https://github.com/)##; s#\.git$##')"
-    echo "  Checking CI conclusions for ${REPO_SLUG}@${DEPLOY_SHA:0:9}..."
-    CI_JSON="$(curl -sf --max-time 30 \
-        "https://api.github.com/repos/${REPO_SLUG}/actions/runs?head_sha=${DEPLOY_SHA}" \
-        || echo "")"
-    CI_VERDICT="$(printf '%s' "${CI_JSON}" | "${PY_BIN}" -X utf8 -c "
-import json, sys
-try:
-    runs = json.load(sys.stdin).get('workflow_runs', [])
-except Exception:
-    print('API_UNREADABLE'); raise SystemExit
-need = {'codebase-invariants', 'test-suite'}
-got = {}
-for r in runs:
-    n = r.get('name')
-    # [P287] The API returns runs NEWEST-FIRST; keep only the FIRST match
-    # per workflow. The old unconditional overwrite meant the OLDEST run
-    # won — a sha whose first run was green and whose re-run went red read
-    # as GREEN and deployed (backwards fail direction on a safety gate).
-    if n in need and n not in got:
-        got[n] = (r.get('status'), r.get('conclusion'))
-missing = need - set(got)
-if missing:
-    print('MISSING:' + ','.join(sorted(missing)))
-elif any(s != 'completed' for s, c in got.values()):
-    print('PENDING:' + ' '.join(f'{k}={s}' for k, (s, c) in sorted(got.items())))
-elif any(c != 'success' for s, c in got.values()):
-    print('RED:' + ' '.join(f'{k}={c}' for k, (s, c) in sorted(got.items())))
-else:
-    print('GREEN')
-" 2>/dev/null || echo "CHECK_FAILED")"
-    if [ "${CI_VERDICT}" != "GREEN" ]; then
-        echo "ERROR: CI is not verified green for origin/main (${CI_VERDICT})."
+    # [P344] ONE implementation of this check now lives in
+    # tools/ci_status.py. It was CORRECT here and unreachable from anywhere
+    # else, so every ad-hoc "did CI pass?" got hand-rolled again and worse --
+    # including one that hardcoded a repo slug that does not exist and then
+    # printed "no runs yet" twenty times at it, burning the API budget on a
+    # question GitHub had already refused (the P159/P199 conflation inside a
+    # retry loop). The tool derives the slug from the remote, keeps the
+    # NEWEST run per workflow (P287), and gives UNREADABLE its own exit code.
+    CI_TOOL="$(dirname "$0")/../tools/ci_status.py"
+    if [ ! -f "${CI_TOOL}" ]; then
+        echo "ERROR: tools/ci_status.py is missing — the CI gate cannot run."
+        echo "  A gate that cannot run must REFUSE, never skip (P159/P187)."
+        exit 1
+    fi
+    echo "  Checking CI conclusions for ${DEPLOY_SHA:0:9}..."
+    set +e
+    CI_OUT="$("${PY_BIN}" -X utf8 "${CI_TOOL}" --sha "${DEPLOY_SHA}" 2>&1)"
+    CI_RC=$?
+    set -e
+    echo "  ${CI_OUT}"
+    if [ "${CI_RC}" -ne 0 ]; then
+        echo "ERROR: CI is not verified green for origin/main (rc=${CI_RC})."
         echo "  A red/pending/unreachable CI must never deploy silently (P233)."
+        echo "  rc: 1=red 2=unreadable 3=pending 4=no-run-yet"
         echo "  Wait for CI, fix the red, or in a genuine emergency:"
         echo "    HMATS_DEPLOY_SKIP_CI_CHECK=1 bash scripts/hetzner_deploy.sh ${SERVER}"
         exit 1
     fi
-    echo "  CI: GREEN (codebase-invariants + test-suite) for ${DEPLOY_SHA:0:9}"
 fi
 
 # [P328] Scan the COMMIT that will deploy, not the checkout it is launched
