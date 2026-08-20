@@ -20,8 +20,15 @@ WHY THIS EXISTS
     This module replaces the constant with a MEASUREMENT: what the seat has
     actually earned, gross, per round trip, taken as its era-MEDIAN.
 
-THE MEASUREMENT (training/funding_legs_lab, 6y, honest per-contract fees,
-gross bps per round trip = 2 x gross per unit turnover)
+THE MEASUREMENT (6y, honest per-contract fees, gross bps per round trip =
+2 x gross per unit turnover)
+
+    [P326] REPRODUCIBLE, not hand-copied. The producer is
+    training/seat_alpha_calibration.py; `--verify` recomputes this table and
+    exits 3 on drift. The one-sentence derivation that used to stand here was
+    not enough to re-derive it -- doing so gave BTC 240.3 / 58.4 / 44.0 -- so
+    the convention's three clauses (gross only; eras indexed on the POSITIONS
+    frame; an opening position is not turnover) live there, pinned by test.
 
         asset   pre_design   design   validation    MIN   MEDIAN (asserted)
         BTC            2.3     68.5         24.1    2.3               24.1
