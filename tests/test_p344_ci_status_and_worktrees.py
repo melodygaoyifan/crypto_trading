@@ -13,6 +13,7 @@ The load-bearing tests here are NOT "the slug parses". They are:
 """
 from __future__ import annotations
 
+import inspect
 import io
 import sys
 from pathlib import Path
@@ -185,6 +186,64 @@ class TestTheDeployUsesTheOneImplementation:
         block = src[i:i + 900]
         assert 'if [ "${CI_RC}" -ne 0 ]; then' in block
         assert "exit 1" in block
+
+
+class TestATransient5xxIsRetried:
+    """[P355b] P344 made UNREADABLE non-retryable because "a 403 will not
+    change inside the polling window and a 404 will never change at all".
+    Both true; neither true of a 5xx or a socket timeout, which are facts
+    about GitHub THIS SECOND. One live 504 ended a poll with 14 minutes of
+    budget left — the same "I could not ask" / "no answer yet" conflation the
+    tool exists to end, one class over.
+    """
+
+    def test_a_5xx_raises_the_transient_variant(self):
+        import tools.ci_status as ci
+        assert issubclass(ci.TransientlyUnreadable, ci.Unreadable), (
+            "it must still BE unreadable — degraded, never mistaken for GREEN"
+        )
+        src = inspect.getsource(ci)
+        assert "if e.code >= 500:" in src
+        i = src.index("if e.code >= 500:")
+        assert "TransientlyUnreadable" in src[i:i + 400]
+
+    def test_a_404_and_a_403_stay_terminal(self):
+        """The half P344 built, which must not regress: a slug typo and a
+        rate limit both spend budget to re-learn a fact about US."""
+        import tools.ci_status as ci
+        src = inspect.getsource(ci)
+        for marker in ("has no repository", "GitHub refused the request"):
+            i = src.index(marker)
+            window = src[max(0, i - 400):i]
+            assert "TransientlyUnreadable" not in window, (
+                f"{marker!r} became retryable — that is the budget-burning "
+                f"loop P344 removed"
+            )
+
+    def test_the_network_error_path_is_transient_too(self):
+        import tools.ci_status as ci
+        src = inspect.getsource(ci)
+        i = src.index("network error: ")
+        assert "TransientlyUnreadable" in src[max(0, i - 300):i]
+
+    def test_the_poller_retries_it_but_still_ends_UNREADABLE(self):
+        import tools.ci_status as ci
+        src = inspect.getsource(ci.main)
+        assert "except TransientlyUnreadable as e:" in src
+        i = src.index("except TransientlyUnreadable as e:")
+        # scope to THIS handler: the terminal `except Unreadable` below also
+        # returns UNREADABLE, and a 700-char window reaches it — the sibling
+        # ambiguity the falsification probe caught in this test's first draft
+        # (P238/P349).
+        block = src[i:src.index("except Unreadable as e:", i)]
+        assert "continue" in block, "it must retry"
+        assert "return UNREADABLE" in block, (
+            "when the budget runs out it must still report UNREADABLE — a "
+            "transient failure that never clears is not a pass"
+        )
+        assert "a.max_requests" in block, (
+            "the hard request cap must still bind on the retry path"
+        )
 
 
 class TestScratchWorktreeCannotLeak:

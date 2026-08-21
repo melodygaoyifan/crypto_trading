@@ -60,6 +60,22 @@ class Unreadable(Exception):
     """We could not ask the question. Never means "the answer is no"."""
 
 
+class TransientlyUnreadable(Unreadable):
+    """[P355b] GitHub could not answer RIGHT NOW, and probably will shortly.
+
+    P344 made UNREADABLE non-retryable on the argument that "a 403 will not
+    change inside the polling window and a 404 will never change at all" —
+    true of both, and NOT true of a 5xx or a socket timeout, which are facts
+    about GitHub this second. Collapsing them meant one gateway timeout ended
+    a poll that had 14 minutes of budget left, which is the same "I could not
+    ask" / "no answer yet" conflation the tool exists to end, one class over.
+
+    Retried within the caller's budget; if it never clears, the verdict is
+    still UNREADABLE — degraded, never mistaken for GREEN.
+    """
+
+
+
 def slug_from_remote(url: str) -> str:
     """owner/repo from any remote form. The ONLY way a slug is produced."""
     s = url.strip()
@@ -152,9 +168,17 @@ def fetch_runs(slug: str, sha: str, token: Optional[str] = None,
                 str(remaining) + when + "): " + detail + ". Polling again "
                 "spends budget without changing the answer -- wait for the "
                 "reset or pass --token.")
+        if e.code >= 500:
+            # [P355b] a gateway/server error is GitHub's problem this second
+            raise TransientlyUnreadable(
+                "HTTP " + str(e.code) + " from GitHub: " + detail +
+                ". Transient: retrying within the budget.")
         raise Unreadable("HTTP " + str(e.code) + " from GitHub: " + detail)
     except (urllib.error.URLError, OSError, TimeoutError) as e:
-        raise Unreadable("network error: " + type(e).__name__ + ": " + str(e))
+        # [P355b] the network being down is also a fact about NOW
+        raise TransientlyUnreadable(
+            "network error: " + type(e).__name__ + ": " + str(e) +
+            ". Transient: retrying within the budget.")
     try:
         payload = json.loads(body)
     except ValueError as e:
@@ -214,6 +238,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     while True:
         try:
             code, detail = status(sha, slug=slug, token=a.token)
+        except TransientlyUnreadable as e:
+            # [P355b] GitHub could not answer THIS SECOND. Retried within the
+            # same budget as PENDING; a terminal Unreadable below still is not.
+            calls += 1
+            print("UNREADABLE(transient) " + str(e))
+            if calls >= a.max_requests or time.monotonic() + a.interval > deadline:
+                return UNREADABLE
+            time.sleep(a.interval)
+            continue
         except Unreadable as e:
             # NOT retried, deliberately: this is a fact about us, not about CI.
             print("UNREADABLE: " + str(e))
