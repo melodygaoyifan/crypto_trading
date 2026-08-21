@@ -231,3 +231,53 @@ def assert_detector_is_precise(detector, must_catch, must_not_catch,
             f"detector FIRED on {len(false_pos)} case(s) it must not: "
             f"{false_pos!r}. Fix its PRECISION — do not relax it until your "
             f"own case passes (P248/P330). {why}".strip())
+
+
+def assert_drives_output(run, marker: str, disable, why: str = "") -> None:
+    """[P359] Prove a declared table/roster/registry actually DRIVES behaviour.
+
+    THE TRAP, and it is P170's ("a mechanism nothing calls is decoration")
+    arriving one level up — in the TEST rather than in the code. You add a
+    lookup table, you assert its keys are well-formed and its values sensible,
+    every test is green, and **nothing anywhere checks that the consumer reads
+    it.** Blank the table and the suite stays green.
+
+    Four sightings, three of them in one day:
+      * P312  a producer's report-building seam nothing called (pinned by hand)
+      * P324  main() no longer calling decide_verdict (pinned by hand)
+      * P358b `KNOWN_SILENT_CAUSES` verified for shape; setting `_cause = None`
+              collapsed every label and left ALL tests green
+      * P357  a `done()` check the test could not reach at all
+
+    Each was found by a falsification probe and then re-pinned by hand, a
+    different way each time. The general remedy is not "remember to also test
+    the call site" — it is that **presence cannot distinguish consumed from
+    coincidental. Only VARYING the input and watching the output change can.**
+
+    So this runs the real consumer twice: once as-is, once with the data
+    neutralised, and requires the marker to appear and then disappear. That is
+    a falsification probe executed inline, on every run, which is what stops
+    a decoration-check from being written by accident in the first place.
+
+    `run` produces the consumer's output as a string. `disable` neutralises
+    the data and returns a callable that restores it (or None if it restores
+    itself, e.g. a monkeypatch fixture).
+    """
+    before = run()
+    if marker not in before:
+        raise AssertionError(
+            f"{marker!r} is absent from the output even WITH the data in "
+            f"place — the test is vacuous in the other direction, and would "
+            f"pass for a consumer that never produced it. {why}".strip())
+    restore = disable()
+    try:
+        after = run()
+    finally:
+        if callable(restore):
+            restore()
+    if marker in after:
+        raise AssertionError(
+            f"{marker!r} still appears with the data NEUTRALISED, so the "
+            f"consumer does not read it — the value is decoration and the "
+            f"guard is checking its shape, not its use (P170/P358b). "
+            f"{why}".strip())

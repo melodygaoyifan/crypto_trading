@@ -278,14 +278,24 @@ def test_every_cause_carries_a_class_and_a_reason():
 
 
 def test_the_diagnostic_ACTUALLY_USES_the_cause_table(tmp_path):
-    """[P358] A falsification probe setting `_cause = None` left every test
-    GREEN — the table was checked and its USE was not, which is P170 (a
-    mechanism nothing calls is decoration) inside the fix for a conflation.
-    Third vacuous guard of mine caught this way today.
+    """[P358b/P359] A falsification probe setting `_cause = None` left every
+    test GREEN — the table was checked and its USE was not (P170).
 
-    So drive the real CLI over a synthetic stats file and read the output."""
-    import subprocess
-    import sys as _sys
+    [P359] Re-expressed through `assert_drives_output`, which runs the real
+    consumer twice: once as-is and once with the table neutralised, requiring
+    the label to appear and then DISAPPEAR. Presence alone cannot distinguish
+    consumed from coincidental; only varying the input can. That turns the
+    probe I had to run by hand into something this test does on every run."""
+    import contextlib
+    import importlib.util
+    import io as _io
+
+    from tests._guard_pins import assert_drives_output
+
+    spec = importlib.util.spec_from_file_location(
+        "_kqdiag_live", REPO / "scripts" / "kq_strategy_diagnostic.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
 
     stats = {
         "regime_ticks": {"SIDEWAYS": 4},
@@ -298,22 +308,27 @@ def test_the_diagnostic_ACTUALLY_USES_the_cause_table(tmp_path):
         },
         "archived": [],
     }
-    f = tmp_path / "stats.json"
-    f.write_text(json.dumps(stats), encoding="utf-8")
 
-    r = subprocess.run(
-        [_sys.executable, "-X", "utf8",
-         str(REPO / "scripts" / "kq_strategy_diagnostic.py"),
-         "--path", str(f)],
-        capture_output=True, text=True, encoding="utf-8", timeout=120)
-    out = r.stdout
+    def _run():
+        buf = _io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            mod.render(stats)
+        return buf.getvalue()
 
-    assert "[STRUCTURAL]" in out, (
-        "a strategy with a known STRUCTURAL cause still rendered as a bare "
-        "'0 fires' — the cause table is not being consulted"
-    )
-    assert "[WARMUP]" in out, "the WARMUP class never reaches the output"
-    assert "P141" in out, (
-        "the output does not tell the reader that repairing a structural "
-        "cause ARMS a DECIDE-authority agent"
+    def _disable():
+        original = mod.KNOWN_SILENT_CAUSES
+        mod.KNOWN_SILENT_CAUSES = {}
+        return lambda: setattr(mod, "KNOWN_SILENT_CAUSES", original)
+
+    for marker in ("[STRUCTURAL]", "[WARMUP]", "P141"):
+        assert_drives_output(
+            _run, marker, _disable,
+            why=f"{marker} does not come from KNOWN_SILENT_CAUSES")
+
+    # ...and the residue must stay visible, or naming the known causes would
+    # hide the set actually worth tracing.
+    stats["by_regime"]["SIDEWAYS"].append(
+        {"name": "ETFSpotCointegration", "attempts": 4, "fires": 0})
+    assert "cause UNKNOWN" in _run(), (
+        "a strategy with no measured cause no longer reads as unexplained"
     )
