@@ -458,3 +458,84 @@ def test_a_no_op_replacement_is_still_caught_under_near(tmp_path, monkeypatch):
               near="mklog('BBB')", expect_red=["missing.py"])
     assert run_probe(p) is False
     assert p.result == "INVALID" and "no-op" in p.detail
+
+
+# ==========================================================================
+# 3. isolate_commit — the SECOND silent-drop case (P357)
+# ==========================================================================
+from tools.isolate_commit import (                      # noqa: E402
+    describe_dropped, describe_foreign_dropped, select_hunks)
+
+_HUNK_MINE = (
+    "@@ -1,3 +1,3 @@\n"
+    " ctx\n"
+    "-old\n"
+    "+new  # [P357]\n"
+)
+_HUNK_UNMARKED = (
+    "@@ -10,3 +10,3 @@\n"
+    " ctx\n"
+    "-a\n"
+    "+b\n"
+)
+# The case that cost a red CI: MY edit to a line stamped by MY OWN earlier
+# entry. Indistinguishable, to a marker match, from another session's hunk.
+_HUNK_MY_OLD_MARKER = (
+    "@@ -20,3 +20,3 @@\n"
+    " ctx\n"
+    "-        self._bg_tasks.add(asyncio.create_task(x()))  # [P356]\n"
+    "+        self._spawn_bg(x(), name=\"x\")  # [P356]\n"
+)
+
+
+def test_a_hunk_carrying_an_earlier_marker_of_your_own_is_surfaced():
+    """[P357] P352b refused on UNMARKED drops and reasoned the marked ones
+    away as 'attributable'. They are not: five of six dispatch-site rewrites
+    edited lines tagged `# [P356]` and were dropped silently, so the commit
+    went out with one sixth of the change and CI went red."""
+    hunks = [_HUNK_MINE, _HUNK_MY_OLD_MARKER]
+    mine, theirs = select_hunks(hunks, "[P357]")
+    assert len(mine) == 1 and len(theirs) == 1
+    assert describe_dropped(theirs, "[P357]") == [], (
+        "it carries a marker, so it is not the UNMARKED case"
+    )
+    foreign = describe_foreign_dropped(theirs, "[P357]")
+    assert len(foreign) == 1, "the drop is still silent"
+    markers, body = foreign[0]
+    assert "[P356]" in markers, "the report does not name the marker"
+    assert "_spawn_bg" in body, (
+        "the report does not show the added line, so the author cannot "
+        "recognise it as their own — a count is not a location (P293b)"
+    )
+
+
+def test_the_unmarked_case_is_unchanged():
+    """P352b's refusal must survive: it is the stronger of the two, and this
+    change must not trade one silent drop for another."""
+    mine, theirs = select_hunks([_HUNK_MINE, _HUNK_UNMARKED], "[P357]")
+    assert len(describe_dropped(theirs, "[P357]")) == 1
+    assert describe_foreign_dropped(theirs, "[P357]") == [], (
+        "an unmarked hunk must not also be reported as foreign — it would be "
+        "listed twice with two different remedies"
+    )
+
+
+def test_a_dual_marked_line_is_recognised_as_yours():
+    """The remedy the NOTE points at: stamp the line with BOTH markers. If
+    that did not work the advice would be wrong, which is worse than silence."""
+    dual = _HUNK_MY_OLD_MARKER.replace('# [P356]\n', '# [P356] [P357]\n')
+    mine, theirs = select_hunks([dual], "[P357]")
+    assert len(mine) == 1 and not theirs
+
+
+def test_foreign_drops_warn_rather_than_refuse():
+    """A guard that fires on the NORMAL case gets bypassed (P202/P303). In a
+    shared tree most foreign hunks really are foreign, so refusing on every
+    one would make the tool unusable for the situation it exists for."""
+    src = pathlib.Path(
+        REPO / "tools" / "isolate_commit.py").read_text(encoding="utf-8")
+    i = src.index("foreign = describe_foreign_dropped(")
+    after = src[i:i + 900]
+    assert "return 2" not in after.split("for mk, body in foreign:")[0], (
+        "the foreign-marker report refuses instead of warning"
+    )

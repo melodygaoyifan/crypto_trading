@@ -37,12 +37,22 @@ so they were dropped silently, the tool printed success, and HEAD went red with
 The tool cannot know whose an UNMARKED hunk is — so it must not decide, it must
 SHOW. It now prints every dropped hunk with its location and added lines, and
 REFUSES when a dropped hunk carries no marker of any kind, which is exactly the
-ambiguous case. A dropped hunk that carries somebody else's marker is
-attributable and passes quietly. `--accept-unmarked` is the explicit escape for
-when you have read them and they are theirs.
+ambiguous case. `--accept-unmarked` is the explicit escape for when you have
+read them and they are theirs.
 
 "3 hunks do not carry your marker" was a COUNT. A count is not a location
 (P293b/P349), and that is the whole of this fix.
+
+[P357] AND THE SENTENCE THAT USED TO SIT HERE — "a dropped hunk that carries
+somebody else's marker is attributable and passes quietly" — WAS FALSE, and it
+cost a second red CI. A hunk that EDITS a line stamped by an earlier entry of
+YOUR OWN campaign carries that earlier marker in its added text and is
+indistinguishable, to this tool, from another session's work. Five of six
+dispatch-site rewrites here modified lines tagged `# [P356]`, so `--marker
+"[P357]"` dropped them silently and the commit went out with one sixth of the
+change in it. P352b closed the unmarked case and REASONED the marked case away;
+foreign-marked drops are now listed as a NOTE (not a refusal — see
+describe_foreign_dropped for why). Stamp such a line with BOTH markers.
 """
 from __future__ import annotations
 
@@ -94,24 +104,57 @@ def select_hunks(hunks: Sequence[str], marker: str) -> Tuple[List[str], List[str
     return mine, theirs
 
 
+def _render_hunk(h: str) -> str:
+    lines = h.splitlines()
+    added = [ln for ln in lines if ln.startswith("+")]
+    loc = lines[0] if lines else "@@ ?"
+    shown = [("      " + ln) for ln in added[:6]]
+    if len(added) > 6:
+        shown.append("      ... %d more added line(s)" % (len(added) - 6))
+    return "  " + loc + "\n" + "\n".join(shown)
+
+
 def describe_dropped(theirs: Sequence[str], marker: str) -> List[str]:
     """[P352b] Render the dropped hunks that carry NO marker of any kind.
 
-    Those are the ambiguous ones: a dropped hunk stamped with somebody else's
-    P-number is attributable and needs no attention, while an unmarked one may
-    be yours — which is the case that produced a partial commit and a red CI.
+    Those are the ambiguous ones: an unmarked dropped hunk may be yours, which
+    is the case that produced a partial commit and a red CI.
     """
     out: List[str] = []
     for h in theirs:
-        lines = h.splitlines()
-        added = [ln for ln in lines if ln.startswith("+")]
+        added = [ln for ln in h.splitlines() if ln.startswith("+")]
         if any(MARKER_RE.search(ln) for ln in added):
-            continue          # attributable to another session
-        loc = lines[0] if lines else "@@ ?"
-        shown = [("      " + ln) for ln in added[:6]]
-        if len(added) > 6:
-            shown.append("      ... %d more added line(s)" % (len(added) - 6))
-        out.append("  " + loc + "\n" + "\n".join(shown))
+            continue          # carries SOME marker — see describe_foreign
+        out.append(_render_hunk(h))
+    return out
+
+
+def describe_foreign_dropped(theirs: Sequence[str],
+                             marker: str) -> List[Tuple[str, str]]:
+    """[P357] Render the dropped hunks that carry a marker other than yours.
+
+    P352b's docstring asserted these "need no attention" because they are
+    attributable to another session. **That is false in the common case and it
+    cost a red CI**: a hunk that EDITS a line already stamped with an earlier
+    marker of your own campaign carries that earlier marker in its added text.
+    Five of six dispatch-site rewrites here rewrote lines tagged `# [P356]`,
+    so `--marker "[P357]"` classified them as somebody else's and dropped them
+    **silently** — the same silent partial commit P352b was built to end, one
+    case over, invisible because the refusal only covered UNMARKED hunks.
+
+    Reported as a WARNING rather than a refusal, deliberately. In a shared
+    tree most foreign hunks really are foreign, and refusing on every one
+    would make the tool unusable for the situation it exists for — a guard
+    that fires on the normal case gets bypassed (P202/P303). Naming the
+    markers is enough: the author recognises their own campaign's number.
+    """
+    out: List[Tuple[str, str]] = []
+    for h in theirs:
+        added = [ln for ln in h.splitlines() if ln.startswith("+")]
+        found = sorted({m for ln in added for m in MARKER_RE.findall(ln)
+                        if m != marker})
+        if found:
+            out.append((", ".join(found), _render_hunk(h)))
     return out
 
 
@@ -152,6 +195,20 @@ def isolate(path: str, marker: str, apply: bool = True,
         for d in unmarked:
             print(d)
         return 2
+
+    # [P357] A dropped hunk carrying ANOTHER marker is not automatically
+    # somebody else's — it is usually YOUR edit to a line your own earlier
+    # entry stamped. Warn, do not refuse (see describe_foreign_dropped).
+    foreign = describe_foreign_dropped(theirs, marker)
+    if foreign:
+        print(f"NOTE: {len(foreign)} dropped hunk(s) carry a marker that is "
+              f"not {marker}. That usually means another session — but a hunk "
+              f"of YOURS that edits a line stamped by an earlier entry of "
+              f"your own campaign looks identical, and is dropped silently "
+              f"(P357). Confirm none of these is yours:")
+        for mk, body in foreign:
+            print(f"  [carries {mk}]")
+            print(body)
     if not apply:
         return 0
 
