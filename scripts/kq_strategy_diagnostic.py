@@ -62,13 +62,28 @@ KNOWN_SILENT_CAUSES = {
         "reads market_data[asset]['volume'/'close']; the converter returns a "
         "fixed key set with no per-asset sub-dict, so both are 0 and every "
         "asset is skipped (P358/P2). Repair = P141 arming."),
+    "ETFSpotCointegration": (
+        "STRUCTURAL",
+        "reads market_data['close'/'open'/'volume_24h']; the converter "
+        "produces none of them, so btc_close==0 and it returns on its first "
+        "check (P358c/P2). Repair = P141 arming."),
+    # [P358c] WARMUP clocks measured, not assumed. Buffers are fed ~3x per 4H
+    # tick (generate_signal runs once per asset and appends for all three),
+    # are in-memory, and have no persistence — so a deploy resets them
+    # (P301/P316). The days figure is samples/3 ticks x 4h.
     "RelativeStrengthStrategy": (
         "WARMUP",
-        "needs >=50 samples in an in-memory buffer fed ~3x per 4H tick, with "
-        "no persistence — days of uninterrupted uptime (P358/P301/P316)."),
+        ">=50 price samples ~= 17 ticks ~= 2.8 days of uninterrupted uptime; "
+        "in-memory, no persistence (P358c/P301/P316)."),
     "KalmanCointegration_SOL_ETH": (
         "WARMUP",
-        "same in-memory buffer clock as RelativeStrength (P358/P301/P316)."),
+        ">=50 price AND >=30 spread samples (the spread only accrues once "
+        "prices are full) ~= 27 ticks ~= 4.5 days of uninterrupted uptime "
+        "(P358c/P301/P316)."),
+    "FundingDivergenceStrategy": (
+        "WARMUP",
+        ">=240 price samples ~= 80 ticks ~= 13.3 days of uninterrupted "
+        "uptime — the longest clock of the six (P358c/P301/P316)."),
 }
 
 

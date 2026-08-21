@@ -324,10 +324,84 @@ def test_the_diagnostic_ACTUALLY_USES_the_cause_table(tmp_path):
             _run, marker, _disable,
             why=f"{marker} does not come from KNOWN_SILENT_CAUSES")
 
-    # ...and the residue must stay visible, or naming the known causes would
-    # hide the set actually worth tracing.
+    # ...and an UNTRACED strategy must still read as unexplained. [P358c]
+    # emptied the real residue (all six now have a measured cause), so this
+    # uses a synthetic name: the property being protected is that naming the
+    # known causes never hides the set worth tracing, not that the set is
+    # non-empty today.
     stats["by_regime"]["SIDEWAYS"].append(
-        {"name": "ETFSpotCointegration", "attempts": 4, "fires": 0})
+        {"name": "SomeStrategyNobodyHasTraced", "attempts": 4, "fires": 0})
     assert "cause UNKNOWN" in _run(), (
         "a strategy with no measured cause no longer reads as unexplained"
     )
+
+
+# ==========================================================================
+# 5. [P358c] The two "cause UNKNOWN" strategies, traced
+# ==========================================================================
+def test_etf_cointegration_reads_keys_the_converter_never_produces():
+    """[P358c] The THIRD structural defect, and the same shape as
+    DarkPoolVolume: it asks for `close` / `open` / `volume_24h`, the converter
+    produces none of them, so `btc_close == 0` and it returns on its first
+    check. Pinned from BOTH sides — the reader and the producer — because
+    either changing is an arming (P141)."""
+    from agents.kraken_quant_agent import ETFSpotCointegrationStrategy
+
+    src = inspect.getsource(ETFSpotCointegrationStrategy)
+    assert "market_data.get('close'" in src, (
+        "ETFSpotCointegration no longer reads 'close' — it may now be live at "
+        "DECIDE authority (P141)"
+    )
+    produced = _converter_keys()
+    for absent in ("close", "open", "volume_24h", "volume", "current_price"):
+        assert absent not in produced, (
+            f"the converter now produces {absent!r} — ETFSpotCointegration "
+            f"can fire, which is a P141 arming"
+        )
+
+
+def _converter_keys():
+    import textwrap
+    tree = ast.parse(textwrap.dedent(inspect.getsource(
+        KrakenQuantAgentV6._convert_market_data)))
+    keys = set()
+    for r in ast.walk(tree):
+        if isinstance(r, ast.Return) and isinstance(r.value, ast.Dict):
+            keys |= {k.value for k in r.value.keys
+                     if isinstance(k, ast.Constant)}
+    assert keys, "could not read the converter's key set"
+    return keys
+
+
+@pytest.mark.parametrize("cls_name,needles", [
+    ("RelativeStrengthStrategy", ["< 50"]),
+    ("KalmanCointegrationStrategy", ["< 50", "< 30"]),
+    ("FundingDivergenceStrategy", [">= 240"]),
+])
+def test_the_warmup_thresholds_the_day_figures_rest_on(cls_name, needles):
+    """[P358c] The diagnostic states 2.8 / 4.5 / 13.3 days of uninterrupted
+    uptime. Those are `samples / 3 appends per tick x 4h` — arithmetic over
+    the thresholds below, so if a threshold moves the figure is silently
+    wrong. Pin the inputs, not the prose."""
+    import agents.kraken_quant_agent as kq
+
+    src = inspect.getsource(getattr(kq, cls_name))
+    for n in needles:
+        assert n in src, (
+            f"{cls_name}: warmup threshold {n!r} changed — the day figure in "
+            f"KNOWN_SILENT_CAUSES was computed from it and is now wrong"
+        )
+
+
+def test_every_reachable_silent_strategy_now_has_a_measured_cause():
+    """[P358c] The residue P358b deliberately left visible is now empty: all
+    six reachable strategies are traced. Pinned as a ROSTER so that a new
+    silent strategy shows up as missing rather than as another anonymous
+    '0 fires' line — the conflation this started from."""
+    expected = {
+        "OrderBookImbalance", "DarkPoolVolumeStrategy", "ETFSpotCointegration",
+        "RelativeStrengthStrategy", "KalmanCointegration_SOL_ETH",
+        "FundingDivergenceStrategy",
+    }
+    missing = sorted(expected - set(_cause_table()))
+    assert not missing, f"reachable strategies with no measured cause: {missing}"
