@@ -21134,6 +21134,80 @@ class HMATSProductionRunner:
         wait = secs_to_boundary + offset_seconds
         return max(wait, 60.0)  # Minimum 60s to prevent tight loops
 
+    def _spawn_bg(self, coro, name: str):
+        """[P357] Start a background task so that its DEATH is observable.
+
+        Two separate problems, and the second is the one that makes silence
+        useless as evidence:
+
+        1. asyncio keeps only a WEAK reference to a task, so a discarded
+           handle lets it be collected mid-execution (P356). The set holds it.
+        2. **A Task that raises STORES the exception and never reports it.**
+           Nothing surfaces unless somebody calls `.exception()`. So a
+           background loop that dies of an unhandled error is completely
+           silent — and `OnChainFeed.start()` logs only on a *caught* fetch
+           error, which is why "no log lines" could not distinguish healthy
+           from dead. P356 recorded exactly that and left it as a limitation;
+           this is the mechanism.
+
+        The done-callback makes every ending loud, with the right severity:
+        an exception is an ERROR carrying the traceback, a clean return from
+        a supposedly-endless loop is a WARNING (it should not happen), and a
+        cancellation at shutdown is routine.
+        """
+        task = asyncio.ensure_future(coro)
+        try:
+            task.set_name(name)
+        except AttributeError:  # noqa: silent-swallow — naming is cosmetic
+            pass
+        self._bg_tasks.add(task)
+        task.add_done_callback(self._on_bg_task_done)
+        return task
+
+    def _on_bg_task_done(self, task) -> None:
+        """[P357] Report a background task that has ended, and why."""
+        self._bg_tasks.discard(task)
+        name = "background-task"
+        try:
+            name = task.get_name()
+        except AttributeError:  # noqa: silent-swallow — cosmetic
+            pass
+        if task.cancelled():
+            logger.info("[BG-TASK] %s cancelled (shutdown)", name)
+            return
+        try:
+            exc = task.exception()
+        except Exception:  # noqa: silent-swallow — retrieving the exception
+            # must never itself raise into the callback and take the loop down
+            exc = None
+        if exc is not None:
+            logger.error(
+                "[BG-TASK] %s DIED: %s: %s — the signals it feeds are now "
+                "stale and nothing else will say so. This is the failure that "
+                "used to be silent (P356/P357).",
+                name, type(exc).__name__, exc, exc_info=exc)
+        else:
+            logger.warning(
+                "[BG-TASK] %s ENDED without an error. It is a long-running "
+                "loop, so returning is itself unexpected — whatever it feeds "
+                "stops updating from now on.", name)
+
+    def background_task_names(self):
+        """[P357] The POSITIVE half: what is alive right now.
+
+        A death report answers "did it stop?"; this answers "is it running?",
+        which is the question that had no answer at all. Surfaced in the 4H
+        heartbeat so silence is never the only signal.
+        """
+        out = []
+        for t in list(getattr(self, "_bg_tasks", ()) or ()):
+            try:
+                if not t.done():
+                    out.append(t.get_name())
+            except AttributeError:  # noqa: silent-swallow — cosmetic
+                out.append("?")
+        return sorted(out)
+
     async def _refresh_equity_for_nav(self) -> bool:
         """[P351] Make the equity reading FRESH before the drawdown snapshot.
 
@@ -21489,8 +21563,7 @@ class HMATSProductionRunner:
                 # INSIDE lead_lag_engine ("was discarded asyncio.create_task()
                 # result -> tasks could be GC'd mid-WebSocket loop") and it
                 # was never applied to the CALL SITES (P171/P226).
-                self._bg_tasks.add(asyncio.create_task(
-                    self.onchain_feed.start(), name="onchain_feed"))
+                self._spawn_bg(self.onchain_feed.start(), name="onchain_feed")  # [P357]
             except Exception:  # noqa: silent-swallow — a background feed must
                 # never stop the loop from starting; the feed's own absence is
                 # already visible as data_quality on its agent.
@@ -22954,6 +23027,19 @@ class HMATSProductionRunner:
                             + (" | WEEKEND" if _hb_is_weekend else "")
                             + f" | Kraken trades: {_hb_trades_this_tick}"
                         )
+                        # [P357] POSITIVE liveness for the background loops.
+                        # Their death is now loud (_on_bg_task_done), but a
+                        # death report only answers "did it stop?" — this
+                        # answers "is it running?", which had no answer at
+                        # all, and is why "the loop logs only on error" made
+                        # its silence useless as evidence.
+                        try:
+                            _hb_bg = self.background_task_names()
+                            _hb_msg += (" | bg: " + ",".join(_hb_bg)
+                                        if _hb_bg else " | bg: NONE RUNNING")
+                        except Exception as _hb_bg_err:  # noqa: silent-swallow
+                            # a liveness LABEL must never break the heartbeat
+                            logger.debug(f"[BG-TASK] name read failed: {_hb_bg_err}")
                         # [P155] Surface the Coinbase sleeve in the heartbeat. Reports the
                         # PREVIOUS tick's result — the manage driver runs AFTER this
                         # heartbeat block ([P227] it was moved out so a logging failure
@@ -24349,9 +24435,8 @@ class HMATSProductionRunner:
                     # one, and this task is SHORT, which is exactly the shape
                     # that can be collected before it runs. If it is, positions
                     # are never re-synced after a reconnect.
-                    _h4_task = loop.create_task(self._reconnect_position_sync())
-                    self._bg_tasks.add(_h4_task)
-                    _h4_task.add_done_callback(self._bg_tasks.discard)
+                    self._spawn_bg(self._reconnect_position_sync(),  # [P357]
+                                   name="reconnect_position_sync")
                 else:
                     loop.run_until_complete(self._reconnect_position_sync())
             except Exception as _h4_err:

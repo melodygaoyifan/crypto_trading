@@ -139,11 +139,18 @@ def test_no_background_task_reference_is_discarded():
 
 
 def test_the_runner_holds_the_references():
+    """[P357] The dispatch sites now go through `_spawn_bg`, which holds the
+    reference AND attaches the death report. The invariant is unchanged — a
+    reference is held — so the pin follows it rather than the call shape
+    (P165: rewrite a rotted literal into the invariant it was reaching for)."""
     src = inspect.getsource(main.HMATSProductionRunner)
     assert "self._bg_tasks: set = set()" in src, "no holder is initialised"
-    assert src.count("self._bg_tasks.add(asyncio.create_task(") == 6, (
-        "expected six dispatch sites (three background loops x paper/live)"
+    assert src.count("self._spawn_bg(") == 7, (
+        "expected seven dispatch sites (three background loops x paper/live, "
+        "plus the reconnect position sync)"
     )
+    spawn = inspect.getsource(main.HMATSProductionRunner._spawn_bg)
+    assert "self._bg_tasks.add(task)" in spawn, "the helper drops the reference"
 
 
 def test_the_dangerous_shape_is_the_one_that_motivated_it():
@@ -172,9 +179,17 @@ def test_no_shared_mutable_default_asset_list(cls):
     )
 
 
-def test_an_explicit_asset_list_is_still_honoured_and_copied():
+@pytest.mark.parametrize("cls", [lle.BinanceTakerMonitor, lle.LeadLagAlphaEngine])
+def test_an_explicit_asset_list_is_still_honoured_and_copied(cls):
+    """[P357] Parametrized over BOTH classes. As shipped, P356 tested the copy
+    on BinanceTakerMonitor only — so reverting the `list(...)` in its sibling
+    left every guard GREEN. Found by a falsification probe coming back VACUOUS,
+    which is the harness reporting a gap in the GUARD rather than in the fix
+    (P238: distrust the probe first, then believe it). P171/P226 once more: a
+    mitigation applied to one instance of a class is not applied to the class,
+    and here both instances were fixed while only one was pinned."""
     given = ["BTC"]
-    m = lle.BinanceTakerMonitor(given)
+    m = cls(given)
     assert m.assets == ["BTC"]
     assert m.assets is not given, (
         "the caller's list is stored by reference; a later mutation by the "

@@ -29,7 +29,12 @@ WHAT IT ENFORCES, and each clause is one way a probe lies:
 
   * the anchor matches EXACTLY once — zero means the probe never applied
     (an "ANCHOR MISS" that is easy to skim past); more than one means it
-    edited somewhere you did not read (P238 anchor-uniqueness).
+    edited somewhere you did not read (P238 anchor-uniqueness). [P357] When
+    the text you want genuinely repeats -- two call sites, two classes with
+    the same __init__, a handler and the one below it -- pass `near=` and the
+    probe is resolved WITHIN that window instead of refused, which is what
+    `assert_text_pin` already does for pins (P350). `near` must itself be
+    unique, for the same reason.
   * the edit CHANGES THE FILE — a no-op replacement is a probe that tests
     nothing.
   * the named tests were GREEN BEFORE — probing an already-red suite proves
@@ -62,6 +67,8 @@ class Probe:
     old: str
     new: str
     expect_red: Sequence[str]           # pytest targets that MUST fail
+    near: str = ""                      # [P357] disambiguates a repeated `old`
+    near_window: int = 600              # chars either side of `near` to search
     skip_green_check: bool = False      # only when the pre-check is expensive
     result: Optional[str] = field(default=None, init=False)
     detail: str = field(default="", init=False)
@@ -91,14 +98,62 @@ def run_probe(p: Probe) -> bool:
         return False
 
     n = original.count(p.old)
-    if n != 1:
+    if n != 1 and p.near:
+        # [P357] SCOPE it instead of sending the author away to hand-expand
+        # the anchor. Sibling ambiguity has now cost four INVALID rounds in
+        # three entries, every time because two call sites, two classes with
+        # identical __init__ signatures, or a handler and the handler below it
+        # share the text. The harness caught all four — the waste was the
+        # round trip, not a missed defect — so `near` closes the loop the way
+        # assert_text_pin's `near` does for pins (P350): one concept, both
+        # tools, rather than a fifth reminder to be careful.
+        if original.count(p.near) != 1:
+            p.result = "INVALID"
+            p.detail = (f"near={p.near!r} occurs {original.count(p.near)} "
+                        f"times; an ambiguous ANCHOR for an ambiguous needle "
+                        f"scopes the probe to a window you did not read "
+                        f"(P238).")
+            return False
+        # [P357] BIDIRECTIONAL. The first cut searched forward only, and its
+        # own demonstration failed on that: the distinguishing text
+        # (`logging.getLogger('BinanceTaker')`) sits AFTER the line being
+        # probed. "near" means nearby, not after — and a helper that silently
+        # means the latter sends the author looking for the wrong thing.
+        # (`assert_text_pin` is forward-only and documents it; that is the
+        # right trade for a PIN, where the anchor is chosen to precede.)
+        # [P357] TIGHT by default. The first cut used 4000 chars, and its own
+        # test exposed that as no scoping at all for anything but a large
+        # file: two siblings a few lines apart both land inside the window and
+        # the probe is refused for "2 within the window", which is the same
+        # dead end `near` exists to remove. P350 made this exact correction to
+        # `assert_text_pin` (1500 -> 400) for the same reason. A window that is
+        # too small only ever REFUSES, which is the safe direction; too large
+        # silently fails to discriminate.
+        W = p.near_window
+        centre = original.index(p.near)
+        lo = max(0, centre - W)
+        hi = min(len(original), centre + len(p.near) + W)
+        window = original[lo:hi]
+        if window.count(p.old) != 1:
+            p.result = "INVALID"
+            p.detail = (f"anchor matched {n} times overall and "
+                        f"{window.count(p.old)} within {W} chars either side "
+                        f"(widen or narrow with near_window=) "
+                        f"of near={p.near!r} — needs exactly 1 there.")
+            return False
+        at = lo + window.index(p.old)
+        mutated = original[:at] + p.new + original[at + len(p.old):]
+        n = 1
+    elif n != 1:
         p.result = "INVALID"
         p.detail = (f"anchor matched {n} times (need exactly 1). Zero means "
                     f"the probe never applied; more than one means it edited "
-                    f"somewhere you did not read.")
+                    f"somewhere you did not read."
+                    + (" Pass near=<unique nearby text> to scope it (P357)."
+                       if n > 1 else ""))
         return False
-
-    mutated = original.replace(p.old, p.new)
+    else:
+        mutated = original.replace(p.old, p.new)
     if mutated == original:
         p.result, p.detail = "INVALID", "the replacement is a no-op"
         return False
