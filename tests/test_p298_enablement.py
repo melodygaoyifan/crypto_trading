@@ -36,8 +36,9 @@ class TestGroupAEnabled:
     @pytest.mark.parametrize("flag", [
         "options_use_deribit",
         "exchange_netflow_to_flow_agent",
-        "coinbase_whale_filter_enforce",
-        "coinbase_ma_filter_enforce",
+        # [P356] the two entry filters moved OFF this roster and onto the
+        # disarmed one below — by operator instruction, on the no-trade
+        # decomposition. They are still pinned, just to the other value.
         "macro_gci_live",
         "fusion_conviction_to_sleeve",
     ])
@@ -46,6 +47,23 @@ class TestGroupAEnabled:
         assert d.get(flag) is True, f"{flag} is not enabled"
         notes = [k for k in d if k.startswith("_") and flag.split("_")[0] in k]
         assert notes, f"{flag} enabled with no annotation (P141: a live flip is a decision)"
+
+    @pytest.mark.parametrize("flag", [
+        "coinbase_whale_filter_enforce",
+        "coinbase_ma_filter_enforce",
+    ])
+    def test_the_entry_filters_are_disarmed_with_their_reason(self, flag):
+        """[P356] Armed by P298, disarmed by explicit operator instruction
+        after the no-trade decomposition put 23 of ETH's 31 actionable ticks
+        on them. Pinned at the DECIDED value so a silent re-arm fails too."""
+        d = _live()
+        assert d.get(flag) is False, (
+            f"{flag} is not at its decided value False — re-arming is a "
+            f"live-money change and needs its own record"
+        )
+        assert any(k.startswith("_p356") for k in d), (
+            "the disarm must carry its reason in the profile (P141)"
+        )
 
     def test_sentiment_uses_the_historical_distribution(self):
         assert _live().get("sentiment_zscore_mode") == "historical"

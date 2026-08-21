@@ -166,7 +166,13 @@ class BinanceTakerMonitor:
     - @markPrice: Mark price for divergence detection
     """
     
-    def __init__(self, assets: List[str] = ['BTC', 'ETH', 'SOL']):
+    def __init__(self, assets: Optional[List[str]] = None):
+        # [P356] was `= ['BTC','ETH','SOL']` — a mutable default is ONE list
+        # shared by every default-constructed instance, and it is stored on
+        # self, so any future mutation would leak across instances and
+        # across restarts within a process. No mutation site exists today;
+        # this closes it before one is written.
+        assets = list(assets) if assets is not None else ['BTC', 'ETH', 'SOL']
         self.assets = assets
         self.logger = logging.getLogger('BinanceTaker')
         
@@ -563,7 +569,13 @@ class LeadLagAlphaEngine:
     5. Generate front-running execution recommendations
     """
     
-    def __init__(self, assets: List[str] = ['BTC', 'ETH', 'SOL']):
+    def __init__(self, assets: Optional[List[str]] = None):
+        # [P356] was `= ['BTC','ETH','SOL']` — a mutable default is ONE list
+        # shared by every default-constructed instance, and it is stored on
+        # self, so any future mutation would leak across instances and
+        # across restarts within a process. No mutation site exists today;
+        # this closes it before one is written.
+        assets = list(assets) if assets is not None else ['BTC', 'ETH', 'SOL']
         self.assets = assets
         self.logger = logging.getLogger('LeadLagEngine')
         

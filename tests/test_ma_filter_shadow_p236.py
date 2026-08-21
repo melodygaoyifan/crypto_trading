@@ -103,14 +103,18 @@ class TestConfigContract:
         # silently flip on.
         live = json.loads((REPO / "configs" / "live_high_risk.json"
                            ).read_text(encoding="utf-8-sig"))
-        # [P298] Flipped by explicit operator instruction ("make a plan on enabling all items, i don't want to wait"). The pin now asserts the DECIDED value rather than OFF, so a silent revert fails too - either direction is a live-money change (the P237/P270 pattern).
-        # Enforcement is ON. Evidence is the P236 live counterfactual the
-        # filter was built from: quant earns +24.9bps/tick when model_alpha
-        # AGREES and -78.9bps/tick when it disagrees (t=-3.42). The filter is
-        # tightening-only, fails OPEN on a silent agent, and never exits.
-        assert live.get("coinbase_ma_filter_enforce") is True, (
-            "coinbase_ma_filter_enforce is not at its decided value True — a "
-            "silent revert is as much a live-money change as the flip was"
+        # [P356] DISARMED by explicit operator instruction, after the
+        # no-trade decomposition put 23 of ETH's 31 actionable ticks on these
+        # filters. The pin follows the DECIDED value (the P237/P270 pattern),
+        # so a silent RE-ARM fails too — either direction is a live-money
+        # change. P298's flip rested on the P236 counterfactual (-78.9bps on
+        # disagreement, t=-3.42); P324 then measured it NOT EARNED at the
+        # pre-committed bar once the t was overlap-corrected, and P337
+        # measured it against the decider it actually filters and found the
+        # sign INVERTED. The ledger keeps accruing either way (P340).
+        assert live.get("coinbase_ma_filter_enforce") is False, (
+            "coinbase_ma_filter_enforce is not at its decided value False — a "
+            "silent re-arm is as much a live-money change as the disarm was"
         )
 
 

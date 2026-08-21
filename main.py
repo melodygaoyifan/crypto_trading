@@ -6283,6 +6283,11 @@ class HMATSProductionRunner:
         # V3.2-A7: FastRiskTick -30s risk check between 4H decisions (SHADOW)
         # =====================================================================
         self.fast_risk_tick = None
+        # [P356] Strong references to the long-running background tasks.
+        # asyncio keeps only WEAK ones, so a discarded handle lets a task
+        # be garbage-collected mid-execution. A set, because the dispatch
+        # sites are idempotent (guarded on each object's own _running).
+        self._bg_tasks: set = set()
         self._fast_risk_last_eval: float = 0.0
         if FAST_RISK_TICK_AVAILABLE and self.config.mode in [RunMode.PAPER, RunMode.LIVE]:
             try:
@@ -21473,14 +21478,29 @@ class HMATSProductionRunner:
         # W9: Start on-chain feed polling
         if self.onchain_feed and not getattr(self.onchain_feed, '_running', False):
             try:
-                asyncio.create_task(self.onchain_feed.start())
-            except Exception:
+                # [P356] HOLD THE REFERENCE. asyncio's own docs: "Save a
+                # reference to the result of this function, to avoid a task
+                # disappearing mid-execution" — the loop keeps only a WEAK
+                # reference. It matters most here of the three dispatches
+                # below, because `OnChainFeed.start()` runs its polling loop
+                # INLINE (`while self._running: ... await sleep()`), so the
+                # Task IS the loop; the other two spawn their own tracked
+                # inner tasks and complete. P37 fixed exactly this class
+                # INSIDE lead_lag_engine ("was discarded asyncio.create_task()
+                # result -> tasks could be GC'd mid-WebSocket loop") and it
+                # was never applied to the CALL SITES (P171/P226).
+                self._bg_tasks.add(asyncio.create_task(
+                    self.onchain_feed.start(), name="onchain_feed"))
+            except Exception:  # noqa: silent-swallow — a background feed must
+                # never stop the loop from starting; the feed's own absence is
+                # already visible as data_quality on its agent.
                 pass
 
         # [P1b] Start Lead-Lag Alpha Engine (Binance + Deribit WebSockets)
         if self._lead_lag_engine and not getattr(self._lead_lag_engine, '_running', False):
             try:
-                asyncio.create_task(self._lead_lag_engine.start())
+                self._bg_tasks.add(asyncio.create_task(
+                    self._lead_lag_engine.start(), name="lead_lag"))  # [P356]
                 logger.info("[P1b] LeadLagAlphaEngine: async start() dispatched")
             except Exception as _ll_err:
                 logger.warning(f"[P1b] LeadLagAlphaEngine start failed: {_ll_err}")
@@ -21490,7 +21510,8 @@ class HMATSProductionRunner:
         # generate_signal_safe() always returned data_quality=0 neutral.
         if getattr(self, '_sol_onchain_agent', None) is not None and not getattr(self._sol_onchain_agent, '_running', False):
             try:
-                asyncio.create_task(self._sol_onchain_agent.start())
+                self._bg_tasks.add(asyncio.create_task(
+                    self._sol_onchain_agent.start(), name="sol_onchain"))  # [P356]
                 logger.info("[WIRE-SOL-OC] SolanaOnChainAgent: async start() dispatched")
             except Exception as _soc_err:
                 logger.warning(f"[WIRE-SOL-OC] start failed: {_soc_err}")
@@ -22573,19 +22594,22 @@ class HMATSProductionRunner:
             # dormant → dead signals (data_quality=0) for months.
             if self.onchain_feed and not getattr(self.onchain_feed, '_running', False):
                 try:
-                    asyncio.create_task(self.onchain_feed.start())
+                    self._bg_tasks.add(asyncio.create_task(
+                        self.onchain_feed.start(), name="onchain_feed"))  # [P356]
                     logger.info("[W9-LIVE] OnChainFeed: async start() dispatched")
                 except Exception as _oc_err:
                     logger.warning(f"[W9-LIVE] OnChainFeed start failed: {_oc_err}")
             if self._lead_lag_engine and not getattr(self._lead_lag_engine, '_running', False):
                 try:
-                    asyncio.create_task(self._lead_lag_engine.start())
+                    self._bg_tasks.add(asyncio.create_task(
+                        self._lead_lag_engine.start(), name="lead_lag"))  # [P356]
                     logger.info("[P1b-LIVE] LeadLagAlphaEngine: async start() dispatched")
                 except Exception as _ll_err:
                     logger.warning(f"[P1b-LIVE] LeadLagAlphaEngine start failed: {_ll_err}")
             if getattr(self, '_sol_onchain_agent', None) is not None and not getattr(self._sol_onchain_agent, '_running', False):
                 try:
-                    asyncio.create_task(self._sol_onchain_agent.start())
+                    self._bg_tasks.add(asyncio.create_task(
+                        self._sol_onchain_agent.start(), name="sol_onchain"))  # [P356]
                     logger.info("[WIRE-SOL-OC-LIVE] SolanaOnChainAgent: async start() dispatched")
                 except Exception as _soc_err:
                     logger.warning(f"[WIRE-SOL-OC-LIVE] start failed: {_soc_err}")
@@ -24321,7 +24345,13 @@ class HMATSProductionRunner:
                 import asyncio as _h4_asyncio
                 loop = _h4_asyncio.get_event_loop()
                 if loop.is_running():
-                    loop.create_task(self._reconnect_position_sync())
+                    # [P356] hold the reference — asyncio keeps only a weak
+                    # one, and this task is SHORT, which is exactly the shape
+                    # that can be collected before it runs. If it is, positions
+                    # are never re-synced after a reconnect.
+                    _h4_task = loop.create_task(self._reconnect_position_sync())
+                    self._bg_tasks.add(_h4_task)
+                    _h4_task.add_done_callback(self._bg_tasks.discard)
                 else:
                     loop.run_until_complete(self._reconnect_position_sync())
             except Exception as _h4_err:

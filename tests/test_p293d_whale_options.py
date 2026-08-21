@@ -450,20 +450,26 @@ class TestConfigTrio:
             p.write_text(json.dumps({"whale_seat_mode": "ENFORCE"}), encoding="utf-8")
             assert ProductionConfig.from_file(p).whale_seat_mode == "enforce"
 
-    @pytest.mark.parametrize("flag", [
-        "coinbase_whale_filter_enforce", "fusion_conviction_to_sleeve"])
-    def test_undecided_flags_stay_out_of_the_live_profile(self, flag):
-        """A and C remain operator decisions with their own P-entry."""
+    @pytest.mark.parametrize("flag,decided", [
+        # [P356] The whale entry filter was ARMED by P298 and DISARMED by
+        # explicit operator instruction after the no-trade decomposition put
+        # 23 of ETH's 31 actionable ticks on the two filters. Conviction
+        # sizing is unchanged. Both are pinned at their DECIDED value, so a
+        # silent move in EITHER direction fails (P237/P270) — the point of
+        # this test was never the value, it was that nobody changes it
+        # quietly.
+        ("coinbase_whale_filter_enforce", False),
+        ("fusion_conviction_to_sleeve", True),
+    ])
+    def test_flags_sit_at_their_decided_value(self, flag, decided):
+        """Each of these is an operator decision with its own P-entry."""
         prof = REPO / "configs" / "live_high_risk.json"
         if not prof.exists():
             pytest.skip("live profile not present")
         data = json.loads(prof.read_text(encoding="utf-8-sig"))
-        # [P298] Flipped by explicit operator instruction ("make a plan on enabling all items, i don't want to wait"). The pin now asserts the DECIDED value rather than OFF, so a silent revert fails too - either direction is a live-money change (the P237/P270 pattern).
-        # A (whale entry filter) is tightening-only and fails OPEN; C
-        # (conviction sizing) can only REDUCE size and never changes a sign.
-        assert data.get(flag) is True, (
-            f"{flag} is not at its decided value True — a silent revert is "
-            f"as much a live-money change as the flip was"
+        assert data.get(flag) is decided, (
+            f"{flag} is not at its decided value {decided} — moving it is a "
+            f"live-money change and needs its own record"
         )
 
     def test_whale_seat_is_the_DECIDED_value(self):
