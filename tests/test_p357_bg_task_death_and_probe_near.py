@@ -86,6 +86,7 @@ class _Runner:
 
     def __init__(self):
         self._bg_tasks = set()
+        self._bg_handed_off = set()
 
     _spawn_bg = main.HMATSProductionRunner._spawn_bg
     _on_bg_task_done = main.HMATSProductionRunner._on_bg_task_done
@@ -152,9 +153,9 @@ def test_the_consequence_is_stated_not_just_the_event(caplog):
 
 
 def test_a_clean_return_is_a_warning_because_the_loop_should_not_end(caplog):
-    """All three dispatched coroutines are endless loops. Returning normally
-    is not success — it is a different fault, and collapsing it into the
-    healthy case would make it invisible the way the raise was."""
+    """For an ENDLESS loop, returning normally is not success — it is a
+    different fault, and collapsing it into the healthy case would make it
+    invisible the way the raise was."""
 
     async def _ends():
         return None
@@ -538,4 +539,119 @@ def test_foreign_drops_warn_rather_than_refuse():
     after = src[i:i + 900]
     assert "return 2" not in after.split("for mk, body in foreign:")[0], (
         "the foreign-marker report refuses instead of warning"
+    )
+
+
+# ==========================================================================
+# 4. [P357b] endless vs hand-off — found by DEPLOYING the mechanism
+# ==========================================================================
+def test_a_handoff_task_returning_is_not_reported_as_a_fault(caplog):
+    """The defect the first live boot exposed, one hour after shipping.
+
+    P356 had already written down that only `OnChainFeed.start()` runs its
+    loop INLINE, and that `LeadLagAlphaEngine.start()` and the SOL agent
+    spawn tracked inner tasks and RETURN. I quoted that in this very file and
+    still wrote a blanket WARNING calling every clean return a fault — so the
+    first heartbeat carried two WARNINGs saying signals had stopped updating
+    when nothing had. **An alert that fires on the normal case is how a real
+    one becomes wallpaper (P202/P303)**, and here it also made the one return
+    that genuinely matters indistinguishable from the two that do not."""
+
+    async def _hands_off():
+        return None
+
+    async def _go():
+        _Runner()._spawn_bg(_hands_off(), name="lead_lag", endless=False)
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+    with caplog.at_level(logging.INFO):
+        asyncio.run(_go())
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING], (
+        "a hand-off task returning was reported as a fault"
+    )
+    blob = " ".join(r.getMessage() for r in caplog.records)
+    assert "handed off" in blob, (
+        "the hand-off is not reported at all — it must stay visible, just not "
+        "as an alarm"
+    )
+
+
+def test_a_handoff_task_that_RAISES_is_still_an_error(caplog):
+    """The load-bearing half of the split: a hand-off that throws never
+    handed anything off, so the inner tasks do not exist. Quieting the clean
+    return must not quiet the fault (P248: the blanket-mute direction)."""
+
+    async def _boom():
+        raise RuntimeError("never handed off")
+
+    async def _go():
+        _Runner()._spawn_bg(_boom(), name="lead_lag", endless=False)
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+    with caplog.at_level(logging.INFO):
+        asyncio.run(_go())
+    assert [r for r in caplog.records if r.levelno >= logging.ERROR], (
+        "a hand-off task raised and was not reported"
+    )
+
+
+def test_endless_is_the_DEFAULT_so_a_new_site_cannot_go_quiet_by_omission():
+    """Fail direction. A new dispatch site that forgets the flag must get the
+    LOUD treatment; the quiet one has to be asked for."""
+    sig = inspect.signature(main.HMATSProductionRunner._spawn_bg)
+    assert sig.parameters["endless"].default is True
+
+
+def test_the_dispatch_sites_declare_the_shape_P356_measured():
+    """onchain_feed runs its loop inline (endless); the other three hand off.
+    If a call site's flag ever disagrees with that, the severity is wrong in
+    one direction or the other."""
+    src = inspect.getsource(main.HMATSProductionRunner)
+    for name, expected_handoff in (("onchain_feed", False),
+                                   ("lead_lag", True),
+                                   ("sol_onchain", True),
+                                   ("reconnect_position_sync", True)):
+        for line in src.splitlines():
+            if "_spawn_bg(" not in line and f'name="{name}"' not in line:
+                continue
+            if f'name="{name}"' not in line:
+                continue
+            assert ("endless=False" in line) is expected_handoff, (
+                f"{name}: endless flag disagrees with the measured shape"
+            )
+
+
+def test_handoff_names_are_never_presented_as_running():
+    """The heartbeat may COUNT hand-offs, never list them among the live
+    names: their inner tasks are owned by the child and this runner does not
+    track them, so naming them would fabricate a liveness claim (P2/P223) —
+    the same defect as reporting a finished task as alive."""
+
+    async def _hands_off():
+        return None
+
+    async def _go():
+        r = _Runner()
+        r._spawn_bg(_hands_off(), name="lead_lag", endless=False)
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        return r.background_task_names(), r._bg_handed_off
+
+    live, off = asyncio.run(_go())
+    assert live == [], "a handed-off task is listed as running"
+    assert off == {"lead_lag"}, "the hand-off was not recorded for the count"
+
+
+def test_the_heartbeat_reports_the_handoff_count_not_their_names():
+    src = inspect.getsource(main.HMATSProductionRunner.run_live)
+    i = src.index("background_task_names()")
+    window = src[i:i + 1200]
+    assert "handed off" in window, (
+        "`bg: onchain_feed` alone reads as 'the other two died' — which is "
+        "exactly how the first live heartbeat looked"
+    )
+    assert "_bg_handed_off" in window and "len(" in window, (
+        "the heartbeat must render a COUNT, not the hand-off names"
     )

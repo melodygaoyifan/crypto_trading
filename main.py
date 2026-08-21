@@ -21134,7 +21134,7 @@ class HMATSProductionRunner:
         wait = secs_to_boundary + offset_seconds
         return max(wait, 60.0)  # Minimum 60s to prevent tight loops
 
-    def _spawn_bg(self, coro, name: str):
+    def _spawn_bg(self, coro, name: str, endless: bool = True):  # [P357]
         """[P357] Start a background task so that its DEATH is observable.
 
         Two separate problems, and the second is the one that makes silence
@@ -21572,7 +21572,7 @@ class HMATSProductionRunner:
         # [P1b] Start Lead-Lag Alpha Engine (Binance + Deribit WebSockets)
         if self._lead_lag_engine and not getattr(self._lead_lag_engine, '_running', False):
             try:
-                self._spawn_bg(self._lead_lag_engine.start(), name="lead_lag")  # [P356] [P357]
+                self._spawn_bg(self._lead_lag_engine.start(), name="lead_lag", endless=False)  # [P356] [P357]
                 logger.info("[P1b] LeadLagAlphaEngine: async start() dispatched")
             except Exception as _ll_err:
                 logger.warning(f"[P1b] LeadLagAlphaEngine start failed: {_ll_err}")
@@ -21582,7 +21582,7 @@ class HMATSProductionRunner:
         # generate_signal_safe() always returned data_quality=0 neutral.
         if getattr(self, '_sol_onchain_agent', None) is not None and not getattr(self._sol_onchain_agent, '_running', False):
             try:
-                self._spawn_bg(self._sol_onchain_agent.start(), name="sol_onchain")  # [P356] [P357]
+                self._spawn_bg(self._sol_onchain_agent.start(), name="sol_onchain", endless=False)  # [P356] [P357]
                 logger.info("[WIRE-SOL-OC] SolanaOnChainAgent: async start() dispatched")
             except Exception as _soc_err:
                 logger.warning(f"[WIRE-SOL-OC] start failed: {_soc_err}")
@@ -22671,13 +22671,13 @@ class HMATSProductionRunner:
                     logger.warning(f"[W9-LIVE] OnChainFeed start failed: {_oc_err}")
             if self._lead_lag_engine and not getattr(self._lead_lag_engine, '_running', False):
                 try:
-                    self._spawn_bg(self._lead_lag_engine.start(), name="lead_lag")  # [P356] [P357]
+                    self._spawn_bg(self._lead_lag_engine.start(), name="lead_lag", endless=False)  # [P356] [P357]
                     logger.info("[P1b-LIVE] LeadLagAlphaEngine: async start() dispatched")
                 except Exception as _ll_err:
                     logger.warning(f"[P1b-LIVE] LeadLagAlphaEngine start failed: {_ll_err}")
             if getattr(self, '_sol_onchain_agent', None) is not None and not getattr(self._sol_onchain_agent, '_running', False):
                 try:
-                    self._spawn_bg(self._sol_onchain_agent.start(), name="sol_onchain")  # [P356] [P357]
+                    self._spawn_bg(self._sol_onchain_agent.start(), name="sol_onchain", endless=False)  # [P356] [P357]
                     logger.info("[WIRE-SOL-OC-LIVE] SolanaOnChainAgent: async start() dispatched")
                 except Exception as _soc_err:
                     logger.warning(f"[WIRE-SOL-OC-LIVE] start failed: {_soc_err}")
@@ -24431,7 +24431,8 @@ class HMATSProductionRunner:
                     # that can be collected before it runs. If it is, positions
                     # are never re-synced after a reconnect.
                     self._spawn_bg(self._reconnect_position_sync(),  # [P357]
-                                   name="reconnect_position_sync")
+                                   name="reconnect_position_sync",  # [P357]
+                                   endless=False)
                 else:
                     loop.run_until_complete(self._reconnect_position_sync())
             except Exception as _h4_err:
