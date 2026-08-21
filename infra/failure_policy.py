@@ -32,8 +32,10 @@ THE CONTRACT, and each clause is one of the bugs above:
                    next attempt fails, and for a safety-relevant caller
                    suppression is the dangerous direction (P329).
   RATE_LIMITED     suppresses for the interval the SERVER stated.
-  QUOTA_EXHAUSTED  suppresses until the reset the server stated; when no
-                   date is given, a bounded re-probe cadence — never a
+  QUOTA_EXHAUSTED  suppresses until the EARLIER of the reset the server
+                   stated and a bounded re-probe cadence (P355: a stated
+                   reset is the earliest access returns, not the latest);
+                   when no date is given, that same cadence — never a
                    guessed calendar boundary (P319).
   PERMANENT        suppresses for the process. A 404 on a hardcoded path
                    cannot succeed by retrying (P218).
@@ -161,15 +163,38 @@ def classify_external_failure(
     # status alone is exactly how P329c fell through every branch.
     if any(h in msg for h in _QUOTA_HINTS):
         stated = _parse_regain(message or "")
+        # [P355] A STATED RESET IS THE EARLIEST THE VENDOR PROMISES ACCESS
+        # BACK, NOT THE LATEST. Suppressing for the whole stated interval
+        # cannot notice the cap being lifted early — by the operator raising
+        # their own limit, or by the vendor. That happened: the Anthropic
+        # account cap stated 2026-09-01 and was resolved on 08-21, and only a
+        # process restart (which wipes the in-memory disable) let Haiku
+        # resume; a long-lived process would have sat on the headline
+        # heuristic for eleven more days.
+        #
+        # So the suppression is the EARLIER of the stated reset and the
+        # bounded re-probe. Capping only ever SHORTENS, so P293b's real
+        # defect — a monthly quota retried on a 900s transient backoff,
+        # ~2,900 pointless requests — stays fixed at one request per
+        # re-probe interval, and the fail direction stays P319's: retry
+        # sooner than necessary, never go dark for weeks by mistake.
+        # [P355] named apart from the 429 branch's `secs`, which is
+        # `float | None` — one name bound to two types is the P342b shape.
+        if stated is None:
+            quota_secs = DEFAULT_QUOTA_REPROBE_SEC
+            why = ("quota exhausted with no stated reset — bounded re-probe, "
+                   "never a guessed billing boundary (P319)")
+        elif stated > DEFAULT_QUOTA_REPROBE_SEC:
+            quota_secs = DEFAULT_QUOTA_REPROBE_SEC
+            why = (f"quota exhausted; the server states a reset in "
+                   f"{stated / 3600.0:.1f}h, but that is the EARLIEST it "
+                   f"promises access back — re-probing on the bounded "
+                   f"cadence so a cap lifted early is noticed (P355)")
+        else:
+            quota_secs = stated
+            why = "quota exhausted; reset stated by the server, sooner than the re-probe"
         return FailurePolicy(
-            FailureClass.QUOTA_EXHAUSTED,
-            stated if stated is not None else DEFAULT_QUOTA_REPROBE_SEC,
-            "error",
-            ("quota exhausted; reset stated by the server"
-             if stated is not None else
-             "quota exhausted with no stated reset — bounded re-probe, "
-             "never a guessed billing boundary (P319)"),
-        )
+            FailureClass.QUOTA_EXHAUSTED, quota_secs, "error", why)
 
     if status == 429:
         secs = _coerce_retry_after(retry_after)

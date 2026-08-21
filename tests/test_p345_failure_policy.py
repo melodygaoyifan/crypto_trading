@@ -22,6 +22,13 @@ from infra.failure_policy import (  # noqa: E402
 )
 
 
+
+def _soon_utc() -> str:
+    """A regain-instant a few hours out, formatted the way the vendor does."""
+    from datetime import datetime, timedelta, timezone
+    t = datetime.now(timezone.utc) + timedelta(hours=3)
+    return t.strftime("%Y-%m-%d at %H:%M")
+
 class TestTheFiveRecordedBugs:
 
     def test_p329_a_transient_read_failure_never_suppresses(self):
@@ -60,7 +67,22 @@ class TestTheFiveRecordedBugs:
             message="usage limit; you will regain access on 2099-09-01 at 00:00 UTC")
         unstated = classify_external_failure(
             status=400, message="usage limit reached, try later")
-        assert stated.retry_after_sec != DEFAULT_QUOTA_REPROBE_SEC
+        # [P355] The invariant P319 was reaching for is that the server's
+        # date is READ AND USED, never replaced by a guess about a billing
+        # cycle. It is NOT that a stated reset always outlasts the re-probe:
+        # a stated reset is the EARLIEST access returns, so a far-future one
+        # is capped at the bounded cadence and a NEAR one is honoured exactly.
+        assert stated.reason != unstated.reason, (
+            "a stated reset and an unstated one must be distinguishable — "
+            "otherwise nothing proves the date was read at all")
+        assert "regain" not in unstated.reason
+        near = classify_external_failure(
+            status=400,
+            message=("usage limit; you will regain access on "
+                     + _soon_utc() + " UTC"))
+        assert near.retry_after_sec < DEFAULT_QUOTA_REPROBE_SEC, (
+            "a reset SOONER than the re-probe must be honoured exactly — "
+            "that is the half of P319 that must never regress")
         assert unstated.retry_after_sec == DEFAULT_QUOTA_REPROBE_SEC, (
             "with no stated reset, fall back to a bounded re-probe")
 

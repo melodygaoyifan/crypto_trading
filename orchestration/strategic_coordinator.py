@@ -581,6 +581,11 @@ class StrategicCoordinator:
         market_data: Dict[str, float],
         squeeze_risk: float = 0.0,
         funding_rate: float = 0.0,
+        # [P355] `cvd` is a real classifier input and it lives in
+        # agent_signals, not market_data. Optional and defaulted so every
+        # existing caller is unchanged; when it is absent `cvd` simply joins
+        # the MISSING list rather than being fabricated as 0.
+        agent_signals: Optional[Dict[str, Any]] = None,
     ) -> ShortFilterResult:
         """
         ?
@@ -611,7 +616,28 @@ class StrategicCoordinator:
         # 1. Regime ?
         if self._regime_classifier is not None:
             try:
-                features = self._build_regime_features(asset, market_data)
+                features, _missing = self._build_regime_features(
+                    asset, market_data, agent_signals)
+                # [P355] REFUSE ON A MOSTLY-FABRICATED VECTOR. Resolving the
+                # names is only half the fix: without this, a feed outage
+                # silently restores the exact state P347 found — a classifier
+                # scoring defaults and a veto firing on the result. Three
+                # inputs have no producer anywhere and are always absent, so
+                # the floor is set against the 13 that are obtainable.
+                _absent = len(_missing)
+                if _absent > self._REGIME_MAX_ABSENT_INPUTS:
+                    if not getattr(self, "_regime_absent_warned", False):
+                        self._regime_absent_warned = True
+                        logger.warning(
+                            "[REGIME-CLASSIFIER] %s: %d of %d inputs have no "
+                            "value this tick (%s) — REFUSING to classify "
+                            "rather than score a fabricated-neutral vector "
+                            "(P355). The short filter contributes nothing "
+                            "while this holds.",
+                            asset, _absent, self._REGIME_TOTAL_INPUTS,
+                            ", ".join(sorted(_missing)[:8]))
+                    return result
+                self._regime_absent_warned = False
                 regime_result = self._regime_classifier.classify(features)
                 self._last_regime_result = regime_result
                 
@@ -700,48 +726,149 @@ class StrategicCoordinator:
         
         return result
     
-    def _build_regime_features(
-        self,
-        asset: str,
-        market_data: Dict[str, float],
-    ):
-        """ RegimeFeatures"""
+    # [P355] The names this classifier reads were never the names the pipeline
+    # writes. P347 measured 8 of its 10 market/technical inputs with NO
+    # producer anywhere, so every `.get(key, default)` returned the default on
+    # every tick: the model scored a market in which the price had not moved on
+    # any horizon, MACD was flat, Bollinger sat mid-band and CVD was zero — the
+    # same fabricated-neutral vector whatever the market was doing (P2/P223).
+    # A control fed defaults is not a conservative control, it is a random one
+    # with a safety-sounding name.
+    #
+    # Resolved at the READER, because that is where the mismatch is — not by
+    # publishing a second set of aliases into market_data, since a second name
+    # for one quantity is how the first one stops being read (P172).
+    #
+    # NAME-ONLY: the pipeline already computes exactly this quantity.
+    _REGIME_INPUT_ALIASES = {
+        "price_return_1h": ("price_change_1h_pct", "market_data"),
+        "price_return_4h": ("price_change_4h_pct", "market_data"),
+        "rsi_14": ("rsi", "market_data"),
+        "macd_histogram": ("macd_hist", "market_data"),
+        "volume_ratio": ("volume_ratio", "market_data"),
+        "volatility_4h": ("volatility_4h", "market_data"),
+        "funding_rate": ("funding_rate", "market_data"),
+        "open_interest_change": ("oi_change_24h_pct", "market_data"),
+        "fear_greed_index": ("fear_greed_value", "market_data"),
+        "cvd": ("cvd_divergence", "agent_signals"),
+    }
+    # DERIVED from real series already present — see _resolve_regime_inputs.
+    _REGIME_INPUT_DERIVED = ("price_return_24h", "volatility_24h", "bb_position")
+    # NO SOURCE ANYWHERE, deliberately left ABSENT rather than defaulted: an
+    # invented value here is indistinguishable from a measured one, which is
+    # the whole defect. `volatility_1h` needs an hourly price SERIES and the
+    # pipeline keeps only the last hourly CHANGE (P306); `basis` exists only
+    # inside the calbasis shadow ledger; `social_sentiment` has no producer.
+    _REGIME_INPUT_UNAVAILABLE = ("volatility_1h", "basis", "social_sentiment")
+    _REGIME_TOTAL_INPUTS = 16
+    # 3 are permanently unavailable, so this admits at most 2 further gaps
+    # (a transient feed outage) before the vector stops being a measurement.
+    _REGIME_MAX_ABSENT_INPUTS = 5
+
+    @staticmethod
+    def _resolve_regime_inputs(market_data, agent_signals=None):
+        """[P355] Real values for the classifier's inputs, plus what is MISSING.
+
+        Returns ``(values, missing)``. `values` carries only inputs actually
+        resolved from a producer; the caller supplies the dataclass default for
+        anything in `missing` and — crucially — can SEE how many it is
+        supplying, which the old `.get(key, default)` form could not.
+        """
+        sig = agent_signals or {}
+        out = {}
+        missing = []
+
+        def _num(v):
+            try:
+                f = float(v)
+            except (TypeError, ValueError):  # noqa: silent-swallow — a value
+                # that will not coerce is "the producer gave us nothing
+                # usable", which is precisely what the MISSING list is for.
+                # Logging per field per tick would be wallpaper (P202), and
+                # the caller already reports the whole missing set once.
+                return None
+            if f != f or f in (float("inf"), float("-inf")):
+                return None
+            return f
+
+        for field_name, (src_key, where) in (
+                StrategicCoordinator._REGIME_INPUT_ALIASES.items()):
+            src_dict = market_data if where == "market_data" else sig
+            v = _num(src_dict.get(src_key))
+            if v is None:
+                missing.append(field_name)
+            else:
+                out[field_name] = v
+
+        prices = market_data.get("prices") or []
+        try:
+            prices = [float(x) for x in prices]
+        except (TypeError, ValueError):
+            prices = []
+
+        # 24h == 6 bars of 4H; 7 closes are needed to form the return.
+        if len(prices) >= 7 and prices[-7] > 0:
+            out["price_return_24h"] = (prices[-1] - prices[-7]) / prices[-7]
+        else:
+            missing.append("price_return_24h")
+
+        if len(prices) >= 7:
+            rets = [(prices[i] - prices[i - 1]) / prices[i - 1]
+                    for i in range(len(prices) - 6, len(prices))
+                    if prices[i - 1] > 0]
+            if len(rets) >= 2:
+                mean = sum(rets) / len(rets)
+                var = sum((r - mean) ** 2 for r in rets) / (len(rets) - 1)
+                out["volatility_24h"] = var ** 0.5
+            else:
+                missing.append("volatility_24h")
+        else:
+            missing.append("volatility_24h")
+
+        _u = _num(market_data.get("bb_upper"))
+        _l = _num(market_data.get("bb_lower"))
+        _c = _num(market_data.get("current_price"))
+        if _u is not None and _l is not None and _c is not None and _u > _l:
+            out["bb_position"] = max(0.0, min(1.0, (_c - _l) / (_u - _l)))
+        else:
+            missing.append("bb_position")
+
+        missing.extend(StrategicCoordinator._REGIME_INPUT_UNAVAILABLE)
+        return out, missing
+
+    def _build_regime_features(self, asset, market_data, agent_signals=None):
+        """[P355] Build RegimeFeatures from REAL values; report what is absent.
+
+        Returns ``(features, missing)`` so the caller can refuse to act on a
+        vector that is mostly defaults.
+        """
         if self._RegimeFeatures is None:
-            return None
-        
-        return self._RegimeFeatures(
+            return None, ["RegimeFeatures unavailable"]
+
+        vals, missing = self._resolve_regime_inputs(market_data, agent_signals)
+        g = vals.get
+        features = self._RegimeFeatures(
             timestamp=datetime.now(timezone.utc),
             asset=asset,
-            
-            # 
-            price_return_1h=market_data.get("price_return_1h", 0),
-            price_return_4h=market_data.get("price_return_4h", 0),
-            price_return_24h=market_data.get("price_return_24h", 0),
-            
-            # ?
-            volatility_1h=market_data.get("volatility_1h", 0.02),
-            volatility_4h=market_data.get("volatility_4h", 0.04),
-            volatility_24h=market_data.get("volatility_24h", 0.08),
-            
-            # ?
-            rsi_14=market_data.get("rsi", 50),
-            macd_histogram=market_data.get("macd_histogram", 0),
-            bb_position=market_data.get("bb_position", 0.5),
-            
-            # ?
-            volume_ratio=market_data.get("volume_ratio", 1.0),
-            cvd=market_data.get("cvd", 0),
-            
-            # ?
-            funding_rate=market_data.get("funding_rate", 0),
-            open_interest_change=market_data.get("oi_change", 0),
-            basis=market_data.get("basis", 0),
-            
-            # 
-            fear_greed_index=market_data.get("fear_greed", 50),
-            social_sentiment=market_data.get("social_sentiment", 0),
+            price_return_1h=g("price_return_1h", 0),
+            price_return_4h=g("price_return_4h", 0),
+            price_return_24h=g("price_return_24h", 0),
+            volatility_1h=g("volatility_1h", 0.02),
+            volatility_4h=g("volatility_4h", 0.04),
+            volatility_24h=g("volatility_24h", 0.08),
+            rsi_14=g("rsi_14", 50),
+            macd_histogram=g("macd_histogram", 0),
+            bb_position=g("bb_position", 0.5),
+            volume_ratio=g("volume_ratio", 1.0),
+            cvd=g("cvd", 0),
+            funding_rate=g("funding_rate", 0),
+            open_interest_change=g("open_interest_change", 0),
+            basis=g("basis", 0),
+            fear_greed_index=g("fear_greed_index", 50),
+            social_sentiment=g("social_sentiment", 0),
         )
-    
+        return features, missing
+
     # =========================================================================
     # COMBINED DECISION WRAPPER
     # =========================================================================
@@ -815,6 +942,7 @@ class StrategicCoordinator:
                 market_data=market_data,
                 squeeze_risk=agent_signals.get('squeeze_risk', 0),
                 funding_rate=market_data.get('funding_rate', 0),
+                agent_signals=agent_signals,  # [P355] carries `cvd`
             )
 
         # --- [v9-PATCH-4] Leverage gating ---

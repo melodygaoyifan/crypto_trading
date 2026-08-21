@@ -303,8 +303,13 @@ class TestHaikuUsageLimitIsNotRetried:
         assert "_cooldown=" in reason
         secs = float(reason.split("_cooldown=", 1)[1])
         from infra.failure_policy import DEFAULT_QUOTA_REPROBE_SEC
-        assert secs > DEFAULT_QUOTA_REPROBE_SEC, (
-            "a server-stated reset must beat the bounded re-probe default")
+        # [P355] A far-future stated reset is CAPPED at the bounded re-probe:
+        # the date is the earliest access returns, not the latest, and the
+        # Anthropic cap was in fact resolved ten days before the date it
+        # stated. What must hold is that the suppression is real and bounded.
+        assert 0 < secs <= DEFAULT_QUOTA_REPROBE_SEC, (
+            "a dated cap must suppress, and must not suppress past the "
+            "re-probe cadence — a cap lifted early has to be noticed")
 
     def test_an_ordinary_400_is_left_alone(self):
         """A genuinely malformed request is a BUG we want to keep seeing —
@@ -317,10 +322,21 @@ class TestHaikuUsageLimitIsNotRetried:
         implementation, not a private copy per caller (P172)."""
         from infra.failure_policy import (
             classify_external_failure, DEFAULT_QUOTA_REPROBE_SEC)
-        p = classify_external_failure(
+        far = classify_external_failure(
             status=400,
             message="you will regain access on 2099-09-01 at 00:00 UTC")
-        assert p.retry_after_sec > DEFAULT_QUOTA_REPROBE_SEC
+        # [P355] read, and then capped — the reason names the stated interval
+        # so the operator can see the date WAS parsed.
+        assert far.retry_after_sec == DEFAULT_QUOTA_REPROBE_SEC
+        assert "EARLIEST" in far.reason
+        from datetime import datetime, timedelta, timezone
+        _soon = (datetime.now(timezone.utc) + timedelta(hours=3)).strftime(
+            "%Y-%m-%d at %H:%M")
+        near = classify_external_failure(
+            status=400, message=f"you will regain access on {_soon} UTC")
+        assert 0 < near.retry_after_sec < DEFAULT_QUOTA_REPROBE_SEC, (
+            "a NEAR stated reset must still be honoured exactly, or the "
+            "parse has stopped mattering (P319)")
 
     def test_unparseable_wording_falls_back_and_never_to_no_backoff(self):
         """The fail direction: if the vendor rewords the message we fall back
@@ -361,7 +377,12 @@ class TestHaikuUsageLimitIsNotRetried:
         assert a is not None and b is not None, (
             "the caller cannot recover a cooldown from the reason the "
             "classifier emits — the contract is broken")
-        assert a > b, "a server-stated reset must outlast the bounded re-probe"
+        # [P355] Both are now bounded by the re-probe cadence; what the
+        # round-trip must prove is that the caller can RECOVER a usable,
+        # positive, bounded cooldown from either shape.
+        from infra.failure_policy import DEFAULT_QUOTA_REPROBE_SEC
+        for v in (a, b):
+            assert 0 < v <= DEFAULT_QUOTA_REPROBE_SEC
 
     def test_the_message_says_it_is_a_billing_state(self):
         """P202: an alert an operator cannot fix by debugging must say so, and

@@ -3004,6 +3004,43 @@ def whale_direction_from_pressure(net_pressure):
 
 
 # [P352] `evidence_ok` — see the body; default True keeps every caller identical.
+def short_already_held(sleeve, asset, position_state):
+    """[P355] Is a SHORT already open? Returns True / False / None(unknown).
+
+    Two flatten-intended vetoes — `[V6 SHORT FILTER]` and `[P0 SHORT BLOCK]` —
+    are meant to block only a NEW short, and both asked
+    `position_state['current_exposure'] >= 0`. In LIVE that resolves to the
+    KRAKEN book, empty since the 2026-06-13 flatten (P275/P338), so the test
+    was STRUCTURALLY TRUE for every routed asset: each would have liquidated a
+    live Coinbase short while believing there was none.
+
+    One implementation for both, because fixing one instance of a class is not
+    fixing the class (P171/P226) — the second site sat one screen above the
+    first and was found only because a guard written for the first was scoped
+    to the whole file.
+
+    UNKNOWN is None and never False. The caller must not veto on it: firing a
+    flatten-intended veto on an unreadable book liquidates a real position
+    (P338's category error), while not firing admits one short entry that
+    every other gate still sees.
+    """
+    if sleeve is not None:
+        if not getattr(sleeve, "_reconcile_ok", False):
+            return None                     # venue unreadable this tick
+        try:
+            return float(sleeve.signed_contracts(asset) or 0.0) < 0
+        except Exception:  # noqa: silent-swallow — unknown, and the caller
+            # is required to treat unknown as "do not veto"; raising here
+            # would take the tick down for a question about a guard.
+            return None
+    # No sleeve at all: single-venue / paper, where the Kraken book IS the
+    # real one and the original read is correct.
+    try:
+        return float((position_state or {}).get("current_exposure", 0) or 0.0) < 0
+    except (TypeError, ValueError):  # noqa: silent-swallow — unknown
+        return None
+
+
 def sleeve_agent_filter_decision(current_contracts, raw_target, agent_dir,
                                  agent_tag="agent", evidence_ok=True):
     """[P293d] Generic confirming-agent disagreement filter for the sleeve.
@@ -13956,8 +13993,18 @@ class HMATSProductionRunner:
         # V6 Short Filter (below) is more sophisticated (3-tier funding, exposure caps).
         # P0 short block remains as fallback when strategic_coordinator unavailable.
         if not p0_allow_short and intent.is_actionable and intent.direction < 0:
-            current_exposure = position_state.get('current_exposure', 0)
-            if current_exposure >= 0:  # Not already short
+            # [P355] Same class as the V6 guard below, found by a test written
+            # for that one: `[P0 SHORT BLOCK]` is flatten-intended too, and
+            # this read was structurally always-true for a routed asset.
+            _p0_short_held = short_already_held(
+                getattr(self, "_coinbase_sleeve", None), asset, position_state)
+            if _p0_short_held is None:
+                logger.warning(
+                    f"[P0 SHORT BLOCK] {asset}: cannot tell whether a short is "
+                    f"already held — NOT vetoing (P355); this veto is "
+                    f"flatten-intended and firing it on an unknown book would "
+                    f"liquidate a live position.")
+            if _p0_short_held is False:  # positively flat or long: a NEW short
                 if STRATEGIC_COORDINATOR_AVAILABLE and self.strategic_coordinator:
                     # [VC-3] V6 Short Filter will handle -shadow log only
                     logger.info(
@@ -14080,18 +14127,43 @@ class HMATSProductionRunner:
                         market_data=market_data,
                         squeeze_risk=agent_signals.get('squeeze_risk', 0),
                         funding_rate=market_data.get('funding_rate', 0),
+                        # [P355] carries `cvd`, a real classifier input that
+                        # lives in agent_signals rather than market_data
+                        agent_signals=agent_signals,
                     )
                     
                     if not short_filter.allow_new_short:
-                        # Check if this is a new position
-                        current_exposure = position_state.get('current_exposure', 0)
-                        if current_exposure >= 0:  # No existing short
+                        # [P355] "Is there already a short?" must be asked
+                        # of the book that HOLDS one. `position_state`
+                        # resolves to the KRAKEN book in LIVE, empty since the
+                        # 2026-06-13 flatten (P275/P338), so
+                        # `current_exposure >= 0` was STRUCTURALLY TRUE for
+                        # every routed asset — and `[V6 SHORT FILTER]` is
+                        # flatten-intended, so this entry-only guard would
+                        # have liquidated a live Coinbase short while
+                        # believing there was none (P347).
+                        #
+                        # UNKNOWN book => DO NOT veto. Firing on an unreadable
+                        # book liquidates a real position (P338's category
+                        # error); not firing admits one short entry in a
+                        # bullish regime, which every other gate still sees.
+                        _v6_short_held = short_already_held(
+                            getattr(self, "_coinbase_sleeve", None),
+                            asset, position_state)
+
+                        if _v6_short_held is False:  # flat or long: a NEW short
                             intent.veto_active = True
                             intent.veto_reason = f"[V6 SHORT FILTER] {'; '.join(short_filter.reasons)}"
                             logger.warning(
                                 f"[V6 SHORT FILTER] New short BLOCKED for {asset}: "
                                 f"{short_filter.reasons}"
                             )
+                        elif _v6_short_held is None:
+                            logger.warning(
+                                f"[V6 SHORT FILTER] {asset}: cannot tell whether "
+                                f"a short is already held — NOT vetoing (P355). "
+                                f"This veto is flatten-intended, so firing it on "
+                                f"an unknown book would liquidate a live position.")
                     
                     # Apply exposure cap
                     if short_filter.max_short_exposure < 1.0:
