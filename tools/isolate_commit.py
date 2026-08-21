@@ -95,12 +95,32 @@ def split_hunks(diff: str) -> Tuple[List[str], List[str]]:
     return head, hunks
 
 
+def campaign_markers(marker: str) -> "re.Pattern[str]":
+    """[P357c] `[P357]` must also mean `[P357b]`, `[P357c]`, …
+
+    A sub-entry suffix makes the marker a DIFFERENT LITERAL, so a substring
+    match on the base number silently drops every sub-entry hunk — which is
+    what happened here on the third commit of this entry: the `_bg_handed_off`
+    initialiser, the hand-off branch and the heartbeat segment all carried
+    `# [P357b]`, none contained the substring `[P357]`, and all three were
+    classified as somebody else's work and left behind. Suffixed sub-entries
+    are this repo's normal way of recording a follow-up (P322b–f, P329b–d,
+    P355b, P357b), so the base number IS the campaign.
+
+    Deliberately exact on the NUMBER: `[P357]` must not match `[P35]` or
+    `[P3570]`, or isolating one entry would sweep a neighbour's.
+    """
+    base = marker.strip().strip("[]").rstrip("abcdefghijklmnopqrstuvwxyz")
+    return re.compile(r"\[" + re.escape(base) + r"[a-z]?\]")
+
+
 def select_hunks(hunks: Sequence[str], marker: str) -> Tuple[List[str], List[str]]:
-    """(mine, theirs) by whether an ADDED line carries the marker."""
+    """(mine, theirs) by whether an ADDED line carries the marker's campaign."""
+    pat = campaign_markers(marker)
     mine, theirs = [], []
     for h in hunks:
         added = [ln for ln in h.splitlines() if ln.startswith("+")]
-        (mine if any(marker in ln for ln in added) else theirs).append(h)
+        (mine if any(pat.search(ln) for ln in added) else theirs).append(h)
     return mine, theirs
 
 
@@ -148,11 +168,15 @@ def describe_foreign_dropped(theirs: Sequence[str],
     that fires on the normal case gets bypassed (P202/P303). Naming the
     markers is enough: the author recognises their own campaign's number.
     """
+    pat = campaign_markers(marker)
     out: List[Tuple[str, str]] = []
     for h in theirs:
         added = [ln for ln in h.splitlines() if ln.startswith("+")]
+        # [P357c] "not mine" means outside the CAMPAIGN, not merely a
+        # different literal — otherwise a sub-entry marker of your own reads
+        # as foreign in the report as well as in the selection.
         found = sorted({m for ln in added for m in MARKER_RE.findall(ln)
-                        if m != marker})
+                        if not pat.fullmatch(m)})
         if found:
             out.append((", ".join(found), _render_hunk(h)))
     return out
@@ -160,9 +184,10 @@ def describe_foreign_dropped(theirs: Sequence[str],
 
 def foreign_markers(text: str, marker: str, baseline: str) -> List[str]:
     """Markers present in `text` that are neither yours nor already in HEAD."""
+    pat = campaign_markers(marker)   # [P357c] the campaign, not one literal
     base = set(MARKER_RE.findall(baseline))
     found = set(MARKER_RE.findall(text))
-    return sorted(m for m in found - base if m != marker)
+    return sorted(m for m in found - base if not pat.fullmatch(m))
 
 
 def isolate(path: str, marker: str, apply: bool = True,

@@ -608,19 +608,33 @@ def test_the_dispatch_sites_declare_the_shape_P356_measured():
     """onchain_feed runs its loop inline (endless); the other three hand off.
     If a call site's flag ever disagrees with that, the severity is wrong in
     one direction or the other."""
-    src = inspect.getsource(main.HMATSProductionRunner)
-    for name, expected_handoff in (("onchain_feed", False),
-                                   ("lead_lag", True),
-                                   ("sol_onchain", True),
-                                   ("reconnect_position_sync", True)):
-        for line in src.splitlines():
-            if "_spawn_bg(" not in line and f'name="{name}"' not in line:
-                continue
-            if f'name="{name}"' not in line:
-                continue
-            assert ("endless=False" in line) is expected_handoff, (
-                f"{name}: endless flag disagrees with the measured shape"
-            )
+    # Read the CALL, not the line: a marker comment can split a call across
+    # lines and a line-based scan then reports the wrong shape (it did).
+    tree = ast.parse((REPO / "main.py").read_text(encoding="utf-8",
+                                                  errors="replace"))
+    seen = {}
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "_spawn_bg"):
+            continue
+        kw = {k.arg: k.value for k in node.keywords}
+        nm = kw.get("name")
+        if not isinstance(nm, ast.Constant):
+            continue
+        endless = kw.get("endless")
+        is_handoff = (isinstance(endless, ast.Constant)
+                      and endless.value is False)
+        seen.setdefault(nm.value, set()).add(is_handoff)
+
+    expected = {"onchain_feed": False, "lead_lag": True,
+                "sol_onchain": True, "reconnect_position_sync": True}
+    assert set(seen) == set(expected), f"dispatch roster changed: {sorted(seen)}"
+    for nm, want in expected.items():
+        assert seen[nm] == {want}, (
+            f"{nm}: endless flag disagrees with the shape P356 measured "
+            f"(handoff={want}); every call site for one name must agree"
+        )
 
 
 def test_handoff_names_are_never_presented_as_running():
@@ -654,4 +668,37 @@ def test_the_heartbeat_reports_the_handoff_count_not_their_names():
     )
     assert "_bg_handed_off" in window and "len(" in window, (
         "the heartbeat must render a COUNT, not the hand-off names"
+    )
+
+
+def test_a_sub_entry_marker_belongs_to_its_campaign():
+    """[P357c] THIRD partial commit of this entry, same class again.
+
+    `[P357b]` does not CONTAIN the substring `[P357]`, so a base-number match
+    classified every sub-entry hunk as another session's and dropped it: the
+    `_bg_handed_off` initialiser, the hand-off branch and the heartbeat
+    segment all went missing and the committed tree failed four of its own
+    tests while the working tree was green (P311b, again).
+
+    Suffixed sub-entries are how this repo records follow-ups (P322b–f,
+    P329b–d, P355b), so the base number IS the campaign — and the tool has to
+    know that, because the alternative is remembering to pass the suffix."""
+    from tools.isolate_commit import campaign_markers, select_hunks
+
+    pat = campaign_markers("[P357]")
+    for m in ("[P357]", "[P357b]", "[P357c]"):
+        assert pat.fullmatch(m), f"{m} is not recognised as the campaign"
+    for m in ("[P356]", "[P35]", "[P3570]", "[P358]"):
+        assert not pat.fullmatch(m), (
+            f"{m} was swept in — isolating one entry must never take a "
+            f"neighbour's hunks"
+        )
+    # and the suffix is accepted as the ARGUMENT too, so either spelling works
+    assert campaign_markers("[P357b]").fullmatch("[P357]")
+
+    hunk = ("@@ -1,3 +1,3 @@\n ctx\n-old\n"
+            "+        self._bg_handed_off: set = set()  # [P357b]\n")
+    mine, theirs = select_hunks([hunk], "[P357]")
+    assert len(mine) == 1 and not theirs, (
+        "a sub-entry hunk is still dropped as foreign"
     )

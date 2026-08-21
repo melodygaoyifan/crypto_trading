@@ -6288,6 +6288,9 @@ class HMATSProductionRunner:
         # be garbage-collected mid-execution. A set, because the dispatch
         # sites are idempotent (guarded on each object's own _running).
         self._bg_tasks: set = set()
+        # [P357b] names dispatched as HAND-OFF (they spawn inner tasks and
+        # return); a clean return from these is success, not a fault.
+        self._bg_handed_off: set = set()
         self._fast_risk_last_eval: float = 0.0
         if FAST_RISK_TICK_AVAILABLE and self.config.mode in [RunMode.PAPER, RunMode.LIVE]:
             try:
@@ -21150,16 +21153,32 @@ class HMATSProductionRunner:
            from dead. P356 recorded exactly that and left it as a limitation;
            this is the mechanism.
 
-        The done-callback makes every ending loud, with the right severity:
-        an exception is an ERROR carrying the traceback, a clean return from
-        a supposedly-endless loop is a WARNING (it should not happen), and a
-        cancellation at shutdown is routine.
+        [P357b] `endless` is NOT decoration, and shipping without it produced
+        two spurious WARNINGs on the first live boot. The three dispatched
+        coroutines are two different shapes, which P356 had already written
+        down and this helper ignored:
+
+          * ENDLESS (`OnChainFeed.start`) runs its poll loop INLINE, so the
+            Task IS the loop and returning means the feed has stopped.
+          * HAND-OFF (`LeadLagAlphaEngine.start`, the SOL on-chain agent,
+            `_reconnect_position_sync`) spawn their own tracked inner tasks
+            and return promptly. Returning is SUCCESS.
+
+        Treating every clean return as a fault fires an alert on the normal
+        case, which is how a real signal becomes wallpaper (P202/P303) — and
+        it is worse than noise here, because it makes the one return that
+        genuinely matters indistinguishable from the two that do not.
+
+        A RAISE is an ERROR for both shapes: a hand-off that throws never
+        handed anything off.
         """
         task = asyncio.ensure_future(coro)
         try:
             task.set_name(name)
         except AttributeError:  # noqa: silent-swallow — naming is cosmetic
             pass
+        if not endless:
+            self._bg_handed_off.add(name)
         self._bg_tasks.add(task)
         task.add_done_callback(self._on_bg_task_done)
         return task
@@ -21186,6 +21205,13 @@ class HMATSProductionRunner:
                 "stale and nothing else will say so. This is the failure that "
                 "used to be silent (P356/P357).",
                 name, type(exc).__name__, exc, exc_info=exc)
+        elif name in getattr(self, "_bg_handed_off", ()):
+            # [P357b] Expected: this one spawns its own tracked inner tasks
+            # and returns. Reported at INFO so the hand-off is still visible
+            # without asserting a fault on the healthy path.
+            logger.info(
+                "[BG-TASK] %s handed off (its own inner tasks carry the loop "
+                "from here) — expected, not a fault.", name)
         else:
             logger.warning(
                 "[BG-TASK] %s ENDED without an error. It is a long-running "
@@ -23032,6 +23058,17 @@ class HMATSProductionRunner:
                             _hb_bg = self.background_task_names()
                             _hb_msg += (" | bg: " + ",".join(_hb_bg)
                                         if _hb_bg else " | bg: NONE RUNNING")
+                            # [P357b] Say how many were dispatched as HAND-OFF,
+                            # or `bg: onchain_feed` reads as "the other two
+                            # died" — which is what the first live heartbeat
+                            # looked like. Deliberately a COUNT of dispatches,
+                            # never their names in the running list: their
+                            # inner tasks are owned by the child and this
+                            # runner does not track them, so listing them as
+                            # alive would fabricate a liveness claim (P2/P223).
+                            _hb_off = len(getattr(self, "_bg_handed_off", ()))
+                            if _hb_off:
+                                _hb_msg += f" (+{_hb_off} handed off)"
                         except Exception as _hb_bg_err:  # noqa: silent-swallow
                             # a liveness LABEL must never break the heartbeat
                             logger.debug(f"[BG-TASK] name read failed: {_hb_bg_err}")
