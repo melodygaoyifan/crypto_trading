@@ -681,7 +681,8 @@ class MarketDataPipeline:
 
     # ─── Public API ─────────────────────────────────────────────────────
 
-    async def fetch_and_prepare(self, asset: str, tick_count: int = 0) -> Dict[str, Any]:
+    async def fetch_and_prepare(self, asset: str, tick_count: int = 0,
+                                for_decision: bool = False) -> Dict[str, Any]:
         """Fetch live data AND compute technical indicators.
 
         This is the combined replacement for main.py's _fetch_live_data +
@@ -899,8 +900,21 @@ class MarketDataPipeline:
                     try:
                         from training.scripts.wavelet_denoise import wavelet_denoise as _wv_denoise
                         _wv_buf = self._wavelet_buffers[asset]
-                        for src_name in _wv_map:
-                            _wv_buf[src_name].append(float(raw.get(src_name, 0.0)))
+                        # [P354] BAR CADENCE ONLY. This deque is the runtime
+                        # side of P164's causal-wavelet parity: the training
+                        # transform runs over 4H BARS, so a 256-sample window
+                        # is meant to be ~42 days. `run_live` sleeps to the 4H
+                        # candle in 30s chunks and calls this whole pipeline on
+                        # every chunk for FastRiskTick, so before this gate the
+                        # deque was fed every ~34s and spanned 145 MINUTES —
+                        # a train/serve skew on 5 of the 122 DRL features that
+                        # P164's own guard could not see, because it pins the
+                        # TRANSFORM and not what the deque is fed (P353).
+                        # FastRiskTick reads only price/vol/depth/staleness, so
+                        # withholding the append costs the watchdog nothing.
+                        if for_decision:
+                            for src_name in _wv_map:
+                                _wv_buf[src_name].append(float(raw.get(src_name, 0.0)))
 
                         for src_name, dst_name in _wv_map.items():
                             buf = _wv_buf[src_name]
@@ -1023,18 +1037,31 @@ class MarketDataPipeline:
                     _state = {"current": gmm_regime_name, "pending": None, "count": 0}
                     self._regime_smoother_state[asset] = _state
 
-                if gmm_regime_name == _state["current"]:
-                    _state["pending"] = None
-                    _state["count"] = 0
-                elif gmm_regime_name == _state["pending"]:
-                    _state["count"] += 1
-                    if _state["count"] >= self._regime_smoother_persistence:
-                        _state["current"] = gmm_regime_name
+                # [P354] ADVANCE ONLY ON A DECISION TICK. `persistence` is
+                # documented as a train/runtime parity requirement and means
+                # 2 BARS in training. The 30s FastRiskTick slice runs this
+                # whole pipeline, so before this gate the smoother advanced
+                # every ~34s and confirmed a regime change in ~1.1 minutes —
+                # ~424 advances between decisions, i.e. no damping whatever at
+                # the horizon the rule is about, and exactly the ping-pong it
+                # was written to prevent (P353; measured 52 suppressions in
+                # ~44,000 calls). A non-decision call now SERVES the current
+                # smoothed label without moving the state machine, which is
+                # what a watchdog should see: the regime the decision was
+                # taken under.
+                if for_decision:
+                    if gmm_regime_name == _state["current"]:
                         _state["pending"] = None
                         _state["count"] = 0
-                else:
-                    _state["pending"] = gmm_regime_name
-                    _state["count"] = 1
+                    elif gmm_regime_name == _state["pending"]:
+                        _state["count"] += 1
+                        if _state["count"] >= self._regime_smoother_persistence:
+                            _state["current"] = gmm_regime_name
+                            _state["pending"] = None
+                            _state["count"] = 0
+                    else:
+                        _state["pending"] = gmm_regime_name
+                        _state["count"] = 1
 
                 smoothed_regime = _state["current"]
                 if smoothed_regime != gmm_regime_name:

@@ -21441,7 +21441,11 @@ class HMATSProductionRunner:
                 # [P-7 Phase 2] Pre-fetch all market data in parallel
                 _pf_keys = list(self.config.assets)
                 _pf_results = await asyncio.gather(
-                    *(self._prepare_market_data(a) for a in _pf_keys),
+                    # [P354] THE decision call for this tick — the one
+                    # call per asset allowed to advance the bar-cadence
+                    # accumulators (P353).
+                    *(self._prepare_market_data(a, for_decision=True)
+                      for a in _pf_keys),
                     return_exceptions=True,
                 )
                 _prefetched = dict(zip(_pf_keys, _pf_results))
@@ -22596,7 +22600,11 @@ class HMATSProductionRunner:
                 # [P-7 Phase 2] Pre-fetch all market data in parallel
                 _pf_keys = list(self.config.assets)
                 _pf_results = await asyncio.gather(
-                    *(self._prepare_market_data(a) for a in _pf_keys),
+                    # [P354] THE decision call for this tick — the one
+                    # call per asset allowed to advance the bar-cadence
+                    # accumulators (P353).
+                    *(self._prepare_market_data(a, for_decision=True)
+                      for a in _pf_keys),
                     return_exceptions=True,
                 )
                 _prefetched_live = dict(zip(_pf_keys, _pf_results))
@@ -25292,9 +25300,19 @@ class HMATSProductionRunner:
         """[Phase 4C] Delegate to MarketDataPipeline._fetch_live_data."""
         return await self._market_pipeline._fetch_live_data(asset)
 
-    async def _prepare_market_data(self, asset: str) -> Dict[str, Any]:
-        """[Phase 4C] Delegate to MarketDataPipeline.fetch_and_prepare."""
-        return await self._market_pipeline.fetch_and_prepare(asset, self._tick_count)
+    async def _prepare_market_data(self, asset: str, for_decision: bool = False):
+        """[Phase 4C] Delegate to MarketDataPipeline.fetch_and_prepare.
+
+        [P354] `for_decision` says whether this call IS the 4H decision, and
+        exactly one call per asset per tick may set it. Bar-cadence
+        accumulators (the causal-wavelet deques, the regime smoother) advance
+        only on those; the 30s FastRiskTick refresh reads without advancing
+        them. Default False so a NEW caller cannot pollute a bar-cadence
+        window by forgetting — the decision sites are pinned by test instead
+        (P353).
+        """
+        return await self._market_pipeline.fetch_and_prepare(
+            asset, self._tick_count, for_decision=for_decision)
 
     # [Phase 4C] _REGIME_SIGNAL_WEIGHTS, _REGIME_STRATEGY_FIT, _compute_strategy_signals,
     # _predict_gmm_regime all moved to data_mgmt/market_data_pipeline.py

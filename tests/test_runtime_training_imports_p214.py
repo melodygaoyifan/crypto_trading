@@ -229,7 +229,16 @@ class TestTheFallbackStaysVisible:
         must not be silent. A DEBUG here would be P160 exactly."""
         src = (_REPO / "data_mgmt" / "market_data_pipeline.py").read_text(
             encoding="utf-8", errors="replace")
+        # [P354] Anchored on the HANDLER rather than on a byte window. The
+        # old `src[i:i+1200]` broke the moment a comment was added between
+        # the import and its except — a character-count window is a guard
+        # whose failure mode is a confusing message about the wrong thing
+        # (P320's note on the 5,000-char seat window, one file over).
         i = src.index("from training.scripts.wavelet_denoise import")
-        w = src[i:i + 1200]
-        assert "logger.warning" in w
+        j = src.index("except Exception as _wv_err:", i)
+        w = src[j:j + 500]
+        assert "logger.warning" in w, (
+            "the wavelet import fallback no longer warns — a DEBUG here would "
+            "be P160 exactly"
+        )
         assert "using raw" in w

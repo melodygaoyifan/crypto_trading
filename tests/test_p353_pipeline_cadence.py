@@ -15,9 +15,9 @@ inference. Measured over the retained logs:
 
 2,541 full pipeline runs per asset per day, against 6 decision ticks.
 
-`fetch_and_prepare` mutates its accumulators on EVERY call — there is no
-tick_count gate anywhere — so each buffer's maxlen counts 34-second samples,
-not 4H bars:
+`fetch_and_prepare` mutated its accumulators on EVERY call — there was no
+decision-tick gate anywhere — so each buffer's maxlen counted 34-second
+samples, not 4H bars:
 
     buffer                      maxlen   actual      implied by "bars"
     _ofi_history                    42   23.8 min    7 days
@@ -53,11 +53,21 @@ depth median and collapse detector that FastRiskTick itself alerts on; and
 `regime_state` is consumed broadly and live (ADVISE weights, smart beta,
 kraken_quant buckets, the trend gate).
 
-NOT FIXED HERE, deliberately. The four accumulators serve two consumers with
-genuinely different cadence needs — a 30-second watchdog and a 4-hourly
-decision — so choosing a window per accumulator is a live-behaviour decision
-with effects in both directions, not a bugfix. These tests pin the facts the
-arithmetic rests on so the next reader re-derives rather than inherits.
+DISPOSITION (P354): split per accumulator, on what each consumer's timescale
+actually is, rather than uniformly.
+
+  * GATED to decision ticks, because each has a train/serve CONTRACT:
+    `_wavelet_buffers` (P164's causal-wavelet parity is defined over 4H bars)
+    and the RegimeSmoother (`persistence` means 2 BARS in training).
+  * LEFT on the 34s feed, because their consumers are execution-timescale:
+    `_ofi_history` -> the order-flow toxicity band, and `_depth_history` ->
+    the execution TIMING depth score. A 24-minute toxicity window and a
+    68-minute depth median are right for those; the days their maxlens imply
+    are not. FastRiskTick reads neither — its depth baseline is its own 4H
+    anchor (P156).
+
+These tests pin the facts the arithmetic rests on, and the ones below pin the
+half that stayed ungated so a future change to it has to be argued for.
 """
 
 import ast
@@ -117,36 +127,43 @@ def _accumulator_appends():
     return found
 
 
-def test_the_accumulators_are_not_gated_to_decision_ticks():
-    """The fact that makes the windows short — pinned so the FIX moves the record.
+def test_the_execution_timescale_accumulators_stay_ungated():
+    """[P354] `_ofi_history` and `_depth_history` are DELIBERATELY left on the
+    34-second feed, because their consumers are execution-timescale:
 
-    This is NOT a test that forbids the fix. If the appends are ever gated to
-    real decision ticks (a `tick_count` / `for_decision` guard), that IS the
-    P353 fix — and every window in the entry above becomes days again, so this
-    test and that entry must be updated together rather than one drifting from
-    the other (the P318 anti-rot pattern).
+      * `ofi_zscore` -> the SOL order-flow toxicity classifier. Toxicity is a
+        microstructure property; a 24-minute window is the right horizon for
+        it and the 7 days its maxlen implies plainly is not.
+      * `_depth_history`'s median -> `orderbook_depth`, which feeds the
+        execution TIMING scores (the `depth=` term in the [PROOF] line).
+        "Is depth good right now relative to recent conditions" wants ~an
+        hour, not 20 days.
+
+    Note FastRiskTick does NOT read either: its depth baseline is its own 4H
+    anchor (P156), and it reads only price/vol/depth/staleness. So this is a
+    statement about the pipeline's own consumers, not about the watchdog.
+
+    Gating these would be a preference with no evidence behind it. Gating them
+    later is allowed — but it must be argued for, and this test is where the
+    argument goes.
     """
-    src = mdp.__file__ and inspect.getsource(mdp)
+    src = inspect.getsource(mdp)
     tree = ast.parse(src)
     gated = []
     for node in ast.walk(tree):
-        if isinstance(node, ast.If):
-            test_src = ast.dump(node.test)
-            if "tick_count" in test_src or "for_decision" in test_src:
-                for sub in ast.walk(node):
-                    if isinstance(sub, ast.Call):
-                        f = sub.func
-                        if isinstance(f, ast.Attribute) and f.attr == "append":
-                            seg = ast.dump(f.value)
-                            if any(n in seg for n in ("_ofi_history",
-                                                      "_depth_history",
-                                                      "_wavelet_buffers")):
-                                gated.append(seg)
+        if isinstance(node, ast.If) and "for_decision" in ast.dump(node.test):
+            for sub in ast.walk(node):
+                if isinstance(sub, ast.Call):
+                    f = sub.func
+                    if isinstance(f, ast.Attribute) and f.attr == "append":
+                        seg = ast.dump(f.value)
+                        if "_ofi_history" in seg or "_depth_buf" in seg:
+                            gated.append(seg)
     assert not gated, (
-        "a rolling-buffer append is now gated on the decision tick — that is "
-        "the P353 fix. Re-derive every window in the P353 entry (they become "
-        "days rather than minutes) and update this test, or the record and the "
-        "code have silently disagreed again."
+        "an execution-timescale buffer is now gated to decision ticks — that "
+        "changes the toxicity band or the execution timing baseline from "
+        "~minutes to ~weeks. Say why in the P353/P354 record and update this "
+        "test, or the code and the reasoning have diverged."
     )
 
 
