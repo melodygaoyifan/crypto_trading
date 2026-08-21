@@ -71,10 +71,29 @@ def main() -> int:
 
     files = sorted(glob.glob(str(Path(args.reports_dir) / "slope_*.json")))
     if not files:
-        print(f"TRIPWIRE CANNOT BE EVALUATED: no slope_*.json under "
-              f"{args.reports_dir} — the weekly calibrator has not written "
-              f"there yet (first cron run 2026-08-11). 'No reports' is NOT "
-              f"'not fired'.", file=sys.stderr)
+        # [P362] Split "I could not LOOK" from "I looked and found NOTHING".
+        # The old message asserted one cause — "the weekly calibrator has not
+        # written there yet (first cron run 2026-08-11)" — which was true when
+        # written and is now false: the calibrator has written every Monday
+        # since. Run from a laptop it sent the reader to investigate a cron
+        # that is working, when the real cause is that this reads the
+        # CONTAINER's data volume (P213). An alert must name its cause from
+        # the data, not from a guess baked into the format string (P155), and
+        # a hardcoded date in a refusal is a claim that rots.
+        _dir = Path(args.reports_dir)
+        if not _dir.is_dir():
+            print(f"TRIPWIRE CANNOT BE EVALUATED: {args.reports_dir} does not "
+                  f"exist here. This tool reads the CONTAINER's data volume — "
+                  f"run it as `docker exec hmats-engine python -X utf8 "
+                  f"analytics/calibration/tripwire_check.py` (P213), or pass "
+                  f"--reports-dir. This says NOTHING about whether the weekly "
+                  f"calibrator has run. 'Could not look' is NOT 'not fired'.",
+                  file=sys.stderr)
+        else:
+            print(f"TRIPWIRE CANNOT BE EVALUATED: {args.reports_dir} exists "
+                  f"but holds no slope_*.json — the weekly calibrator has "
+                  f"produced nothing here. Check the Monday cron. "
+                  f"'No reports' is NOT 'not fired'.", file=sys.stderr)
         return 2
 
     # One report per calendar day (re-runs same day supersede), newest last.
