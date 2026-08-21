@@ -112,14 +112,47 @@ should fire it. (Status at pre-commit: 1/4 reports, all three assets armed.)
 
 ## ~Sep 7 — ma_filter (ledger since 08-08)
 
-The single most likely promotion: model_alpha has measured positive in three
-independent windows (P230 +0.289; the P236 counterfactual −78.9bps/tick when
-quant disagrees with it; the 08-10 report 4h IC +0.127 t=2.07).
+**[P361, CORRECTED] This was written as "the single most likely promotion".
+Four entries have overtaken that, and the flag has since been DISARMED —
+so a PASS here is not a green light, it is the start of an argument.**
+
+| entry | what it measured |
+|---|---|
+| P324 | NOT EARNED at the pre-committed bar (model_alpha disagreement −7.8/−31.2bps, t=−1.41/−1.38; the contrast fails too) |
+| P337 | measured against the decider it *actually* filters (the regimebook, not the retired trend seat): its disagreements marked entries that did **BETTER** — contrast −10.0, t −0.72 |
+| P348 | **no obtainable sample makes it significant** — this very read moves model_alpha's t from 0.73 to 0.79; |t|≥2 needs ~503 disagreements ≈ 2.8 years |
+| P356 | **DISARMED** (`coinbase_ma_filter_enforce: false`) by operator instruction on that arithmetic |
+
+The read still happens, because the ledger accrues whether or not enforcement
+is on (P340) and evidence is free. What changed is the disposition on each
+outcome.
 
 | outcome | action |
 |---|---|
-| PASS (P166 bar on the `ma_filtered` ledger) | set `coinbase_ma_filter_enforce: true` (+ its own P-entry). Entry filter only — it never force-exits (P236 semantics). |
-| FAIL | flag stays false; model_alpha's IC keeps accruing via the weekly cron; re-examine at 60d only if the trajectory is monotone. |
+| PASS (P166 bar on the `ma_filtered` ledger) | **do NOT simply set the flag.** A PASS must be reconciled with P337 (opposite sign against the right decider) and P348 (the sample cannot support it). If it survives that, re-arming is its own P-entry AND an operator decision (P141) — it is a live-money reversal of P356. |
+| FAIL | confirms P324/P337/P348; the flag stays false, which is already the deployed state. No action. |
+
+## ~Sep 17 — whale_filter (ledger since 08-18)
+
+**[P361] This section did not exist.** `whale_filter_*.jsonl` had been
+accruing every tick since 2026-08-18, `whale_filtered` is a registered
+POOLABLE scorer family, and neither this tree nor the countdown mentioned it
+— so its ledger would have grown unexamined. An evidence stream with no read
+date is the P199/P230 gap this document exists to close, and it was open on
+one of the two entry filters while its sibling had a full section.
+
+Same standing as ma_filter, with one less entry against it (P337 measured
+whale's disagreements as marking *no* difference rather than a better one):
+
+| outcome | action |
+|---|---|
+| PASS (P166 bar on the `whale_filtered` ledger, pooled — it is in `POOLABLE_FAMILIES`) | reconcile with P324 (NOT EARNED) and P348 (unsettleable) first; re-arming `coinbase_whale_filter_enforce` is its own P-entry and an operator decision (P141), reversing P356. |
+| FAIL | confirms P324/P348; flag stays false, the deployed state. No action. |
+
+Note P352 changed what this ledger *records* (the claim became a SIGN rather
+than a contract count, and the `whale_count` evidence floor arrived), so rows
+before 2026-08-20 are not comparable with rows after — read the post-P352
+window, never one spanning both.
 
 ## ~Sep 9 — regimebook raw + adjusted (ledgers since 08-10)
 

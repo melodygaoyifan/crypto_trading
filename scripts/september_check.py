@@ -60,7 +60,20 @@ CANDIDATES = {
     "regimebook":     ("regimebook",     "2026-08-10", "regimebook_mode enforce (P256 seat)"),
     "regimebook_adj": ("regimebook",     "2026-08-10", "ADJ params into the seat"),
     "derivflow":      ("derivflow",      "2026-08-08", "liq-basis candidate -> own P-entry"),
-    "ma_filter":      ("ma_filter",      "2026-08-08", "coinbase_ma_filter_enforce true"),
+    # [P361] ma_filter's action is NO LONGER a plain arm-on-PASS: P324 measured
+    # it NOT EARNED at the pre-committed bar, P337 found its disagreements
+    # marked entries that did BETTER against the decider it actually filters,
+    # P348 showed no obtainable sample makes it significant, and P356 DISARMED
+    # it by operator instruction. The read still happens (evidence is free),
+    # but a PASS now has to argue with four entries.
+    "ma_filter":      ("ma_filter",      "2026-08-08",
+                       "re-arm ONLY vs P324/P337/P348 (disarmed P356)"),
+    # [P361] whale_filter was accruing since 08-18 with NO read date at all —
+    # the roster's own comment demands every scorer-read candidate, and this
+    # one was missing, so its ledger would have grown unexamined (P199/P230,
+    # the gap this script exists to close).
+    "whale_filter":   ("whale_filter",   "2026-08-18",
+                       "re-arm ONLY vs P324/P348 (disarmed P356)"),
     "volskip":        ("regimebook",     "2026-08-16", "volskip into the ETH seat path"),
     "etfflow":        ("etfflow",        "2026-08-16", "ETF-flow candidate -> own P-entry"),
     "breadth books":  ("regimebook",     "2026-08-16", "widening decision (routing + books)"),
