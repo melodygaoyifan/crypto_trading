@@ -75,6 +75,8 @@ activation, not a bugfix, and not something to slip in behind a diagnosis.
 import ast
 import inspect
 import json
+from contextlib import redirect_stdout as _redirect
+from io import StringIO as _StringIO
 import pathlib
 
 import pytest
@@ -286,16 +288,13 @@ def test_the_diagnostic_ACTUALLY_USES_the_cause_table(tmp_path):
     the label to appear and then DISAPPEAR. Presence alone cannot distinguish
     consumed from coincidental; only varying the input can. That turns the
     probe I had to run by hand into something this test does on every run."""
-    import contextlib
-    import importlib.util
-    import io as _io
-
+    from tests._cli_harness import load_cli, run_cli
     from tests._guard_pins import assert_drives_output
 
-    spec = importlib.util.spec_from_file_location(
-        "_kqdiag_live", REPO / "scripts" / "kq_strategy_diagnostic.py")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    # [P360] Through the harness rather than hand-rolled importlib +
+    # redirect_stdout. The subprocess version this replaced could not
+    # neutralise the table at all, which is what made the check impossible.
+    mod = load_cli(REPO / "scripts" / "kq_strategy_diagnostic.py")
 
     stats = {
         "regime_ticks": {"SIDEWAYS": 4},
@@ -310,8 +309,8 @@ def test_the_diagnostic_ACTUALLY_USES_the_cause_table(tmp_path):
     }
 
     def _run():
-        buf = _io.StringIO()
-        with contextlib.redirect_stdout(buf):
+        buf = _StringIO()
+        with _redirect(buf):
             mod.render(stats)
         return buf.getvalue()
 
