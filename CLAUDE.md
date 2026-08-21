@@ -1,6 +1,6 @@
 # HMATS — Project Status & Development Guidelines
 
-**Last updated:** 2026-08-20 (P352: three entry gates acting on a quantity about the wrong subject — one of them a ledger claim whose magnitude had become the account balance)
+**Last updated:** 2026-08-20 (P353: every rolling window in the pipeline is ~424x shorter than the bars its size implies — the 30s watchdog runs the full pipeline)
 **Version:** HMATS v6.8.0
 **Live mode:** Coinbase US perp sleeve (sole directional venue since 2026-06-13; Kraken = data + structurally flat, P152), Hetzner CPX21, `configs/live_high_risk.json`
 
@@ -338,6 +338,33 @@ makes the sleeve inert; `coinbase_use_gated_intent: false` restores the pre-gate
 driver. Neither needs a code change.
 
 ### Recent pitfalls (last ~30 days)
+
+### P353. [MEASURED 2026-08-20, operator: "any remaining tasks"] Every rolling window in the pipeline is ~424x shorter than the bars its size implies — the 30s watchdog runs the FULL pipeline, and three earlier entries reasoned from the wrong cadence
+Found by asking why the log showed a market-data fetch every ~34 seconds while the decision loop runs every 4H. Tests `tests/test_p353_pipeline_cadence.py` (12); six falsification probes red-then-restored. **Deliberately no behaviour change — see the disposition below.**
+- **THE MECHANISM, and it is by design at the top and unintended at the bottom.** `run_live` sleeps to the next 4H candle **in 30-second chunks** so FastRiskTick can act between decisions (P110/P227) — correct. On every chunk it calls `self._prepare_market_data(frt_asset)` for all three assets, which is the **WHOLE pipeline**: Kraken OHLC, 1,000 trades for VPIN, Best-of-N selection, GMM inference. And `fetch_and_prepare` mutates its rolling accumulators on **every** call — **there is no `tick_count` gate anywhere.**
+- **MEASURED over the retained logs — 2,541 full pipeline runs per asset per day against 6 decision ticks:**
+  | asset | n | median gap | p90 | per day |
+  |---|---|---|---|---|
+  | BTC | 14,773 | **34.0s** | 34.0s | 2,541 |
+  | ETH | 14,771 | 34.0s | 34.0s | 2,541 |
+  | SOL | 14,774 | 34.0s | 34.0s | 2,541 |
+  so every `maxlen` counts 34-second samples, not 4H bars:
+  | buffer | maxlen | **actual window** | window its size implies |
+  |---|---|---|---|
+  | `_ofi_history` | 42 | **23.8 min** | 7 days |
+  | `_depth_history` | 120 | **68.0 min** | 20 days |
+  | `_wavelet_buffers` | 256 | **145.1 min** | 42.7 days |
+  | RegimeSmoother `persistence` | 2 | **1.1 min** | 8 hours |
+- **Verified live rather than inferred:** the persisted `ofi_history` buffer's contents changed for **all three assets within 80 seconds**, between two 4H ticks, and `saved_ts` advanced 102s. It is also full at 42/42/42 two days after P316 shipped its persistence, where a 4H cadence would have produced ~15.
+- **WHAT THIS FALSIFIES IN THIS FILE, which is the reason the entry is worth more than the fix:**
+  * **P316 sized the OFI warmup at "~20 HOURS of uninterrupted uptime"** from "ONE sample per 4H tick", and P301/P302's persistence work rests on the same premise. **Five samples take 170 SECONDS.** The persistence those entries built is still worth having — it survives a deploy mid-window — but the clock they justified it with never existed.
+  * **The Architecture Rule "RegimeSmoother persistence=2 must match training + runtime" is false at serve.** In training the persistence is 2 **bars**; here it is 2 x 34s, so by the time a 4H tick reads `regime_state` the smoother has advanced ~424 times and provides **no damping at the decision horizon at all** — precisely the ping-pong it was written to prevent. Measured: **52 suppressions across ~44,000 pipeline calls**, while BTC's GMM label spans five distinct regimes. Corrected in place in §Architecture Rules.
+  * **P164's parity guard proves the wrong half.** `test_causal_matches_the_live_recurrence_exactly` shows the causal wavelet TRANSFORM reproduces the training one bar for bar — and says nothing about what the runtime deque is FED, which is 34-second snapshots. A guard that pins the function and not its input, inside the entry about a leak (P234's shape, in a leak guard).
+- **BLAST RADIUS, traced at the consumers rather than assumed.** The five `*_denoised` features reach only the DRL observation builder and the Exit-SAC agent — **both SHADOW**, so no live order depends on them; what they confound is both shadow IC streams, which is the P214 caveat with a much larger cause. `ofi_zscore` reaches the SOL toxicity classifier; `_depth_history` feeds the depth median and the collapse detector **FastRiskTick itself alerts on** (the P240 `depth_drop=66-69%` burst came from this); and `regime_state` is consumed broadly and live — ADVISE weights, smart beta, the kraken_quant buckets, the trend gate.
+- **DISPOSITION: measured and recorded, NOT re-windowed — and the reason is not caution.** The four accumulators serve **two consumers with genuinely different cadence needs**: a 30-second watchdog that must see fresh depth and volatility, and a 4-hourly decision whose windows are specified in bars. Gating the appends to decision ticks restores every documented window and would simultaneously change the depth median the emergency watchdog compares against, the OFI z-score band feeding a live veto, and the regime label feeding half the ADVISE layer — in directions that are not uniformly "more correct" (a 7-day OFI z-score is arguably a worse microstructure signal than a 24-minute one, whatever the constant implies). **That is a design decision per accumulator, not a bugfix**, and it is the operator's (P141). What ships is the arithmetic, so nobody re-derives it wrongly for a fourth time.
+- **The pins are written so the FIX moves the record rather than drifting from it** (the P318 anti-rot pattern): a test asserts the appends are currently UNGATED and its failure message says that a gate IS the P353 fix and that every window in this entry must be re-derived alongside it. The turnover numbers are **computed** from the sleep chunk and the maxlens rather than typed, so changing either goes red.
+- **Also surfaced, not a defect but worth knowing:** the inter-tick watchdog loop exists **twice** — `run_paper` and `run_live` carry near-identical copies — which is why a probe anchored on the shared line matched two sites. The P353 pins read `inspect.getsource(run_live)` and are scoped correctly; a future edit to one copy and not the other is the standing hazard.
+- **Mitigation patterns:** (a) a buffer's `maxlen` is a window only in the units of its FEED, so before quoting any rolling window in days, find every caller of the function that appends to it — here a 30-second safety loop silently re-defined four windows that three separate entries then reasoned about in bars; (b) when a component is documented as needing "N ticks", measure the actual inter-sample gap in the live log before building anything on that number — it is one `awk` over timestamps and it falsified two entries' arithmetic; (c) a parity guard must pin what the function is FED as well as what it computes, or it certifies the half that was never in doubt.
 
 ### P352. [FIXED 2026-08-20, operator: "instead of disarm, can we debug the code, to make those integrate"] Three gates acting on a number that describes something other than what it claims — including one whose magnitude had become the ACCOUNT BALANCE
 Offered the choice of disarming the two armed entry filters, the operator asked for the integration to be debugged instead. Three defects were found by measurement, and they are one shape: **a gate acting on a quantity that is about the wrong subject.** Tests `tests/test_p352_filter_integration.py` (164); twelve falsification probes red-then-restored through the P328 harness; full suite 6,023 green; gate clean, **zero baseline movement**, zero mypy findings added in `risk/` or `defense/`.
@@ -3572,7 +3599,7 @@ Authority matrix (`signals/authority_fusion.py`) + writer (`main.py` somewhere i
 
 - **DRL state space** = 126 dims (122 features + 4 env state: position_ratio, position_direction, pnl_ratio, drawdown)
 - **VecFrameStack n_stack=8** in training → TQC expects 1008-dim stacked obs at inference
-- **RegimeSmoother persistence=2** must match training + runtime (prevents regime flip ping-pong)
+- **RegimeSmoother persistence=2** must match training + runtime (prevents regime flip ping-pong). **[FALSE AT SERVE, measured P353]** in training the persistence is 2 BARS; at runtime the 30s FastRiskTick loop advances the smoother every ~34s, so it confirms a regime change in ~1.1 minutes and provides NO damping at the 4H decision horizon (52 suppressions in ~44,000 pipeline calls). Restoring the parity is a live behaviour change, not a bugfix — see P353.
 - **GMM feature defaults must match training distribution** — e.g., `cross_asset_correlation=0.87`, `spread_percentile` per-asset (BTC=5, ETH=8, SOL=12 bps)
 - **Constitution schema** requires: `dvol_zscore`, `vpin`, `correlation_btc_eth_sol`, `orderbook_depth_1pct_usd`
 - **Data age** uses exchange timestamp, `MAX_DATA_AGE_SECONDS=60.0` (was 10.0; widened for 4H tick cycle, see `defense/constitution.py:105`. Schema `data_age_seconds.max` aligned 2026-04-24)
