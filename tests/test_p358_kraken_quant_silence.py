@@ -74,6 +74,7 @@ activation, not a bugfix, and not something to slip in behind a diagnosis.
 
 import ast
 import inspect
+import json
 import pathlib
 
 import pytest
@@ -210,3 +211,109 @@ def test_the_regime_map_still_covers_what_P217_added():
             f"{name} dropped out of the regime map — the reachable-strategy "
             f"count in P358 was measured with it present"
         )
+
+
+# ==========================================================================
+# 4. The diagnostic's cause table — both directions (P310)
+# ==========================================================================
+def _cause_table():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "_kqdiag", REPO / "scripts" / "kq_strategy_diagnostic.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.KNOWN_SILENT_CAUSES
+
+
+def _reported_names():
+    """The names the AGENT emits, read from the PRODUCER.
+
+    Every strategy passes its own `name` to BaseStrategy.__init__, and that is
+    the string the firing stats are keyed by — so instantiating the classes is
+    the only honest source. A hardcoded mirror here would be the very drift
+    this test exists to catch (P310/P172)."""
+    import agents.kraken_quant_agent as kq
+    out = set()
+    for obj in vars(kq).values():
+        if (isinstance(obj, type) and issubclass(obj, kq.BaseStrategy)
+                and obj is not kq.BaseStrategy):
+            try:
+                out.add(obj().name)
+            except Exception:      # abstract or ctor needs args — skip
+                continue
+    return out
+
+
+def test_every_cause_names_a_strategy_the_agent_actually_REPORTS():
+    """[P358] The producer/consumer contract, in the direction that bit me.
+
+    My first cut keyed the table on CLASS names (`OrderBookImbalanceStrategy`)
+    while the agent reports `OrderBookImbalance` — so two of four entries
+    matched nothing and the tool printed 'cause UNKNOWN' for defects it had
+    been told about. Silent, and only visible by running the consumer against
+    real producer output (P264/P309). A table entry that matches nothing is
+    worse than an absent one: it reads as coverage."""
+    reported = _reported_names()
+    assert reported, "could not read the agent's strategy roster"
+    unmatched = sorted(set(_cause_table()) - reported)
+    assert not unmatched, (
+        f"cause-table keys match no reported strategy: {unmatched} — the "
+        f"diagnostic will print 'cause UNKNOWN' for these (P310)"
+    )
+
+
+def test_every_cause_carries_a_class_and_a_reason():
+    """A label without the arithmetic sends the next reader back to re-derive
+    it; and STRUCTURAL entries must say that repairing them is an arming, or
+    the table reads as a to-do list against a live DECIDE-authority agent."""
+    for name, (cls, reason) in _cause_table().items():
+        assert cls in ("STRUCTURAL", "WARMUP"), f"{name}: unknown class {cls}"
+        assert len(reason) > 40, f"{name}: reason is not a reason"
+        assert "P358" in reason, f"{name}: no provenance"
+        if cls == "STRUCTURAL":
+            assert "P141" in reason, (
+                f"{name}: a structural cause must state that repairing it "
+                f"ARMS a DECIDE-authority agent on a live account"
+            )
+
+
+def test_the_diagnostic_ACTUALLY_USES_the_cause_table(tmp_path):
+    """[P358] A falsification probe setting `_cause = None` left every test
+    GREEN — the table was checked and its USE was not, which is P170 (a
+    mechanism nothing calls is decoration) inside the fix for a conflation.
+    Third vacuous guard of mine caught this way today.
+
+    So drive the real CLI over a synthetic stats file and read the output."""
+    import subprocess
+    import sys as _sys
+
+    stats = {
+        "regime_ticks": {"SIDEWAYS": 4},
+        "by_regime": {
+            "SIDEWAYS": [
+                {"name": "DarkPoolVolumeStrategy", "attempts": 4, "fires": 0},
+                {"name": "KalmanCointegration_SOL_ETH", "attempts": 4,
+                 "fires": 0},
+            ]
+        },
+        "archived": [],
+    }
+    f = tmp_path / "stats.json"
+    f.write_text(json.dumps(stats), encoding="utf-8")
+
+    r = subprocess.run(
+        [_sys.executable, "-X", "utf8",
+         str(REPO / "scripts" / "kq_strategy_diagnostic.py"),
+         "--path", str(f)],
+        capture_output=True, text=True, encoding="utf-8", timeout=120)
+    out = r.stdout
+
+    assert "[STRUCTURAL]" in out, (
+        "a strategy with a known STRUCTURAL cause still rendered as a bare "
+        "'0 fires' — the cause table is not being consulted"
+    )
+    assert "[WARMUP]" in out, "the WARMUP class never reaches the output"
+    assert "P141" in out, (
+        "the output does not tell the reader that repairing a structural "
+        "cause ARMS a DECIDE-authority agent"
+    )

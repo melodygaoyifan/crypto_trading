@@ -42,6 +42,36 @@ CANONICAL = {
 }
 
 
+KNOWN_SILENT_CAUSES = {
+    # [P358] Measured causes for reachable strategies that never fire. A
+    # cause here is NOT permission to repair it: every one of these would let
+    # a DECIDE-authority agent start emitting directions on a live account,
+    # which is a P141 activation. `tests/test_p358_kraken_quant_silence.py`
+    # pins the underlying defects, so an entry that goes stale fails there
+    # rather than quietly misdescribing a strategy that has been fixed.
+    # KEYS ARE THE NAMES THE AGENT REPORTS, not the class names — my first
+    # cut used the class names and silently covered 2 of 4 (P310/P2), found
+    # only by running this against real producer output (P264/P309).
+    "OrderBookImbalance": (
+        "STRUCTURAL",
+        "cannot fire at ANY threshold: main.py sets bid_depth = ask_depth = "
+        "orderbook_depth_1pct_usd/2, so (bid-ask)/(bid+ask) is identically 0 "
+        "(P358). Repair = P141 arming."),
+    "DarkPoolVolumeStrategy": (
+        "STRUCTURAL",
+        "reads market_data[asset]['volume'/'close']; the converter returns a "
+        "fixed key set with no per-asset sub-dict, so both are 0 and every "
+        "asset is skipped (P358/P2). Repair = P141 arming."),
+    "RelativeStrengthStrategy": (
+        "WARMUP",
+        "needs >=50 samples in an in-memory buffer fed ~3x per 4H tick, with "
+        "no persistence — days of uninterrupted uptime (P358/P301/P316)."),
+    "KalmanCointegration_SOL_ETH": (
+        "WARMUP",
+        "same in-memory buffer clock as RelativeStrength (P358/P301/P316)."),
+}
+
+
 def load_stats(path: Path) -> Dict[str, Any]:
     if not path.exists():
         print(f"[KQ-DIAG] stats file not found: {path}")
@@ -126,7 +156,15 @@ def render(stats: Dict[str, Any]) -> None:
                 else:
                     status = "[!] not invoked despite regime active"
             elif fires == 0:
-                status = "[DEAD] 0 fires"
+                # [P358] "0 fires" had THREE distinct causes and one label, so
+                # a reader could not tell a strategy that CANNOT fire from one
+                # that is starved from one that simply declined — the P199/P216
+                # conflation, in the tool built to explain the silence. Naming
+                # the known ones leaves the residue genuinely unexplained,
+                # which is the set worth investigating.
+                _cause = KNOWN_SILENT_CAUSES.get(s_name)
+                status = f"[{_cause[0]}] {_cause[1]}" if _cause else (
+                    "[DEAD] 0 fires — cause UNKNOWN, worth a trace")
                 dead += 1
             elif rate < 1.0:
                 status = "[LOW] <1% fire rate"
