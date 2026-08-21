@@ -17,7 +17,15 @@
 #
 # Exit code is non-zero if any FAIL is observed (suitable for cron).
 
+# [P363] pipefail: without it a pipeline reports its LAST stage's status,
+# so `cmd | grep` reads grep's exit code and a failing cmd looks fine
+# (P185's trap). Nothing here branches on $? after a pipeline today —
+# it captures output and line ~40 already appends `|| true` — so this
+# is behaviour-preserving; it closes the class for the next line added.
+# Only -o pipefail, deliberately: -e would abort this monitor on the
+# first probe that legitimately returns non-zero.
 set -u
+set -o pipefail
 
 HOST="${HMATS_HOST:-hmats}"
 WATCH=0
