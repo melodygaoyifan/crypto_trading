@@ -263,6 +263,23 @@ class FastRiskTick:
         action = FastRiskAction.HOLD
 
         # Trigger 1: Price move > 3% (EXIT_ONLY bypasses cooldown)
+        #
+        # [P364] DIRECTION-BLIND, and that is not obvious from the code above:
+        # `price_move_pct` is an ABSOLUTE move from the 4H anchor, so a rally
+        # fires the emergency exit exactly as hard as a crash. Measured live
+        # over 12h on 2026-08-21 (ETH +6.7%, SOL +4.7%): 32 real flattens of
+        # a LONG book, 31 re-fires on an already-flat asset, and the sleeve
+        # still ENDED THE WINDOW UP $43.66 at a new equity high — so this is
+        # a fee cost in a window it won, not a losing control.
+        #
+        # Left symmetric ON PURPOSE, pending an operator decision (P141):
+        # making it direction-aware would make an emergency exit fire LESS,
+        # which is a loosening of a live risk control; and "reduce risk when
+        # the market moves 3% inside one 4H bar, whichever way it went" is a
+        # defensible design for a 30-second watchdog rather than obviously a
+        # bug. What was wrong was that this comment did not SAY so, leaving a
+        # reader unable to tell a decision from an oversight (P177/P202).
+        # Pinned both directions in tests/test_p364_fastrisk_direction_blind.py.
         # [P110] Suppress EXIT_ONLY if a prior emergency exit was REJECTED
         # within EXIT_FAILED_BACKOFF_SEC. Cleared by set_4h_anchor().
         _price_move_triggered = price_move_pct > self.PRICE_MOVE_THRESHOLD
