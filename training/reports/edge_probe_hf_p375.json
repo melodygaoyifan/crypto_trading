@@ -1,0 +1,334 @@
+{
+  "assets": {
+    "BTC": {
+      "asset": "BTC",
+      "causal_ok": true,
+      "horizons": {
+        "1": {
+          "sigma_fwd_bps": 62.5,
+          "req_ic_pct": 0.1915,
+          "req_ic_cde": 0.5304,
+          "groups": {
+            "price": {
+              "ic": 0.0339,
+              "n": 44012,
+              "gross_bps": 0.23,
+              "net_pct_venue": -9.77,
+              "net_cde": -27.47,
+              "clears_pct": false,
+              "clears_cde": false
+            },
+            "flow": {
+              "ic": 0.0195,
+              "n": 44012,
+              "gross_bps": 0.15,
+              "net_pct_venue": -9.85,
+              "net_cde": -27.55,
+              "clears_pct": false,
+              "clears_cde": false
+            },
+            "all": {
+              "ic": 0.0349,
+              "n": 44012,
+              "gross_bps": 0.45,
+              "net_pct_venue": -9.55,
+              "net_cde": -27.25,
+              "clears_pct": false,
+              "clears_cde": false
+            }
+          }
+        },
+        "4": {
+          "sigma_fwd_bps": 123.4,
+          "req_ic_pct": 0.097,
+          "req_ic_cde": 0.2688,
+          "groups": {
+            "price": {
+              "ic": 0.0215,
+              "n": 44009,
+              "gross_bps": 0.51,
+              "net_pct_venue": -9.49,
+              "net_cde": -27.19,
+              "clears_pct": false,
+              "clears_cde": false
+            },
+            "flow": {
+              "ic": 0.0108,
+              "n": 44009,
+              "gross_bps": 1.79,
+              "net_pct_venue": -8.21,
+              "net_cde": -25.91,
+              "clears_pct": false,
+              "clears_cde": false
+            },
+            "all": {
+              "ic": 0.0244,
+              "n": 44009,
+              "gross_bps": 1.19,
+              "net_pct_venue": -8.81,
+              "net_cde": -26.51,
+              "clears_pct": false,
+              "clears_cde": false
+            }
+          }
+        },
+        "12": {
+          "sigma_fwd_bps": 210.9,
+          "req_ic_pct": 0.0568,
+          "req_ic_cde": 0.1572,
+          "groups": {
+            "price": {
+              "ic": 0.037,
+              "n": 44001,
+              "gross_bps": 4.74,
+              "net_pct_venue": -5.26,
+              "net_cde": -22.96,
+              "clears_pct": false,
+              "clears_cde": false
+            },
+            "flow": {
+              "ic": 0.02,
+              "n": 44001,
+              "gross_bps": 4.48,
+              "net_pct_venue": -5.52,
+              "net_cde": -23.22,
+              "clears_pct": false,
+              "clears_cde": false
+            },
+            "all": {
+              "ic": 0.0424,
+              "n": 44001,
+              "gross_bps": 5.98,
+              "net_pct_venue": -4.02,
+              "net_cde": -21.72,
+              "clears_pct": false,
+              "clears_cde": false
+            }
+          }
+        }
+      }
+    },
+    "ETH": {
+      "asset": "ETH",
+      "causal_ok": true,
+      "horizons": {
+        "1": {
+          "sigma_fwd_bps": 82.2,
+          "req_ic_pct": 0.1456,
+          "req_ic_cde": 0.6407,
+          "groups": {
+            "price": {
+              "ic": 0.033,
+              "n": 44012,
+              "gross_bps": 0.34,
+              "net_pct_venue": -9.66,
+              "net_cde": -43.66,
+              "clears_pct": false,
+              "clears_cde": false
+            },
+            "flow": {
+              "ic": 0.0085,
+              "n": 44012,
+              "gross_bps": 0.47,
+              "net_pct_venue": -9.53,
+              "net_cde": -43.53,
+              "clears_pct": false,
+              "clears_cde": false
+            },
+            "all": {
+              "ic": 0.0323,
+              "n": 44012,
+              "gross_bps": 0.6,
+              "net_pct_venue": -9.4,
+              "net_cde": -43.4,
+              "clears_pct": false,
+              "clears_cde": false
+            }
+          }
+        },
+        "4": {
+          "sigma_fwd_bps": 163.1,
+          "req_ic_pct": 0.0734,
+          "req_ic_cde": 0.3229,
+          "groups": {
+            "price": {
+              "ic": 0.0212,
+              "n": 44009,
+              "gross_bps": 0.98,
+              "net_pct_venue": -9.02,
+              "net_cde": -43.02,
+              "clears_pct": false,
+              "clears_cde": false
+            },
+            "flow": {
+              "ic": 0.0172,
+              "n": 44009,
+              "gross_bps": 1.5,
+              "net_pct_venue": -8.5,
+              "net_cde": -42.5,
+              "clears_pct": false,
+              "clears_cde": false
+            },
+            "all": {
+              "ic": 0.0218,
+              "n": 44009,
+              "gross_bps": 0.82,
+              "net_pct_venue": -9.18,
+              "net_cde": -43.18,
+              "clears_pct": false,
+              "clears_cde": false
+            }
+          }
+        },
+        "12": {
+          "sigma_fwd_bps": 280.2,
+          "req_ic_pct": 0.0427,
+          "req_ic_cde": 0.188,
+          "groups": {
+            "price": {
+              "ic": 0.0389,
+              "n": 44001,
+              "gross_bps": 7.84,
+              "net_pct_venue": -2.16,
+              "net_cde": -36.16,
+              "clears_pct": false,
+              "clears_cde": false
+            },
+            "flow": {
+              "ic": 0.0215,
+              "n": 44001,
+              "gross_bps": 4.22,
+              "net_pct_venue": -5.78,
+              "net_cde": -39.78,
+              "clears_pct": false,
+              "clears_cde": false
+            },
+            "all": {
+              "ic": 0.0426,
+              "n": 44001,
+              "gross_bps": 7.21,
+              "net_pct_venue": -2.79,
+              "net_cde": -36.79,
+              "clears_pct": false,
+              "clears_cde": false
+            }
+          }
+        }
+      }
+    },
+    "SOL": {
+      "asset": "SOL",
+      "causal_ok": true,
+      "horizons": {
+        "1": {
+          "sigma_fwd_bps": 129.2,
+          "req_ic_pct": 0.0926,
+          "req_ic_cde": 0.3798,
+          "groups": {
+            "price": {
+              "ic": 0.0295,
+              "n": 43790,
+              "gross_bps": 0.61,
+              "net_pct_venue": -9.39,
+              "net_cde": -40.39,
+              "clears_pct": false,
+              "clears_cde": false
+            },
+            "flow": {
+              "ic": -0.0012,
+              "n": 43790,
+              "gross_bps": 0.75,
+              "net_pct_venue": -9.25,
+              "net_cde": -40.25,
+              "clears_pct": false,
+              "clears_cde": false
+            },
+            "all": {
+              "ic": 0.0196,
+              "n": 43790,
+              "gross_bps": 0.71,
+              "net_pct_venue": -9.29,
+              "net_cde": -40.29,
+              "clears_pct": false,
+              "clears_cde": false
+            }
+          }
+        },
+        "4": {
+          "sigma_fwd_bps": 251.2,
+          "req_ic_pct": 0.0477,
+          "req_ic_cde": 0.1954,
+          "groups": {
+            "price": {
+              "ic": 0.0252,
+              "n": 43787,
+              "gross_bps": 0.93,
+              "net_pct_venue": -9.07,
+              "net_cde": -40.07,
+              "clears_pct": false,
+              "clears_cde": false
+            },
+            "flow": {
+              "ic": 0.0031,
+              "n": 43787,
+              "gross_bps": 2.46,
+              "net_pct_venue": -7.54,
+              "net_cde": -38.54,
+              "clears_pct": false,
+              "clears_cde": false
+            },
+            "all": {
+              "ic": 0.0207,
+              "n": 43787,
+              "gross_bps": 2.13,
+              "net_pct_venue": -7.87,
+              "net_cde": -38.87,
+              "clears_pct": false,
+              "clears_cde": false
+            }
+          }
+        },
+        "12": {
+          "sigma_fwd_bps": 430.5,
+          "req_ic_pct": 0.0278,
+          "req_ic_cde": 0.114,
+          "groups": {
+            "price": {
+              "ic": 0.0294,
+              "n": 43779,
+              "gross_bps": 2.3,
+              "net_pct_venue": -7.7,
+              "net_cde": -38.7,
+              "clears_pct": false,
+              "clears_cde": false
+            },
+            "flow": {
+              "ic": 0.0039,
+              "n": 43779,
+              "gross_bps": 9.02,
+              "net_pct_venue": -0.98,
+              "net_cde": -31.98,
+              "clears_pct": false,
+              "clears_cde": false
+            },
+            "all": {
+              "ic": 0.031,
+              "n": 43779,
+              "gross_bps": 7.13,
+              "net_pct_venue": -2.87,
+              "net_cde": -33.87,
+              "clears_pct": false,
+              "clears_cde": false
+            }
+          }
+        }
+      }
+    }
+  },
+  "cost_pct_rt": 10.0,
+  "cost_cde_rt": {
+    "BTC": 27.7,
+    "ETH": 44.0,
+    "SOL": 41.0
+  }
+}
