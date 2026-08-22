@@ -134,7 +134,17 @@ def main():
     for a in ("ETH", "SOL"):
         idx = idx.intersection(per[a]["_ts"])
     def align(a, key):
-        s = pd.Series(per[a][key], index=per[a]["_ts"]).reindex(idx).fillna(0.0)
+        # [P378] `np.asarray` is load-bearing, not decoration. `pnl_of` returns
+        # a pandas Series (it is `pos * ret`, and `ret` carries px's index), so
+        # `pd.Series(<Series>, index=...)` makes pandas ALIGN on the source
+        # index rather than REPLACE it. Today the index passed is that same
+        # Series' own index, so the alignment is an identity and the values
+        # are correct — which is exactly why it survived review. The moment the
+        # two diverge it yields silent all-NaN, then `.fillna(0.0)` turns that
+        # into a plausible-looking zero. P301 lost an entire six-year carry
+        # column to this shape and left the guard that flags it.
+        s = pd.Series(np.asarray(per[a][key]),
+                      index=per[a]["_ts"]).reindex(idx).fillna(0.0)
         return s.to_numpy()
     hold_pf = np.mean([align(a, "_hold_pnl") for a in ASSETS], axis=0)
     ovl_pf = np.mean([align(a, "_ovl_pnl") for a in ASSETS], axis=0)
