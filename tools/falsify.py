@@ -92,6 +92,14 @@ def run_probe(p: Probe) -> bool:
     """True when the probe genuinely falsified its guards."""
     target = REPO / p.path
     try:
+        # [P365] Keep the RAW BYTES for restoration, and decode separately
+        # for matching. Reading in text mode collapses CRLF to a bare LF
+        # (universal newlines) and the old restore wrote `newline=""`, i.e.
+        # LF — so in a CRLF working tree every probed file came back
+        # CONTENT-identical and BYTE-different, left showing as modified in a
+        # shared working tree. Probe anchors are written with bare LF, so the
+        # matching still needs the decoded text; only the restore needs bytes.
+        original_bytes = target.read_bytes()
         original = io.open(target, encoding="utf-8").read()
     except OSError as e:
         p.result, p.detail = "INVALID", f"cannot read {p.path}: {e}"
@@ -180,9 +188,16 @@ def run_probe(p: Probe) -> bool:
         p.result, p.detail = "OK", _summary(after)
         return True
     finally:
-        io.open(target, "w", encoding="utf-8", newline="").write(original)
-        restored = io.open(target, encoding="utf-8").read()
-        if restored != original:
+        # [P365] Restore the BYTES, and verify against the BYTES. The old
+        # check re-decoded both sides, so it compared text to text and could
+        # not observe the very property it claimed ("byte-identically") — a
+        # check that cannot fail (P174), inside the harness built to catch
+        # that class. Its cost was real in a shared tree: every probed file
+        # was left modified, i.e. clutter indistinguishable from another
+        # session's legitimate work (P344's rule), which is exactly the
+        # question that produced three partial commits in one day.
+        target.write_bytes(original_bytes)
+        if target.read_bytes() != original_bytes:
             p.result = "NOT_RESTORED"
             p.detail = (f"{p.path} did NOT restore byte-identically — the tree "
                         f"may still carry the deliberate defect")

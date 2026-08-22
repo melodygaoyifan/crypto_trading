@@ -152,10 +152,44 @@ class TestRestoration:
         assert io.open(path, encoding="utf-8").read() == before
 
     def test_the_harness_never_shells_out_to_git(self):
+        """[P365] Precision fixed, recall pinned (P330's rule).
+
+        This scanned for the bare substrings "checkout" and "git", so it
+        fired on ordinary COMMENT prose — "on a CRLF checkout" and then
+        "legitimate" — twice against one comment. That is the P177 shape
+        (a scanner matching its own explanation) and this repo's third
+        substring-guard false positive after P317 ("is") and P324 ("not").
+        The tempting fix is to reword the comment a third time; the durable
+        one is to detect an actual INVOCATION, and to pin that a real
+        shell-out is still caught so precision is not bought with recall
+        (P248/P174).
+        """
+        import re as _re
+
         src = io.open(REPO / "tools" / "falsify.py", encoding="utf-8").read()
-        code = src.split('"""', 2)[-1]
-        assert "checkout" not in code
-        assert "git" not in code.replace("git grep", "")
+
+        def _invokes_git(text):
+            """A git command TOKEN in a string literal — not the letters
+            wherever they fall. `"git"` on its own, or a command line
+            starting `git `, both count; `legitimate` and `checkout` in
+            prose do not."""
+            for lit in _re.findall(r"""["']([^"']*)["']""", text):
+                if lit == "git" or lit.startswith("git "):
+                    return True
+            return False
+
+        assert not _invokes_git(src), (
+            "the harness shells out — reversal by `git checkout` reverts to "
+            "HEAD rather than to the pre-probe state, silently discarding "
+            "uncommitted work (P265)"
+        )
+        # RECALL: the detector must still catch a real shell-out, or making
+        # it precise would have made it useless (P174/P330).
+        assert _invokes_git('subprocess.run(["git", "checkout", "--", p])')
+        assert _invokes_git('os.system("git checkout .")')
+        # ...and must NOT catch prose that merely contains the letters.
+        assert not _invokes_git('# legitimate work in a CRLF checkout')
+        assert not _invokes_git('s = "the digit and the legitimate checkout"')
 
 
 class TestTheAggregateVerdict:
