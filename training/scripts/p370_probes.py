@@ -64,6 +64,21 @@ PROBES = [
         new='  "fast_risk_price_move_threshold": 0.03,',
         expect_red=[T],
     ),
+    # ---- vol-parity fractions (same commit) ----
+    Probe(
+        name="the live profile silently reverts SOL to the flat 0.15 fraction",
+        path=C,
+        old='"coinbase_target_fraction_by_asset": {"BTC": 0.20, "ETH": 0.15, "SOL": 0.095}',
+        new='"coinbase_target_fraction_by_asset": {"BTC": 0.20, "ETH": 0.15, "SOL": 0.15}',
+        expect_red=["tests/test_p370_vol_parity_fractions.py"],
+    ),
+    Probe(
+        name="parity is turned into a real loosening (ETH raised past 0.15)",
+        path=C,
+        old='"coinbase_target_fraction_by_asset": {"BTC": 0.20, "ETH": 0.15, "SOL": 0.095}',
+        new='"coinbase_target_fraction_by_asset": {"BTC": 0.20, "ETH": 0.22, "SOL": 0.095}',
+        expect_red=["tests/test_p370_vol_parity_fractions.py"],
+    ),
 ]
 
 if __name__ == "__main__":
