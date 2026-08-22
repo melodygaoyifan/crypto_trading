@@ -29,11 +29,38 @@ import json
 import logging
 import math
 import os
+import re
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from exchange.symbol_mapping import from_venue_symbol, to_venue_symbol
+
+# [P378] How long the sleeve may be unable to READ the venue before it says so
+# at a severity the operator must act on. reconcile_positions() is attempted at
+# least every ~30s by the FastRiskTick loop, so 15 min is ~30 failed attempts —
+# far past any plausible blip, and short enough to matter while positions are
+# open and unmanageable.
+RECONCILE_BLIND_ALERT_SEC = 15 * 60.0
+RECONCILE_BLIND_REALERT_SEC = 60 * 60.0
+
+_HTTP_STATUS_RE = re.compile(r"\b([45]\d\d)\b")
+
+
+def _http_status(exc: Exception) -> Optional[int]:
+    """Best-effort HTTP status for an SDK exception.
+
+    [P378] `requests.HTTPError` carries `.response.status_code`; the Coinbase
+    SDK re-raises shapes that sometimes only have it in the message text.
+    Returns None when neither is available, and None classifies TRANSIENT —
+    the safe direction, because the only thing the class changes here is how
+    loudly we speak (never whether we retry).
+    """
+    code = getattr(getattr(exc, "response", None), "status_code", None)
+    if isinstance(code, int):
+        return code
+    m = _HTTP_STATUS_RE.search(str(exc))
+    return int(m.group(1)) if m else None
 
 logger = logging.getLogger(__name__)
 
@@ -185,6 +212,16 @@ class CoinbaseSleeve:
         # management refuses to act when this is False (don't trade on a stale
         # snapshot after an API timeout). See manage_to_signal.
         self._reconcile_ok: bool = False
+        # [P378] Blind-since tracking is a TIMESTAMP, not a count: reconcile is
+        # called from three loops at different cadences (30s FastRiskTick, the
+        # 4H manage driver, snapshot), so "N consecutive failures" would mean a
+        # different duration depending on which one happened to call.
+        self._reconcile_blind_since: Optional[float] = None
+        # [P378] None means NEVER ALERTED. 0.0 would be a timestamp
+        # meaning 1970, and `now - 0.0 >= interval` is a different question
+        # from "have we alerted yet" — the missing-vs-neutral collapse (P2),
+        # which is exactly what the first draft got wrong here.
+        self._reconcile_last_alert_at: Optional[float] = None
         # --- isolated sleeve risk guard (the Kraken existence-fuse equivalent,
         # scoped to Coinbase ONLY; never touches the global fuse) ---
         self._max_sleeve_drawdown_pct = float(max_sleeve_drawdown_pct)
@@ -282,6 +319,19 @@ class CoinbaseSleeve:
                 }
             self._last_positions = out
             self._reconcile_ok = True
+            # [P378] Announce recovery and RESET, or a long-lived process
+            # drifts into a permanent alert state that no longer describes the
+            # present (P265f/P329). Silent on the normal path: this only fires
+            # when the sleeve had actually gone blind.
+            _since = getattr(self, "_reconcile_blind_since", None)
+            if _since is not None:
+                _blind_min = (time.time() - _since) / 60.0
+                logger.warning(
+                    f"[COINBASE_SLEEVE] reconcile RECOVERED after "
+                    f"{_blind_min:.1f} min blind — the venue is readable again "
+                    f"and the sleeve can manage positions")
+                self._reconcile_blind_since = None
+                self._reconcile_last_alert_at = None
             return out
         except Exception as e:
             self._reconcile_ok = False
@@ -300,9 +350,72 @@ class CoinbaseSleeve:
                     # conditional variants [misc] — and a fallback that does
                     # not type like the thing it replaces is a latent bug too.
                     return msg
-            logger.warning(f"[COINBASE_SLEEVE] reconcile failed: "
-                           f"{type(e).__name__}: {_shb(str(e))}; "
-                           f"returning last snapshot")
+            # [P378] CLASSIFY THE FAILURE — FOR SEVERITY ONLY, NEVER FOR
+            # SUPPRESSION, and that distinction is the whole of this fix.
+            #
+            # P345's contract says a PERMANENT class (401/403/404/422)
+            # suppresses for the PROCESS. Wiring that here would be the P329
+            # mistake mirrored: the live 403 that produced this entry
+            # (2026-08-22 06:12:20, PERMISSION_DENIED "User does not have
+            # access to portfolio") RECOVERED on the very next cycle, so
+            # suppressing would have converted a one-cycle blip into a
+            # permanently blind sleeve holding ETH+SOL. A failure to READ is
+            # never evidence that the next read fails, and this reader guards
+            # live positions — so it retries on its normal cadence, always.
+            # Pinned by test.
+            _status = _http_status(e)
+            try:
+                from infra.failure_policy import classify_external_failure
+                _cls = classify_external_failure(
+                    status=_status, message=str(e)).failure_class.name
+            except Exception:  # noqa: silent-swallow — classification is advisory only
+                _cls = "UNCLASSIFIED"
+
+            _now = time.time()
+            _blind_since = getattr(self, "_reconcile_blind_since", None)
+            if _blind_since is None:
+                _blind_since = _now
+                self._reconcile_blind_since = _now
+            _blind_sec = _now - _blind_since
+            _held = {a: p.get("signed_contracts")
+                     for a, p in self._last_positions.items()
+                     if p.get("signed_contracts")}
+
+            _base = (f"[COINBASE_SLEEVE] reconcile failed: "
+                     f"{type(e).__name__}: {_shb(str(e))}; "
+                     f"returning last snapshot")
+
+            # A single blip must stay noise, or the alert becomes wallpaper and
+            # gets ignored (P202/P303) — today's 403 was exactly one cycle.
+            # What is actionable is SUSTAINED blindness, and it is far more
+            # actionable while the sleeve holds positions it cannot see, exit
+            # or flip: manage_to_signal returns SKIPPED_STALE for every one of
+            # them, at INFO, forever, and nothing else escalates unless
+            # FastRiskTick happens to trigger (P329 only fires on an action).
+            _last_alert = getattr(self, "_reconcile_last_alert_at", None)
+            if (_blind_sec >= RECONCILE_BLIND_ALERT_SEC
+                    and (_last_alert is None
+                         or _now - _last_alert >= RECONCILE_BLIND_REALERT_SEC)):
+                self._reconcile_last_alert_at = _now
+                _hint = ("credentials/permissions — this does NOT self-heal "
+                         "and needs an operator"
+                         if _cls == "PERMANENT"
+                         else "venue-side; may clear on its own")
+                if _held:
+                    logger.critical(
+                        f"{_base}. BLIND {_blind_sec / 60.0:.0f} min while "
+                        f"HOLDING {_held} — signal exits and flips are NOT "
+                        f"happening (every manage returns SKIPPED_STALE); only "
+                        f"the venue-resting stop still protects these. "
+                        f"class={_cls} status={_status} ({_hint})")
+                else:
+                    logger.error(
+                        f"{_base}. BLIND {_blind_sec / 60.0:.0f} min; the book "
+                        f"is FLAT so nothing is at risk, but no entry can be "
+                        f"taken until it clears. class={_cls} status={_status} "
+                        f"({_hint})")
+            else:
+                logger.warning(f"{_base} [class={_cls} status={_status}]")
             return dict(self._last_positions)
 
     def position(self, asset: str) -> Optional[Dict[str, Any]]:
