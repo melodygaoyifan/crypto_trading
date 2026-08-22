@@ -67,8 +67,11 @@ class FastRiskTick:
     # missed anchors do.
     ANCHOR_MAX_AGE_SEC = 21600.0  # 6h
 
-    def __init__(self, shadow_mode: bool = True):
+    def __init__(self, shadow_mode: bool = True,
+                 velocity_trigger: bool = False):
         self.shadow_mode = shadow_mode
+        # [P367] DEFAULT OFF. Arming it changes a live emergency exit.
+        self.velocity_trigger = bool(velocity_trigger)
         self._anchor_set_at: Dict[str, float] = {}  # [P156] anchor freshness
         self._anchor_stale_log_at: Dict[str, float] = {}
         self._last_4h_prices: Dict[str, float] = {}
@@ -81,6 +84,13 @@ class FastRiskTick:
         self._exit_suppress_log_at: Dict[str, float] = {}  # [P110] rate-limit suppression log
         self._venue_unreadable_streak: Dict[str, int] = {}  # [P329] transient reads
         self._venue_unreadable_log_at: Dict[str, float] = {}
+        # [P367] velocity trigger: price at the PREVIOUS evaluation, so a
+        # move can be measured between ticks instead of against a 4H-old
+        # anchor. Shadow counters accrue the evidence for arming it.
+        self._last_eval_price: Dict[str, float] = {}
+        self._shadow_drift_fires: Dict[str, int] = {}
+        self._shadow_velocity_fires: Dict[str, int] = {}
+        self._shadow_evals: Dict[str, int] = {}
         self._trigger_count = 0
         self._shadow_log: list = []
         logger.info(f"[FastRiskTick] Initialized (shadow={shadow_mode})")
@@ -88,6 +98,29 @@ class FastRiskTick:
     def set_4h_anchor(self, asset: str, price: float,
                       volatility: float = 0.0, depth: float = 0.0):
         """Called after each 4H decision to set reference values."""
+        # [P367] Report the anchor period that is ENDING before resetting it:
+        # how often each quantity would have fired the emergency exit. One
+        # line per asset per 4H bar, so the evidence accrues without becoming
+        # wallpaper (P202) — ~19% of evaluations is far too many to log per
+        # occurrence, which is the whole finding.
+        _n = self._shadow_evals.pop(asset, 0)
+        if _n:
+            _d = self._shadow_drift_fires.pop(asset, 0)
+            _v = self._shadow_velocity_fires.pop(asset, 0)
+            logger.info(
+                "[FastRiskTick][P367-SHADOW] %s: over %d evaluations, "
+                "drift-from-anchor would fire %d (%.1f%%), inter-tick "
+                "velocity %d (%.1f%%) — active=%s. Drift measures up to 4h of "
+                "cumulative move; velocity measures the gap this control "
+                "exists for.",
+                asset, _n, _d, 100.0 * _d / _n, _v, 100.0 * _v / _n,
+                "velocity" if self.velocity_trigger else "drift")
+        self._shadow_drift_fires.pop(asset, None)
+        self._shadow_velocity_fires.pop(asset, None)
+        # The velocity reference is deliberately NOT cleared here: it is the
+        # previous EVALUATION's price, not an anchor, and the 30s loop keeps
+        # running across the 4H boundary.
+
         self._last_4h_prices[asset] = price
         self._anchor_set_at[asset] = time.time()  # [P156]
         self._anchor_stale_log_at.pop(asset, None)
@@ -246,7 +279,34 @@ class FastRiskTick:
                 )
             return FastRiskResult(FastRiskAction.HOLD, "anchor_stale", 0.0, now)
 
-        price_move_pct = abs(current_price - anchor_price) / anchor_price
+        drift_pct = abs(current_price - anchor_price) / anchor_price
+
+        # [P367] VELOCITY: the move since the PREVIOUS evaluation, which is
+        # what an inter-tick watchdog is actually for. Measured over ~13,800
+        # live samples per asset (P366): a one-step move >= 3% happened 4
+        # times, while drift from the 4H anchor was >= 3% on ~19% of samples
+        # — a ~650x gap, because drift accumulates over up to four hours
+        # while the loop runs every ~34 seconds.
+        _prev = self._last_eval_price.get(asset)
+        velocity_pct = (abs(current_price - _prev) / _prev
+                        if _prev and _prev > 0 else 0.0)
+        self._last_eval_price[asset] = current_price
+
+        # Shadow counters — both are always measured so the arming decision
+        # rests on forward evidence rather than on one 24h sample (P287's
+        # shadow-first pattern). Reported once per anchor refresh.
+        self._shadow_evals[asset] = self._shadow_evals.get(asset, 0) + 1
+        if drift_pct > self.PRICE_MOVE_THRESHOLD:
+            self._shadow_drift_fires[asset] = \
+                self._shadow_drift_fires.get(asset, 0) + 1
+        if velocity_pct > self.PRICE_MOVE_THRESHOLD:
+            self._shadow_velocity_fires[asset] = \
+                self._shadow_velocity_fires.get(asset, 0) + 1
+
+        # The quantity the trigger acts on. DEFAULT is the historical drift,
+        # so this ships changing nothing (P201 trio; the flag is absent from
+        # the live profile and pinned absent).
+        price_move_pct = velocity_pct if self.velocity_trigger else drift_pct
         data_valid = bool(market_data.get("data_valid", True))
         if not data_valid:
             self._depth_drop_streak[asset] = 0

@@ -1934,6 +1934,12 @@ class ProductionConfig:
     # an operator-watched step (P141). While off, a triggered action logs one
     # warning per asset so the gap stays visible (P155).
     fast_risk_sleeve_enabled: bool = False
+    # [P367] Trigger the inter-tick emergency exit on the move since the
+    # LAST EVALUATION rather than since the 4H anchor. DEFAULT OFF: it is a
+    # live risk control and the measured change is ~650x fewer fires
+    # (P366). Both quantities are counted either way, so the arming
+    # decision rests on forward evidence.
+    fast_risk_velocity_trigger: bool = False
     # [P232] Alpha-gate hold band (hysteresis). 0 = OFF (today's behavior:
     # any gate fail flattens the sleeve). When > 0 (research value 0.65), a
     # HELD sleeve position survives a gate fail iff alpha >= ratio x
@@ -2333,6 +2339,8 @@ class ProductionConfig:
                 data.get("coinbase_use_gated_intent", False)),
             fast_risk_sleeve_enabled=bool(
                 data.get("fast_risk_sleeve_enabled", False)),
+            fast_risk_velocity_trigger=bool(  # [P367]
+                data.get("fast_risk_velocity_trigger", False)),
             alpha_gate_hold_ratio=float(
                 data.get("alpha_gate_hold_ratio", 0.0)),
             dynamic_alpha_gate_enforce=bool(
@@ -6356,7 +6364,10 @@ class HMATSProductionRunner:
         self._fast_risk_last_eval: float = 0.0
         if FAST_RISK_TICK_AVAILABLE and self.config.mode in [RunMode.PAPER, RunMode.LIVE]:
             try:
-                self.fast_risk_tick = FastRiskTick(shadow_mode=False)  # [FIX-0] ACTIVE: exit/reduce between ticks
+                self.fast_risk_tick = FastRiskTick(  # [FIX-0] ACTIVE: exit/reduce between ticks
+                    shadow_mode=False,
+                    velocity_trigger=bool(getattr(  # [P367]
+                        self.config, 'fast_risk_velocity_trigger', False)))
             except Exception as e:
                 logger.warning(f"  FastRiskTick: STUB ({e})")
 

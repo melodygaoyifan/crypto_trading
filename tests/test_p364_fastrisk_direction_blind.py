@@ -167,13 +167,22 @@ def test_the_trigger_compares_against_the_4H_ANCHOR_not_the_last_tick():
     live risk control (it would fire ~650x less), and while that is arguably
     the control doing its own job instead of duplicating the 4H tick's, it is
     the operator's call (P141). Pinned so the decision rests on the numbers."""
+    # [P367] This guard fired on P367's own fix and was RIGHT to (P318): the
+    # quantity is now named `drift_pct`, with `velocity_pct` measured beside
+    # it. Re-expressed to the decided state — the ACTIVE quantity is still
+    # drift by default, and both are computed so the evidence accrues.
     src = inspect.getsource(FastRiskTick)
-    i = src.index("price_move_pct = abs(")
-    line = src[i:src.index("\n", i)]
-    assert "anchor_price" in line, (
-        "the trigger no longer references the 4H anchor — if it now measures "
-        "an inter-tick move, P366's measurement describes a control that no "
-        "longer exists and must be re-derived, not inherited"
+    i = src.index("drift_pct = abs(")
+    assert "anchor_price" in src[i:src.index("\n", i)], (
+        "drift is no longer measured against the 4H anchor — P366's "
+        "measurement then describes a control that no longer exists and "
+        "must be re-derived, not inherited"
+    )
+    assert "velocity_pct" in src, "the inter-tick quantity is not measured"
+    assert ("price_move_pct = velocity_pct if self.velocity_trigger "
+            "else drift_pct") in src, (
+        "the active quantity is no longer selected by the flag — check which "
+        "one the emergency exit is acting on (P141)"
     )
 
 
@@ -211,3 +220,105 @@ def test_a_slow_drift_and_a_sudden_dislocation_are_INDISTINGUISHABLE():
         "that is the root cause, and it is why the trigger fires on ~19% of "
         "evaluations while real dislocations are 0.03% (P366)"
     )
+
+
+# ==========================================================================
+# [P367] The root-cause fix, shipped SHADOW-FIRST and DEFAULT OFF
+# ==========================================================================
+def _md(px):
+    return {"current_price": px, "data_valid": True, "volatility_30m": 0.01,
+            "orderbook_depth_1pct_usd": 1_000_000.0, "orderbook_stale": False}
+
+
+def test_the_flag_is_absent_from_the_live_profile_and_defaults_OFF():
+    """[P367] Arming it changes a live emergency exit by ~650x fewer fires
+    (P366). That is an operator decision (P141), so the code ships changing
+    nothing and the flag's ABSENCE is what pins it."""
+    import json
+    d = json.loads((REPO / "configs" / "live_high_risk.json").read_text(
+        encoding="utf-8-sig"))
+    assert "fast_risk_velocity_trigger" not in d, (
+        "the velocity trigger appears in the live profile — arming it is a "
+        "P141 decision that needs its own entry, not a side effect"
+    )
+    assert FastRiskTick().velocity_trigger is False
+
+
+def test_default_behaviour_is_byte_identical_to_before():
+    """A 4% drift accrued smoothly still fires, exactly as it does today."""
+    frt = FastRiskTick()
+    frt.set_4h_anchor("ETH", price=2000.0, volatility=0.01, depth=1_000_000.0)
+    frt.evaluate("ETH", _md(2010.0), has_position=True)   # small step
+    res = frt.evaluate("ETH", _md(2080.0), has_position=True)
+    assert res.action == FastRiskAction.EXIT_ONLY
+    assert res.price_move_pct == pytest.approx(0.04)
+
+
+def test_ARMED_it_distinguishes_a_drift_from_a_dislocation():
+    """The whole point, and the thing the current control cannot do: the same
+    +4% endpoint reached SMOOTHLY does not fire, while reached in ONE STEP it
+    does."""
+    smooth = FastRiskTick(velocity_trigger=True)
+    smooth.set_4h_anchor("ETH", price=2000.0, volatility=0.01,
+                         depth=1_000_000.0)
+    last = None
+    for px in (2020.0, 2040.0, 2060.0, 2080.0):     # 1% steps
+        last = smooth.evaluate("ETH", _md(px), has_position=True)
+    assert last.action == FastRiskAction.HOLD, (
+        "a slow drift still fires under the velocity trigger — it is not "
+        "measuring the inter-tick move"
+    )
+
+    sudden = FastRiskTick(velocity_trigger=True)
+    sudden.set_4h_anchor("ETH", price=2000.0, volatility=0.01,
+                         depth=1_000_000.0)
+    sudden.evaluate("ETH", _md(2000.0), has_position=True)
+    res = sudden.evaluate("ETH", _md(2080.0), has_position=True)   # +4% in one
+    assert res.action == FastRiskAction.EXIT_ONLY, (
+        "a one-tick 4% gap did NOT fire — the control would be blind to the "
+        "dislocation it exists for"
+    )
+
+
+def test_the_first_evaluation_cannot_fire_on_velocity():
+    """Fail direction: with no previous price there is no velocity, and a
+    fabricated one would fire the emergency exit on the first tick after a
+    restart (P2 — absence must not become a trigger)."""
+    frt = FastRiskTick(velocity_trigger=True)
+    frt.set_4h_anchor("ETH", price=2000.0, volatility=0.01, depth=1_000_000.0)
+    res = frt.evaluate("ETH", _md(3000.0), has_position=True)   # +50% vs anchor
+    assert res.action == FastRiskAction.HOLD
+    assert res.price_move_pct == pytest.approx(0.0)
+
+
+def test_both_quantities_are_counted_regardless_of_the_flag():
+    """Shadow-first (P287): the evidence for arming accrues whether or not it
+    is armed, so the decision rests on forward data rather than on P366's
+    single 24h sample."""
+    frt = FastRiskTick()                       # OFF
+    frt.set_4h_anchor("ETH", price=2000.0, volatility=0.01, depth=1_000_000.0)
+    frt.evaluate("ETH", _md(2000.0), has_position=True)
+    frt.evaluate("ETH", _md(2080.0), has_position=True)   # drift AND velocity
+    assert frt._shadow_evals["ETH"] == 2
+    assert frt._shadow_drift_fires.get("ETH", 0) == 1
+    assert frt._shadow_velocity_fires.get("ETH", 0) == 1
+
+
+def test_the_shadow_report_is_one_line_per_anchor_refresh(caplog):
+    """~19% of evaluations is far too many to log per occurrence — that is
+    the finding, and logging it per event would be the wallpaper P202 warns
+    about. Reported once per asset per 4H bar, then reset."""
+    import logging as _logging
+    frt = FastRiskTick()
+    frt.set_4h_anchor("ETH", price=2000.0, volatility=0.01, depth=1_000_000.0)
+    frt.evaluate("ETH", _md(2000.0), has_position=True)
+    frt.evaluate("ETH", _md(2080.0), has_position=True)
+    with caplog.at_level(_logging.INFO):
+        frt.set_4h_anchor("ETH", price=2080.0, volatility=0.01,
+                          depth=1_000_000.0)
+    lines = [r.getMessage() for r in caplog.records if "P367-SHADOW" in
+             r.getMessage()]
+    assert len(lines) == 1, f"expected one summary, got {len(lines)}"
+    assert "drift-from-anchor would fire" in lines[0]
+    assert "active=drift" in lines[0]
+    assert frt._shadow_evals.get("ETH", 0) == 0, "counters were not reset"
