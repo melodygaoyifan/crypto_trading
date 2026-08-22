@@ -1,0 +1,73 @@
+{
+  "validation_era_start": 9100,
+  "params": {
+    "BTC": [
+      1,
+      2,
+      0
+    ],
+    "ETH": [
+      3,
+      1,
+      0
+    ],
+    "SOL": [
+      1,
+      1,
+      6
+    ]
+  },
+  "assets": {
+    "BTC": {
+      "raw": {
+        "gross": 0.7805,
+        "cost": 0.0924,
+        "net": 0.6881,
+        "turnover": 308.0
+      },
+      "adj": {
+        "gross": 0.7098,
+        "cost": 0.0822,
+        "net": 0.6276,
+        "turnover": 274.0
+      },
+      "beats_net": false,
+      "cuts_turnover": true
+    },
+    "ETH": {
+      "raw": {
+        "gross": 0.5242,
+        "cost": 0.024,
+        "net": 0.5002,
+        "turnover": 60.0
+      },
+      "adj": {
+        "gross": 0.4828,
+        "cost": 0.0144,
+        "net": 0.4684,
+        "turnover": 36.0
+      },
+      "beats_net": false,
+      "cuts_turnover": true
+    },
+    "SOL": {
+      "raw": {
+        "gross": 0.1357,
+        "cost": 0.0429,
+        "net": 0.0928,
+        "turnover": 66.0
+      },
+      "adj": {
+        "gross": -0.3935,
+        "cost": 0.0215,
+        "net": -0.415,
+        "turnover": 33.0
+      },
+      "beats_net": false,
+      "cuts_turnover": true
+    }
+  },
+  "verdict": "OVERFIT \u2014 do not arm",
+  "net_beats": 0,
+  "turnover_cut": 3
+}

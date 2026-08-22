@@ -107,3 +107,4 @@ data/evidence_reports_pulled/
 
 # [P303] v5.1 strategy warmup state - runtime, per-machine
 data/v5_1_warmup/
+training/scripts/_microcache/
