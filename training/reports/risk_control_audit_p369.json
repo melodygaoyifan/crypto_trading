@@ -1,0 +1,893 @@
+[
+  {
+    "asset": "BTC",
+    "years": 5.91,
+    "baseline": {
+      "total_pct": 233.9,
+      "per_yr_pct": 39.61,
+      "p05_24h_bps": -295.0,
+      "worst_24h_bps": -2201.2,
+      "eras": {
+        "2020-22": 112.5,
+        "2023-24": 132.2,
+        "2025-26": -10.8
+      }
+    },
+    "controls": {
+      "A_drift_exit_3pct": {
+        "fires_per_yr": 25.2,
+        "cost_pct_per_yr": -10.58,
+        "p05_24h_delta_bps": -7.8,
+        "worst_24h_delta_bps": 738.1,
+        "era_deltas": {
+          "2020-22": -37.1,
+          "2023-24": -26.7,
+          "2025-26": 1.3
+        },
+        "era_sign_stable": false,
+        "total_with": 171.4,
+        "total_base": 233.9
+      },
+      "A_drift_exit_5pct": {
+        "fires_per_yr": 3.7,
+        "cost_pct_per_yr": -3.22,
+        "p05_24h_delta_bps": -3.1,
+        "worst_24h_delta_bps": -494.8,
+        "era_deltas": {
+          "2020-22": -10.8,
+          "2023-24": -8.5,
+          "2025-26": 0.3
+        },
+        "era_sign_stable": false,
+        "total_with": 214.9,
+        "total_base": 233.9
+      },
+      "A_drift_exit_7pct": {
+        "fires_per_yr": 0.8,
+        "cost_pct_per_yr": -1.15,
+        "p05_24h_delta_bps": -0.9,
+        "worst_24h_delta_bps": -494.8,
+        "era_deltas": {
+          "2020-22": -6.8,
+          "2023-24": 0.0,
+          "2025-26": 0.0
+        },
+        "era_sign_stable": false,
+        "total_with": 227.1,
+        "total_base": 233.9
+      },
+      "A_drift_exit_10pct": {
+        "fires_per_yr": 0.2,
+        "cost_pct_per_yr": 0.09,
+        "p05_24h_delta_bps": 0.0,
+        "worst_24h_delta_bps": 0.0,
+        "era_deltas": {
+          "2020-22": 0.5,
+          "2023-24": 0.0,
+          "2025-26": 0.0
+        },
+        "era_sign_stable": true,
+        "total_with": 234.4,
+        "total_base": 233.9
+      },
+      "B_vol_reduce_2x": {
+        "fires_per_yr": 193.6,
+        "cost_pct_per_yr": -28.64,
+        "p05_24h_delta_bps": -1.0,
+        "worst_24h_delta_bps": -167.3,
+        "era_deltas": {
+          "2020-22": -65.4,
+          "2023-24": -73.2,
+          "2025-26": -30.5
+        },
+        "era_sign_stable": true,
+        "total_with": 64.8,
+        "total_base": 233.9
+      },
+      "B_vol_reduce_3x": {
+        "fires_per_yr": 84.3,
+        "cost_pct_per_yr": -13.03,
+        "p05_24h_delta_bps": -2.9,
+        "worst_24h_delta_bps": 0.0,
+        "era_deltas": {
+          "2020-22": -27.7,
+          "2023-24": -33.6,
+          "2025-26": -15.6
+        },
+        "era_sign_stable": true,
+        "total_with": 156.9,
+        "total_base": 233.9
+      },
+      "B_vol_reduce_4x": {
+        "fires_per_yr": 43.0,
+        "cost_pct_per_yr": -6.28,
+        "p05_24h_delta_bps": -3.0,
+        "worst_24h_delta_bps": 0.0,
+        "era_deltas": {
+          "2020-22": -9.1,
+          "2023-24": -17.6,
+          "2025-26": -10.3
+        },
+        "era_sign_stable": true,
+        "total_with": 196.8,
+        "total_base": 233.9
+      },
+      "C_entry_stop_5pct": {
+        "fires_per_yr": 1.0,
+        "cost_pct_per_yr": 1.24,
+        "p05_24h_delta_bps": 0.4,
+        "worst_24h_delta_bps": 0.0,
+        "era_deltas": {
+          "2020-22": 6.1,
+          "2023-24": 1.2,
+          "2025-26": 0.0
+        },
+        "era_sign_stable": true,
+        "total_with": 241.2,
+        "total_base": 233.9
+      },
+      "C_entry_stop_10pct": {
+        "fires_per_yr": 0.2,
+        "cost_pct_per_yr": 0.09,
+        "p05_24h_delta_bps": 0.0,
+        "worst_24h_delta_bps": 0.0,
+        "era_deltas": {
+          "2020-22": 0.5,
+          "2023-24": 0.0,
+          "2025-26": 0.0
+        },
+        "era_sign_stable": true,
+        "total_with": 234.4,
+        "total_base": 233.9
+      },
+      "C_entry_stop_15pct": {
+        "fires_per_yr": 0.0,
+        "cost_pct_per_yr": 0.0,
+        "p05_24h_delta_bps": 0.0,
+        "worst_24h_delta_bps": 0.0,
+        "era_deltas": {
+          "2020-22": 0.0,
+          "2023-24": 0.0,
+          "2025-26": 0.0
+        },
+        "era_sign_stable": true,
+        "total_with": 233.9,
+        "total_base": 233.9
+      },
+      "C_entry_stop_20pct": {
+        "fires_per_yr": 0.0,
+        "cost_pct_per_yr": 0.0,
+        "p05_24h_delta_bps": 0.0,
+        "worst_24h_delta_bps": 0.0,
+        "era_deltas": {
+          "2020-22": 0.0,
+          "2023-24": 0.0,
+          "2025-26": 0.0
+        },
+        "era_sign_stable": true,
+        "total_with": 233.9,
+        "total_base": 233.9
+      },
+      "D_dd_halt_10pct": {
+        "fires_per_yr": 0.2,
+        "cost_pct_per_yr": -33.06,
+        "p05_24h_delta_bps": 295.0,
+        "worst_24h_delta_bps": 856.2,
+        "era_deltas": {
+          "2020-22": -73.8,
+          "2023-24": -132.2,
+          "2025-26": 10.8
+        },
+        "era_sign_stable": false,
+        "total_with": 38.7,
+        "total_base": 233.9
+      },
+      "D_dd_halt_15pct": {
+        "fires_per_yr": 0.2,
+        "cost_pct_per_yr": -19.92,
+        "p05_24h_delta_bps": 295.0,
+        "worst_24h_delta_bps": 592.4,
+        "era_deltas": {
+          "2020-22": 3.8,
+          "2023-24": -132.2,
+          "2025-26": 10.8
+        },
+        "era_sign_stable": false,
+        "total_with": 116.3,
+        "total_base": 233.9
+      },
+      "D_dd_halt_25pct": {
+        "fires_per_yr": 0.2,
+        "cost_pct_per_yr": -21.42,
+        "p05_24h_delta_bps": 295.0,
+        "worst_24h_delta_bps": 0.0,
+        "era_deltas": {
+          "2020-22": -5.1,
+          "2023-24": -132.2,
+          "2025-26": 10.8
+        },
+        "era_sign_stable": false,
+        "total_with": 107.4,
+        "total_base": 233.9
+      },
+      "E_flip_persist_1": {
+        "fires_per_yr": 0.0,
+        "cost_pct_per_yr": 0.0,
+        "p05_24h_delta_bps": 0.0,
+        "worst_24h_delta_bps": 0.0,
+        "era_deltas": {
+          "2020-22": 0.0,
+          "2023-24": 0.0,
+          "2025-26": 0.0
+        },
+        "era_sign_stable": true,
+        "total_with": 233.9,
+        "total_base": 233.9
+      },
+      "E_flip_persist_2": {
+        "fires_per_yr": 29.5,
+        "cost_pct_per_yr": 5.86,
+        "p05_24h_delta_bps": -5.0,
+        "worst_24h_delta_bps": 0.0,
+        "era_deltas": {
+          "2020-22": 19.9,
+          "2023-24": 13.6,
+          "2025-26": 1.1
+        },
+        "era_sign_stable": true,
+        "total_with": 268.5,
+        "total_base": 233.9
+      },
+      "E_flip_persist_3": {
+        "fires_per_yr": 50.8,
+        "cost_pct_per_yr": 8.21,
+        "p05_24h_delta_bps": -1.7,
+        "worst_24h_delta_bps": 0.0,
+        "era_deltas": {
+          "2020-22": 23.2,
+          "2023-24": 21.4,
+          "2025-26": 3.9
+        },
+        "era_sign_stable": true,
+        "total_with": 282.4,
+        "total_base": 233.9
+      },
+      "F_reentry_cool_0_with_10pct_stop": {
+        "fires_per_yr": 0.2,
+        "cost_pct_per_yr": 0.09,
+        "p05_24h_delta_bps": 0.0,
+        "worst_24h_delta_bps": 0.0,
+        "era_deltas": {
+          "2020-22": 0.5,
+          "2023-24": 0.0,
+          "2025-26": 0.0
+        },
+        "era_sign_stable": true,
+        "total_with": 234.4,
+        "total_base": 233.9
+      },
+      "F_reentry_cool_2_with_10pct_stop": {
+        "fires_per_yr": 0.2,
+        "cost_pct_per_yr": 0.09,
+        "p05_24h_delta_bps": 0.0,
+        "worst_24h_delta_bps": 0.0,
+        "era_deltas": {
+          "2020-22": 0.5,
+          "2023-24": 0.0,
+          "2025-26": 0.0
+        },
+        "era_sign_stable": true,
+        "total_with": 234.4,
+        "total_base": 233.9
+      },
+      "F_reentry_cool_4_with_10pct_stop": {
+        "fires_per_yr": 0.2,
+        "cost_pct_per_yr": 0.09,
+        "p05_24h_delta_bps": 0.0,
+        "worst_24h_delta_bps": 0.0,
+        "era_deltas": {
+          "2020-22": 0.5,
+          "2023-24": 0.0,
+          "2025-26": 0.0
+        },
+        "era_sign_stable": true,
+        "total_with": 234.4,
+        "total_base": 233.9
+      }
+    }
+  },
+  {
+    "asset": "ETH",
+    "years": 5.91,
+    "baseline": {
+      "total_pct": 303.5,
+      "per_yr_pct": 51.4,
+      "p05_24h_bps": -388.9,
+      "worst_24h_bps": -2860.7,
+      "eras": {
+        "2020-22": 232.4,
+        "2023-24": 41.9,
+        "2025-26": 29.2
+      }
+    },
+    "controls": {
+      "A_drift_exit_3pct": {
+        "fires_per_yr": 47.1,
+        "cost_pct_per_yr": -37.55,
+        "p05_24h_delta_bps": -19.5,
+        "worst_24h_delta_bps": 665.5,
+        "era_deltas": {
+          "2020-22": -162.7,
+          "2023-24": -38.3,
+          "2025-26": -20.8
+        },
+        "era_sign_stable": true,
+        "total_with": 81.8,
+        "total_base": 303.5
+      },
+      "A_drift_exit_5pct": {
+        "fires_per_yr": 9.3,
+        "cost_pct_per_yr": -6.43,
+        "p05_24h_delta_bps": -5.1,
+        "worst_24h_delta_bps": -50.5,
+        "era_deltas": {
+          "2020-22": -14.1,
+          "2023-24": -15.9,
+          "2025-26": -7.9
+        },
+        "era_sign_stable": true,
+        "total_with": 265.6,
+        "total_base": 303.5
+      },
+      "A_drift_exit_7pct": {
+        "fires_per_yr": 2.9,
+        "cost_pct_per_yr": -3.13,
+        "p05_24h_delta_bps": -2.8,
+        "worst_24h_delta_bps": -69.8,
+        "era_deltas": {
+          "2020-22": 0.5,
+          "2023-24": -13.5,
+          "2025-26": -5.5
+        },
+        "era_sign_stable": false,
+        "total_with": 285.0,
+        "total_base": 303.5
+      },
+      "A_drift_exit_10pct": {
+        "fires_per_yr": 0.3,
+        "cost_pct_per_yr": -0.16,
+        "p05_24h_delta_bps": 0.0,
+        "worst_24h_delta_bps": 0.0,
+        "era_deltas": {
+          "2020-22": -0.9,
+          "2023-24": 0.0,
+          "2025-26": 0.0
+        },
+        "era_sign_stable": false,
+        "total_with": 302.6,
+        "total_base": 303.5
+      },
+      "B_vol_reduce_2x": {
+        "fires_per_yr": 175.1,
+        "cost_pct_per_yr": -39.62,
+        "p05_24h_delta_bps": 0.8,
+        "worst_24h_delta_bps": 0.0,
+        "era_deltas": {
+          "2020-22": -94.5,
+          "2023-24": -86.9,
+          "2025-26": -52.5
+        },
+        "era_sign_stable": true,
+        "total_with": 69.6,
+        "total_base": 303.5
+      },
+      "B_vol_reduce_3x": {
+        "fires_per_yr": 74.8,
+        "cost_pct_per_yr": -19.37,
+        "p05_24h_delta_bps": -1.1,
+        "worst_24h_delta_bps": 0.0,
+        "era_deltas": {
+          "2020-22": -47.8,
+          "2023-24": -45.1,
+          "2025-26": -21.4
+        },
+        "era_sign_stable": true,
+        "total_with": 189.1,
+        "total_base": 303.5
+      },
+      "B_vol_reduce_4x": {
+        "fires_per_yr": 36.1,
+        "cost_pct_per_yr": -11.1,
+        "p05_24h_delta_bps": -2.8,
+        "worst_24h_delta_bps": 0.0,
+        "era_deltas": {
+          "2020-22": -28.0,
+          "2023-24": -25.3,
+          "2025-26": -12.3
+        },
+        "era_sign_stable": true,
+        "total_with": 238.0,
+        "total_base": 303.5
+      },
+      "C_entry_stop_5pct": {
+        "fires_per_yr": 1.5,
+        "cost_pct_per_yr": 0.32,
+        "p05_24h_delta_bps": 0.8,
+        "worst_24h_delta_bps": 0.0,
+        "era_deltas": {
+          "2020-22": 3.1,
+          "2023-24": -3.7,
+          "2025-26": 2.5
+        },
+        "era_sign_stable": false,
+        "total_with": 305.4,
+        "total_base": 303.5
+      },
+      "C_entry_stop_10pct": {
+        "fires_per_yr": 0.2,
+        "cost_pct_per_yr": 0.0,
+        "p05_24h_delta_bps": 0.0,
+        "worst_24h_delta_bps": 0.0,
+        "era_deltas": {
+          "2020-22": 0.0,
+          "2023-24": 0.0,
+          "2025-26": 0.0
+        },
+        "era_sign_stable": true,
+        "total_with": 303.5,
+        "total_base": 303.5
+      },
+      "C_entry_stop_15pct": {
+        "fires_per_yr": 0.0,
+        "cost_pct_per_yr": 0.0,
+        "p05_24h_delta_bps": 0.0,
+        "worst_24h_delta_bps": 0.0,
+        "era_deltas": {
+          "2020-22": 0.0,
+          "2023-24": 0.0,
+          "2025-26": 0.0
+        },
+        "era_sign_stable": true,
+        "total_with": 303.5,
+        "total_base": 303.5
+      },
+      "C_entry_stop_20pct": {
+        "fires_per_yr": 0.0,
+        "cost_pct_per_yr": 0.0,
+        "p05_24h_delta_bps": 0.0,
+        "worst_24h_delta_bps": 0.0,
+        "era_deltas": {
+          "2020-22": 0.0,
+          "2023-24": 0.0,
+          "2025-26": 0.0
+        },
+        "era_sign_stable": true,
+        "total_with": 303.5,
+        "total_base": 303.5
+      },
+      "D_dd_halt_10pct": {
+        "fires_per_yr": 0.2,
+        "cost_pct_per_yr": -53.3,
+        "p05_24h_delta_bps": 388.9,
+        "worst_24h_delta_bps": 1740.0,
+        "era_deltas": {
+          "2020-22": -243.6,
+          "2023-24": -41.9,
+          "2025-26": -29.2
+        },
+        "era_sign_stable": true,
+        "total_with": -11.2,
+        "total_base": 303.5
+      },
+      "D_dd_halt_15pct": {
+        "fires_per_yr": 0.2,
+        "cost_pct_per_yr": -54.41,
+        "p05_24h_delta_bps": 388.9,
+        "worst_24h_delta_bps": 1082.3,
+        "era_deltas": {
+          "2020-22": -250.2,
+          "2023-24": -41.9,
+          "2025-26": -29.2
+        },
+        "era_sign_stable": true,
+        "total_with": -17.8,
+        "total_base": 303.5
+      },
+      "D_dd_halt_25pct": {
+        "fires_per_yr": 0.2,
+        "cost_pct_per_yr": -36.1,
+        "p05_24h_delta_bps": 388.9,
+        "worst_24h_delta_bps": 51.3,
+        "era_deltas": {
+          "2020-22": -142.1,
+          "2023-24": -41.9,
+          "2025-26": -29.2
+        },
+        "era_sign_stable": true,
+        "total_with": 90.3,
+        "total_base": 303.5
+      },
+      "E_flip_persist_1": {
+        "fires_per_yr": 0.0,
+        "cost_pct_per_yr": 0.0,
+        "p05_24h_delta_bps": 0.0,
+        "worst_24h_delta_bps": 0.0,
+        "era_deltas": {
+          "2020-22": 0.0,
+          "2023-24": 0.0,
+          "2025-26": 0.0
+        },
+        "era_sign_stable": true,
+        "total_with": 303.5,
+        "total_base": 303.5
+      },
+      "E_flip_persist_2": {
+        "fires_per_yr": 26.6,
+        "cost_pct_per_yr": -0.08,
+        "p05_24h_delta_bps": -8.5,
+        "worst_24h_delta_bps": 0.0,
+        "era_deltas": {
+          "2020-22": -12.5,
+          "2023-24": 6.8,
+          "2025-26": 5.3
+        },
+        "era_sign_stable": false,
+        "total_with": 303.1,
+        "total_base": 303.5
+      },
+      "E_flip_persist_3": {
+        "fires_per_yr": 47.1,
+        "cost_pct_per_yr": -2.92,
+        "p05_24h_delta_bps": -8.3,
+        "worst_24h_delta_bps": -756.1,
+        "era_deltas": {
+          "2020-22": -35.9,
+          "2023-24": 6.2,
+          "2025-26": 12.5
+        },
+        "era_sign_stable": false,
+        "total_with": 286.3,
+        "total_base": 303.5
+      },
+      "F_reentry_cool_0_with_10pct_stop": {
+        "fires_per_yr": 0.2,
+        "cost_pct_per_yr": 0.0,
+        "p05_24h_delta_bps": 0.0,
+        "worst_24h_delta_bps": 0.0,
+        "era_deltas": {
+          "2020-22": 0.0,
+          "2023-24": 0.0,
+          "2025-26": 0.0
+        },
+        "era_sign_stable": true,
+        "total_with": 303.5,
+        "total_base": 303.5
+      },
+      "F_reentry_cool_2_with_10pct_stop": {
+        "fires_per_yr": 0.2,
+        "cost_pct_per_yr": 0.0,
+        "p05_24h_delta_bps": 0.0,
+        "worst_24h_delta_bps": 0.0,
+        "era_deltas": {
+          "2020-22": 0.0,
+          "2023-24": 0.0,
+          "2025-26": 0.0
+        },
+        "era_sign_stable": true,
+        "total_with": 303.5,
+        "total_base": 303.5
+      },
+      "F_reentry_cool_4_with_10pct_stop": {
+        "fires_per_yr": 0.2,
+        "cost_pct_per_yr": 0.79,
+        "p05_24h_delta_bps": 0.2,
+        "worst_24h_delta_bps": 0.0,
+        "era_deltas": {
+          "2020-22": 4.7,
+          "2023-24": 0.0,
+          "2025-26": 0.0
+        },
+        "era_sign_stable": true,
+        "total_with": 308.2,
+        "total_base": 303.5
+      }
+    }
+  },
+  {
+    "asset": "SOL",
+    "years": 5.88,
+    "baseline": {
+      "total_pct": 584.0,
+      "per_yr_pct": 99.37,
+      "p05_24h_bps": -558.8,
+      "worst_24h_bps": -6369.8,
+      "eras": {
+        "2020-22": 346.1,
+        "2023-24": 260.6,
+        "2025-26": -22.7
+      }
+    },
+    "controls": {
+      "A_drift_exit_3pct": {
+        "fires_per_yr": 121.1,
+        "cost_pct_per_yr": -92.53,
+        "p05_24h_delta_bps": 0.7,
+        "worst_24h_delta_bps": 4337.5,
+        "era_deltas": {
+          "2020-22": -392.7,
+          "2023-24": -152.5,
+          "2025-26": 1.3
+        },
+        "era_sign_stable": false,
+        "total_with": 40.2,
+        "total_base": 584.0
+      },
+      "A_drift_exit_5pct": {
+        "fires_per_yr": 41.3,
+        "cost_pct_per_yr": -40.08,
+        "p05_24h_delta_bps": -14.3,
+        "worst_24h_delta_bps": 3659.0,
+        "era_deltas": {
+          "2020-22": -185.2,
+          "2023-24": -57.0,
+          "2025-26": 6.7
+        },
+        "era_sign_stable": false,
+        "total_with": 348.5,
+        "total_base": 584.0
+      },
+      "A_drift_exit_7pct": {
+        "fires_per_yr": 18.0,
+        "cost_pct_per_yr": -18.17,
+        "p05_24h_delta_bps": -7.5,
+        "worst_24h_delta_bps": 3077.5,
+        "era_deltas": {
+          "2020-22": -98.8,
+          "2023-24": -14.6,
+          "2025-26": 6.6
+        },
+        "era_sign_stable": false,
+        "total_with": 477.2,
+        "total_base": 584.0
+      },
+      "A_drift_exit_10pct": {
+        "fires_per_yr": 4.3,
+        "cost_pct_per_yr": -10.37,
+        "p05_24h_delta_bps": -1.4,
+        "worst_24h_delta_bps": 2683.2,
+        "era_deltas": {
+          "2020-22": -50.3,
+          "2023-24": -10.7,
+          "2025-26": 0.0
+        },
+        "era_sign_stable": false,
+        "total_with": 523.1,
+        "total_base": 584.0
+      },
+      "B_vol_reduce_2x": {
+        "fires_per_yr": 166.1,
+        "cost_pct_per_yr": -37.83,
+        "p05_24h_delta_bps": 4.4,
+        "worst_24h_delta_bps": 548.9,
+        "era_deltas": {
+          "2020-22": -106.0,
+          "2023-24": -80.3,
+          "2025-26": -36.0
+        },
+        "era_sign_stable": true,
+        "total_with": 361.7,
+        "total_base": 584.0
+      },
+      "B_vol_reduce_3x": {
+        "fires_per_yr": 62.3,
+        "cost_pct_per_yr": -12.37,
+        "p05_24h_delta_bps": 4.4,
+        "worst_24h_delta_bps": 548.9,
+        "era_deltas": {
+          "2020-22": -42.7,
+          "2023-24": -18.7,
+          "2025-26": -11.3
+        },
+        "era_sign_stable": true,
+        "total_with": 511.3,
+        "total_base": 584.0
+      },
+      "B_vol_reduce_4x": {
+        "fires_per_yr": 31.0,
+        "cost_pct_per_yr": -5.16,
+        "p05_24h_delta_bps": 3.0,
+        "worst_24h_delta_bps": 548.9,
+        "era_deltas": {
+          "2020-22": -21.1,
+          "2023-24": -7.4,
+          "2025-26": -1.8
+        },
+        "era_sign_stable": true,
+        "total_with": 553.7,
+        "total_base": 584.0
+      },
+      "C_entry_stop_5pct": {
+        "fires_per_yr": 3.9,
+        "cost_pct_per_yr": -0.68,
+        "p05_24h_delta_bps": -1.0,
+        "worst_24h_delta_bps": 1211.4,
+        "era_deltas": {
+          "2020-22": -1.5,
+          "2023-24": -1.5,
+          "2025-26": -1.0
+        },
+        "era_sign_stable": true,
+        "total_with": 580.0,
+        "total_base": 584.0
+      },
+      "C_entry_stop_10pct": {
+        "fires_per_yr": 0.5,
+        "cost_pct_per_yr": 0.89,
+        "p05_24h_delta_bps": -0.1,
+        "worst_24h_delta_bps": 754.8,
+        "era_deltas": {
+          "2020-22": 5.2,
+          "2023-24": 0.0,
+          "2025-26": 0.0
+        },
+        "era_sign_stable": true,
+        "total_with": 589.3,
+        "total_base": 584.0
+      },
+      "C_entry_stop_15pct": {
+        "fires_per_yr": 0.2,
+        "cost_pct_per_yr": 0.0,
+        "p05_24h_delta_bps": 0.0,
+        "worst_24h_delta_bps": 0.0,
+        "era_deltas": {
+          "2020-22": 0.0,
+          "2023-24": 0.0,
+          "2025-26": 0.0
+        },
+        "era_sign_stable": true,
+        "total_with": 584.0,
+        "total_base": 584.0
+      },
+      "C_entry_stop_20pct": {
+        "fires_per_yr": 0.0,
+        "cost_pct_per_yr": 0.0,
+        "p05_24h_delta_bps": 0.0,
+        "worst_24h_delta_bps": 0.0,
+        "era_deltas": {
+          "2020-22": 0.0,
+          "2023-24": 0.0,
+          "2025-26": 0.0
+        },
+        "era_sign_stable": true,
+        "total_with": 584.0,
+        "total_base": 584.0
+      },
+      "D_dd_halt_10pct": {
+        "fires_per_yr": 0.2,
+        "cost_pct_per_yr": -99.37,
+        "p05_24h_delta_bps": 558.8,
+        "worst_24h_delta_bps": 4913.5,
+        "era_deltas": {
+          "2020-22": -346.1,
+          "2023-24": -260.6,
+          "2025-26": 22.7
+        },
+        "era_sign_stable": false,
+        "total_with": -0.0,
+        "total_base": 584.0
+      },
+      "D_dd_halt_15pct": {
+        "fires_per_yr": 0.2,
+        "cost_pct_per_yr": -99.68,
+        "p05_24h_delta_bps": 558.8,
+        "worst_24h_delta_bps": 4730.8,
+        "era_deltas": {
+          "2020-22": -347.9,
+          "2023-24": -260.6,
+          "2025-26": 22.7
+        },
+        "era_sign_stable": false,
+        "total_with": -1.8,
+        "total_base": 584.0
+      },
+      "D_dd_halt_25pct": {
+        "fires_per_yr": 0.2,
+        "cost_pct_per_yr": -101.34,
+        "p05_24h_delta_bps": 558.8,
+        "worst_24h_delta_bps": 4903.1,
+        "era_deltas": {
+          "2020-22": -357.7,
+          "2023-24": -260.6,
+          "2025-26": 22.7
+        },
+        "era_sign_stable": false,
+        "total_with": -11.6,
+        "total_base": 584.0
+      },
+      "E_flip_persist_1": {
+        "fires_per_yr": 0.0,
+        "cost_pct_per_yr": 0.0,
+        "p05_24h_delta_bps": 0.0,
+        "worst_24h_delta_bps": 0.0,
+        "era_deltas": {
+          "2020-22": 0.0,
+          "2023-24": 0.0,
+          "2025-26": 0.0
+        },
+        "era_sign_stable": true,
+        "total_with": 584.0,
+        "total_base": 584.0
+      },
+      "E_flip_persist_2": {
+        "fires_per_yr": 34.7,
+        "cost_pct_per_yr": 4.93,
+        "p05_24h_delta_bps": -11.9,
+        "worst_24h_delta_bps": 1785.1,
+        "era_deltas": {
+          "2020-22": 0.1,
+          "2023-24": 7.4,
+          "2025-26": 21.5
+        },
+        "era_sign_stable": true,
+        "total_with": 613.0,
+        "total_base": 584.0
+      },
+      "E_flip_persist_3": {
+        "fires_per_yr": 60.7,
+        "cost_pct_per_yr": 10.42,
+        "p05_24h_delta_bps": -18.8,
+        "worst_24h_delta_bps": 1826.1,
+        "era_deltas": {
+          "2020-22": 19.3,
+          "2023-24": 22.8,
+          "2025-26": 19.2
+        },
+        "era_sign_stable": true,
+        "total_with": 645.3,
+        "total_base": 584.0
+      },
+      "F_reentry_cool_0_with_10pct_stop": {
+        "fires_per_yr": 0.5,
+        "cost_pct_per_yr": 0.89,
+        "p05_24h_delta_bps": -0.1,
+        "worst_24h_delta_bps": 754.8,
+        "era_deltas": {
+          "2020-22": 5.2,
+          "2023-24": 0.0,
+          "2025-26": 0.0
+        },
+        "era_sign_stable": true,
+        "total_with": 589.3,
+        "total_base": 584.0
+      },
+      "F_reentry_cool_2_with_10pct_stop": {
+        "fires_per_yr": 0.5,
+        "cost_pct_per_yr": 0.89,
+        "p05_24h_delta_bps": -0.1,
+        "worst_24h_delta_bps": 754.8,
+        "era_deltas": {
+          "2020-22": 5.2,
+          "2023-24": 0.0,
+          "2025-26": 0.0
+        },
+        "era_sign_stable": true,
+        "total_with": 589.3,
+        "total_base": 584.0
+      },
+      "F_reentry_cool_4_with_10pct_stop": {
+        "fires_per_yr": 0.5,
+        "cost_pct_per_yr": 0.89,
+        "p05_24h_delta_bps": -0.1,
+        "worst_24h_delta_bps": 754.8,
+        "era_deltas": {
+          "2020-22": 5.2,
+          "2023-24": 0.0,
+          "2025-26": 0.0
+        },
+        "era_sign_stable": true,
+        "total_with": 589.3,
+        "total_base": 584.0
+      }
+    }
+  }
+]

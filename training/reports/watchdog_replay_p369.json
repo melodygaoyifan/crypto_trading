@@ -1,0 +1,275 @@
+[
+  {
+    "asset": "BTC",
+    "bars": 52565,
+    "cost_rt_bps": 27.7,
+    "horizons": {
+      "drift": {
+        "fire_rate_pct": 1.06,
+        "n_fires": 557,
+        "h4": {
+          "n": 557,
+          "mean_fwd_bps": 24.0,
+          "flatten_value_bps": -51.7,
+          "n_adverse": 273,
+          "adverse_fwd_bps": 35.4,
+          "n_favourable": 284,
+          "favourable_fwd_bps": 13.1
+        },
+        "h12": {
+          "n": 557,
+          "mean_fwd_bps": 40.9,
+          "flatten_value_bps": -68.6,
+          "n_adverse": 273,
+          "adverse_fwd_bps": 35.9,
+          "n_favourable": 284,
+          "favourable_fwd_bps": 45.7
+        },
+        "h24": {
+          "n": 557,
+          "mean_fwd_bps": 81.6,
+          "flatten_value_bps": -109.3,
+          "n_adverse": 273,
+          "adverse_fwd_bps": 117.6,
+          "n_favourable": 284,
+          "favourable_fwd_bps": 46.9
+        }
+      },
+      "velocity": {
+        "fire_rate_pct": 0.46,
+        "n_fires": 242,
+        "h4": {
+          "n": 242,
+          "mean_fwd_bps": 35.9,
+          "flatten_value_bps": -63.6,
+          "n_adverse": 136,
+          "adverse_fwd_bps": 68.2,
+          "n_favourable": 106,
+          "favourable_fwd_bps": -5.5
+        },
+        "h12": {
+          "n": 242,
+          "mean_fwd_bps": 75.6,
+          "flatten_value_bps": -103.3,
+          "n_adverse": 136,
+          "adverse_fwd_bps": 75.0,
+          "n_favourable": 106,
+          "favourable_fwd_bps": 76.5
+        },
+        "h24": {
+          "n": 242,
+          "mean_fwd_bps": 136.2,
+          "flatten_value_bps": -163.9,
+          "n_adverse": 136,
+          "adverse_fwd_bps": 162.7,
+          "n_favourable": 106,
+          "favourable_fwd_bps": 102.2
+        }
+      }
+    },
+    "tail": {
+      "horizon_h": 24,
+      "uncond_p05_bps": -448.2,
+      "uncond_min_bps": -2039.7,
+      "adverse_p05_bps": -703.6,
+      "adverse_min_bps": -1496.6,
+      "n_adverse": 273
+    },
+    "eras": {
+      "2020-22": {
+        "n": 388,
+        "flatten_value_bps": -55.2
+      },
+      "2023-24": {
+        "n": 105,
+        "flatten_value_bps": -51.3
+      },
+      "2025-26": {
+        "n": 64,
+        "flatten_value_bps": -31.2
+      }
+    }
+  },
+  {
+    "asset": "ETH",
+    "bars": 52565,
+    "cost_rt_bps": 44.0,
+    "horizons": {
+      "drift": {
+        "fire_rate_pct": 2.26,
+        "n_fires": 1188,
+        "h4": {
+          "n": 1188,
+          "mean_fwd_bps": 25.5,
+          "flatten_value_bps": -69.5,
+          "n_adverse": 608,
+          "adverse_fwd_bps": 40.0,
+          "n_favourable": 580,
+          "favourable_fwd_bps": 10.2
+        },
+        "h12": {
+          "n": 1188,
+          "mean_fwd_bps": 51.5,
+          "flatten_value_bps": -95.5,
+          "n_adverse": 608,
+          "adverse_fwd_bps": 36.0,
+          "n_favourable": 580,
+          "favourable_fwd_bps": 67.7
+        },
+        "h24": {
+          "n": 1188,
+          "mean_fwd_bps": 108.0,
+          "flatten_value_bps": -152.0,
+          "n_adverse": 608,
+          "adverse_fwd_bps": 110.8,
+          "n_favourable": 580,
+          "favourable_fwd_bps": 105.1
+        }
+      },
+      "velocity": {
+        "fire_rate_pct": 1.065,
+        "n_fires": 560,
+        "h4": {
+          "n": 560,
+          "mean_fwd_bps": 42.9,
+          "flatten_value_bps": -86.9,
+          "n_adverse": 281,
+          "adverse_fwd_bps": 70.2,
+          "n_favourable": 279,
+          "favourable_fwd_bps": 15.5
+        },
+        "h12": {
+          "n": 560,
+          "mean_fwd_bps": 73.0,
+          "flatten_value_bps": -117.0,
+          "n_adverse": 281,
+          "adverse_fwd_bps": 75.4,
+          "n_favourable": 279,
+          "favourable_fwd_bps": 70.6
+        },
+        "h24": {
+          "n": 560,
+          "mean_fwd_bps": 138.4,
+          "flatten_value_bps": -182.4,
+          "n_adverse": 281,
+          "adverse_fwd_bps": 144.3,
+          "n_favourable": 279,
+          "favourable_fwd_bps": 132.6
+        }
+      }
+    },
+    "tail": {
+      "horizon_h": 24,
+      "uncond_p05_bps": -608.4,
+      "uncond_min_bps": -3348.8,
+      "adverse_p05_bps": -832.1,
+      "adverse_min_bps": -2665.3,
+      "n_adverse": 608
+    },
+    "eras": {
+      "2020-22": {
+        "n": 809,
+        "flatten_value_bps": -71.2
+      },
+      "2023-24": {
+        "n": 157,
+        "flatten_value_bps": -89.6
+      },
+      "2025-26": {
+        "n": 222,
+        "flatten_value_bps": -48.8
+      }
+    }
+  },
+  {
+    "asset": "SOL",
+    "bars": 52317,
+    "cost_rt_bps": 41.0,
+    "horizons": {
+      "drift": {
+        "fire_rate_pct": 5.73,
+        "n_fires": 2998,
+        "h4": {
+          "n": 2998,
+          "mean_fwd_bps": 38.4,
+          "flatten_value_bps": -79.4,
+          "n_adverse": 1405,
+          "adverse_fwd_bps": 64.1,
+          "n_favourable": 1593,
+          "favourable_fwd_bps": 15.8
+        },
+        "h12": {
+          "n": 2998,
+          "mean_fwd_bps": 87.3,
+          "flatten_value_bps": -128.3,
+          "n_adverse": 1405,
+          "adverse_fwd_bps": 105.6,
+          "n_favourable": 1593,
+          "favourable_fwd_bps": 71.1
+        },
+        "h24": {
+          "n": 2998,
+          "mean_fwd_bps": 167.2,
+          "flatten_value_bps": -208.2,
+          "n_adverse": 1405,
+          "adverse_fwd_bps": 211.0,
+          "n_favourable": 1593,
+          "favourable_fwd_bps": 128.6
+        }
+      },
+      "velocity": {
+        "fire_rate_pct": 3.475,
+        "n_fires": 1818,
+        "h4": {
+          "n": 1818,
+          "mean_fwd_bps": 49.2,
+          "flatten_value_bps": -90.2,
+          "n_adverse": 843,
+          "adverse_fwd_bps": 84.0,
+          "n_favourable": 975,
+          "favourable_fwd_bps": 19.1
+        },
+        "h12": {
+          "n": 1818,
+          "mean_fwd_bps": 121.3,
+          "flatten_value_bps": -162.3,
+          "n_adverse": 843,
+          "adverse_fwd_bps": 145.0,
+          "n_favourable": 975,
+          "favourable_fwd_bps": 100.9
+        },
+        "h24": {
+          "n": 1818,
+          "mean_fwd_bps": 204.1,
+          "flatten_value_bps": -245.1,
+          "n_adverse": 843,
+          "adverse_fwd_bps": 253.5,
+          "n_favourable": 975,
+          "favourable_fwd_bps": 161.5
+        }
+      }
+    },
+    "tail": {
+      "horizon_h": 24,
+      "uncond_p05_bps": -810.0,
+      "uncond_min_bps": -4756.5,
+      "adverse_p05_bps": -1197.4,
+      "adverse_min_bps": -4286.3,
+      "n_adverse": 1405
+    },
+    "eras": {
+      "2020-22": {
+        "n": 2062,
+        "flatten_value_bps": -82.7
+      },
+      "2023-24": {
+        "n": 626,
+        "flatten_value_bps": -90.9
+      },
+      "2025-26": {
+        "n": 310,
+        "flatten_value_bps": -34.5
+      }
+    }
+  }
+]
