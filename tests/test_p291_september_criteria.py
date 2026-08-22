@@ -257,12 +257,19 @@ class TestLiveFractionsUnchanged:
     """[P237] Pin the DECIDED value: a silent raise must fail loudly."""
 
     def test_fractions_are_still_015(self):
+        """[P370] Name kept so the P291 intent stays greppable. The DECIDED
+        value moved from flat 0.15 x3 to vol-parity {.20,.15,.095} — its own
+        recorded P-entry (P370), on a RISK-basis backtest (flat 0.15 put 48%
+        of three-asset book risk in SOL). The P291 ladder rule was about
+        SIZE INCREASES following certification; this is a re-weighting at the
+        same 0.445 aggregate budget that REDUCES SOL and raises only BTC,
+        which cannot pass the gate — net exposure falls. A silent change in
+        either direction still fails here."""
         prof = json.loads(LIVE_PROFILE.read_text(encoding="utf-8-sig"))
         fr = prof["coinbase_target_fraction_by_asset"]
-        assert fr == {"BTC": 0.15, "ETH": 0.15, "SOL": 0.15}, (
-            "the sizing ladder (P291) pre-commits that fractions only move "
-            "AFTER a certification, per the doc's table — if this changed, "
-            "the change needs its own recorded P-entry")
+        assert fr == {"BTC": 0.20, "ETH": 0.15, "SOL": 0.095}, (
+            "P370 decided vol-parity {.20,.15,.095}; a different value is a "
+            "new sizing decision needing its own recorded P-entry (P291 ladder)")
 
     def test_nominal_max_net_stays_under_the_p208_cap(self):
         prof = json.loads(LIVE_PROFILE.read_text(encoding="utf-8-sig"))

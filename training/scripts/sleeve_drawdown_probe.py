@@ -37,7 +37,13 @@ DATA = REPO / "training" / "training_data" / "drl_training"
 SMA_WINDOW = 200
 
 # Live fractions (configs/live_high_risk.json coinbase_target_fraction_by_asset)
-LIVE_FRACTION = {"BTC": 0.15, "ETH": 0.15, "SOL": 0.15}
+# [P370] moved from flat 0.15 x3 to vol-parity on the strategy-threshold
+# audit (48% of book risk sat in SOL at flat 0.15). NOTE for any reader of
+# the P340 cold-start figure ("12% of cold starts trip the 15% halt"): it
+# was computed at flat 0.15 AND at a 15% halt; both have since moved (halt
+# is 25% as of P370), so that figure is stale in BOTH inputs and must be
+# re-derived before being quoted again.
+LIVE_FRACTION = {"BTC": 0.20, "ETH": 0.15, "SOL": 0.095}
 
 # P289 measured CDE full spreads; taker pays half. Per-leg cost in bps.
 HALF_SPREAD_BPS = {"BTC": 1.0, "ETH": 2.75, "SOL": 2.0}

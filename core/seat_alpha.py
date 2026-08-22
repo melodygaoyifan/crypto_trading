@@ -40,7 +40,9 @@ WHY THE MEDIAN, AND WHAT IT DECIDES
     [P321] The gate prices EXPECTED edge against expected cost, so the robust
     central estimate is the median across eras. The MINIMUM (BTC 2.3, ETH 52.1,
     SOL -20.8) is the right statistic for a pure safety control and stops every
-    asset; the MEAN (BTC 80.3, ETH 224.9, SOL 354.7) can be carried by a single
+    asset; the MEAN (BTC 31.6, ETH 130.6, SOL 209.5 — the mean of the table
+    below; [P370] an earlier draft quoted 80.3/224.9/354.7, figures from a
+    superseded convention, P326) can be carried by a single
     dominant era, which is the era-fragility P243/P244 disqualify on. The median
     is neither. This is a recorded risk-preference choice, not a measurement
     upgrade, and it is still far stricter than the flat 22.5 the seat asserted
@@ -97,8 +99,9 @@ logger = logging.getLogger("HMATS.SeatAlpha")
 # The minimum is the right statistic for a pure safety control — it assumes the
 # worst era repeats — and it asserts BTC 2.3 / SOL -20.8, which stops every
 # asset. The gate's job here is to price EXPECTED edge against expected cost,
-# and the median is the robust central estimate: unlike the mean (BTC 80.3,
-# SOL 354.7) it cannot be carried by one dominant era, which is precisely the
+# and the median is the robust central estimate: unlike the mean (BTC 31.6,
+# SOL 209.5; [P370] corrected to the table's own arithmetic) it cannot be
+# carried by one dominant era, which is precisely the
 # era-fragility P243/P244 treat as disqualifying.
 #
 # This is a LOOSENING relative to the minimum and a TIGHTENING relative to the

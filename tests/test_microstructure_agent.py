@@ -27,6 +27,16 @@ from agents.microstructure_agent import (
 # HELPERS
 # ============================================================================
 
+@pytest.fixture(autouse=True)  # [P371]
+def _isolated_warmup_state(tmp_path, monkeypatch):  # [P371]
+    """[P371] The agent now persists its sample deques under HMATS_DATA_DIR and
+    restores them at construction. P294: construct the state, never inherit
+    it — without this, these tests would read whatever the engine (or the
+    previous test) last wrote on this machine."""  # [P371]
+    monkeypatch.setenv("HMATS_DATA_DIR", str(tmp_path))  # [P371]
+    yield  # [P371]
+
+
 def _make_agent(**config_kw) -> MicrostructureArbitrageAgent:
     cfg = MicrostructureConfig(**config_kw)
     return MicrostructureArbitrageAgent(config=cfg)

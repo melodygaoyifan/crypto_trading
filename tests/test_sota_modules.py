@@ -423,6 +423,13 @@ class TestSentimentAgent:
 
 class TestMicrostructureAgent:
     """Test microstructure arbitrage agent."""
+
+    @pytest.fixture(autouse=True)  # [P371]
+    def _isolated_warmup_state(self, tmp_path, monkeypatch):  # [P371]
+        """[P371] the agent persists/restores its sample deques under
+        HMATS_DATA_DIR; construct the state, never inherit it (P294)."""  # [P371]
+        monkeypatch.setenv("HMATS_DATA_DIR", str(tmp_path))  # [P371]
+        yield  # [P371]
     
     def test_import(self):
         """Test microstructure agent can be imported."""

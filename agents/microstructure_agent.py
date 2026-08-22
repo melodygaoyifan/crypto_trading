@@ -167,6 +167,8 @@ class MicrostructureConfig:
 class LagDetector:
     """Detects price leads/lags between exchanges."""
 
+    PRICE_HISTORY_MAXLEN = 500  # [P371] one constant; the restore path builds the same deque
+
     def __init__(self, config: MicrostructureConfig):
         self.config = config
         self.price_history: Dict[str, Deque] = {}
@@ -174,7 +176,7 @@ class LagDetector:
 
     def update(self, exchange: str, timestamp_ms: float, price: float):
         if exchange not in self.price_history:
-            self.price_history[exchange] = deque(maxlen=500)
+            self.price_history[exchange] = deque(maxlen=self.PRICE_HISTORY_MAXLEN)  # [P371]
         self.price_history[exchange].append((timestamp_ms, price))
 
     def estimate_lag(self, leader: str, follower: str) -> Optional[float]:
@@ -423,11 +425,24 @@ class MicrostructureArbitrageAgent:
 
     ASSETS = ("BTC", "ETH", "SOL")
 
+    # [P371] ---- warmup-sample persistence -----------------------------------
+    # [P371] The `min_samples` gate counts spread_history + imbalance_history +
+    # [P371] the lag detector's per-exchange price_history. All three were
+    # [P371] per-process deques, so every restart put the agent back at
+    # [P371] `insufficient_samples` (dq 0.7-0.8, measured P316/P370) — the
+    # [P371] P301/P316 class, one more location. Deliberately reuses
+    # [P371] strategies/_warmup_state (one atomic writer, one staleness rule,
+    # [P371] one set of fail directions — P172). Decision logic and thresholds
+    # [P371] are UNTOUCHED: only where the samples live across restarts.
+    _WARMUP_STATE_NAME = "micro_agent_samples"          # [P371]
+    _WARMUP_MAX_AGE_SEC = 7 * 24 * 3600.0               # [P371] same bound as the pipeline buffers (P316)
+
     def __init__(self, config: MicrostructureConfig = None):
         self.config = config or MicrostructureConfig()
         self._per_asset: Dict[str, _AssetState] = {}
         self._tick_count = 0
         self._cross_asset_lag = CrossAssetLagDetector()  # [UPG5]
+        self._restore_warmup_samples()  # [P371] before the first tick; fail-soft
         logger.info("MicrostructureArbitrageAgent v6 initialized")
 
     # ---- per-asset state accessor ------------------------------------------
@@ -436,6 +451,105 @@ class MicrostructureArbitrageAgent:
         if asset not in self._per_asset:
             self._per_asset[asset] = _AssetState(self.config)
         return self._per_asset[asset]
+
+    # ---- [P371] warmup-sample persistence ----------------------------------
+
+    def _warmup_series(self) -> Dict[str, List[float]]:
+        """[P371] Flatten the sample deques to {composite_key: [floats]}.
+
+        [P371] The helper carries float lists only, so the lag detector's
+        [P371] (timestamp_ms, price) tuples travel as two parallel series
+        [P371] (`lag_ts::A::EX` / `lag_px::A::EX`) and are zipped back on
+        [P371] restore; a length mismatch drops that exchange rather than
+        [P371] pairing the wrong timestamp with a price.
+        """
+        series: Dict[str, List[float]] = {}  # [P371]
+        for asset, st in self._per_asset.items():  # [P371]
+            if len(st.spread_history):  # [P371]
+                series[f"spread::{asset}"] = [float(v) for v in st.spread_history]  # [P371]
+            if len(st.imbalance_history):  # [P371]
+                series[f"imbalance::{asset}"] = [float(v) for v in st.imbalance_history]  # [P371]
+            for ex, dq in st.lag_detector.price_history.items():  # [P371]
+                if len(dq):  # [P371]
+                    series[f"lag_ts::{asset}::{ex}"] = [float(t) for t, _ in dq]  # [P371]
+                    series[f"lag_px::{asset}::{ex}"] = [float(p) for _, p in dq]  # [P371]
+        return series  # [P371]
+
+    def _restore_warmup_samples(self) -> None:
+        """[P371] Restore the sample deques saved by the previous process.
+
+        [P371] Every failure path restores NOTHING and the agent warms up
+        [P371] exactly as it did before P371: a missing/corrupt/version-
+        [P371] mismatched/stale file is a cold start, logged rather than a
+        [P371] silent return (a cold start that announces itself is the
+        [P371] difference between a warmup and a permanent NEUTRAL, P316).
+        """
+        try:  # [P371]
+            from strategies._warmup_state import load as _wload  # [P371]
+            saved = _wload(self._WARMUP_STATE_NAME,  # [P371]
+                           max_age_sec=self._WARMUP_MAX_AGE_SEC)  # [P371]
+            if not saved:  # [P371]
+                logger.info("[MicroV6] warmup samples: no saved state — cold "  # [P371]
+                            "start, warming up from scratch")  # [P371]
+                return  # [P371]
+            restored: Dict[str, int] = {}  # [P371]
+            lag_ts: Dict[tuple, list] = {}  # [P371]
+            lag_px: Dict[tuple, list] = {}  # [P371]
+            for key, vals in saved.items():  # [P371]
+                parts = str(key).split("::")  # [P371]
+                kind = parts[0]  # [P371]
+                if kind in ("spread", "imbalance") and len(parts) == 2:  # [P371]
+                    st = self._state(parts[1])  # [P371]
+                    dq = (st.spread_history if kind == "spread"  # [P371]
+                          else st.imbalance_history)  # [P371]
+                    tail = list(vals)[-dq.maxlen:] if dq.maxlen else list(vals)  # [P371]
+                    for v in tail:  # [P371]
+                        dq.append(float(v))  # [P371]
+                    restored[parts[1]] = restored.get(parts[1], 0) + len(tail)  # [P371]
+                elif kind == "lag_ts" and len(parts) == 3:  # [P371]
+                    lag_ts[(parts[1], parts[2])] = list(vals)  # [P371]
+                elif kind == "lag_px" and len(parts) == 3:  # [P371]
+                    lag_px[(parts[1], parts[2])] = list(vals)  # [P371]
+                # [P371] unknown keys are ignored: an old encoding must not
+                # [P371] land in a deque it was never meant for
+            for (asset, ex), ts in lag_ts.items():  # [P371]
+                px = lag_px.get((asset, ex))  # [P371]
+                if px is None or len(px) != len(ts):  # [P371]
+                    logger.warning("[MicroV6] warmup samples: lag series %s/%s "  # [P371]
+                                   "ts/px length mismatch — dropped, not paired",  # [P371]
+                                   asset, ex)  # [P371]
+                    continue  # [P371]
+                st = self._state(asset)  # [P371]
+                dq = st.lag_detector.price_history.setdefault(  # [P371]
+                    ex, deque(maxlen=LagDetector.PRICE_HISTORY_MAXLEN))  # [P371]
+                pairs = list(zip(ts, px))[-dq.maxlen:]  # [P371]
+                for t, p in pairs:  # [P371]
+                    dq.append((float(t), float(p)))  # [P371]
+                restored[asset] = restored.get(asset, 0) + len(pairs)  # [P371]
+            if restored:  # [P371]
+                logger.info("[MicroV6] warmup samples: restored %s",  # [P371]
+                            ", ".join(f"{a}={n}" for a, n in sorted(restored.items())))  # [P371]
+            else:  # [P371]
+                logger.info("[MicroV6] warmup samples: saved state held no usable "  # [P371]
+                            "series — cold start, warming up from scratch")  # [P371]
+        except Exception as e:  # noqa: silent-swallow — logged; cold start is pre-P371 behaviour  # [P371]
+            logger.warning("[MicroV6] warmup samples: restore failed (%s: %s) — "  # [P371]
+                           "cold start, warming up from scratch",  # [P371]
+                           type(e).__name__, e)  # [P371]
+
+    def _persist_warmup_samples(self) -> None:
+        """[P371] Save the sample deques. Never raises: a warmup that cannot
+        [P371] be saved must not take a tick down; the only cost of a failed
+        [P371] save is the warmup this exists to end.
+        """
+        try:  # [P371]
+            from strategies._warmup_state import save as _wsave  # [P371]
+            series = self._warmup_series()  # [P371]
+            if series:  # [P371]
+                _wsave(self._WARMUP_STATE_NAME, series)  # [P371]
+        except Exception as e:  # noqa: silent-swallow — logged; persistence only  # [P371]
+            logger.debug("[MicroV6] warmup samples: persist skipped (%s: %s)",  # [P371]
+                         type(e).__name__, e)  # [P371]
 
     # ---- data ingestion (asset-scoped) -------------------------------------
 
@@ -488,6 +602,7 @@ class MicrostructureArbitrageAgent:
             st.taker_analyzer.add_trade(last_side, last_size, now_ms)
 
         self._update_cross_state(st)
+        self._persist_warmup_samples()  # [P371] after each append; fail-soft
 
     # ---- cross-exchange state update ---------------------------------------
 

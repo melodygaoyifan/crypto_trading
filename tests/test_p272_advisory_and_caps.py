@@ -254,8 +254,12 @@ class TestPerAssetContractCaps:
             "live per-asset sizes changed — if deliberate, update this pin "
             "+ the sizing note + re-check the net-cap arithmetic in the "
             "same commit")
-        # [P274] equity-scaled fractions: 0.15 each — reproduces the fixed
-        # book at activation equity, deploys deposits automatically; max
-        # all-same-direction ~0.45x net vs the 0.50 cap
+        # [P274] equity-scaled fractions — reproduces the fixed book at
+        # activation equity, deploys deposits automatically; max
+        # all-same-direction ~0.45x net vs the 0.50 cap.
+        # [P370] moved from flat 0.15 x3 to VOL-PARITY {.20,.15,.095} on the
+        # strategy-threshold backtest: flat 0.15 put 48% of book risk in SOL.
+        # Same 0.445 aggregate budget; NOT a loosening (SOL down, ETH same,
+        # BTC up but BTC cannot pass the gate). Pinned to the decided value.
         assert live.get("coinbase_target_fraction_by_asset") == {
-            "BTC": 0.15, "ETH": 0.15, "SOL": 0.15}
+            "BTC": 0.20, "ETH": 0.15, "SOL": 0.095}

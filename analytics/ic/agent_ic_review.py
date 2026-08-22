@@ -25,6 +25,12 @@ VERDICT SEMANTICS (mirrors analytics/shadow_ic P166 arithmetic):
   expected_edge >= 2.0 x 6bps (Coinbase taker round trip, safety margin 2).
   A PROMOTE-CANDIDATE here is a candidate for a WEIGHT in
   ADVISE_WEIGHTS_BY_REGIME with its own P-entry — never an automatic change.
+  [P371] A signal that barely moved in the window is REFUSED-DEGENERATE, never
+  PROMOTE: <= 2 sign changes (per-asset MAX), or one sign on > 90% of the
+  scored records, or a |t| that clears 2 at n//h but not at
+  n_eff = min(n//h, sign changes). Its n_eff is the number of sign changes,
+  not the row count, and the P231 overlap correction cannot see that
+  (P370 Q5 — the sentiment F&G artifact: 3/5/1 changes per asset, t 9.4).
 """
 
 from __future__ import annotations
@@ -143,6 +149,204 @@ def required_ic(fwd_vol_bps: float) -> float | None:
 
 
 # =============================================================================
+# [P371] DEGENERATE-SIGNAL GUARD — n_eff is the number of sign changes
+# =============================================================================
+# [P371] P370's audit: the `sentiment` agent read 30d IC 0.703 (t 9.16 at 16h)
+# [P371] and this tool labelled it PROMOTE-CANDIDATE. The attribution census
+# [P371] showed ONE global daily Fear&Greed value shared by all three assets:
+# [P371] direction -1 on every tick from Jul 22 to Aug 17, then +1 from Aug 19
+# [P371] coincident with the rally. That is ONE sign change, not 687
+# [P371] observations. The P231 overlap correction (n_eff = n/h) cannot see it
+# [P371] — it corrects for horizon OVERLAP, not for a signal that is a
+# [P371] near-constant — so the t-statistic was computed on a sample size the
+# [P371] signal never had.
+# [P371]
+# [P371] A near-constant signal is degenerate in either of two shapes, measured
+# [P371] on the SCORED series (the nonzero directions this tool correlates):
+# [P371]   * few SIGN CHANGES across the window — a step function whose
+# [P371]     n_eff is ~the number of changes;
+# [P371]   * one sign occupying almost the whole window — a perma-bias whose
+# [P371]     IC is an artifact of which way the window happened to go.
+# [P371] Sign changes are counted PER ASSET SERIES and summed, because the
+# [P371] scored list interleaves assets: BTC always +1 beside ETH always -1
+# [P371] would read as a sign change on every row while neither series moved.
+# [P371]
+# [P371] A degenerate agent is REFUSED — verdict REFUSED-DEGENERATE with the
+# [P371] reason printed — never PROMOTE-CANDIDATE. A varying signal is judged by
+# [P371] exactly the bar above, unchanged: this guard can only REMOVE a
+# [P371] promotion, never grant one.
+DEGENERATE_MAX_SIGN_CHANGES = 2        # [P371] <= this many -> degenerate
+DEGENERATE_DOMINANT_SHARE = 0.90       # [P371] one sign > this share -> degenerate
+DEGENERATE_MIN_T_AT_SIGNAL_N_EFF = 2.0  # [P371] the tool's own |t| bar, re-priced at n_eff = sign changes
+REFUSED_DEGENERATE = "REFUSED-DEGENERATE"   # [P371]
+
+
+def _sign(x: float) -> int:  # [P371]
+    return 1 if x > 0 else (-1 if x < 0 else 0)  # [P371]
+
+
+def sign_changes_by_asset(xs: list, assets: list | None = None) -> dict:
+    """[P371] {asset: sign changes along THAT asset's scored series}.
+
+    [P371] With `assets` None the whole list is one series under key "_".
+    [P371] Zero directions (which the scorer already drops) are skipped, not
+    [P371] counted as a change — a pause is not a flip.
+    """
+    series: dict = defaultdict(list)  # [P371]
+    if assets is None:  # [P371]
+        series["_"] = list(xs)  # [P371]
+    else:  # [P371]
+        for a, x in zip(assets, xs):  # [P371]
+            series[a].append(x)  # [P371]
+    out: dict = {}  # [P371]
+    for a, vals in series.items():  # [P371]
+        prev, changes = None, 0  # [P371]
+        for x in vals:  # [P371]
+            sg = _sign(x)  # [P371]
+            if sg == 0:  # [P371]
+                continue  # [P371]
+            if prev is not None and sg != prev:  # [P371]
+                changes += 1  # [P371]
+            prev = sg  # [P371]
+        out[a] = changes  # [P371]
+    return out  # [P371]
+
+
+def count_sign_changes(xs: list, assets: list | None = None) -> int:
+    """[P371] The agent's effective sign-change count = MAX over per-asset
+    [P371] series, not the sum.
+
+    [P371] Measured on the live ledger (30d): `sentiment` is ONE global F&G
+    [P371] value, so its BTC/ETH/SOL series are copies of each other — summing
+    [P371] would count the same flip three times and report 9 where the
+    [P371] signal moved ~3 times. And BTC always +1 beside ETH always -1 must
+    [P371] read as 0, not as a flip on every interleaved row. MAX understates
+    [P371] n_eff for genuinely independent per-asset variation, which is the
+    [P371] conservative direction for a guard that can only REMOVE a verdict.
+    """
+    per = sign_changes_by_asset(xs, assets)  # [P371]
+    return max(per.values()) if per else 0  # [P371]
+
+
+def signal_degeneracy(xs: list, assets: list | None = None) -> dict:
+    """[P371] Is this scored series a near-constant? Returns the measurement.
+
+    [P371] {"n", "sign_changes", "dominant_share", "degenerate", "reason"}.
+    [P371] `reason` is None when the series genuinely varies.
+    """
+    n = len(xs)  # [P371]
+    pos = sum(1 for x in xs if x > 0)  # [P371]
+    neg = sum(1 for x in xs if x < 0)  # [P371]
+    nz = pos + neg  # [P371]
+    dominant = (max(pos, neg) / nz) if nz else 1.0  # [P371]
+    changes = count_sign_changes(xs, assets)  # [P371]
+    reasons = []  # [P371]
+    if changes <= DEGENERATE_MAX_SIGN_CHANGES:  # [P371]
+        reasons.append(  # [P371]
+            f"IC computed on a signal with {changes} sign change(s); "  # [P371]
+            f"n_eff is ~{changes}, not the row count ({n}); not evidence")  # [P371]
+    if dominant > DEGENERATE_DOMINANT_SHARE:  # [P371]
+        reasons.append(  # [P371]
+            f"one sign occupies {dominant:.0%} of the {n} scored records "  # [P371]
+            f"(IC computed on a signal with {changes} sign change(s); "  # [P371]
+            f"n_eff is ~{changes}, not the row count); not evidence")  # [P371]
+    return {"n": n, "sign_changes": changes,  # [P371]
+            "dominant_share": round(dominant, 4),  # [P371]
+            "degenerate": bool(reasons),  # [P371]
+            "reason": "; ".join(reasons) if reasons else None}  # [P371]
+
+
+def decide_agent_verdict(dirs_by_h: dict, rets_by_h: dict, fwd_vol: dict,
+                         assets_by_h: dict | None = None) -> tuple:
+    """[P371] One agent's per-horizon rows + verdict, as a PURE function.
+
+    [P371] Extracted from main() so the verdict can be driven with a synthetic
+    [P371] series (P324's rule: a verdict rule is tested by being CALLED, not
+    [P371] by a source pin). The arithmetic is byte-for-byte the P230/P231 loop;
+    [P371] what is new is the degeneracy check on each scored horizon and the
+    [P371] REFUSED-DEGENERATE verdict that outranks PROMOTE-CANDIDATE.
+    """
+    rows, verdict_bits = {}, []  # [P371]
+    for h in HORIZON_BARS:  # [P371]
+        xs, ys = list(dirs_by_h.get(h, [])), list(rets_by_h.get(h, []))  # [P371]
+        n = len(xs)  # [P371]
+        ic = _pearson(xs, ys)  # [P371]
+        if n < MIN_N or ic is None:  # [P371]
+            rows[h] = {"n": n, "ic": ic, "verdict": "INSUFFICIENT"}  # [P371]
+            verdict_bits.append("INSUFFICIENT")  # [P371]
+            continue  # [P371]
+        # [P231] OVERLAP CORRECTION. An h-bar forward return sampled every
+        # bar overlaps h times, so consecutive observations are not
+        # independent and the naive t = IC*sqrt(n-1) overstates
+        # significance by ~sqrt(h). The first live reading's headline
+        # (model_alpha 16h t=4.4) was exactly this artifact — corrected it
+        # is ~2.2, below the multiple-testing hurdle (research: Bailey/
+        # Lopez de Prado MinTRL + Harvey-Liu-Zhu t>3 for new signals).
+        # Effective n = n/h is the standard cheap correction; a proper
+        # Newey-West would be tighter still, so this remains generous.
+        n_eff = max(3, n // h)  # [P371] (moved, unchanged)
+        t = ic * math.sqrt(n_eff - 1)  # [P371] (moved, unchanged)
+        vol_h = fwd_vol.get(h, 0.0)  # [P371]
+        edge = 0.7979 * 2.0 * math.sin(math.pi * ic / 6.0) * vol_h  # [P371]
+        req = required_ic(vol_h)  # [P371]
+        clears_arith = (ic > 0 and abs(t) >= 2.0  # [P371]
+                        and req is not None and ic >= req)  # [P371]
+        # [P371] The guard. n_eff above corrects for overlap; it cannot see a
+        # [P371] signal that barely moved. Measure the series itself.
+        dg = signal_degeneracy(  # [P371]
+            xs, (assets_by_h or {}).get(h) if assets_by_h else None)  # [P371]
+        # [P371] And the claim itself re-priced at the signal's OWN n_eff:
+        # [P371] "n_eff is ~N sign changes, not the row count" applied
+        # [P371] literally. The live sentiment series had 3/5/1 sign changes
+        # [P371] per asset (restart ticks + two one-day flickers around the
+        # [P371] Aug 19 flip) — above a bare <=2 bar and still nowhere near
+        # [P371] the 160-687 rows the t was computed on. A t that is
+        # [P371] significant at n//h and not at min(n//h, sign changes) is
+        # [P371] not evidence. Only ever tightens: n_eff_signal <= n_eff.
+        n_eff_signal = max(1, min(n_eff, dg["sign_changes"]))  # [P371]
+        t_signal = ic * math.sqrt(max(n_eff_signal - 1, 0))  # [P371]
+        dg["n_eff_signal"] = n_eff_signal  # [P371]
+        dg["t_at_n_eff_signal"] = round(t_signal, 2)  # [P371]
+        if abs(t) >= 2.0 and abs(t_signal) < DEGENERATE_MIN_T_AT_SIGNAL_N_EFF:  # [P371]
+            dg["degenerate"] = True  # [P371]
+            extra = (f"IC computed on a signal with {dg['sign_changes']} "  # [P371]
+                     f"sign change(s); n_eff is ~{dg['sign_changes']}, not the "  # [P371]
+                     f"row count ({n}); |t| at n_eff={n_eff_signal} is "  # [P371]
+                     f"{abs(t_signal):.2f} < 2 (was {abs(t):.2f} at n//h); "  # [P371]
+                     f"not evidence")  # [P371]
+            dg["reason"] = (f"{dg['reason']}; {extra}" if dg["reason"]  # [P371]
+                            else extra)  # [P371]
+        degenerate = bool(dg["degenerate"])  # [P371]
+        clears = clears_arith and not degenerate  # [P371]
+        rows[h] = {"n": n, "n_eff": n_eff, "ic": round(ic, 4),  # [P371]
+                   "t": round(t, 2), "t_note": f"overlap-corrected (n/{h})",  # [P371]
+                   "edge_bps": round(edge, 2),  # [P371]
+                   "required_ic": round(req, 4) if req else None,  # [P371]
+                   "clears_p166": clears,  # [P371]
+                   "clears_p166_arithmetic": clears_arith,  # [P371]
+                   "degenerate": degenerate,  # [P371]
+                   "degeneracy": dg}  # [P371]
+        if degenerate:  # [P371]
+            verdict_bits.append("DEGENERATE")  # [P371]
+            continue  # [P371]
+        verdict_bits.append(  # [P371]
+            "CLEARS" if clears else  # [P371]
+            ("NEGATIVE" if (ic < 0 and abs(t) >= 2.0) else  # [P371]
+             ("NOISE" if abs(t) < 1.0 else "WEAK")))  # [P371]
+    if "DEGENERATE" in verdict_bits:  # [P371]
+        verdict = REFUSED_DEGENERATE  # [P371] outranks PROMOTE: not evidence
+    elif verdict_bits and all(v == "CLEARS" for v in verdict_bits):  # [P371]
+        verdict = "PROMOTE-CANDIDATE"  # [P371]
+    elif "NEGATIVE" in verdict_bits:  # [P371]
+        verdict = "NEGATIVE"  # [P371]
+    elif all(v == "INSUFFICIENT" for v in verdict_bits):  # [P371]
+        verdict = "INSUFFICIENT"  # [P371]
+    else:  # [P371]
+        verdict = "HOLD"  # [P371]
+    return rows, verdict  # [P371]
+
+
+# =============================================================================
 # [P312] THE REPORT SHAPE, owned by the PRODUCER
 # =============================================================================
 # P295d: `scripts/seat_check.py` read `agents.<name>.<h>` while this file emits
@@ -189,6 +393,7 @@ def main() -> int:
     # agent -> horizon -> parallel lists of (direction, fwd_return_frac)
     dirs: dict = defaultdict(lambda: defaultdict(list))
     rets: dict = defaultdict(lambda: defaultdict(list))
+    sig_assets: dict = defaultdict(lambda: defaultdict(list))  # [P371] per-asset sign-change count
     vol_samples: dict = defaultdict(list)
     joined = unjoined = 0
     for rec in records:
@@ -210,6 +415,7 @@ def main() -> int:
                 a = sig.get("agent_name", "?")
                 dirs[a][h].append(d)
                 rets[a][h].append(fwd)
+                sig_assets[a][h].append(rec["asset"])  # [P371]
         joined += 1
     print(f"records joined={joined} pre-history={unjoined} "
           f"window={args.window_days}d horizons={HORIZON_BARS} bars(4H)")
@@ -224,45 +430,11 @@ def main() -> int:
     print(f"\n{'agent':<14}{'h':>3}{'n':>6}{'IC':>8}{'t':>7}"
           f"{'edge_bps':>9}{'req_IC':>8}  verdict")
     for agent in sorted(dirs):
-        rows, verdict_bits = {}, []
-        for h in HORIZON_BARS:
-            xs, ys = dirs[agent][h], rets[agent][h]
-            n = len(xs)
-            ic = _pearson(xs, ys)
-            if n < MIN_N or ic is None:
-                rows[h] = {"n": n, "ic": ic, "verdict": "INSUFFICIENT"}
-                verdict_bits.append("INSUFFICIENT")
-                continue
-            # [P231] OVERLAP CORRECTION. An h-bar forward return sampled every
-            # bar overlaps h times, so consecutive observations are not
-            # independent and the naive t = IC*sqrt(n-1) overstates
-            # significance by ~sqrt(h). The first live reading's headline
-            # (model_alpha 16h t=4.4) was exactly this artifact — corrected it
-            # is ~2.2, below the multiple-testing hurdle (research: Bailey/
-            # Lopez de Prado MinTRL + Harvey-Liu-Zhu t>3 for new signals).
-            # Effective n = n/h is the standard cheap correction; a proper
-            # Newey-West would be tighter still, so this remains generous.
-            n_eff = max(3, n // h)
-            t = ic * math.sqrt(n_eff - 1)
-            edge = 0.7979 * 2.0 * math.sin(math.pi * ic / 6.0) * fwd_vol[h]
-            req = required_ic(fwd_vol[h])
-            clears = (ic > 0 and abs(t) >= 2.0
-                      and req is not None and ic >= req)
-            rows[h] = {"n": n, "n_eff": n_eff, "ic": round(ic, 4),
-                       "t": round(t, 2), "t_note": f"overlap-corrected (n/{h})",
-                       "edge_bps": round(edge, 2),
-                       "required_ic": round(req, 4) if req else None,
-                       "clears_p166": clears}
-            verdict_bits.append(
-                "CLEARS" if clears else
-                ("NEGATIVE" if (ic < 0 and abs(t) >= 2.0) else
-                 ("NOISE" if abs(t) < 1.0 else "WEAK")))
-        verdict = ("PROMOTE-CANDIDATE"
-                   if verdict_bits and all(v == "CLEARS" for v in verdict_bits)
-                   else ("NEGATIVE" if "NEGATIVE" in verdict_bits
-                         else ("INSUFFICIENT" if all(
-                             v == "INSUFFICIENT" for v in verdict_bits)
-                             else "HOLD")))
+        # [P371] The verdict rule is a pure function now (see
+        # [P371] decide_agent_verdict) so a synthetic series can drive it; the
+        # [P371] asset list lets the guard count sign changes PER asset.
+        rows, verdict = decide_agent_verdict(  # [P371]
+            dirs[agent], rets[agent], fwd_vol, sig_assets[agent])  # [P371]
         report[AGENTS_CONTAINER_KEY][agent] = build_agent_entry(rows, verdict)
         for h in HORIZON_BARS:
             r = rows[h]
@@ -272,6 +444,14 @@ def main() -> int:
                   f"{r.get('edge_bps', float('nan')):>9.2f}"
                   f"{(r.get('required_ic') or float('nan')):>8.3f}"
                   f"  {verdict if h == HORIZON_BARS[-1] else ''}")
+        if verdict == REFUSED_DEGENERATE:  # [P371]
+            # [P371] Say WHY, at the row, or the refusal reads like a HOLD.
+            for h in HORIZON_BARS:  # [P371]
+                dg = rows[h].get("degeneracy")  # [P371]
+                if dg and dg.get("degenerate"):  # [P371]
+                    print(f"{'':<14}{h:>3}  REFUSED PROMOTE: {dg['reason']} "  # [P371]
+                          f"(P371; check the attribution census before "  # [P371]
+                          f"believing any IC above 0.3)")  # [P371]
 
     rep_dir = Path(args.report_dir) if args.report_dir else (
         Path(__file__).resolve().parent / "reports")

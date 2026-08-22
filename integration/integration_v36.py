@@ -254,6 +254,29 @@ def alpha_gate_sign_diverges(alpha_input_dir, fused_dir, eps: float = 1e-9):
     return abs(a) > eps and abs(f) > eps and (a * f) < 0
 
 
+# [P372] PROOF-LINE MACRO STATUS — pure, unit-testable
+def macro_context_is_live(mcc) -> bool:  # [P372]
+    """[P372] Whether the macro/crowd context main.py hands decide() is a LIVE
+    reading, for the [PROOF] ``Macro=`` field.
+
+    THE DEFECT: main.py (the ONLY writer of ``agent_signals["macro_crowd_context"]``)
+    publishes the adapter's macro dict itself — whose liveness field is
+    ``source_status == "available"`` (P293: derived from FRED feed provenance) —
+    and only writes the literal ``{"available": False}`` in its ELSE branch.
+    Both stash sites here read ``.get("available", False)``, a key the live
+    dict never carries, so ``macro_real`` was False on every tick the feed was
+    actually serving data and the PROOF line printed ``Macro=DISABLED`` while
+    ``[EXTERNAL]``/the diag records said ``macro_status: available``. The P2
+    reader/writer shape, on an observability field. Accept the producer's
+    shape AND the legacy bool/``available`` shapes; anything else is not live.
+    """
+    if isinstance(mcc, dict):  # [P372]
+        if mcc.get("available", False):  # [P372] legacy / explicit shape
+            return True  # [P372]
+        return str(mcc.get("source_status", "")).lower() == "available"  # [P372] producer shape (main.py)
+    return bool(mcc)  # [P372] bool / None
+
+
 # =============================================================================
 # TRADE INTENT v3.6.1
 # =============================================================================
@@ -1100,7 +1123,7 @@ class HMATSv36Engine:
             agent_signals.get("sentiment_feed_alive", False) or abs(_early_sent_z) > 0.001
         )
         _early_mcc = agent_signals.get("macro_crowd_context")
-        self._last_macro_active = _early_mcc.get("available", False) if isinstance(_early_mcc, dict) else bool(_early_mcc)
+        self._last_macro_active = macro_context_is_live(_early_mcc)  # [P372] producer writes source_status, not available
         # [P287] Stash whether the DVOL feed actually served a value this
         # tick, for the proof log. The old proof-log expression tested
         # `hasattr(intent, 'dvol_zscore')` — a field nothing ever assigns —
@@ -2432,7 +2455,7 @@ class HMATSv36Engine:
         self._last_sentiment_active = _sent_feed_alive or abs(sentiment_zscore) > 0.001
         # [BUGFIX AUDIT-D4] Check 'available' key, not truthiness of dict
         _mcc = agent_signals.get("macro_crowd_context")
-        self._last_macro_active = _mcc.get("available", False) if isinstance(_mcc, dict) else bool(_mcc)
+        self._last_macro_active = macro_context_is_live(_mcc)  # [P372] producer writes source_status, not available
         sentiment_confidence = min(abs(sentiment_zscore) / 3.0, 1.0)
         if "sentiment_agent" in v6_weights:
             sentiment_confidence *= v6_weights["sentiment_agent"]
