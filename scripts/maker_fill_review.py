@@ -101,10 +101,139 @@ def read_lines(log_file: str | None) -> list:
     return out.stdout.splitlines()
 
 
+
+# ---------------------------------------------------------------------------
+# [P375] LEDGER MODE (authoritative). The log-parse mode above rests on the
+# REFUTED percentage fee model (0.5/3.0bps) and the P278 "RT<=3bps unlocks the
+# supervised revival" bar, both VOIDED by P315/P374: CDE charges a FLAT
+# ~$0.60/contract, so realized fees are ~9-14bps/leg for maker AND taker alike
+# and maker-first saves ~1bps of fee. What actually matters — the realized
+# maker FILL RATE and the realized SLIPPAGE it captures — is recorded directly
+# in data/fill_quality.jsonl (P290). This mode reports it.
+# ---------------------------------------------------------------------------
+CONTRACT_SIZE = {"BTC": 0.01, "ETH": 0.1, "SOL": 5.0}
+# certified era-median edge, bps per round trip (core/seat_alpha.py, P320/P321)
+EDGE_RT_BPS = {"BTC": 24.1, "ETH": 88.1, "SOL": 221.7}
+SOL_REPRICE_FLOOR = 20   # P315 revision rule: LOWER a fee only on >=20 fills
+
+
+def read_ledger(ledger_file):
+    import json
+    if ledger_file:
+        try:
+            raw = open(ledger_file, encoding="utf-8", errors="replace").read()
+        except OSError as e:
+            print(f"REFUSING: cannot read {ledger_file} ({e}) — an unreadable "
+                  f"ledger must never read as a verdict (P199)")
+            sys.exit(2)
+    else:
+        out = subprocess.run(
+            ['ssh', 'hmats',
+             'docker exec hmats-engine cat /opt/hmats/data/fill_quality.jsonl'],
+            capture_output=True, text=True, timeout=120, encoding="utf-8")
+        if out.returncode != 0:
+            print(f"REFUSING: could not read the live fill_quality ledger "
+                  f"(rc={out.returncode}) — no data must never read as a "
+                  f"verdict (P199)")
+            sys.exit(2)
+        raw = out.stdout
+    rows = []
+    for ln in raw.splitlines():
+        ln = ln.strip()
+        if not ln:
+            continue
+        try:
+            rows.append(json.loads(ln))
+        except ValueError:
+            continue
+    return rows
+
+
+def ledger_report(rows):
+    # CDE-format only: the P290 hooks stamp `liquidity`; pre-P290 Kraken-era
+    # rows have it None and are a DIFFERENT quantity — never mix them (P255).
+    cde = [r for r in rows if r.get("liquidity") is not None]
+    if not cde:
+        print("REFUSING a verdict: 0 CDE-format fills in the ledger (only "
+              "pre-P290 rows, if any). The sleeve has not logged a CDE fill "
+              "here — keep accruing (P199). NOTE: the LIVE ledger is on the "
+              "container volume; a stale LOCAL copy reads as zero (P255) — "
+              "run with no --ledger-file to pull it over ssh.")
+        return 2
+    from collections import defaultdict
+    nonurg = [r for r in cde if not r.get("urgent")]
+    maker = [r for r in nonurg if r["liquidity"] == "maker"]
+    f = (len(maker) / len(nonurg)) if nonurg else None
+
+    slip = defaultdict(list)
+    for r in cde:
+        s = r.get("realized_slippage_bps")
+        if isinstance(s, (int, float)):
+            slip[r["liquidity"]].append(s)
+    fee = defaultdict(list)
+    for r in cde:
+        fu, px, ct = r.get("fees_usd"), r.get("fill_avg_price"), r.get("contracts")
+        cs = CONTRACT_SIZE.get(r.get("asset"))
+        if fu and px and ct and cs:
+            fee[r["asset"]].append(fu / (ct * cs * px) * 1e4)
+
+    print(f"[MAKER-REVIEW/LEDGER] {len(cde)} CDE fills | non-urgent {len(nonurg)} "
+          f"| maker {len(maker)}"
+          + (f" -> maker fill rate f = {f:.2f}" if f is not None else ""))
+    print("  realized slippage bps by liquidity (mean/n; +=paid worse than mid):")
+    for k in ("maker", "taker_cross", "direct"):
+        if slip.get(k):
+            v = slip[k]
+            print(f"    {k:12s} {sum(v)/len(v):+7.2f}  n={len(v)}")
+    print("  realized FEE bps/leg by asset (mean/n) vs modelled:")
+    for a in ("BTC", "ETH", "SOL"):
+        if fee.get(a):
+            v = fee[a]
+            print(f"    {a}: {sum(v)/len(v):5.2f}  n={len(v)}")
+    # SOL re-pricing progress (P315: lower the assumed 14.51 only at >=20 fills)
+    n_sol = len(fee.get("SOL", []))
+    if n_sol:
+        note = ("ELIGIBLE to re-price down" if n_sol >= SOL_REPRICE_FLOOR
+                else f"{n_sol}/{SOL_REPRICE_FLOOR} fills toward re-pricing")
+        print(f"  SOL fee is ASSUMED (14.51bps); {note} (P315 revision rule)")
+
+    # realized RT cost per asset (fee + slippage, maker-weighted at observed f)
+    # vs certified edge — the honest 'does it clear' read.
+    print("  realized RT cost (fee+slip) vs certified edge, per asset:")
+    for a in ("BTC", "ETH", "SOL"):
+        if not fee.get(a):
+            continue
+        leg_fee = sum(fee[a]) / len(fee[a])
+        a_slip = [r.get("realized_slippage_bps") for r in cde
+                  if r.get("asset") == a and isinstance(r.get("realized_slippage_bps"), (int, float))]
+        leg_slip = (sum(a_slip) / len(a_slip)) if a_slip else 0.0
+        rt = 2 * (leg_fee + leg_slip)
+        edge = EDGE_RT_BPS.get(a, 0.0)
+        print(f"    {a}: RT {rt:6.2f}bps vs edge {edge:6.1f} -> "
+              f"net {edge - rt:+6.1f}bps")
+    print("  NOTE: the gate prices TAKER fee + FULL spread + a 0.75 haircut, "
+          "which is MORE conservative than realized maker economics; it admits "
+          "ETH/SOL and holds BTC out. Pricing realized maker cost would admit "
+          "BTC, but BTC's forward edge is ~0 (P320c/P374) and that is a P141 "
+          "loosening, not a bugfix.")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--log-file", default=None)
+    ap.add_argument("--log-file", default=None,
+                    help="LEGACY log-parse mode (refuted fee model; kept for "
+                         "back-compat). Omit to use the authoritative ledger.")
+    ap.add_argument("--ledger-file", default=None,
+                    help="local copy of fill_quality.jsonl; omit to pull live")
     args = ap.parse_args()
+    if args.log_file is None:
+        # [P375] LEDGER mode is the default + authoritative reading.
+        return ledger_report(read_ledger(args.ledger_file))
+    print("[MAKER-REVIEW] LEGACY log-parse mode: fee model (0.5/3.0bps) and "
+          "the P278 RT<=3bps bar are SUPERSEDED by P315/P374 (flat "
+          "per-contract fees). Use ledger mode (omit --log-file) for the "
+          "authoritative realized-cost reading.")
     lines = read_lines(args.log_file)
     counts = {k: 0 for k in PATTERNS}
     for ln in lines:
