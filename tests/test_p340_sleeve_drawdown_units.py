@@ -174,7 +174,17 @@ class TestTheHaltValueIsDeliberatelyLeftAbsent:
             encoding="utf-8-sig"))
 
     def test_the_key_is_still_absent_and_p239_still_owns_it(self):
-        assert "coinbase_max_sleeve_drawdown_pct" not in self._cfg()
+        # [P370] The decision this pin was guarding has now been MADE, by
+        # explicit operator instruction on the P369 six-year backtest: at 15%
+        # the halt trips SOL 48-77x in 6y and removes 60-85% of its return;
+        # at 25% it is a tolerable premium on all three and equals the
+        # existing risk.hard_drawdown_halt. So the pin moves from must-be-
+        # ABSENT to the DECIDED value (P237/P270 pattern), exactly as the
+        # sibling P239 pin did in the same commit. A silent revert to 0.15
+        # and a silent loosening past 0.25 both fail here.
+        assert self._cfg().get("coinbase_max_sleeve_drawdown_pct") == 0.25, (
+            "P370 decided 0.25; any other value is a new operator decision "
+            "needing its own P-entry")
 
     def test_the_effective_value_is_the_one_that_was_measured(self):
         """The absence is only safe while the default equals what P340

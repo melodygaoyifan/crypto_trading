@@ -1,0 +1,2461 @@
+{
+  "lab": "P370 strategy_threshold_audit",
+  "cost_rt_bps": {
+    "BTC": 27.7,
+    "ETH": 44.0,
+    "SOL": 41.0
+  },
+  "eras": {
+    "2020-22": [
+      "2020-01-01",
+      "2023-01-01"
+    ],
+    "2023-24": [
+      "2023-01-01",
+      "2025-01-01"
+    ],
+    "2025-26": [
+      "2025-01-01",
+      "2027-01-01"
+    ]
+  },
+  "constants": {
+    "NORMAL_MULTIPLIER": 1.1,
+    "ROUND_TRIP_LEGS": 2.0,
+    "PERF_FACTOR_FROZEN": 0.75,
+    "REGIME_MULT_LIVE": 1.155,
+    "HOLD_COST_BPS": 1.0,
+    "LIVE_FRACTION": {
+      "BTC": 0.15,
+      "ETH": 0.15,
+      "SOL": 0.15
+    },
+    "POST_LEVERAGE_CAPS": {
+      "BTC": 0.25,
+      "ETH": 0.25,
+      "SOL": 0.2
+    },
+    "SLEEVE_EQUITY_USD": 10800.0
+  },
+  "a_sma_lookback": {
+    "BTC": {
+      "pure": {
+        "100": {
+          "net_pct": 113.2,
+          "gross_pct": 196.0,
+          "sharpe_ann": 0.48,
+          "max_dd_pct": -72.2,
+          "round_trips_per_yr": 49.9,
+          "time_long_pct": 52.4,
+          "eras": {
+            "2020-22": {
+              "net_pct": 52.2,
+              "gross_pct": 84.6,
+              "round_trips": 117.0,
+              "gross_bps_per_rt": 72.3
+            },
+            "2023-24": {
+              "net_pct": 91.0,
+              "gross_pct": 119.6,
+              "round_trips": 103.0,
+              "gross_bps_per_rt": 116.1
+            },
+            "2025-26": {
+              "net_pct": -30.0,
+              "gross_pct": -8.2,
+              "round_trips": 79.0,
+              "gross_bps_per_rt": -10.3
+            }
+          }
+        },
+        "150": {
+          "net_pct": 177.8,
+          "gross_pct": 240.4,
+          "sharpe_ann": 0.75,
+          "max_dd_pct": -64.5,
+          "round_trips_per_yr": 37.7,
+          "time_long_pct": 51.4,
+          "eras": {
+            "2020-22": {
+              "net_pct": 91.9,
+              "gross_pct": 114.6,
+              "round_trips": 82.0,
+              "gross_bps_per_rt": 139.8
+            },
+            "2023-24": {
+              "net_pct": 112.7,
+              "gross_pct": 134.6,
+              "round_trips": 79.0,
+              "gross_bps_per_rt": 170.3
+            },
+            "2025-26": {
+              "net_pct": -26.8,
+              "gross_pct": -8.8,
+              "round_trips": 65.0,
+              "gross_bps_per_rt": -13.6
+            }
+          }
+        },
+        "200": {
+          "net_pct": 235.1,
+          "gross_pct": 283.6,
+          "sharpe_ann": 0.98,
+          "max_dd_pct": -57.1,
+          "round_trips_per_yr": 29.2,
+          "time_long_pct": 51.1,
+          "eras": {
+            "2020-22": {
+              "net_pct": 117.7,
+              "gross_pct": 136.2,
+              "round_trips": 67.0,
+              "gross_bps_per_rt": 203.3
+            },
+            "2023-24": {
+              "net_pct": 131.2,
+              "gross_pct": 147.3,
+              "round_trips": 58.0,
+              "gross_bps_per_rt": 253.9
+            },
+            "2025-26": {
+              "net_pct": -13.7,
+              "gross_pct": 0.1,
+              "round_trips": 50.0,
+              "gross_bps_per_rt": 0.2
+            }
+          }
+        },
+        "250": {
+          "net_pct": 302.2,
+          "gross_pct": 338.2,
+          "sharpe_ann": 1.26,
+          "max_dd_pct": -63.5,
+          "round_trips_per_yr": 21.7,
+          "time_long_pct": 51.4,
+          "eras": {
+            "2020-22": {
+              "net_pct": 158.1,
+              "gross_pct": 171.1,
+              "round_trips": 47.0,
+              "gross_bps_per_rt": 364.0
+            },
+            "2023-24": {
+              "net_pct": 153.4,
+              "gross_pct": 164.5,
+              "round_trips": 40.0,
+              "gross_bps_per_rt": 411.3
+            },
+            "2025-26": {
+              "net_pct": -9.3,
+              "gross_pct": 2.6,
+              "round_trips": 43.0,
+              "gross_bps_per_rt": 6.1
+            }
+          }
+        },
+        "300": {
+          "net_pct": 286.6,
+          "gross_pct": 321.2,
+          "sharpe_ann": 1.19,
+          "max_dd_pct": -73.1,
+          "round_trips_per_yr": 20.8,
+          "time_long_pct": 51.9,
+          "eras": {
+            "2020-22": {
+              "net_pct": 152.8,
+              "gross_pct": 164.1,
+              "round_trips": 41.0,
+              "gross_bps_per_rt": 400.3
+            },
+            "2023-24": {
+              "net_pct": 140.7,
+              "gross_pct": 152.9,
+              "round_trips": 44.0,
+              "gross_bps_per_rt": 347.5
+            },
+            "2025-26": {
+              "net_pct": -6.8,
+              "gross_pct": 4.2,
+              "round_trips": 40.0,
+              "gross_bps_per_rt": 10.6
+            }
+          }
+        }
+      },
+      "book": {
+        "100": {
+          "net_pct": 98.6,
+          "gross_pct": 154.8,
+          "sharpe_ann": 0.5,
+          "max_dd_pct": -77.7,
+          "round_trips_per_yr": 33.9,
+          "time_long_pct": 33.1,
+          "eras": {
+            "2020-22": {
+              "net_pct": 51.5,
+              "gross_pct": 69.5,
+              "round_trips": 65.0,
+              "gross_bps_per_rt": 107.0
+            },
+            "2023-24": {
+              "net_pct": 57.3,
+              "gross_pct": 86.1,
+              "round_trips": 104.0,
+              "gross_bps_per_rt": 82.8
+            },
+            "2025-26": {
+              "net_pct": -10.2,
+              "gross_pct": -0.8,
+              "round_trips": 34.0,
+              "gross_bps_per_rt": -2.2
+            }
+          }
+        },
+        "150": {
+          "net_pct": 147.3,
+          "gross_pct": 190.7,
+          "sharpe_ann": 0.72,
+          "max_dd_pct": -66.3,
+          "round_trips_per_yr": 26.2,
+          "time_long_pct": 34.2,
+          "eras": {
+            "2020-22": {
+              "net_pct": 75.4,
+              "gross_pct": 88.2,
+              "round_trips": 46.0,
+              "gross_bps_per_rt": 191.6
+            },
+            "2023-24": {
+              "net_pct": 81.7,
+              "gross_pct": 103.3,
+              "round_trips": 78.0,
+              "gross_bps_per_rt": 132.5
+            },
+            "2025-26": {
+              "net_pct": -9.9,
+              "gross_pct": -0.7,
+              "round_trips": 33.0,
+              "gross_bps_per_rt": -2.2
+            }
+          }
+        },
+        "200": {
+          "net_pct": 187.0,
+          "gross_pct": 224.2,
+          "sharpe_ann": 0.89,
+          "max_dd_pct": -57.1,
+          "round_trips_per_yr": 22.3,
+          "time_long_pct": 35.9,
+          "eras": {
+            "2020-22": {
+              "net_pct": 85.9,
+              "gross_pct": 97.0,
+              "round_trips": 40.0,
+              "gross_bps_per_rt": 242.5
+            },
+            "2023-24": {
+              "net_pct": 107.6,
+              "gross_pct": 125.6,
+              "round_trips": 65.0,
+              "gross_bps_per_rt": 193.2
+            },
+            "2025-26": {
+              "net_pct": -6.5,
+              "gross_pct": 1.6,
+              "round_trips": 29.0,
+              "gross_bps_per_rt": 5.4
+            }
+          }
+        },
+        "250": {
+          "net_pct": 246.6,
+          "gross_pct": 277.0,
+          "sharpe_ann": 1.14,
+          "max_dd_pct": -36.4,
+          "round_trips_per_yr": 18.3,
+          "time_long_pct": 37.8,
+          "eras": {
+            "2020-22": {
+              "net_pct": 131.4,
+              "gross_pct": 140.5,
+              "round_trips": 33.0,
+              "gross_bps_per_rt": 425.9
+            },
+            "2023-24": {
+              "net_pct": 128.4,
+              "gross_pct": 142.0,
+              "round_trips": 49.0,
+              "gross_bps_per_rt": 289.8
+            },
+            "2025-26": {
+              "net_pct": -13.3,
+              "gross_pct": -5.5,
+              "round_trips": 28.0,
+              "gross_bps_per_rt": -19.8
+            }
+          }
+        },
+        "300": {
+          "net_pct": 230.5,
+          "gross_pct": 260.9,
+          "sharpe_ann": 1.05,
+          "max_dd_pct": -42.0,
+          "round_trips_per_yr": 18.3,
+          "time_long_pct": 39.6,
+          "eras": {
+            "2020-22": {
+              "net_pct": 130.8,
+              "gross_pct": 138.2,
+              "round_trips": 27.0,
+              "gross_bps_per_rt": 512.0
+            },
+            "2023-24": {
+              "net_pct": 109.7,
+              "gross_pct": 126.1,
+              "round_trips": 59.0,
+              "gross_bps_per_rt": 213.7
+            },
+            "2025-26": {
+              "net_pct": -10.0,
+              "gross_pct": -3.4,
+              "round_trips": 24.0,
+              "gross_bps_per_rt": -14.1
+            }
+          }
+        }
+      },
+      "verdicts": {
+        "pure": {
+          "verdict": "(ii) arbitrary but harmless \u2014 dominated on THIS asset only (no lookback dominates 200 on >=2 assets: single-asset fit, P262 transfer rule); dominated across eras by SMA250, gap +67.1% > noise 8.1%",
+          "best_sma": 250,
+          "best_net_pct": 302.2,
+          "live_net_pct": 235.1,
+          "dominators": [
+            {
+              "sma": 250,
+              "gap_net_pct": 67.1
+            },
+            {
+              "sma": 300,
+              "gap_net_pct": 51.5
+            }
+          ],
+          "plateau": false,
+          "noise_pct_per_yr_turnover": 8.1
+        },
+        "book": {
+          "verdict": "(ii) arbitrary but harmless (nothing dominates 200 across eras)",
+          "best_sma": 250,
+          "best_net_pct": 246.6,
+          "live_net_pct": 187.0,
+          "dominators": [],
+          "plateau": false,
+          "noise_pct_per_yr_turnover": 6.2
+        }
+      }
+    },
+    "ETH": {
+      "pure": {
+        "100": {
+          "net_pct": 135.8,
+          "gross_pct": 259.4,
+          "sharpe_ann": 0.44,
+          "max_dd_pct": -99.0,
+          "round_trips_per_yr": 46.9,
+          "time_long_pct": 50.2,
+          "eras": {
+            "2020-22": {
+              "net_pct": 132.8,
+              "gross_pct": 178.5,
+              "round_trips": 104.0,
+              "gross_bps_per_rt": 171.7
+            },
+            "2023-24": {
+              "net_pct": 53.9,
+              "gross_pct": 96.5,
+              "round_trips": 97.0,
+              "gross_bps_per_rt": 99.5
+            },
+            "2025-26": {
+              "net_pct": -50.9,
+              "gross_pct": -15.7,
+              "round_trips": 80.0,
+              "gross_bps_per_rt": -19.6
+            }
+          }
+        },
+        "150": {
+          "net_pct": 300.2,
+          "gross_pct": 380.5,
+          "sharpe_ann": 0.97,
+          "max_dd_pct": -74.4,
+          "round_trips_per_yr": 30.4,
+          "time_long_pct": 48.9,
+          "eras": {
+            "2020-22": {
+              "net_pct": 241.5,
+              "gross_pct": 267.5,
+              "round_trips": 59.0,
+              "gross_bps_per_rt": 453.4
+            },
+            "2023-24": {
+              "net_pct": 57.2,
+              "gross_pct": 86.6,
+              "round_trips": 67.0,
+              "gross_bps_per_rt": 129.3
+            },
+            "2025-26": {
+              "net_pct": 1.5,
+              "gross_pct": 26.4,
+              "round_trips": 56.5,
+              "gross_bps_per_rt": 46.6
+            }
+          }
+        },
+        "200": {
+          "net_pct": 302.2,
+          "gross_pct": 372.4,
+          "sharpe_ann": 0.97,
+          "max_dd_pct": -59.9,
+          "round_trips_per_yr": 26.6,
+          "time_long_pct": 48.4,
+          "eras": {
+            "2020-22": {
+              "net_pct": 233.2,
+              "gross_pct": 255.2,
+              "round_trips": 50.0,
+              "gross_bps_per_rt": 510.4
+            },
+            "2023-24": {
+              "net_pct": 40.3,
+              "gross_pct": 68.5,
+              "round_trips": 64.0,
+              "gross_bps_per_rt": 107.0
+            },
+            "2025-26": {
+              "net_pct": 28.7,
+              "gross_pct": 48.7,
+              "round_trips": 45.5,
+              "gross_bps_per_rt": 107.0
+            }
+          }
+        },
+        "250": {
+          "net_pct": 278.6,
+          "gross_pct": 343.1,
+          "sharpe_ann": 0.88,
+          "max_dd_pct": -73.5,
+          "round_trips_per_yr": 24.4,
+          "time_long_pct": 49.7,
+          "eras": {
+            "2020-22": {
+              "net_pct": 187.4,
+              "gross_pct": 210.7,
+              "round_trips": 53.0,
+              "gross_bps_per_rt": 397.6
+            },
+            "2023-24": {
+              "net_pct": 52.0,
+              "gross_pct": 78.4,
+              "round_trips": 60.0,
+              "gross_bps_per_rt": 130.7
+            },
+            "2025-26": {
+              "net_pct": 39.2,
+              "gross_pct": 53.9,
+              "round_trips": 33.5,
+              "gross_bps_per_rt": 161.0
+            }
+          }
+        },
+        "300": {
+          "net_pct": 294.2,
+          "gross_pct": 343.7,
+          "sharpe_ann": 0.92,
+          "max_dd_pct": -92.8,
+          "round_trips_per_yr": 18.8,
+          "time_long_pct": 50.1,
+          "eras": {
+            "2020-22": {
+              "net_pct": 167.4,
+              "gross_pct": 187.2,
+              "round_trips": 45.0,
+              "gross_bps_per_rt": 416.0
+            },
+            "2023-24": {
+              "net_pct": 79.7,
+              "gross_pct": 98.2,
+              "round_trips": 42.0,
+              "gross_bps_per_rt": 233.9
+            },
+            "2025-26": {
+              "net_pct": 47.1,
+              "gross_pct": 58.3,
+              "round_trips": 25.5,
+              "gross_bps_per_rt": 228.7
+            }
+          }
+        }
+      },
+      "book": {
+        "100": {
+          "net_pct": 100.4,
+          "gross_pct": 184.5,
+          "sharpe_ann": 0.4,
+          "max_dd_pct": -104.0,
+          "round_trips_per_yr": 31.9,
+          "time_long_pct": 30.6,
+          "eras": {
+            "2020-22": {
+              "net_pct": 93.3,
+              "gross_pct": 122.8,
+              "round_trips": 67.0,
+              "gross_bps_per_rt": 183.2
+            },
+            "2023-24": {
+              "net_pct": 56.6,
+              "gross_pct": 90.9,
+              "round_trips": 78.0,
+              "gross_bps_per_rt": 116.5
+            },
+            "2025-26": {
+              "net_pct": -49.4,
+              "gross_pct": -29.2,
+              "round_trips": 46.0,
+              "gross_bps_per_rt": -63.4
+            }
+          }
+        },
+        "150": {
+          "net_pct": 192.8,
+          "gross_pct": 256.2,
+          "sharpe_ann": 0.75,
+          "max_dd_pct": -80.1,
+          "round_trips_per_yr": 24.0,
+          "time_long_pct": 31.1,
+          "eras": {
+            "2020-22": {
+              "net_pct": 154.2,
+              "gross_pct": 174.9,
+              "round_trips": 47.0,
+              "gross_bps_per_rt": 372.1
+            },
+            "2023-24": {
+              "net_pct": 63.8,
+              "gross_pct": 88.0,
+              "round_trips": 55.0,
+              "gross_bps_per_rt": 160.0
+            },
+            "2025-26": {
+              "net_pct": -25.2,
+              "gross_pct": -6.7,
+              "round_trips": 42.0,
+              "gross_bps_per_rt": -16.0
+            }
+          }
+        },
+        "200": {
+          "net_pct": 202.5,
+          "gross_pct": 260.6,
+          "sharpe_ann": 0.77,
+          "max_dd_pct": -91.1,
+          "round_trips_per_yr": 22.0,
+          "time_long_pct": 31.9,
+          "eras": {
+            "2020-22": {
+              "net_pct": 160.9,
+              "gross_pct": 177.2,
+              "round_trips": 37.0,
+              "gross_bps_per_rt": 479.0
+            },
+            "2023-24": {
+              "net_pct": 42.5,
+              "gross_pct": 69.8,
+              "round_trips": 62.0,
+              "gross_bps_per_rt": 112.5
+            },
+            "2025-26": {
+              "net_pct": -0.9,
+              "gross_pct": 13.6,
+              "round_trips": 33.0,
+              "gross_bps_per_rt": 41.3
+            }
+          }
+        },
+        "250": {
+          "net_pct": 207.6,
+          "gross_pct": 259.9,
+          "sharpe_ann": 0.76,
+          "max_dd_pct": -91.9,
+          "round_trips_per_yr": 19.8,
+          "time_long_pct": 33.8,
+          "eras": {
+            "2020-22": {
+              "net_pct": 144.6,
+              "gross_pct": 160.9,
+              "round_trips": 37.0,
+              "gross_bps_per_rt": 434.8
+            },
+            "2023-24": {
+              "net_pct": 44.1,
+              "gross_pct": 71.0,
+              "round_trips": 61.0,
+              "gross_bps_per_rt": 116.4
+            },
+            "2025-26": {
+              "net_pct": 18.8,
+              "gross_pct": 28.1,
+              "round_trips": 21.0,
+              "gross_bps_per_rt": 133.6
+            }
+          }
+        },
+        "300": {
+          "net_pct": 201.7,
+          "gross_pct": 248.3,
+          "sharpe_ann": 0.72,
+          "max_dd_pct": -101.7,
+          "round_trips_per_yr": 17.7,
+          "time_long_pct": 35.1,
+          "eras": {
+            "2020-22": {
+              "net_pct": 119.5,
+              "gross_pct": 137.1,
+              "round_trips": 40.0,
+              "gross_bps_per_rt": 342.8
+            },
+            "2023-24": {
+              "net_pct": 53.0,
+              "gross_pct": 75.9,
+              "round_trips": 52.0,
+              "gross_bps_per_rt": 146.0
+            },
+            "2025-26": {
+              "net_pct": 29.1,
+              "gross_pct": 35.3,
+              "round_trips": 14.0,
+              "gross_bps_per_rt": 251.8
+            }
+          }
+        }
+      },
+      "verdicts": {
+        "pure": {
+          "verdict": "(i) close to optimal",
+          "best_sma": 200,
+          "best_net_pct": 302.2,
+          "live_net_pct": 302.2,
+          "dominators": [],
+          "plateau": false,
+          "noise_pct_per_yr_turnover": 11.7
+        },
+        "book": {
+          "verdict": "(i) close to optimal",
+          "best_sma": 250,
+          "best_net_pct": 207.6,
+          "live_net_pct": 202.5,
+          "dominators": [],
+          "plateau": false,
+          "noise_pct_per_yr_turnover": 9.7
+        }
+      }
+    },
+    "SOL": {
+      "pure": {
+        "100": {
+          "net_pct": 475.4,
+          "gross_pct": 595.1,
+          "sharpe_ann": 0.93,
+          "max_dd_pct": -120.5,
+          "round_trips_per_yr": 48.9,
+          "time_long_pct": 49.3,
+          "eras": {
+            "2020-22": {
+              "net_pct": 280.3,
+              "gross_pct": 329.9,
+              "round_trips": 121.0,
+              "gross_bps_per_rt": 272.7
+            },
+            "2023-24": {
+              "net_pct": 253.3,
+              "gross_pct": 291.0,
+              "round_trips": 92.0,
+              "gross_bps_per_rt": 316.3
+            },
+            "2025-26": {
+              "net_pct": -58.2,
+              "gross_pct": -25.8,
+              "round_trips": 79.0,
+              "gross_bps_per_rt": -32.7
+            }
+          }
+        },
+        "150": {
+          "net_pct": 534.4,
+          "gross_pct": 632.8,
+          "sharpe_ann": 1.06,
+          "max_dd_pct": -136.0,
+          "round_trips_per_yr": 40.2,
+          "time_long_pct": 48.6,
+          "eras": {
+            "2020-22": {
+              "net_pct": 327.5,
+              "gross_pct": 366.5,
+              "round_trips": 95.0,
+              "gross_bps_per_rt": 385.8
+            },
+            "2023-24": {
+              "net_pct": 240.4,
+              "gross_pct": 275.2,
+              "round_trips": 85.0,
+              "gross_bps_per_rt": 323.8
+            },
+            "2025-26": {
+              "net_pct": -33.4,
+              "gross_pct": -8.8,
+              "round_trips": 60.0,
+              "gross_bps_per_rt": -14.7
+            }
+          }
+        },
+        "200": {
+          "net_pct": 600.0,
+          "gross_pct": 682.9,
+          "sharpe_ann": 1.19,
+          "max_dd_pct": -129.5,
+          "round_trips_per_yr": 33.8,
+          "time_long_pct": 47.8,
+          "eras": {
+            "2020-22": {
+              "net_pct": 359.8,
+              "gross_pct": 392.6,
+              "round_trips": 80.0,
+              "gross_bps_per_rt": 490.8
+            },
+            "2023-24": {
+              "net_pct": 264.4,
+              "gross_pct": 293.1,
+              "round_trips": 70.0,
+              "gross_bps_per_rt": 418.7
+            },
+            "2025-26": {
+              "net_pct": -24.2,
+              "gross_pct": -2.8,
+              "round_trips": 52.0,
+              "gross_bps_per_rt": -5.5
+            }
+          }
+        },
+        "250": {
+          "net_pct": 607.9,
+          "gross_pct": 689.5,
+          "sharpe_ann": 1.2,
+          "max_dd_pct": -124.7,
+          "round_trips_per_yr": 33.3,
+          "time_long_pct": 47.8,
+          "eras": {
+            "2020-22": {
+              "net_pct": 347.2,
+              "gross_pct": 382.4,
+              "round_trips": 86.0,
+              "gross_bps_per_rt": 444.7
+            },
+            "2023-24": {
+              "net_pct": 291.1,
+              "gross_pct": 315.3,
+              "round_trips": 59.0,
+              "gross_bps_per_rt": 534.5
+            },
+            "2025-26": {
+              "net_pct": -30.5,
+              "gross_pct": -8.3,
+              "round_trips": 54.0,
+              "gross_bps_per_rt": -15.4
+            }
+          }
+        },
+        "300": {
+          "net_pct": 639.8,
+          "gross_pct": 696.8,
+          "sharpe_ann": 1.27,
+          "max_dd_pct": -116.3,
+          "round_trips_per_yr": 23.3,
+          "time_long_pct": 48.0,
+          "eras": {
+            "2020-22": {
+              "net_pct": 420.4,
+              "gross_pct": 440.5,
+              "round_trips": 49.0,
+              "gross_bps_per_rt": 898.9
+            },
+            "2023-24": {
+              "net_pct": 262.7,
+              "gross_pct": 280.3,
+              "round_trips": 43.0,
+              "gross_bps_per_rt": 651.9
+            },
+            "2025-26": {
+              "net_pct": -43.2,
+              "gross_pct": -24.0,
+              "round_trips": 47.0,
+              "gross_bps_per_rt": -51.0
+            }
+          }
+        }
+      },
+      "book": {
+        "100": {
+          "net_pct": 351.5,
+          "gross_pct": 426.2,
+          "sharpe_ann": 0.86,
+          "max_dd_pct": -106.3,
+          "round_trips_per_yr": 30.5,
+          "time_long_pct": 30.6,
+          "eras": {
+            "2020-22": {
+              "net_pct": 218.2,
+              "gross_pct": 245.2,
+              "round_trips": 66.0,
+              "gross_bps_per_rt": 371.5
+            },
+            "2023-24": {
+              "net_pct": 147.1,
+              "gross_pct": 179.1,
+              "round_trips": 78.0,
+              "gross_bps_per_rt": 229.6
+            },
+            "2025-26": {
+              "net_pct": -13.7,
+              "gross_pct": 1.9,
+              "round_trips": 38.0,
+              "gross_bps_per_rt": 4.9
+            }
+          }
+        },
+        "150": {
+          "net_pct": 397.2,
+          "gross_pct": 462.3,
+          "sharpe_ann": 0.95,
+          "max_dd_pct": -123.4,
+          "round_trips_per_yr": 26.6,
+          "time_long_pct": 32.0,
+          "eras": {
+            "2020-22": {
+              "net_pct": 281.0,
+              "gross_pct": 301.5,
+              "round_trips": 50.0,
+              "gross_bps_per_rt": 602.9
+            },
+            "2023-24": {
+              "net_pct": 124.3,
+              "gross_pct": 156.2,
+              "round_trips": 78.0,
+              "gross_bps_per_rt": 200.3
+            },
+            "2025-26": {
+              "net_pct": -8.1,
+              "gross_pct": 4.7,
+              "round_trips": 31.0,
+              "gross_bps_per_rt": 15.0
+            }
+          }
+        },
+        "200": {
+          "net_pct": 401.0,
+          "gross_pct": 461.7,
+          "sharpe_ann": 0.95,
+          "max_dd_pct": -138.2,
+          "round_trips_per_yr": 24.8,
+          "time_long_pct": 32.4,
+          "eras": {
+            "2020-22": {
+              "net_pct": 272.8,
+              "gross_pct": 292.1,
+              "round_trips": 47.0,
+              "gross_bps_per_rt": 621.4
+            },
+            "2023-24": {
+              "net_pct": 151.0,
+              "gross_pct": 178.5,
+              "round_trips": 67.0,
+              "gross_bps_per_rt": 266.4
+            },
+            "2025-26": {
+              "net_pct": -22.8,
+              "gross_pct": -8.9,
+              "round_trips": 34.0,
+              "gross_bps_per_rt": -26.1
+            }
+          }
+        },
+        "250": {
+          "net_pct": 433.6,
+          "gross_pct": 492.6,
+          "sharpe_ann": 1.02,
+          "max_dd_pct": -124.7,
+          "round_trips_per_yr": 24.1,
+          "time_long_pct": 33.6,
+          "eras": {
+            "2020-22": {
+              "net_pct": 303.4,
+              "gross_pct": 321.0,
+              "round_trips": 43.0,
+              "gross_bps_per_rt": 746.5
+            },
+            "2023-24": {
+              "net_pct": 180.0,
+              "gross_pct": 202.1,
+              "round_trips": 54.0,
+              "gross_bps_per_rt": 374.2
+            },
+            "2025-26": {
+              "net_pct": -49.7,
+              "gross_pct": -30.5,
+              "round_trips": 47.0,
+              "gross_bps_per_rt": -64.8
+            }
+          }
+        },
+        "300": {
+          "net_pct": 430.8,
+          "gross_pct": 474.2,
+          "sharpe_ann": 1.0,
+          "max_dd_pct": -116.1,
+          "round_trips_per_yr": 17.8,
+          "time_long_pct": 34.5,
+          "eras": {
+            "2020-22": {
+              "net_pct": 333.2,
+              "gross_pct": 344.3,
+              "round_trips": 27.0,
+              "gross_bps_per_rt": 1275.2
+            },
+            "2023-24": {
+              "net_pct": 143.6,
+              "gross_pct": 160.8,
+              "round_trips": 42.0,
+              "gross_bps_per_rt": 382.9
+            },
+            "2025-26": {
+              "net_pct": -46.1,
+              "gross_pct": -30.9,
+              "round_trips": 37.0,
+              "gross_bps_per_rt": -83.5
+            }
+          }
+        }
+      },
+      "verdicts": {
+        "pure": {
+          "verdict": "(i) close to optimal",
+          "best_sma": 300,
+          "best_net_pct": 639.8,
+          "live_net_pct": 600.0,
+          "dominators": [],
+          "plateau": false,
+          "noise_pct_per_yr_turnover": 13.9
+        },
+        "book": {
+          "verdict": "(i) close to optimal",
+          "best_sma": 250,
+          "best_net_pct": 433.6,
+          "live_net_pct": 401.0,
+          "dominators": [],
+          "plateau": true,
+          "noise_pct_per_yr_turnover": 10.2
+        }
+      }
+    },
+    "_cross_asset": {
+      "pure": {
+        "lookbacks_dominating_200_on_2plus_assets": {},
+        "all_dominators": {
+          "250": [
+            [
+              "BTC",
+              67.1
+            ]
+          ],
+          "300": [
+            [
+              "BTC",
+              51.5
+            ]
+          ]
+        }
+      },
+      "book": {
+        "lookbacks_dominating_200_on_2plus_assets": {},
+        "all_dominators": {}
+      }
+    }
+  },
+  "backtest_sign_book_bull_sma200": {
+    "BTC": {
+      "eras_positive": 2,
+      "eras": 3,
+      "net_by_era": {
+        "2020-22": 85.9,
+        "2023-24": 107.6,
+        "2025-26": -6.5
+      }
+    },
+    "ETH": {
+      "eras_positive": 2,
+      "eras": 3,
+      "net_by_era": {
+        "2020-22": 160.9,
+        "2023-24": 42.5,
+        "2025-26": -0.9
+      }
+    },
+    "SOL": {
+      "eras_positive": 2,
+      "eras": 3,
+      "net_by_era": {
+        "2020-22": 272.8,
+        "2023-24": 151.0,
+        "2025-26": -22.8
+      }
+    }
+  },
+  "b_gate_multiplier": {
+    "grid": {
+      "BTC": {
+        "seat_alpha_median_bps": 24.1,
+        "rows": [
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.0,
+            "legs": 1.0,
+            "mult": 1.0,
+            "est_bps": 24.1,
+            "thr_bps": 14.8,
+            "pass": true
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.0,
+            "legs": 1.0,
+            "mult": 1.1,
+            "est_bps": 24.1,
+            "thr_bps": 16.3,
+            "pass": true
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.0,
+            "legs": 1.0,
+            "mult": 1.25,
+            "est_bps": 24.1,
+            "thr_bps": 18.6,
+            "pass": true
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.0,
+            "legs": 1.0,
+            "mult": 1.5,
+            "est_bps": 24.1,
+            "thr_bps": 22.3,
+            "pass": true
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.0,
+            "legs": 1.0,
+            "mult": 2.0,
+            "est_bps": 24.1,
+            "thr_bps": 29.7,
+            "pass": false
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.0,
+            "legs": 2.0,
+            "mult": 1.0,
+            "est_bps": 24.1,
+            "thr_bps": 28.7,
+            "pass": false
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.0,
+            "legs": 2.0,
+            "mult": 1.1,
+            "est_bps": 24.1,
+            "thr_bps": 31.6,
+            "pass": false
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.0,
+            "legs": 2.0,
+            "mult": 1.25,
+            "est_bps": 24.1,
+            "thr_bps": 35.9,
+            "pass": false
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.0,
+            "legs": 2.0,
+            "mult": 1.5,
+            "est_bps": 24.1,
+            "thr_bps": 43.0,
+            "pass": false
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.0,
+            "legs": 2.0,
+            "mult": 2.0,
+            "est_bps": 24.1,
+            "thr_bps": 57.4,
+            "pass": false
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.155,
+            "legs": 1.0,
+            "mult": 1.0,
+            "est_bps": 24.1,
+            "thr_bps": 17.2,
+            "pass": true
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.155,
+            "legs": 1.0,
+            "mult": 1.1,
+            "est_bps": 24.1,
+            "thr_bps": 18.9,
+            "pass": true
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.155,
+            "legs": 1.0,
+            "mult": 1.25,
+            "est_bps": 24.1,
+            "thr_bps": 21.4,
+            "pass": true
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.155,
+            "legs": 1.0,
+            "mult": 1.5,
+            "est_bps": 24.1,
+            "thr_bps": 25.7,
+            "pass": false
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.155,
+            "legs": 1.0,
+            "mult": 2.0,
+            "est_bps": 24.1,
+            "thr_bps": 34.3,
+            "pass": false
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.155,
+            "legs": 2.0,
+            "mult": 1.0,
+            "est_bps": 24.1,
+            "thr_bps": 33.1,
+            "pass": false
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.155,
+            "legs": 2.0,
+            "mult": 1.1,
+            "est_bps": 24.1,
+            "thr_bps": 36.5,
+            "pass": false
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.155,
+            "legs": 2.0,
+            "mult": 1.25,
+            "est_bps": 24.1,
+            "thr_bps": 41.4,
+            "pass": false
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.155,
+            "legs": 2.0,
+            "mult": 1.5,
+            "est_bps": 24.1,
+            "thr_bps": 49.7,
+            "pass": false
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.155,
+            "legs": 2.0,
+            "mult": 2.0,
+            "est_bps": 24.1,
+            "thr_bps": 66.3,
+            "pass": false
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.0,
+            "legs": 1.0,
+            "mult": 1.0,
+            "est_bps": 18.1,
+            "thr_bps": 14.8,
+            "pass": true
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.0,
+            "legs": 1.0,
+            "mult": 1.1,
+            "est_bps": 18.1,
+            "thr_bps": 16.3,
+            "pass": true
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.0,
+            "legs": 1.0,
+            "mult": 1.25,
+            "est_bps": 18.1,
+            "thr_bps": 18.6,
+            "pass": false
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.0,
+            "legs": 1.0,
+            "mult": 1.5,
+            "est_bps": 18.1,
+            "thr_bps": 22.3,
+            "pass": false
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.0,
+            "legs": 1.0,
+            "mult": 2.0,
+            "est_bps": 18.1,
+            "thr_bps": 29.7,
+            "pass": false
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.0,
+            "legs": 2.0,
+            "mult": 1.0,
+            "est_bps": 18.1,
+            "thr_bps": 28.7,
+            "pass": false
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.0,
+            "legs": 2.0,
+            "mult": 1.1,
+            "est_bps": 18.1,
+            "thr_bps": 31.6,
+            "pass": false
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.0,
+            "legs": 2.0,
+            "mult": 1.25,
+            "est_bps": 18.1,
+            "thr_bps": 35.9,
+            "pass": false
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.0,
+            "legs": 2.0,
+            "mult": 1.5,
+            "est_bps": 18.1,
+            "thr_bps": 43.0,
+            "pass": false
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.0,
+            "legs": 2.0,
+            "mult": 2.0,
+            "est_bps": 18.1,
+            "thr_bps": 57.4,
+            "pass": false
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.155,
+            "legs": 1.0,
+            "mult": 1.0,
+            "est_bps": 18.1,
+            "thr_bps": 17.2,
+            "pass": true
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.155,
+            "legs": 1.0,
+            "mult": 1.1,
+            "est_bps": 18.1,
+            "thr_bps": 18.9,
+            "pass": false
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.155,
+            "legs": 1.0,
+            "mult": 1.25,
+            "est_bps": 18.1,
+            "thr_bps": 21.4,
+            "pass": false
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.155,
+            "legs": 1.0,
+            "mult": 1.5,
+            "est_bps": 18.1,
+            "thr_bps": 25.7,
+            "pass": false
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.155,
+            "legs": 1.0,
+            "mult": 2.0,
+            "est_bps": 18.1,
+            "thr_bps": 34.3,
+            "pass": false
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.155,
+            "legs": 2.0,
+            "mult": 1.0,
+            "est_bps": 18.1,
+            "thr_bps": 33.1,
+            "pass": false
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.155,
+            "legs": 2.0,
+            "mult": 1.1,
+            "est_bps": 18.1,
+            "thr_bps": 36.5,
+            "pass": false
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.155,
+            "legs": 2.0,
+            "mult": 1.25,
+            "est_bps": 18.1,
+            "thr_bps": 41.4,
+            "pass": false
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.155,
+            "legs": 2.0,
+            "mult": 1.5,
+            "est_bps": 18.1,
+            "thr_bps": 49.7,
+            "pass": false
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.155,
+            "legs": 2.0,
+            "mult": 2.0,
+            "est_bps": 18.1,
+            "thr_bps": 66.3,
+            "pass": false
+          }
+        ],
+        "verdict_decided_by_the_1.10": false,
+        "pass_at_mult_1.0_legs2": false,
+        "breakeven_multiplier_legs2": {
+          "haircut1.0_rm1.0": 0.84,
+          "haircut1.0_rm1.155": 0.73,
+          "haircut0.75_rm1.0": 0.63,
+          "haircut0.75_rm1.155": 0.55
+        },
+        "live_setting": {
+          "haircut": 0.75,
+          "regime_mult": 1.155,
+          "legs": 2.0,
+          "mult": 1.1,
+          "est_bps": 18.1,
+          "thr_bps": 36.5,
+          "pass": false
+        },
+        "verdict_flips_in_1_to_2": false
+      },
+      "ETH": {
+        "seat_alpha_median_bps": 88.1,
+        "rows": [
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.0,
+            "legs": 1.0,
+            "mult": 1.0,
+            "est_bps": 88.1,
+            "thr_bps": 23.0,
+            "pass": true
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.0,
+            "legs": 1.0,
+            "mult": 1.1,
+            "est_bps": 88.1,
+            "thr_bps": 25.3,
+            "pass": true
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.0,
+            "legs": 1.0,
+            "mult": 1.25,
+            "est_bps": 88.1,
+            "thr_bps": 28.8,
+            "pass": true
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.0,
+            "legs": 1.0,
+            "mult": 1.5,
+            "est_bps": 88.1,
+            "thr_bps": 34.5,
+            "pass": true
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.0,
+            "legs": 1.0,
+            "mult": 2.0,
+            "est_bps": 88.1,
+            "thr_bps": 46.0,
+            "pass": true
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.0,
+            "legs": 2.0,
+            "mult": 1.0,
+            "est_bps": 88.1,
+            "thr_bps": 45.0,
+            "pass": true
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.0,
+            "legs": 2.0,
+            "mult": 1.1,
+            "est_bps": 88.1,
+            "thr_bps": 49.5,
+            "pass": true
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.0,
+            "legs": 2.0,
+            "mult": 1.25,
+            "est_bps": 88.1,
+            "thr_bps": 56.2,
+            "pass": true
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.0,
+            "legs": 2.0,
+            "mult": 1.5,
+            "est_bps": 88.1,
+            "thr_bps": 67.5,
+            "pass": true
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.0,
+            "legs": 2.0,
+            "mult": 2.0,
+            "est_bps": 88.1,
+            "thr_bps": 90.0,
+            "pass": false
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.155,
+            "legs": 1.0,
+            "mult": 1.0,
+            "est_bps": 88.1,
+            "thr_bps": 26.6,
+            "pass": true
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.155,
+            "legs": 1.0,
+            "mult": 1.1,
+            "est_bps": 88.1,
+            "thr_bps": 29.2,
+            "pass": true
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.155,
+            "legs": 1.0,
+            "mult": 1.25,
+            "est_bps": 88.1,
+            "thr_bps": 33.2,
+            "pass": true
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.155,
+            "legs": 1.0,
+            "mult": 1.5,
+            "est_bps": 88.1,
+            "thr_bps": 39.8,
+            "pass": true
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.155,
+            "legs": 1.0,
+            "mult": 2.0,
+            "est_bps": 88.1,
+            "thr_bps": 53.1,
+            "pass": true
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.155,
+            "legs": 2.0,
+            "mult": 1.0,
+            "est_bps": 88.1,
+            "thr_bps": 52.0,
+            "pass": true
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.155,
+            "legs": 2.0,
+            "mult": 1.1,
+            "est_bps": 88.1,
+            "thr_bps": 57.2,
+            "pass": true
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.155,
+            "legs": 2.0,
+            "mult": 1.25,
+            "est_bps": 88.1,
+            "thr_bps": 65.0,
+            "pass": true
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.155,
+            "legs": 2.0,
+            "mult": 1.5,
+            "est_bps": 88.1,
+            "thr_bps": 78.0,
+            "pass": true
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.155,
+            "legs": 2.0,
+            "mult": 2.0,
+            "est_bps": 88.1,
+            "thr_bps": 104.0,
+            "pass": false
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.0,
+            "legs": 1.0,
+            "mult": 1.0,
+            "est_bps": 66.1,
+            "thr_bps": 23.0,
+            "pass": true
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.0,
+            "legs": 1.0,
+            "mult": 1.1,
+            "est_bps": 66.1,
+            "thr_bps": 25.3,
+            "pass": true
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.0,
+            "legs": 1.0,
+            "mult": 1.25,
+            "est_bps": 66.1,
+            "thr_bps": 28.8,
+            "pass": true
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.0,
+            "legs": 1.0,
+            "mult": 1.5,
+            "est_bps": 66.1,
+            "thr_bps": 34.5,
+            "pass": true
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.0,
+            "legs": 1.0,
+            "mult": 2.0,
+            "est_bps": 66.1,
+            "thr_bps": 46.0,
+            "pass": true
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.0,
+            "legs": 2.0,
+            "mult": 1.0,
+            "est_bps": 66.1,
+            "thr_bps": 45.0,
+            "pass": true
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.0,
+            "legs": 2.0,
+            "mult": 1.1,
+            "est_bps": 66.1,
+            "thr_bps": 49.5,
+            "pass": true
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.0,
+            "legs": 2.0,
+            "mult": 1.25,
+            "est_bps": 66.1,
+            "thr_bps": 56.2,
+            "pass": true
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.0,
+            "legs": 2.0,
+            "mult": 1.5,
+            "est_bps": 66.1,
+            "thr_bps": 67.5,
+            "pass": false
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.0,
+            "legs": 2.0,
+            "mult": 2.0,
+            "est_bps": 66.1,
+            "thr_bps": 90.0,
+            "pass": false
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.155,
+            "legs": 1.0,
+            "mult": 1.0,
+            "est_bps": 66.1,
+            "thr_bps": 26.6,
+            "pass": true
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.155,
+            "legs": 1.0,
+            "mult": 1.1,
+            "est_bps": 66.1,
+            "thr_bps": 29.2,
+            "pass": true
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.155,
+            "legs": 1.0,
+            "mult": 1.25,
+            "est_bps": 66.1,
+            "thr_bps": 33.2,
+            "pass": true
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.155,
+            "legs": 1.0,
+            "mult": 1.5,
+            "est_bps": 66.1,
+            "thr_bps": 39.8,
+            "pass": true
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.155,
+            "legs": 1.0,
+            "mult": 2.0,
+            "est_bps": 66.1,
+            "thr_bps": 53.1,
+            "pass": true
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.155,
+            "legs": 2.0,
+            "mult": 1.0,
+            "est_bps": 66.1,
+            "thr_bps": 52.0,
+            "pass": true
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.155,
+            "legs": 2.0,
+            "mult": 1.1,
+            "est_bps": 66.1,
+            "thr_bps": 57.2,
+            "pass": true
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.155,
+            "legs": 2.0,
+            "mult": 1.25,
+            "est_bps": 66.1,
+            "thr_bps": 65.0,
+            "pass": true
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.155,
+            "legs": 2.0,
+            "mult": 1.5,
+            "est_bps": 66.1,
+            "thr_bps": 78.0,
+            "pass": false
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.155,
+            "legs": 2.0,
+            "mult": 2.0,
+            "est_bps": 66.1,
+            "thr_bps": 104.0,
+            "pass": false
+          }
+        ],
+        "verdict_decided_by_the_1.10": false,
+        "pass_at_mult_1.0_legs2": true,
+        "breakeven_multiplier_legs2": {
+          "haircut1.0_rm1.0": 1.96,
+          "haircut1.0_rm1.155": 1.7,
+          "haircut0.75_rm1.0": 1.47,
+          "haircut0.75_rm1.155": 1.27
+        },
+        "live_setting": {
+          "haircut": 0.75,
+          "regime_mult": 1.155,
+          "legs": 2.0,
+          "mult": 1.1,
+          "est_bps": 66.1,
+          "thr_bps": 57.2,
+          "pass": true
+        },
+        "verdict_flips_in_1_to_2": true
+      },
+      "SOL": {
+        "seat_alpha_median_bps": 221.7,
+        "rows": [
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.0,
+            "legs": 1.0,
+            "mult": 1.0,
+            "est_bps": 221.7,
+            "thr_bps": 21.5,
+            "pass": true
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.0,
+            "legs": 1.0,
+            "mult": 1.1,
+            "est_bps": 221.7,
+            "thr_bps": 23.7,
+            "pass": true
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.0,
+            "legs": 1.0,
+            "mult": 1.25,
+            "est_bps": 221.7,
+            "thr_bps": 26.9,
+            "pass": true
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.0,
+            "legs": 1.0,
+            "mult": 1.5,
+            "est_bps": 221.7,
+            "thr_bps": 32.2,
+            "pass": true
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.0,
+            "legs": 1.0,
+            "mult": 2.0,
+            "est_bps": 221.7,
+            "thr_bps": 43.0,
+            "pass": true
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.0,
+            "legs": 2.0,
+            "mult": 1.0,
+            "est_bps": 221.7,
+            "thr_bps": 42.0,
+            "pass": true
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.0,
+            "legs": 2.0,
+            "mult": 1.1,
+            "est_bps": 221.7,
+            "thr_bps": 46.2,
+            "pass": true
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.0,
+            "legs": 2.0,
+            "mult": 1.25,
+            "est_bps": 221.7,
+            "thr_bps": 52.5,
+            "pass": true
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.0,
+            "legs": 2.0,
+            "mult": 1.5,
+            "est_bps": 221.7,
+            "thr_bps": 63.0,
+            "pass": true
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.0,
+            "legs": 2.0,
+            "mult": 2.0,
+            "est_bps": 221.7,
+            "thr_bps": 84.0,
+            "pass": true
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.155,
+            "legs": 1.0,
+            "mult": 1.0,
+            "est_bps": 221.7,
+            "thr_bps": 24.8,
+            "pass": true
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.155,
+            "legs": 1.0,
+            "mult": 1.1,
+            "est_bps": 221.7,
+            "thr_bps": 27.3,
+            "pass": true
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.155,
+            "legs": 1.0,
+            "mult": 1.25,
+            "est_bps": 221.7,
+            "thr_bps": 31.0,
+            "pass": true
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.155,
+            "legs": 1.0,
+            "mult": 1.5,
+            "est_bps": 221.7,
+            "thr_bps": 37.2,
+            "pass": true
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.155,
+            "legs": 1.0,
+            "mult": 2.0,
+            "est_bps": 221.7,
+            "thr_bps": 49.7,
+            "pass": true
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.155,
+            "legs": 2.0,
+            "mult": 1.0,
+            "est_bps": 221.7,
+            "thr_bps": 48.5,
+            "pass": true
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.155,
+            "legs": 2.0,
+            "mult": 1.1,
+            "est_bps": 221.7,
+            "thr_bps": 53.4,
+            "pass": true
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.155,
+            "legs": 2.0,
+            "mult": 1.25,
+            "est_bps": 221.7,
+            "thr_bps": 60.6,
+            "pass": true
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.155,
+            "legs": 2.0,
+            "mult": 1.5,
+            "est_bps": 221.7,
+            "thr_bps": 72.8,
+            "pass": true
+          },
+          {
+            "haircut": 1.0,
+            "regime_mult": 1.155,
+            "legs": 2.0,
+            "mult": 2.0,
+            "est_bps": 221.7,
+            "thr_bps": 97.0,
+            "pass": true
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.0,
+            "legs": 1.0,
+            "mult": 1.0,
+            "est_bps": 166.3,
+            "thr_bps": 21.5,
+            "pass": true
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.0,
+            "legs": 1.0,
+            "mult": 1.1,
+            "est_bps": 166.3,
+            "thr_bps": 23.7,
+            "pass": true
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.0,
+            "legs": 1.0,
+            "mult": 1.25,
+            "est_bps": 166.3,
+            "thr_bps": 26.9,
+            "pass": true
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.0,
+            "legs": 1.0,
+            "mult": 1.5,
+            "est_bps": 166.3,
+            "thr_bps": 32.2,
+            "pass": true
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.0,
+            "legs": 1.0,
+            "mult": 2.0,
+            "est_bps": 166.3,
+            "thr_bps": 43.0,
+            "pass": true
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.0,
+            "legs": 2.0,
+            "mult": 1.0,
+            "est_bps": 166.3,
+            "thr_bps": 42.0,
+            "pass": true
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.0,
+            "legs": 2.0,
+            "mult": 1.1,
+            "est_bps": 166.3,
+            "thr_bps": 46.2,
+            "pass": true
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.0,
+            "legs": 2.0,
+            "mult": 1.25,
+            "est_bps": 166.3,
+            "thr_bps": 52.5,
+            "pass": true
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.0,
+            "legs": 2.0,
+            "mult": 1.5,
+            "est_bps": 166.3,
+            "thr_bps": 63.0,
+            "pass": true
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.0,
+            "legs": 2.0,
+            "mult": 2.0,
+            "est_bps": 166.3,
+            "thr_bps": 84.0,
+            "pass": true
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.155,
+            "legs": 1.0,
+            "mult": 1.0,
+            "est_bps": 166.3,
+            "thr_bps": 24.8,
+            "pass": true
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.155,
+            "legs": 1.0,
+            "mult": 1.1,
+            "est_bps": 166.3,
+            "thr_bps": 27.3,
+            "pass": true
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.155,
+            "legs": 1.0,
+            "mult": 1.25,
+            "est_bps": 166.3,
+            "thr_bps": 31.0,
+            "pass": true
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.155,
+            "legs": 1.0,
+            "mult": 1.5,
+            "est_bps": 166.3,
+            "thr_bps": 37.2,
+            "pass": true
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.155,
+            "legs": 1.0,
+            "mult": 2.0,
+            "est_bps": 166.3,
+            "thr_bps": 49.7,
+            "pass": true
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.155,
+            "legs": 2.0,
+            "mult": 1.0,
+            "est_bps": 166.3,
+            "thr_bps": 48.5,
+            "pass": true
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.155,
+            "legs": 2.0,
+            "mult": 1.1,
+            "est_bps": 166.3,
+            "thr_bps": 53.4,
+            "pass": true
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.155,
+            "legs": 2.0,
+            "mult": 1.25,
+            "est_bps": 166.3,
+            "thr_bps": 60.6,
+            "pass": true
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.155,
+            "legs": 2.0,
+            "mult": 1.5,
+            "est_bps": 166.3,
+            "thr_bps": 72.8,
+            "pass": true
+          },
+          {
+            "haircut": 0.75,
+            "regime_mult": 1.155,
+            "legs": 2.0,
+            "mult": 2.0,
+            "est_bps": 166.3,
+            "thr_bps": 97.0,
+            "pass": true
+          }
+        ],
+        "verdict_decided_by_the_1.10": false,
+        "pass_at_mult_1.0_legs2": true,
+        "breakeven_multiplier_legs2": {
+          "haircut1.0_rm1.0": 5.28,
+          "haircut1.0_rm1.155": 4.57,
+          "haircut0.75_rm1.0": 3.96,
+          "haircut0.75_rm1.155": 3.43
+        },
+        "live_setting": {
+          "haircut": 0.75,
+          "regime_mult": 1.155,
+          "legs": 2.0,
+          "mult": 1.1,
+          "est_bps": 166.3,
+          "thr_bps": 53.4,
+          "pass": true
+        },
+        "verdict_flips_in_1_to_2": false
+      }
+    },
+    "agreement": {
+      "BTC": {
+        "gate_live_pass": false,
+        "backtest": {
+          "eras_positive": 2,
+          "eras": 3,
+          "net_by_era": {
+            "2020-22": 85.9,
+            "2023-24": 107.6,
+            "2025-26": -6.5
+          }
+        },
+        "verdict": "DISAGREES with backtest majority verdict (inside one cost of zero?)"
+      },
+      "ETH": {
+        "gate_live_pass": true,
+        "backtest": {
+          "eras_positive": 2,
+          "eras": 3,
+          "net_by_era": {
+            "2020-22": 160.9,
+            "2023-24": 42.5,
+            "2025-26": -0.9
+          }
+        },
+        "verdict": "AGREES with backtest majority-of-eras verdict"
+      },
+      "SOL": {
+        "gate_live_pass": true,
+        "backtest": {
+          "eras_positive": 2,
+          "eras": 3,
+          "net_by_era": {
+            "2020-22": 272.8,
+            "2023-24": 151.0,
+            "2025-26": -22.8
+          }
+        },
+        "verdict": "AGREES with backtest majority-of-eras verdict"
+      }
+    },
+    "multiplier_verdict": "(ii) arbitrary but harmless: the 1.10 flips NO asset vs 1.0; only ETH flips anywhere in [1.0,2.0] (at >=1.5 with the 0.75 haircut)",
+    "multiplier_changes_any_verdict_in_1_to_2": true,
+    "legs_2_is_correct_by_construction": true
+  },
+  "c_target_fraction": {
+    "assets": {
+      "BTC": {
+        "vol_ann_while_long": 0.583,
+        "vol_ann_unconditional": 0.587,
+        "vol_4h_while_long_pct": 1.24,
+        "last_close": 62953.7,
+        "contracts_at_0.15": 2,
+        "usd_1sigma_4h_at_0.15": 20.2
+      },
+      "ETH": {
+        "vol_ann_while_long": 0.773,
+        "vol_ann_unconditional": 0.782,
+        "vol_4h_while_long_pct": 1.65,
+        "last_close": 1862.25,
+        "contracts_at_0.15": 8,
+        "usd_1sigma_4h_at_0.15": 26.8
+      },
+      "SOL": {
+        "vol_ann_while_long": 1.234,
+        "vol_ann_unconditional": 1.208,
+        "vol_4h_while_long_pct": 2.64,
+        "last_close": 72.95,
+        "contracts_at_0.15": 4,
+        "usd_1sigma_4h_at_0.15": 42.7
+      }
+    },
+    "eras": {
+      "2020-22": {
+        "BTC": 0.78,
+        "ETH": 0.992,
+        "SOL": 1.688
+      },
+      "2023-24": {
+        "BTC": 0.491,
+        "ETH": 0.575,
+        "SOL": 0.952
+      },
+      "2025-26": {
+        "BTC": 0.378,
+        "ETH": 0.633,
+        "SOL": 0.798
+      }
+    },
+    "combined_book": {
+      "flat_0.15": {
+        "net_pct_of_equity": 118.6,
+        "sharpe_ann": 1.11,
+        "max_dd_pct_of_equity": -33.9,
+        "worst_4h_bar_pct": -5.26
+      },
+      "vol_parity": {
+        "net_pct_of_equity": 106.7,
+        "sharpe_ann": 1.1,
+        "max_dd_pct_of_equity": -29.7,
+        "worst_4h_bar_pct": -4.79
+      }
+    },
+    "budget": 0.44999999999999996,
+    "vol_parity_fraction": {
+      "BTC": 0.202,
+      "ETH": 0.152,
+      "SOL": 0.095
+    },
+    "risk_share_at_flat_0.15": {
+      "BTC": 0.225,
+      "ETH": 0.299,
+      "SOL": 0.476
+    },
+    "parity_exceeds_cap": [],
+    "sigma_rank_stable_across_eras": true,
+    "era_rankings": [
+      [
+        "BTC",
+        "ETH",
+        "SOL"
+      ],
+      [
+        "BTC",
+        "ETH",
+        "SOL"
+      ],
+      [
+        "BTC",
+        "ETH",
+        "SOL"
+      ]
+    ],
+    "post_leverage_caps": {
+      "BTC": 0.25,
+      "ETH": 0.25,
+      "SOL": 0.2
+    },
+    "verdict": "(iii) wrong on a risk basis"
+  },
+  "d_seat_statistic": {
+    "threshold_live_bps": {
+      "BTC": 36.5,
+      "ETH": 57.2,
+      "SOL": 53.4
+    },
+    "tables": {
+      "recorded_seat_alpha_full_book": {
+        "BTC": {
+          "min": 2.3,
+          "median": 24.1,
+          "mean": 31.6
+        },
+        "ETH": {
+          "min": 52.1,
+          "median": 88.1,
+          "mean": 130.6
+        },
+        "SOL": {
+          "min": -20.8,
+          "median": 221.7,
+          "mean": 209.5
+        }
+      },
+      "replay_hold_leg_pure_sma200": {
+        "BTC": {
+          "by_era": {
+            "2020-22": 203.3,
+            "2023-24": 253.9,
+            "2025-26": 0.2
+          },
+          "min": 0.2,
+          "median": 203.3,
+          "mean": 152.5
+        },
+        "ETH": {
+          "by_era": {
+            "2020-22": 510.4,
+            "2023-24": 107.0,
+            "2025-26": 107.0
+          },
+          "min": 107.0,
+          "median": 107.0,
+          "mean": 241.5
+        },
+        "SOL": {
+          "by_era": {
+            "2020-22": 490.8,
+            "2023-24": 418.7,
+            "2025-26": -5.5
+          },
+          "min": -5.5,
+          "median": 418.7,
+          "mean": 301.3
+        }
+      },
+      "replay_hold_leg_book_bull_sma200": {
+        "BTC": {
+          "by_era": {
+            "2020-22": 242.5,
+            "2023-24": 193.2,
+            "2025-26": 5.4
+          },
+          "min": 5.4,
+          "median": 193.2,
+          "mean": 147.0
+        },
+        "ETH": {
+          "by_era": {
+            "2020-22": 479.0,
+            "2023-24": 112.5,
+            "2025-26": 41.3
+          },
+          "min": 41.3,
+          "median": 112.5,
+          "mean": 210.9
+        },
+        "SOL": {
+          "by_era": {
+            "2020-22": 621.4,
+            "2023-24": 266.4,
+            "2025-26": -26.1
+          },
+          "min": -26.1,
+          "median": 266.4,
+          "mean": 287.2
+        }
+      }
+    },
+    "admits_recorded_table": {
+      "min_haircut1.0": {
+        "BTC": false,
+        "ETH": false,
+        "SOL": false
+      },
+      "min_haircut0.75": {
+        "BTC": false,
+        "ETH": false,
+        "SOL": false
+      },
+      "median_haircut1.0": {
+        "BTC": false,
+        "ETH": true,
+        "SOL": true
+      },
+      "median_haircut0.75": {
+        "BTC": false,
+        "ETH": true,
+        "SOL": true
+      },
+      "mean_haircut1.0": {
+        "BTC": false,
+        "ETH": true,
+        "SOL": true
+      },
+      "mean_haircut0.75": {
+        "BTC": false,
+        "ETH": true,
+        "SOL": true
+      }
+    },
+    "verdicts": {
+      "min": {
+        "admits_with_0.75_haircut": {
+          "BTC": false,
+          "ETH": false,
+          "SOL": false
+        },
+        "verdict": "(ii) BTC: disagrees with majority verdict; ETH: disagrees with majority verdict; SOL: disagrees with majority verdict"
+      },
+      "median": {
+        "admits_with_0.75_haircut": {
+          "BTC": false,
+          "ETH": true,
+          "SOL": true
+        },
+        "verdict": "(ii) BTC: disagrees with majority verdict"
+      },
+      "mean": {
+        "admits_with_0.75_haircut": {
+          "BTC": false,
+          "ETH": true,
+          "SOL": true
+        },
+        "verdict": "(ii) BTC: disagrees with majority verdict"
+      }
+    }
+  }
+}

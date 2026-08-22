@@ -133,8 +133,18 @@ class TestSleeveKnobsConfigWired:
 
     def test_absent_from_live_profile(self):
         """Absent = ctor defaults = today's behavior. Setting them is an
-        operator risk decision, not a side effect of this wiring."""
+        operator risk decision, not a side effect of this wiring.
+
+        [P370] That decision has now been MADE for the drawdown halt, by
+        explicit operator instruction on the P369 six-year backtest (15% trips
+        SOL 48-77x in 6y and removes 60-85% of its return; 25% is a tolerable
+        premium on all three). So this pin moves from must-be-ABSENT to the
+        DECIDED value (the P237/P270 pattern): a silent revert to 0.15 AND a
+        silent loosening past 0.25 both fail. The contracts-per-asset knob is
+        still undecided and stays pinned absent."""
         live = json.loads((REPO / "configs" / "live_high_risk.json"
                            ).read_text(encoding="utf-8-sig"))
-        assert "coinbase_max_sleeve_drawdown_pct" not in live
+        assert live.get("coinbase_max_sleeve_drawdown_pct") == 0.25, (
+            "P370 decided 0.25; a different value is a new decision needing "
+            "its own P-entry")
         assert "coinbase_max_contracts_per_asset" not in live

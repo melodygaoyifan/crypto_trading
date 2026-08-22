@@ -1940,6 +1940,11 @@ class ProductionConfig:
     # (P366). Both quantities are counted either way, so the arming
     # decision rests on forward evidence.
     fast_risk_velocity_trigger: bool = False
+    # [P370] None = the FastRiskTick class constants (3% / 2.0x), i.e. today's
+    # behaviour. The live profile RETIRES the price-move EXIT_ONLY (0.0) and
+    # loosens the vol-spike REDUCE_50 to 4x, on the P369 six-year backtest.
+    fast_risk_price_move_threshold: Optional[float] = None
+    fast_risk_vol_spike_mult: Optional[float] = None
     # [P232] Alpha-gate hold band (hysteresis). 0 = OFF (today's behavior:
     # any gate fail flattens the sleeve). When > 0 (research value 0.65), a
     # HELD sleeve position survives a gate fail iff alpha >= ratio x
@@ -2341,6 +2346,14 @@ class ProductionConfig:
                 data.get("fast_risk_sleeve_enabled", False)),
             fast_risk_velocity_trigger=bool(  # [P367]
                 data.get("fast_risk_velocity_trigger", False)),
+            # [P370] parsed as Optional[float]: an absent key stays None so the
+            # class constants govern (the P201 trio — declared, parsed, consumed).
+            fast_risk_price_move_threshold=(
+                None if data.get("fast_risk_price_move_threshold") is None
+                else float(data.get("fast_risk_price_move_threshold"))),
+            fast_risk_vol_spike_mult=(
+                None if data.get("fast_risk_vol_spike_mult") is None
+                else float(data.get("fast_risk_vol_spike_mult"))),
             alpha_gate_hold_ratio=float(
                 data.get("alpha_gate_hold_ratio", 0.0)),
             dynamic_alpha_gate_enforce=bool(
@@ -6367,7 +6380,13 @@ class HMATSProductionRunner:
                 self.fast_risk_tick = FastRiskTick(  # [FIX-0] ACTIVE: exit/reduce between ticks
                     shadow_mode=False,
                     velocity_trigger=bool(getattr(  # [P367]
-                        self.config, 'fast_risk_velocity_trigger', False)))
+                        self.config, 'fast_risk_velocity_trigger', False)),
+                    # [P370] None -> class defaults (byte-identical to before);
+                    # the live profile sets these to retire A and loosen B.
+                    price_move_threshold=getattr(
+                        self.config, 'fast_risk_price_move_threshold', None),
+                    vol_spike_mult=getattr(
+                        self.config, 'fast_risk_vol_spike_mult', None))
             except Exception as e:
                 logger.warning(f"  FastRiskTick: STUB ({e})")
 

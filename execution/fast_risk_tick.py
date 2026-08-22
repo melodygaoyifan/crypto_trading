@@ -68,10 +68,37 @@ class FastRiskTick:
     ANCHOR_MAX_AGE_SEC = 21600.0  # 6h
 
     def __init__(self, shadow_mode: bool = True,
-                 velocity_trigger: bool = False):
+                 velocity_trigger: bool = False,
+                 price_move_threshold: Optional[float] = None,
+                 vol_spike_mult: Optional[float] = None):
         self.shadow_mode = shadow_mode
         # [P367] DEFAULT OFF. Arming it changes a live emergency exit.
         self.velocity_trigger = bool(velocity_trigger)
+        # [P370] The two per-instance thresholds, each with a DISABLE value.
+        # Backtested six years x three assets (training/risk_control_audit_lab.py,
+        # P369): the 3% price-move EXIT_ONLY costs 10-93%/yr of notional, buys
+        # no tail protection, is era-unstable on BTC and SOL, and measures a
+        # quantity (drift from a RESETTING 4H anchor) with no relationship to
+        # the position. The 2x vol-spike REDUCE_50 fires 166-194x/yr for a
+        # 29-40%/yr tax and ~zero tail effect. The 10% venue-resting stop
+        # (P197) is the control that actually protects, anchored to ENTRY and
+        # surviving process death. Published evidence agrees: stops layered on
+        # a trend strategy leave the Sharpe the same or lower (York 12/11).
+        #
+        # None -> the class constant (byte-identical to before). A value
+        # <= 0 or >= 1.0 for price_move_threshold, or <= 0 for
+        # vol_spike_mult, DISABLES that trigger — a threshold nothing can
+        # reach is the honest way to retire a control without deleting the
+        # code path the shadow counters still need (P367 keeps measuring
+        # both quantities regardless, so the evidence keeps accruing).
+        self.price_move_threshold = (
+            float(self.PRICE_MOVE_THRESHOLD) if price_move_threshold is None
+            else float(price_move_threshold))
+        self.vol_spike_mult = (
+            float(self.VOLATILITY_SPIKE_MULT) if vol_spike_mult is None
+            else float(vol_spike_mult))
+        self.price_trigger_enabled = 0.0 < self.price_move_threshold < 1.0
+        self.vol_trigger_enabled = self.vol_spike_mult > 0.0
         self._anchor_set_at: Dict[str, float] = {}  # [P156] anchor freshness
         self._anchor_stale_log_at: Dict[str, float] = {}
         self._last_4h_prices: Dict[str, float] = {}
@@ -93,7 +120,12 @@ class FastRiskTick:
         self._shadow_evals: Dict[str, int] = {}
         self._trigger_count = 0
         self._shadow_log: list = []
-        logger.info(f"[FastRiskTick] Initialized (shadow={shadow_mode})")
+        # [P370] the boot line names the state of both triggers, so a
+        # retired control is visible as RETIRED rather than silently absent.
+        logger.info(
+            f"[FastRiskTick] Initialized (shadow={shadow_mode}, "
+            f"price_trigger={'ON @' + format(self.price_move_threshold, '.0%') if self.price_trigger_enabled else 'RETIRED'}, "
+            f"vol_trigger={'ON @' + format(self.vol_spike_mult, '.1f') + 'x' if self.vol_trigger_enabled else 'RETIRED'})")
 
     def set_4h_anchor(self, asset: str, price: float,
                       volatility: float = 0.0, depth: float = 0.0):
@@ -342,7 +374,10 @@ class FastRiskTick:
         # Pinned both directions in tests/test_p364_fastrisk_direction_blind.py.
         # [P110] Suppress EXIT_ONLY if a prior emergency exit was REJECTED
         # within EXIT_FAILED_BACKOFF_SEC. Cleared by set_4h_anchor().
-        _price_move_triggered = price_move_pct > self.PRICE_MOVE_THRESHOLD
+        # [P370] a RETIRED price trigger can never fire; the quantity is still
+        # computed and shadow-counted above so the evidence keeps accruing.
+        _price_move_triggered = (self.price_trigger_enabled
+                                 and price_move_pct > self.price_move_threshold)
         _exit_suppressed = False
         if _price_move_triggered:
             _failed_ts = self._exit_failed_at.get(asset, 0.0)
@@ -365,7 +400,9 @@ class FastRiskTick:
         # Trigger 2: Volatility spike > 2x baseline
         current_vol = market_data.get('volatility_30m', 0.0)
         baseline_vol = self._baseline_volatility.get(asset, 0.0)
-        if baseline_vol > 0 and current_vol > baseline_vol * self.VOLATILITY_SPIKE_MULT:
+        # [P370] per-instance multiplier (live 4x) and a retire switch.
+        if (self.vol_trigger_enabled and baseline_vol > 0
+                and current_vol > baseline_vol * self.vol_spike_mult):
             vol_ratio = current_vol / baseline_vol
             if action == FastRiskAction.HOLD:
                 action = FastRiskAction.REDUCE_50
