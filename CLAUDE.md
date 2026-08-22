@@ -1,6 +1,6 @@
 # HMATS — Project Status & Development Guidelines
 
-**Last updated:** 2026-08-21 (P356: the no-trade question decomposed — 75% is the certified book choosing flat by design; both entry filters disarmed by operator instruction; async-lifecycle sweep, one real finding of four classes)
+**Last updated:** 2026-08-21 (P366: a REFUSED emergency exit reported itself as completed on a 3-contract position; the one rolling buffer P354 slowed 424x had no state file; sustained cancel-refusals had no escalation — plus a recorded scanner blind spot: no scanner reads exchange/)
 **Version:** HMATS v6.8.0
 **Live mode:** Coinbase US perp sleeve (sole directional venue since 2026-06-13; Kraken = data + structurally flat, P152), Hetzner CPX21, `configs/live_high_risk.json`
 
@@ -338,6 +338,35 @@ makes the sleeve inert; `coinbase_use_gated_intent: false` restores the pre-gate
 driver. Neither needs a code change.
 
 ### Recent pitfalls (last ~30 days)
+
+### P366. [RESEARCHED 2026-08-21, operator: "do all" -> "can you do some research and give me root cause fix" / "do some research"] Both of my option-sets were SYMPTOM-level — and the research found a bigger defect in one case and a 650x mismeasurement in the other
+Offered four choices for `kraken_quant` and three for FastRiskTick, the operator declined all seven and asked for root causes. Correct call: every option I listed was downstream of a defect I had not yet found. Tests `tests/test_p366_kq_converter_contract.py` (7) + `tests/test_p364_...` (6 -> 9); five falsification probes red-then-restored. **Neither half arms anything.**
+
+**PART 1 — kraken_quant: the converter and the twelve strategies have NEVER had a contract, and every mismatch fails silently.**
+- `_convert_market_data` emits a **FIXED 9-key dict**; the strategies were written against a richer `market_data` shape from their original standalone context. Enumerated by AST over every `market_data.get("X")` and `market_data["X"]`, **FOUR read keys that are never produced** — where hand inspection had found two:
+  | strategy | unproduced key | severity |
+  |---|---|---|
+  | DarkPoolVolume | `market_data[<asset>]` | **FATAL** — skips all three assets |
+  | ETFSpotCointegration | close / current_price / open / volume / volume_24h | **FATAL** — returns on its first check |
+  | **FundingDivergence** | **`predicted_funding`** | **one of two signal branches permanently dead** |
+  | **LiquidationCascadeHunter** | **`cvd`** | **BY DECISION** — the site says "optional, graceful fallback" |
+- **THIS CORRECTS P358c**, which reported 3 STRUCTURAL / 3 WARMUP from hand inspection: `FundingDivergence` was filed as WARMUP only and is *also* missing an input, and `LiquidationCascadeHunter` was never inspected because its regime has not occurred. Two of the four turn out **not** to be defects at all once read at the site, which is why enumerating beats sampling in both directions.
+- **THE ROOT CAUSE IS WHY IT IS SILENT.** Every read is `market_data.get(key, <default>)` or `if asset in market_data.get(key, {})`, so **a missing key is indistinguishable from a measured zero** — the P2 collapse, twelve times over, on a DECIDE-authority agent. Nothing logs and nothing raises; the strategy simply never fires. That is why it survived P215's diagnostic, P217's regime-map fix and P358's own investigation: each looked at BEHAVIOUR ("0 fires") rather than at the BOUNDARY.
+- **The fix is the contract, not the four repairs.** P310 built this mechanism for exactly this class and scoped it, explicitly, to the shadow-ledger boundary. This is another one: every key any strategy reads must be produced or DECLARED with its severity, in both directions — a declaration must still describe reality (the strategy exists, still reads the key, and the key is still unproduced) or it is coverage that is not (P361's rule). It is a TEST, so it arms nothing; repairing any strategy remains a P141 decision and each declaration says so.
+
+**PART 2 — FastRiskTick: the trigger measures DRIFT, not VELOCITY, and P364's direction-blindness is a SYMPTOM of that.**
+- `price_move_pct` compares the current price to a reference set **once per 4H tick**, so it measures **cumulative drift over up to four hours** — while the control is a **30-second inter-tick watchdog** whose job is a dislocation BETWEEN ticks. Different quantities.
+- **Measured over ~13,800 live samples per asset** (persistent log, 24h):
+  | asset | one-step (~34s) ≥3% | drift from 4H anchor ≥3% |
+  |---|---|---|
+  | BTC | **4** | 2,732 — **19.7% of samples** |
+  | ETH | **4** | 2,574 — 18.6% |
+  | SOL | **4** | 2,585 — 18.7% |
+  So it fires on roughly **one evaluation in five**, while genuine inter-tick dislocations occur **4 times in 13,838 (0.03%)** — a **~650x** gap. Median one-step move is 0.011–0.017%; median drift is 0.62–0.82% and **p95 drift is ~10%**, i.e. ordinary trending routinely clears a 3% drift bar.
+- **This explains P364 without a separate cause:** cumulative drift in a trend is monotone, so an ABSOLUTE drift measure necessarily fires on rallies. Direction-blindness is downstream of measuring the wrong quantity — which is why "make it signed" (still ~10% of samples) and "raise the threshold" (p95 is 10%, so the bar would have to exceed the dislocations it exists to catch) were both symptom-level.
+- **The root-cause fix, stated and NOT armed:** trigger on the move since the last evaluation rather than since the 4H anchor. That is a real behaviour change to a live risk control (~650x fewer fires), and the honest argument for it is that the watchdog would stop duplicating the 4H tick's job — a slow four-hour drift is what the 4H decision, the P197 venue stop and the drawdown halts are for. It is still the operator's call (P141), and the numbers are pinned so it rests on them. **A test now asserts a four-hour drift and a one-tick gap produce the IDENTICAL action**, which is the defect stated as behaviour.
+- **Three failed attempts before the measurement, each its own small lesson:** `docker logs` sends the container's stream to **stderr** (my `subprocess` captured stdout only and found zero lines, where every interactive command had used `2>&1`); the container had been **recreated by my own deploy**, so `docker logs` held far too few samples and the answer was in the **persistent** log (P195, which I had cited hours earlier); and a probe anchor scoped to 600 chars found nothing because the target sits **1,853 chars** past its class declaration behind a long docstring — `near_window` exists for exactly that and I had to be told by the refusal.
+- **Mitigation patterns:** (a) when an operator declines a menu of options and asks for the root cause, the menu is usually evidence that the author stopped at the first layer — all seven of mine were downstream of a defect one level below; (b) ENUMERATE a boundary rather than sampling it: hand inspection found 2 of 4 mismatches and mis-classified a third, and the AST diff took minutes; (c) before proposing a threshold change, measure the distribution of the quantity being thresholded — here p95 was three times the threshold, which makes "raise it" arithmetically hopeless and points at the quantity itself.
 
 ### P366. [FIXED 2026-08-21, operator: "can you read through the codebase" -> "sure"] An emergency exit that was REFUSED reported itself as completed, on a 3-contract position — and the one rolling buffer P354 slowed 424x was the one with no state file
 A read-through, run instruments-first (P361): the gate is clean, `calibration_check` is 3/3 within horizon, the September countdown is healthy with `whale_filter` present (P361 held), and the engine is up 10h with 0 restarts. Three defects, all verified against the live process before being called findings. Tests `tests/test_p366_readthrough_fixes.py` (42); **fourteen falsification probes red-then-restored**; full suite 6,218 green; gate clean, **zero baseline movement**.

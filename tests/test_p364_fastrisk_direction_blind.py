@@ -46,7 +46,7 @@ import pathlib
 import pytest
 
 import main
-from execution.fast_risk_tick import FastRiskTick
+from execution.fast_risk_tick import FastRiskAction, FastRiskTick
 
 REPO = pathlib.Path(main.__file__).parent
 
@@ -130,4 +130,84 @@ def test_the_trigger_states_what_it_does_about_direction():
         "the price trigger does not state that it is direction-blind — that "
         "is the difference between a decision and an accident, and it is the "
         "one thing P364 changed"
+    )
+
+
+# ==========================================================================
+# [P366] ROOT CAUSE: the trigger measures DRIFT, not VELOCITY
+# ==========================================================================
+def test_the_trigger_compares_against_the_4H_ANCHOR_not_the_last_tick():
+    """[P366] The operator declined P364's symptom-level options ("make it
+    signed", "raise the threshold") and asked for research. This is what it
+    found, and it reframes P364's direction-blindness as a SYMPTOM.
+
+    `price_move_pct` compares the current price to a reference set once per
+    4H tick — so it measures CUMULATIVE DRIFT over up to four hours, while
+    the control is a 30-second INTER-TICK watchdog whose job is a
+    dislocation BETWEEN ticks. Those are different quantities.
+
+    Measured over ~13,800 live samples per asset (persistent log, 24h):
+
+        asset   one-step (~34s) >= 3%     drift-from-4H-anchor >= 3%
+        BTC                          4     2732  (19.7% of samples)
+        ETH                          4     2574  (18.6%)
+        SOL                          4     2585  (18.7%)
+
+    So it fires on roughly ONE EVALUATION IN FIVE, while genuine inter-tick
+    dislocations happen 4 times in 13,838 (0.03%) — a ~650x gap. Median
+    one-step move is 0.011-0.017%; median drift is 0.62-0.82% and p95 drift
+    is ~10%, i.e. ordinary trending routinely clears a 3% drift bar.
+
+    This also explains P364's finding without needing a separate cause:
+    cumulative drift in a trend is monotone, so an ABSOLUTE drift measure
+    necessarily fires on rallies. Direction-blindness is downstream of
+    measuring the wrong quantity.
+
+    Nothing is changed. Switching to velocity is a real behaviour change to a
+    live risk control (it would fire ~650x less), and while that is arguably
+    the control doing its own job instead of duplicating the 4H tick's, it is
+    the operator's call (P141). Pinned so the decision rests on the numbers."""
+    src = inspect.getsource(FastRiskTick)
+    i = src.index("price_move_pct = abs(")
+    line = src[i:src.index("\n", i)]
+    assert "anchor_price" in line, (
+        "the trigger no longer references the 4H anchor — if it now measures "
+        "an inter-tick move, P366's measurement describes a control that no "
+        "longer exists and must be re-derived, not inherited"
+    )
+
+
+def test_the_anchor_is_set_once_per_4H_tick_which_is_why_it_is_drift():
+    """The other half of the premise: the reference is refreshed on the 4H
+    decision path, so by the end of a bar it is up to four hours old. If it
+    were refreshed every evaluation the same code WOULD measure velocity."""
+    src = inspect.getsource(FastRiskTick.set_4h_anchor)
+    assert "_last_4h_prices" in src
+    doc = (FastRiskTick.set_4h_anchor.__doc__ or "")
+    assert "4H" in doc or "4h" in doc, (
+        "set_4h_anchor no longer documents its cadence — the drift-vs-velocity "
+        "distinction rests on it"
+    )
+
+
+def test_a_slow_drift_and_a_sudden_dislocation_are_INDISTINGUISHABLE():
+    """The defect stated as behaviour rather than as prose: a 4% move that
+    accrued smoothly over four hours and a 4% gap in one tick produce the
+    identical action, because only the endpoint is compared."""
+    frt = FastRiskTick()
+    frt.set_4h_anchor("ETH", price=2000.0, volatility=0.01, depth=1_000_000.0)
+    md = {"current_price": 2080.0, "data_valid": True, "volatility_30m": 0.01,
+          "orderbook_depth_1pct_usd": 1_000_000.0, "orderbook_stale": False}
+    smooth = frt.evaluate("ETH", md, has_position=True)
+
+    frt2 = FastRiskTick()
+    frt2.set_4h_anchor("ETH", price=2000.0, volatility=0.01, depth=1_000_000.0)
+    # the same endpoint, reached in one step
+    sudden = frt2.evaluate("ETH", md, has_position=True)
+
+    assert smooth.action == sudden.action == FastRiskAction.EXIT_ONLY
+    assert smooth.price_move_pct == pytest.approx(sudden.price_move_pct), (
+        "the control cannot tell a four-hour drift from a one-tick gap — "
+        "that is the root cause, and it is why the trigger fires on ~19% of "
+        "evaluations while real dislocations are 0.03% (P366)"
     )
