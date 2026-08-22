@@ -522,7 +522,11 @@ class MicrostructureArbitrageAgent:
                 st = self._state(asset)  # [P371]
                 dq = st.lag_detector.price_history.setdefault(  # [P371]
                     ex, deque(maxlen=LagDetector.PRICE_HISTORY_MAXLEN))  # [P371]
-                pairs = list(zip(ts, px))[-dq.maxlen:]  # [P371]
+                # [P370] slice by the int constant, not dq.maxlen: deque.maxlen
+                # is typed `int | None`, so `-dq.maxlen` is a mypy [operator]
+                # finding even though this deque is always bounded (P284b:
+                # fix at source, never baseline). Same bound, typed honestly.
+                pairs = list(zip(ts, px))[-LagDetector.PRICE_HISTORY_MAXLEN:]  # [P371]
                 for t, p in pairs:  # [P371]
                     dq.append((float(t), float(p)))  # [P371]
                 restored[asset] = restored.get(asset, 0) + len(pairs)  # [P371]

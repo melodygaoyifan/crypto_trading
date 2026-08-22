@@ -266,7 +266,12 @@ def decide_agent_verdict(dirs_by_h: dict, rets_by_h: dict, fwd_vol: dict,
     [P371] what is new is the degeneracy check on each scored horizon and the
     [P371] REFUSED-DEGENERATE verdict that outranks PROMOTE-CANDIDATE.
     """
-    rows, verdict_bits = {}, []  # [P371]
+    # [P370] annotated: mypy infers the value type from the FIRST row
+    # (`str | float | None`) and then flags the nested `degeneracy` dict as
+    # [dict-item]. The rows genuinely mix scalars and one dict; say so at
+    # the declaration rather than baselining the finding (P284b/P287g).
+    rows: dict[int, dict] = {}  # [P371]
+    verdict_bits: list = []  # [P371]
     for h in HORIZON_BARS:  # [P371]
         xs, ys = list(dirs_by_h.get(h, [])), list(rets_by_h.get(h, []))  # [P371]
         n = len(xs)  # [P371]
