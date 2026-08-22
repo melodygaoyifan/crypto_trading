@@ -230,18 +230,20 @@ def _md(px):
             "orderbook_depth_1pct_usd": 1_000_000.0, "orderbook_stale": False}
 
 
-def test_the_flag_is_absent_from_the_live_profile_and_defaults_OFF():
+def test_the_velocity_flag_is_ARMED_in_the_live_profile_and_defaults_OFF():
     """[P367] Arming it changes a live emergency exit by ~650x fewer fires
     (P366). That is an operator decision (P141), so the code ships changing
     nothing and the flag's ABSENCE is what pins it."""
     import json
     d = json.loads((REPO / "configs" / "live_high_risk.json").read_text(
         encoding="utf-8-sig"))
-    assert "fast_risk_velocity_trigger" not in d, (
-        "the velocity trigger appears in the live profile — arming it is a "
-        "P141 decision that needs its own entry, not a side effect"
+    # [P380] ARMED: velocity trigger is now on (its own P-entry, operator-authorized).
+    # 0% false-fire over 257 live evals; restores the price emergency exit the
+    # sleeve lacked after P370 retired the drift trigger.
+    assert d.get("fast_risk_velocity_trigger") is True, (
+        "P380 armed the velocity trigger; a silent revert to absent/false fails here"
     )
-    assert FastRiskTick().velocity_trigger is False
+    assert FastRiskTick().velocity_trigger is False  # class default stays OFF (config arms it)
 
 
 def test_default_behaviour_is_byte_identical_to_before():

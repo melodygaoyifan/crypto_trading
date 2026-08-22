@@ -157,7 +157,8 @@ class TestTheConfigTrio:
         silent further loosening both fail, because either is a live-money
         change that should be argued for rather than drifted into."""
         c = json.loads(LIVE.read_text(encoding="utf-8"))
-        assert c["fast_risk_price_move_threshold"] == 0.0, "A must stay RETIRED"
+        assert c["fast_risk_price_move_threshold"] == 0.03, "P380: velocity armed @3% (drift retired via velocity_trigger selection)"
+        assert c["fast_risk_velocity_trigger"] is True, "P380: velocity trigger armed"
         assert c["fast_risk_vol_spike_mult"] == 4.0, "B must stay at 4x"
         assert c["coinbase_max_sleeve_drawdown_pct"] == 0.25, "halt must stay at 25%"
 
@@ -197,6 +198,6 @@ class TestTheLiveParserRoundTrip:
     def test_the_live_profile_parses_to_the_decided_values(self):
         from main import ProductionConfig
         cfg = ProductionConfig.from_file(LIVE)
-        assert cfg.fast_risk_price_move_threshold == 0.0
+        assert cfg.fast_risk_price_move_threshold == 0.03  # P380 velocity armed
         assert cfg.fast_risk_vol_spike_mult == 4.0
         assert cfg.coinbase_max_sleeve_drawdown_pct == 0.25
