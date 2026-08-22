@@ -339,6 +339,30 @@ driver. Neither needs a code change.
 
 ### Recent pitfalls (last ~30 days)
 
+### P368. [MEASURED 2026-08-21, operator: "from generating profit perspective... i don't want to see any remaining task any more"] P325's LAST open gap closed — and repairing it would trade LESS. **The profitability audit is now fully closed; no remaining code task is a profit lever.**
+The operator asked the right question and one this session had stopped asking. **P357-P367 were hygiene, tooling and guards — none of it generates profit**, and this file's own Trade-Frequency rule names that as the anti-pattern (*"Let me validate one more thing"*). Tests `tests/test_p368_alpha_feedback_frozen.py` (5); three falsification probes red-then-restored. **No repair shipped, deliberately.**
+- **FIRST, THE FACTS, because the rule requires them before any patch:** the system **IS** trading — **39 position changes in 7 days**, sleeve PnL **−$145.04 (−1.31%) over 69 days** on invested capital, equity $10,927 at a new high, ETH 6ct + SOL 3ct held. So the bottleneck is not "0 trades" and none of the anti-patterns about a non-trading system apply.
+- **THE LAST OPEN GAP (P325 #6): the alpha gate haircuts every asserted alpha by 25% on a number nobody has measured.** `perf_factor = 0.5 + (_rolling_hit_rate * 0.5)`, and all three `update_hit_rate()` callers sit at `execution_service.py:2998/3560/3755` — **past the P152 routed-asset early return at :648**. On the only venue that trades they can never run, so the value is frozen at its `0.5` initialiser. The site's own comment says *"the system ALREADY tracks realized wins via update_hit_rate()"* — **false for the sleeve since the 2026-06-13 cutover.**
+- **THE MEASUREMENT INVERTS THE OBVIOUS FIX.** Reconstructed from 552 sleeve-PnL rows over 69 days, flow-adjusted so a deposit is never counted as PnL (P293h):
+  | sample | n | hit rate | perf_factor | effect on alpha |
+  |---|---|---|---|---|
+  | all episodes | 16 | 0.562 | 0.781 | **+4%** |
+  | **SOLO only (clean attribution)** | **8** | **0.250** | **0.625** | **−17%** |
+  Equity is aggregate, so an episode overlapping another asset's winning position is credited that asset's gain — which is exactly why ETH and SOL show 3 wins from 3 while BTC, usually held alone, shows **3 from 10**. **The SOLO subset is the honest sample, and it says the true factor is BELOW the frozen 0.75.** The naive reading — *"the haircut is fictional, remove it, trade more"* — is wrong on this evidence: repairing the loop would **TIGHTEN** the gate.
+- **THEREFORE NO REPAIR.** An honest fix needs per-asset realized PnL, which the sleeve does not record; building it is real work whose measured expected effect is to trade **less**. n=8 cannot decide a live gate change in either direction, and **the two readings disagree in DIRECTION** — choosing 0.562 over 0.250 because it is friendlier would be precisely the selection this repo spends entries preventing (P340's window-shopping lesson).
+- **P325's PROFITABILITY AUDIT IS NOW FULLY CLOSED**, and this is the ledger:
+  | # | gap | disposition |
+  |---|---|---|
+  | 1 | ~86% of wealth not at risk | **operator decision** — the XRP hold, P272/P332 |
+  | 2 | halts tighter than certified drawdown | **CLOSED P340** — a units error; the halt would never have fired |
+  | 3 | ~40% of risk budget idle | **CLOSED P340** — the book is flat 87% by design, not a sizing problem |
+  | 4 | two entry vetoes armed without evidence | **CLOSED P356** — disarmed on operator instruction |
+  | 5 | Rule #3 blind | **CLOSED P325/P325b** — fixed and the poisoned window corrected |
+  | 6 | dead feedback loop haircuts alpha 25% | **CLOSED HERE** — measured; repair would tighten |
+  | 7 | BTC funding legs | **CLOSED P326** — not a lever; trend-only is worse |
+- **SO WHAT ACTUALLY REMAINS FOR PROFIT IS NOT CODE.** The books are certified over six years at honest fees and **lose to buy-and-hold on RETURN while beating it on Sharpe and drawdown** (P318/P321); P320c established the recent-era conditional edge is not statistically distinguishable from zero. The system is doing what it was certified to do. **The only things that can change expected return are the September reads** — the trend tripwire (2026-09-01) and the twelve P166 candidate reads (09-07 → 09-17) — and those are already mechanised, dated and cronned (P333/P361). Writing more code before them is the analysis paralysis the rule names.
+- **Mitigation patterns:** (a) "what remains?" and "what remains that MAKES MONEY?" are different questions, and eleven entries of tooling is what the first one produces when nobody asks the second; (b) before repairing a control that acts on a stale constant, MEASURE the constant's true value — here the repair's own evidence pointed the opposite way to the intuition that motivated it; (c) when two readings of the same quantity disagree in direction, the sample has decided nothing, and picking the convenient one is selection with extra steps.
+
 ### P367. [BUILT 2026-08-21, DEFAULT OFF, operator: "do all remaining tasks"] P366's root-cause fix shipped SHADOW-FIRST — and the two remaining items are NOT equivalent, which is the decision in this entry
 Tests `tests/test_p364_...` (9 -> 15); six falsification probes red-then-restored. **Nothing is armed and the live profile is untouched.**
 - **THE TWO REMAINING ITEMS ARE DIFFERENT IN KIND, and treating them the same would have been the mistake.**
