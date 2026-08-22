@@ -61,10 +61,26 @@ class TestTheLiveDeciderIsTrackable:
 
     def test_nothing_was_added_speculatively(self):
         """A vocabulary entry no producer emits is the inverse defect (P310).
-        `trend` arrives as `trend_following`; the whale seat does not
-        overwrite `primary_strategy` at all."""
-        assert "whale" not in ALL_STRATEGIES
-        assert "trend" not in ALL_STRATEGIES
+
+        [P378] `whale` MOVED from the forbidden list to the required one, and
+        the reason is that its premise changed rather than that the rule did:
+        when P317 wrote this, the whale seat did not overwrite
+        `primary_strategy` at all, so the entry would have been speculative.
+        P376 gave it a producer (`main.py` now writes
+        `primary_strategy = "whale"` at the seat), so the entry is now
+        CORRECT and its absence would be the defect. The invariant this test
+        exists for is unchanged in both directions — every name here must
+        have a live producer, and every live producer must be named — so the
+        assertion is re-pointed at the decided value rather than relaxed
+        (P237/P270). `_the_producer_still_emits_the_name_this_pins` below is
+        the other half.
+        """
+        assert "whale" in ALL_STRATEGIES, (
+            "the whale seat writes primary_strategy='whale' (P376), so the "
+            "aging tracker must know the name or it silently records nothing "
+            "for a live decider — the exact P317 defect"
+        )
+        assert "trend" not in ALL_STRATEGIES, "trend arrives as trend_following"
         assert "trend_following" in ALL_STRATEGIES
 
     def test_the_producer_still_emits_the_name_this_pins(self):
@@ -75,6 +91,16 @@ class TestTheLiveDeciderIsTrackable:
         assert '"primary_strategy"] = "regimebook"' in src, (
             "main.py no longer emits this name — the vocabulary entry is now "
             "the speculative kind this file forbids")
+        # [P378] The half that was missing, and its absence is why the sibling
+        # test above could go stale unnoticed: `whale` was pinned ABSENT on the
+        # premise that no producer wrote it, and when P376 added one, only the
+        # forbidding half failed. Pinning BOTH directions means either change
+        # — a name gaining a producer, or losing one — fails loudly instead of
+        # letting the vocabulary and the writers drift apart (P310).
+        assert '"primary_strategy"] = "whale"' in src, (
+            "main.py no longer emits 'whale' — remove it from the aging "
+            "vocabulary in the same change, or the entry becomes the "
+            "speculative kind this file forbids")
 
 
 class TestUnknownNamesAreSaidOnce:
