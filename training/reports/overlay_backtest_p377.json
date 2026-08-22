@@ -1,0 +1,166 @@
+{
+  "assets": {
+    "BTC": {
+      "asset": "BTC",
+      "hold": {
+        "total_pct": 271.7,
+        "sharpe": 0.79,
+        "maxdd_pct": 77.0
+      },
+      "overlay": {
+        "total_pct": 179.3,
+        "sharpe": 0.76,
+        "maxdd_pct": 48.7
+      },
+      "exposure": 0.511,
+      "eras": {
+        "2020-22": {
+          "hold_ret": 100.7,
+          "ovl_ret": 89.6,
+          "hold_dd": 77.0,
+          "ovl_dd": 48.7,
+          "dd_cut": 0.37,
+          "ret_keep": 0.89,
+          "pass": true
+        },
+        "2023-24": {
+          "hold_ret": 195.6,
+          "ovl_ret": 124.4,
+          "hold_dd": 30.0,
+          "ovl_dd": 26.8,
+          "dd_cut": 0.11,
+          "ret_keep": 0.64,
+          "pass": false
+        },
+        "2025-26": {
+          "hold_ret": -24.6,
+          "ovl_ret": -34.7,
+          "hold_dd": 53.4,
+          "ovl_dd": 36.2,
+          "dd_cut": 0.32,
+          "ret_keep": 0.0,
+          "pass": false
+        }
+      },
+      "dd_cut": 0.368,
+      "ret_keep": 0.66,
+      "verdict": "fails"
+    },
+    "ETH": {
+      "asset": "ETH",
+      "hold": {
+        "total_pct": 319.4,
+        "sharpe": 0.7,
+        "maxdd_pct": 81.1
+      },
+      "overlay": {
+        "total_pct": 244.1,
+        "sharpe": 0.79,
+        "maxdd_pct": 58.1
+      },
+      "exposure": 0.484,
+      "eras": {
+        "2020-22": {
+          "hold_ret": 208.5,
+          "ovl_ret": 220.0,
+          "hold_dd": 81.1,
+          "ovl_dd": 49.1,
+          "dd_cut": 0.39,
+          "ret_keep": 1.06,
+          "pass": true
+        },
+        "2023-24": {
+          "hold_ret": 133.1,
+          "ovl_ret": 17.8,
+          "hold_dd": 45.3,
+          "ovl_dd": 48.7,
+          "dd_cut": -0.07,
+          "ret_keep": 0.13,
+          "pass": false
+        },
+        "2025-26": {
+          "hold_ret": -22.2,
+          "ovl_ret": 6.3,
+          "hold_dd": 68.0,
+          "ovl_dd": 52.7,
+          "dd_cut": 0.23,
+          "ret_keep": 1.0,
+          "pass": false
+        }
+      },
+      "dd_cut": 0.284,
+      "ret_keep": 0.764,
+      "verdict": "fails"
+    },
+    "SOL": {
+      "asset": "SOL",
+      "hold": {
+        "total_pct": 701.3,
+        "sharpe": 1.03,
+        "maxdd_pct": 96.6
+      },
+      "overlay": {
+        "total_pct": 474.1,
+        "sharpe": 0.96,
+        "maxdd_pct": 92.1
+      },
+      "exposure": 0.477,
+      "eras": {
+        "2020-22": {
+          "hold_ret": 370.5,
+          "ovl_ret": 322.6,
+          "hold_dd": 96.6,
+          "ovl_dd": 88.4,
+          "dd_cut": 0.08,
+          "ret_keep": 0.87,
+          "pass": false
+        },
+        "2023-24": {
+          "hold_ret": 380.1,
+          "ovl_ret": 214.2,
+          "hold_dd": 45.7,
+          "ovl_dd": 66.1,
+          "dd_cut": -0.45,
+          "ret_keep": 0.56,
+          "pass": false
+        },
+        "2025-26": {
+          "hold_ret": -49.4,
+          "ovl_ret": -62.7,
+          "hold_dd": 78.5,
+          "ovl_dd": 66.1,
+          "dd_cut": 0.16,
+          "ret_keep": 0.0,
+          "pass": false
+        }
+      },
+      "dd_cut": 0.047,
+      "ret_keep": 0.676,
+      "verdict": "fails"
+    }
+  },
+  "cost_rt": {
+    "BTC": 0.00277,
+    "ETH": 0.0044,
+    "SOL": 0.0041
+  },
+  "bar": {
+    "dd_cut_min": 0.25,
+    "ret_keep_min": 0.5
+  },
+  "portfolio": {
+    "hold": {
+      "total_pct": 430.8,
+      "sharpe": 0.97,
+      "maxdd_pct": 85.9
+    },
+    "overlay": {
+      "total_pct": 299.2,
+      "sharpe": 1.05,
+      "maxdd_pct": 64.5
+    },
+    "dd_cut": 0.249,
+    "ret_keep": 0.695,
+    "verdict": "fails"
+  }
+}
