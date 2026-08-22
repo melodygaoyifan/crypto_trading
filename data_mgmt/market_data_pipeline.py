@@ -268,6 +268,33 @@ class MarketDataPipeline:
             a: {feat: deque(maxlen=256) for feat in _wavelet_targets}
             for a in assets
         }
+        # [P366] PERSISTED — and this buffer needs it far more than the two
+        # around it, which is exactly why its absence was easy to miss.
+        # P354 gated this deque to the DECISION tick to restore P164's
+        # causal-wavelet parity (256 samples is meant to be ~42 days of 4H
+        # BARS, and it had been ~145 minutes of 34s snapshots). That fix was
+        # right and it changed the feed rate by 424x, so the warmup went from
+        # ~2.4 hours to 32 HOURS before `len(buf) >= 8` even starts denoising
+        # and ~42 DAYS to fill — on the one rolling buffer with no state file.
+        # Its two siblings (_ofi_history above, _depth_history below) were
+        # persisted by P316 for a 4H-cadence argument that P353 later showed
+        # was not yet true of them; it is true of THIS one now.
+        # Measured live 2026-08-21: ofi 42/42 and depth 120/120 restored from
+        # disk, wavelet holding 4 samples after 4 decision ticks — i.e. the
+        # denoise was inert and the five *_denoised features were raw
+        # passthrough. P354's own guard asserts a ~42-day window as the design
+        # intent; nothing asserted it was reachable (the P174 shape, one level
+        # over: a pin on an intention rather than on an achievable state).
+        # Bounded: both consumers (DRL obs builder, Exit-SAC) are SHADOW, so
+        # no live order changes — what this restores is the shadow IC streams
+        # P354 set out to stop confounding.
+        # CAVEAT, deliberately accepted and recorded: a restore after downtime
+        # yields 256 bars that are not all CONSECUTIVE, so the window spans
+        # more calendar time than 42 days. That is strictly closer to training
+        # than the 4-sample cold start it replaces, and _BUFFER_MAX_AGE_SEC
+        # bounds the hole; the same trade-off P316 accepted for its two.
+        self._restore_rolling_buffer("wavelet_buffers",
+                                     self._wavelet_flat_view())
 
         # [P316] PERSISTED for the same reason: the depth MEDIAN needs >= 3
         # samples and the collapse detector >= 5, so on a fresh process
@@ -915,6 +942,13 @@ class MarketDataPipeline:
                         if for_decision:
                             for src_name in _wv_map:
                                 _wv_buf[src_name].append(float(raw.get(src_name, 0.0)))
+                            # [P366] mark dirty so the state file is written
+                            # exactly when its contents changed. The persist
+                            # call lives in _fetch_live_data, which runs on
+                            # every ~34s pass and has no `for_decision` in
+                            # scope — writing this ~80KB view 2,541x/day for
+                            # a value that moves 6x/day is pure I/O.
+                            self._wavelet_dirty = True
 
                         for src_name, dst_name in _wv_map.items():
                             buf = _wv_buf[src_name]
@@ -2198,6 +2232,17 @@ class MarketDataPipeline:
     # today, so every failure path here is a no-op rather than a risk.
     _BUFFER_MAX_AGE_SEC = 7 * 24 * 3600.0
 
+    def _wavelet_flat_view(self) -> Dict[str, deque]:
+        """[P366] `_wavelet_buffers` is asset -> feature -> deque, while the
+        restore/persist helpers are asset -> deque. Flatten to a composite key
+        over the SAME deque objects, so a restore appends in place and there
+        is still exactly one persistence implementation (P172) rather than a
+        second hand-rolled one that can drift from it.
+        """
+        return {f"{a}::{feat}": dq
+                for a, feats in getattr(self, "_wavelet_buffers", {}).items()
+                for feat, dq in feats.items()}
+
     def _restore_rolling_buffer(self, name, buffers) -> None:
         try:
             from strategies._warmup_state import load as _wload
@@ -2208,8 +2253,13 @@ class MarketDataPipeline:
                 # read as a flat 0.00 for the life of the system, and a
                 # cold start that announces itself is the difference between
                 # a warmup and a permanent NEUTRAL.
+                # [P366] the warmup length is no longer asserted in the
+                # message. It said "~20h" for every buffer, which was already
+                # only ever true of one of them and is wrong by a factor of
+                # ~50 for the 4H-cadence wavelet deque — an alert that states
+                # a number it cannot know is the P155 class.
                 logger.info("[BUFFER] %s: no saved state — warming up from "
-                            "scratch (needs ~20h of uptime to emit)", name)
+                            "scratch", name)
                 return
             n = 0
             for asset, dq in buffers.items():
@@ -2234,10 +2284,25 @@ class MarketDataPipeline:
         """
         try:
             from strategies._warmup_state import save as _wsave
-            for name, buf in (("ofi_history", getattr(self, "_ofi_history", None)),
-                              ("depth_history", getattr(self, "_depth_history", None))):
+            _targets = [("ofi_history", getattr(self, "_ofi_history", None)),
+                        ("depth_history", getattr(self, "_depth_history", None))]
+            # [P366] the 4H-cadence deque, see the note at its construction —
+            # 42 days to fill, and it was the only rolling buffer with no
+            # state file. Written only when a decision tick actually appended
+            # to it; the flag is cleared AFTER a successful save, so a failed
+            # save retries next pass rather than silently dropping the window.
+            if getattr(self, "_wavelet_dirty", False):
+                _targets.append(("wavelet_buffers", self._wavelet_flat_view()))
+            for name, buf in _targets:
                 if buf:
-                    _wsave(name, {a: list(d) for a, d in buf.items() if len(d)})
+                    _ok = _wsave(name, {a: list(d)
+                                        for a, d in buf.items() if len(d)})
+                    # Clear ONLY on a save that actually reported success:
+                    # _wsave returns False without raising, and clearing on
+                    # that would drop a decision tick's append from the file
+                    # for good (the window silently shortens by one bar).
+                    if name == "wavelet_buffers" and _ok:
+                        self._wavelet_dirty = False
         except Exception as e:  # noqa: silent-swallow — logged; persistence only
             logger.debug("[BUFFER] persist skipped (%s: %s)",
                          type(e).__name__, e)

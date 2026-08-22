@@ -101,9 +101,16 @@ class TestRollingBufferPersistence:
         assert persist > append
 
     def test_a_failed_save_cannot_raise_into_a_tick(self):
-        src = _src("data_mgmt/market_data_pipeline.py")
-        i = src.index("def _persist_rolling_buffers")
-        blk = src[i:i + 1200]
+        # [P366] was a 1200-CHARACTER window from the `def`, which P366's
+        # added comments pushed `except Exception` past — the invariant was
+        # intact and the pin was fragile. A character count is a guard whose
+        # failure message describes the wrong defect (P320's lesson, and P354
+        # made this exact correction to a P214 pin). Anchored on the real
+        # function instead, so documenting a decision at the call site can
+        # never break it.
+        import inspect
+        from data_mgmt.market_data_pipeline import MarketDataPipeline
+        blk = inspect.getsource(MarketDataPipeline._persist_rolling_buffers)
         assert "except Exception" in blk
 
 

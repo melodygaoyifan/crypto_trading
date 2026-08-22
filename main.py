@@ -3386,6 +3386,59 @@ def bt_funding_streak_update(state, utc_day, funding_rate):
     return state
 
 
+# [P366] `execute_target` reports SEVEN outcomes and only OK is an exit.
+# Before this, `sleeve_fast_risk_action` returned the literal "EXITED" for
+# every one of them, so a REFUSED emergency exit was indistinguishable from a
+# completed one — measured live 2026-08-21: ETH held 3 contracts and logged 29
+# `EXIT_ONLY -> EXITED (execute_target(0) -> SKIPPED_STALE)` lines during a
+# venue 502 storm. Four consumers branch on that status, and three of them
+# were wrong on every one of those ticks (streak reset, baseline refresh,
+# re-entry cooldown) while the fourth — the P110/P329 failure detector — was
+# unreachable, because its `elif` needs a status the wrapper never produced.
+#
+# Categories are chosen from what the caller can actually DO, not from the
+# venue's vocabulary:
+#   UNREADABLE -> we could not read/reach the venue and NO order was attempted.
+#                 Transient: no suppression, streak++ (P329's whole point).
+#   STRUCTURAL -> the venue REJECTED the order or threw. P110's original case:
+#                 retrying in 30s fails identically, so back off.
+# BLOCKED is deliberately NEITHER. It is OUR OWN policy refusing to send the
+# order (halt, caps, or the P265/P287 unconfirmed-cancel guard), so it is not
+# a venue-read failure — labelling it one would make a sustained "could not
+# READ the venue" CRITICAL that is simply false (P155). It must also not take
+# the 30-minute structural backoff: the P265 guard fires during exactly the
+# transient venue flakiness P329 established must never disarm the watchdog,
+# and a retry is free (can_trade refuses before any order is placed).
+# Repetition of BLOCKED is escalated at its own source instead (P366 fix 3).
+_SLEEVE_EXIT_UNREADABLE = ("SKIPPED_STALE", "NOT_READY")
+_SLEEVE_EXIT_STRUCTURAL = ("FAILED", "ERROR")
+
+
+def sleeve_exit_status(venue_status, ok_name: str) -> str:
+    """[P366] Map an `execute_target` status onto the helper's contract.
+
+    Pure so the truth table is testable without a runner or an event loop
+    (the P206 pattern). `ok_name` is "EXITED" or "REDUCED".
+
+    An UNRECOGNISED status is STRUCTURAL, never a success: a new venue status
+    must fail loudly rather than silently read as a completed emergency exit,
+    which is the defect this function exists to end.
+    """
+    vs = str(venue_status or "").strip().upper()
+    if vs == "OK":
+        return ok_name
+    # delta == 0, i.e. the book is already at target. For both call shapes
+    # (EXIT_ONLY target=0, REDUCE_50 target=cur/2) that is true only when
+    # cur == 0, so this is exactly the helper's own FLAT — not an exit.
+    if vs == "NOOP":
+        return "FLAT"
+    if vs in _SLEEVE_EXIT_UNREADABLE:
+        return "SKIPPED_STALE"
+    if vs == "BLOCKED":
+        return "EXIT_BLOCKED"
+    return "EXIT_FAILED"
+
+
 async def sleeve_fast_risk_action(sleeve, asset: str, action_name: str,
                                   enabled: bool):
     """[P227] FastRiskTick's inter-tick safety net, for the Coinbase sleeve.
@@ -3428,7 +3481,11 @@ async def sleeve_fast_risk_action(sleeve, asset: str, action_name: str,
             # [P270] urgent=True: the watchdog exists for immediacy — a
             # maker-wait window here would hold risk open to save 3bps
             res = await sleeve.execute_target(asset, 0, urgent=True)
-            return "EXITED", f"execute_target(0) -> {res.get('status')}"
+            _vs = res.get('status')
+            # [P366] classify, never assume. "EXITED" used to be returned here
+            # unconditionally — see the note above sleeve_exit_status.
+            return (sleeve_exit_status(_vs, "EXITED"),
+                    f"execute_target(0) -> {_vs}")
         if action_name == "REDUCE_50":
             if abs(cur) <= 1:
                 return ("REDUCE_NOOP",
@@ -3436,7 +3493,12 @@ async def sleeve_fast_risk_action(sleeve, asset: str, action_name: str,
                         f"cannot halve (venue-resting stop still protects)")
             _tgt = int(cur / 2)  # truncates toward zero = a genuine reduce
             res = await sleeve.execute_target(asset, _tgt, urgent=True)
-            return "REDUCED", f"execute_target({_tgt}) -> {res.get('status')}"
+            _vs = res.get('status')
+            # [P366] same collapse existed here: a BLOCKED or FAILED reduce
+            # reported as "REDUCED" refreshed the depth baseline (P287), which
+            # masks the very depth collapse the trigger fired on.
+            return (sleeve_exit_status(_vs, "REDUCED"),
+                    f"execute_target({_tgt}) -> {_vs}")
         return "IGNORED", f"unhandled action {action_name!r}"
     except Exception as e:  # fail-soft: watchdog must never kill the loop
         logger.warning(
@@ -18432,7 +18494,13 @@ class HMATSProductionRunner:
             # so the transient-unreadable streak is cleared. Without a reset a
             # long-lived process accumulates isolated blips into a permanent
             # CRITICAL that no longer describes the present (P303/P265f).
-            if (_frs_st not in ("SKIPPED_STALE", "ERROR", "DISABLED", "NO_SLEEVE")
+            # [P366] EXIT_FAILED joins the exclusion set: it subsumes the old
+            # helper-level ERROR plus a venue-rejected order, and an exception
+            # on the way to the venue is not evidence the venue was readable.
+            # EXIT_BLOCKED is deliberately NOT excluded — our own policy
+            # refused to send the order, which proves the reconcile succeeded.
+            if (_frs_st not in ("SKIPPED_STALE", "ERROR", "EXIT_FAILED",
+                                "DISABLED", "NO_SLEEVE")
                     and self.fast_risk_tick is not None):
                 _frs_ok = getattr(self.fast_risk_tick, "on_venue_readable", None)
                 if _frs_ok is not None:
@@ -18480,7 +18548,9 @@ class HMATSProductionRunner:
                             asset,
                             new_depth=market_data.get(
                                 'orderbook_depth_1pct_usd', 0.0))
-                    elif (_frs_st in ("ERROR", "SKIPPED_STALE")
+                    # [P366] EXIT_FAILED added — without it this branch was
+                    # unreachable whenever execute_target refused internally.
+                    elif (_frs_st in ("ERROR", "SKIPPED_STALE", "EXIT_FAILED")
                           and result.action == FastRiskAction.EXIT_ONLY
                           and hasattr(self.fast_risk_tick, 'on_exit_failed')):
                         # [P110] failure-detection complement: an urgent

@@ -1427,6 +1427,11 @@ class CoinbaseSleeve:
         try:
             open_orders = await self._adapter.fetch_open_orders(pid)
         except Exception as e:
+            # [P366] both refusal paths feed the streak: an unreadable book
+            # and an unconfirmed cancel both mean "this asset cannot trade".
+            self._note_cancel_refusal(
+                asset, f"could not list resting orders "
+                       f"({type(e).__name__}: {e})")
             logger.warning(
                 f"[COINBASE_SLEEVE] {asset}: could not list resting orders "
                 f"({type(e).__name__}: {e}) — REFUSING to place a new order "
@@ -1449,15 +1454,85 @@ class CoinbaseSleeve:
                 logger.warning(f"[COINBASE_SLEEVE] {asset}: cancel {oid} failed "
                                f"({type(e).__name__}: {e})")
         if failed:
+            self._note_cancel_refusal(
+                asset, f"{failed} resting-order cancel(s) unconfirmed")
             logger.warning(
                 f"[COINBASE_SLEEVE] {asset}: {failed} resting-order cancel(s) "
                 f"unconfirmed — refusing to place a new order this tick "
                 f"(double-order class, P265/P287); next tick retries")
             return None
+        # [P366] the book is verified clear — this asset can trade again.
+        self._note_cancel_ok(asset)
         if cancelled:
             logger.info(f"[COINBASE_SLEEVE] {asset}: cancelled {cancelled} stale "
                         f"resting order(s) before new target")
         return cancelled
+
+    # [P366] How many CONSECUTIVE refusals before this stops being a blip.
+    # 6 matches P329's sustained bar for the sibling watchdog escalation; at
+    # the observed ~35-45s retry cadence that is ~4 minutes.
+    _CANCEL_REFUSE_SUSTAINED = 6
+
+    def _note_cancel_refusal(self, asset: str, why: str) -> None:
+        """[P366] Count consecutive 'cannot verify the book is clear' refusals.
+
+        The refusal itself is correct and stays (P265/P287: an order we cannot
+        see plus a new one is two live orders for one delta). What was missing
+        is that a routed asset can be refused indefinitely and the operator
+        sees only a repeating WARNING — 28 consecutive refusals on one ETH
+        order during the 2026-08-21 venue outage rendered identically to a
+        single blip, and WARNING is not forwarded to Discord.
+
+        P329 built exactly this warn-isolated / escalate-sustained split for
+        FastRiskTick and it was never applied to this sibling refusal path
+        (P171/P226/P323/P355/P356: a mitigation applied to one instance of a
+        class is not applied to the class).
+
+        Escalates ONCE per streak, never per tick — an ERROR every 35s is the
+        wallpaper P202 is about, and it would bury the one line that matters.
+        """
+        try:
+            streaks = getattr(self, "_cancel_refuse_streak", None)
+            if streaks is None:
+                streaks = {}
+                self._cancel_refuse_streak = streaks
+            n = int(streaks.get(asset, 0)) + 1
+            streaks[asset] = n
+            if n == self._CANCEL_REFUSE_SUSTAINED:
+                logger.error(
+                    f"[COINBASE_SLEEVE] {asset}: SUSTAINED — {n} consecutive "
+                    f"refusals to place an order because the resting-order "
+                    f"book could not be verified clear ({why}). This asset "
+                    f"has been unable to open, flip or flatten for the whole "
+                    f"streak, INCLUDING emergency exits from FastRiskTick; "
+                    f"the venue-resting protective stop is the only "
+                    f"protection until it clears. Usually a venue outage and "
+                    f"self-resolving — if it persists, check for a stuck "
+                    f"resting order at the venue.")
+        except Exception as e:  # noqa: silent-swallow — logged; an alert counter must never break the order path
+            logger.debug("[COINBASE_SLEEVE] cancel-refusal counter skipped "
+                         "(%s: %s)", type(e).__name__, e)
+
+    def _note_cancel_ok(self, asset: str) -> None:
+        """[P366] The book was verified clear — clear any refusal streak.
+
+        Without the reset a long-lived process accumulates isolated blips into
+        a permanent 'SUSTAINED' that no longer describes the present, which is
+        the P303/P265f lesson P329 recorded for the watchdog streak.
+        """
+        try:
+            streaks = getattr(self, "_cancel_refuse_streak", None)
+            if not streaks:
+                return
+            n = int(streaks.pop(asset, 0) or 0)
+            if n >= self._CANCEL_REFUSE_SUSTAINED:
+                logger.warning(
+                    f"[COINBASE_SLEEVE] {asset}: resting-order book verified "
+                    f"clear again after {n} consecutive refusals — the asset "
+                    f"can trade; the streak is reset.")
+        except Exception as e:  # noqa: silent-swallow — logged; see _note_cancel_refusal
+            logger.debug("[COINBASE_SLEEVE] cancel-refusal reset skipped "
+                         "(%s: %s)", type(e).__name__, e)
 
     async def _cancel_stale_entry_orders(self, pid: str, asset: str) -> Optional[int]:
         """[P265] Cancel resting NON-STOP orders on ticks that place nothing.

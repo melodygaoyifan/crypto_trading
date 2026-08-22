@@ -57,7 +57,14 @@ class _FakeSleeve:
         if self._boom:
             raise RuntimeError("venue exploded")
         self.calls.append((asset, target))
-        return {"status": "FILLED"}
+        # [P366] was "FILLED" — a status `execute_target` NEVER returns. Its
+        # vocabulary is OK / BLOCKED / FAILED / ERROR / NOOP / NOT_READY /
+        # SKIPPED_STALE. The placeholder went unnoticed for as long as the
+        # helper ignored the status entirely and reported "EXITED" whatever
+        # came back; the moment the helper started classifying, this fixture
+        # was modelling a venue that does not exist. Fixed at the fixture
+        # rather than by widening the success set to admit it (P248).
+        return {"status": "OK"}
 
 
 def _run(coro):
