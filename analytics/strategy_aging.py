@@ -58,12 +58,16 @@ STRATEGY_GROUPS = {
     # times per tick. "universal" because a regime book is
     # regime-agnostic by construction: it picks its leg FROM the regime.
     #
-    # ONLY `regimebook` is added. `trend` already arrives as
-    # `trend_following`, and the whale seat does not overwrite
-    # `primary_strategy` at all — a vocabulary entry no producer emits
-    # is the inverse defect (P310), so nothing is added speculatively.
+    # [P376] `whale` added: that P317 sentence ("the whale seat does not
+    # overwrite primary_strategy at all") is now stale — the whale seat is
+    # armed (whale_seat_mode:enforce) and IS a live decider on flat-book
+    # ticks (P293j), and main.py now writes primary_strategy="whale" in its
+    # deciding branch, so this tracker must know the name or it records
+    # whale decisions as "trend_following". "universal" for the same reason
+    # as regimebook: the whale seat is not regime-bucketed.
+    # `trend` still arrives as `trend_following` (already covered).
     "universal": ["orderbook_imbalance", "funding_rate",
-                  "liquidation_cascade", "regimebook"],
+                  "liquidation_cascade", "regimebook", "whale"],
 }
 
 ALL_STRATEGIES = [s for group in STRATEGY_GROUPS.values() for s in group]

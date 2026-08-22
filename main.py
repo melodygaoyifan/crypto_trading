@@ -10908,6 +10908,17 @@ class HMATSProductionRunner:
                     agent_signals["signal_edge_bps"] = _ws_edge
                     market_data["quant_data_quality"] = 1.0
                     agent_signals["quant_data_quality"] = 1.0
+                    # [P376] The whale seat is a live decider (P293j: seats on
+                    # flat-book ticks the book leaves open). It must name itself
+                    # in primary_strategy — like the regimebook seat (P313) —
+                    # or the strategy-aging tracker + attribution ledger record
+                    # whale decisions under the stale "trend_following", the
+                    # P317 reasoning that predates the armed whale seat. No
+                    # order-path consumer reads this (verified); the cost is a
+                    # corrupted per-strategy EVIDENCE stream, which is the one
+                    # layer that earns its keep.
+                    market_data["primary_strategy"] = "whale"
+                    agent_signals["primary_strategy"] = "whale"
                     # [P149] sleeve bridge — same reason as the seats above
                     self._last_quant_directions[asset] = float(_ws_dir)
                     logger.info(
