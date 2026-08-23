@@ -267,3 +267,14 @@ class TestEnhGatedDirsResetPerLoop:
         assert i_reset < i_block, (
             "the eventfilter claim dict must be reset at loop level, before "
             "the block that may or may not write it")
+
+
+class TestStopIntentIsTheSentTarget:
+    def test_driver_hands_the_stop_the_target_manage_drove_to(self):
+        src = inspect.getsource(m.HMATSProductionRunner.run_live)
+        i = src.index("stop_reconcile_intended_target(")
+        blk = src[max(0, i - 1200):i + 200]
+        assert '_m_res.get("target")' in blk, (
+            "the stop reconcile must receive manage_to_signal's own target, not "
+            "a raw target_for() recompute — the two differ under conviction and "
+            "boundary damping, and the difference reads as a fill lag")

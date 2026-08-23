@@ -24285,11 +24285,20 @@ class HMATSProductionRunner:
                                         # flatten leaves the position live, and
                                         # trusting intended_target=0 there cancels
                                         # its stop — the inverse P207 failure.
+                                        # [P382] the intent handed to the stop
+                                        # is the target manage_to_signal
+                                        # actually DROVE TO (post-conviction,
+                                        # post-damping), not a raw recompute —
+                                        # a raw 6 against a dampened 4 read as
+                                        # a fill lag and armed a follow-up.
+                                        _m_sent_tgt = (_m_res.get("target")
+                                                       if isinstance(_m_res, dict) else None)
+                                        if _m_sent_tgt is None:
+                                            _m_sent_tgt = _sl.target_for(_m_a, _m_dir)
                                         _st_res = await _sl.ensure_protective_stop(
                                             _m_a,
                                             intended_target=stop_reconcile_intended_target(
-                                                _m_st,
-                                                _sl.target_for(_m_a, _m_dir)))
+                                                _m_st, _m_sent_tgt))
                                         _st_st = _st_res.get("status")
                                         _cb_stop_summary[_m_a] = _st_st
                                         if _st_st in ("PLACED", "FAILED", "ERROR",

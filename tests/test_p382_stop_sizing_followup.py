@@ -254,3 +254,37 @@ class TestTheCarveOutsStillHold:
         assert res["status"] == "FLIP_IN_TRANSITION"
         assert a.placed == []
         assert s.stop_followup_pending() == {"SOL": -1.0}
+
+
+class TestManageReportsTheTargetItDroveTo:
+    """[P382] The driver's stop reconcile must receive the target manage_to_signal
+    actually drove to (post-conviction, post-boundary-damping). Recomputing
+    `target_for(asset, dir)` without conviction gave a raw 6 against a dampened
+    4 on the first live tick after the fix — read as a fill lag, arming a
+    follow-up that could only give up 10 minutes later."""
+
+    def test_manage_result_carries_the_sent_target(self):
+        s = _sleeve(_FakeAdapter(), signed=1)
+        s._flip_persist_ticks = 1
+        s._flip_pending = {}
+        s.target_for = lambda asset, direction, threshold=0.15, conviction=1.0: 2
+        calls = []
+
+        async def _exec(asset, target, **kw):
+            calls.append(target)
+            return {"status": "OK", "asset": asset}
+        s.execute_target = _exec
+        res = asyncio.run(s.manage_to_signal("SOL", 1.0, conviction=0.5))
+        assert calls == [2]
+        assert res["target"] == 2
+
+    def test_an_existing_target_key_is_not_overwritten(self):
+        s = _sleeve(_FakeAdapter(), signed=1)
+        s._flip_persist_ticks = 1
+        s._flip_pending = {}
+        s.target_for = lambda *a, **k: 3
+
+        async def _exec(asset, target, **kw):
+            return {"status": "OK", "target": 99}
+        s.execute_target = _exec
+        assert asyncio.run(s.manage_to_signal("SOL", 1.0))["target"] == 99

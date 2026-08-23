@@ -1515,7 +1515,16 @@ class CoinbaseSleeve:
             # Same-direction, flat, or flatten: any pending flip streak is
             # broken — a flip must be CONSECUTIVE opposing ticks.
             self._flip_pending.pop(asset, None)
-        return await self.execute_target(asset, target)
+        _res = await self.execute_target(asset, target)
+        # [P382] Report the target this call actually DROVE TO (post-sizing,
+        # post-conviction, post-boundary-damping) so the caller's stop
+        # reconcile can use the same number. The driver used to recompute
+        # `target_for(asset, dir)` WITHOUT conviction — a raw 6 against a
+        # dampened 4 — which read as a size mismatch and armed a follow-up
+        # for a fill lag that did not exist.
+        if isinstance(_res, dict) and "target" not in _res:
+            _res["target"] = target
+        return _res
 
     async def _cancel_resting_orders(self, pid: str, asset: str) -> Optional[int]:
         """[P195] Cancel our own resting orders for `pid` before placing a new one.
