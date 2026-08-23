@@ -9556,6 +9556,30 @@ class HMATSProductionRunner:
         # Coinbase book does not depend on. Re-arming it is a decision:
         # wire a feed AND decide what a Kraken integrity verdict should mean
         # for a Coinbase-routed asset (P141).
+        # [P384] Feed the shield the REST L2 snapshot the pipeline already
+        # fetched this call (market_data["orderbook_snapshot"], ABSENT when
+        # the ob fetch failed — P2). A REST snapshot cannot carry a CRC, so
+        # the shield judges what a snapshot CAN prove (non-empty, uncrossed,
+        # sane spread, fresh). Feeding must never abort the tick: any
+        # exception is logged once per asset and the read below proceeds.
+        if self.integrity_shield:
+            try:
+                _snap = market_data.get("orderbook_snapshot")
+                if isinstance(_snap, dict):
+                    _feed_pair = self._normalize_kraken_pair(asset)
+                    _fed_ok, _fed_reason = self.integrity_shield.feed_rest_snapshot(
+                        _feed_pair, _snap.get("bids"), _snap.get("asks"), _snap.get("ts"))
+                    if not _fed_ok:
+                        logger.warning(f"[INTEGRITY] {asset}: REST snapshot REJECTED by the "
+                                       f"shield ({_fed_reason}, pair={_feed_pair}, "
+                                       f"levels={_snap.get('depth_levels')}, src={_snap.get('source')})")
+            except Exception as _feed_err:
+                if not hasattr(self, "_shield_feed_err_logged"):
+                    self._shield_feed_err_logged = set()
+                if asset not in self._shield_feed_err_logged:
+                    self._shield_feed_err_logged.add(asset)
+                    logger.warning(f"[INTEGRITY] {asset}: shield feed failed ({_feed_err!r}) — "
+                                   f"continuing; the shield stays at its last state")
         _shield_fed = False
         if self.integrity_shield:
             try:
@@ -9578,11 +9602,34 @@ class HMATSProductionRunner:
                 else:
                     # Get orderbook from shield (validated)
                     orderbook = self.integrity_shield.get_orderbook(canonical_pair)
-                    
-                    if orderbook is None or not self.integrity_shield.is_healthy():
+
+                    # [P384] This branch is REACHABLE for the first time (the
+                    # shield is fed REST snapshots, above). Isolated vs
+                    # SUSTAINED is the load-bearing split: a single transient
+                    # crossed/locked REST book (a known Kraken matching blip)
+                    # must not HOLD this asset's sleeve for a whole 4H tick
+                    # (P370/P378 — severity keyed to a blip); a STALE shield
+                    # (no snapshot >6h) or MAX_CONSECUTIVE_FAILURES bad
+                    # decision-tick snapshots in a row genuinely means "Kraken
+                    # market-data state unknown", which is what the abort
+                    # (-> sleeve HOLD, P382) is for. Judged PER PAIR so one
+                    # asset's stale feed cannot abort the others.
+                    _hr = getattr(self.integrity_shield, "health_reasons", lambda: {})()
+                    _mgr = getattr(self.integrity_shield, "orderbooks", {}).get(canonical_pair)
+                    _pair_reason = str(_hr.get(canonical_pair, ""))
+                    _sustained = (_pair_reason.startswith("stale_snapshot")
+                                  or (_mgr is not None and
+                                      _mgr.metrics.consecutive_failures
+                                      >= getattr(_mgr, "MAX_CONSECUTIVE_FAILURES", 3)))
+                    if orderbook is None or _sustained:
                         p0_abort_tick = True
-                        p0_abort_reason = "[INTEGRITY] Data integrity check failed - stale or corrupt data"
+                        p0_abort_reason = (f"[INTEGRITY] Data integrity check failed for "
+                                           f"{canonical_pair}: {_pair_reason or 'unreadable'} "
+                                           f"(all: {_hr})")
                         logger.warning(p0_abort_reason)
+                    elif _pair_reason and _pair_reason != "ok":
+                        logger.warning(f"[INTEGRITY] {canonical_pair}: isolated snapshot failure "
+                                       f"({_pair_reason}) — proceeding, not aborting (P384)")
                     else:
                         # Inject validated mid price into market_data
                         if orderbook.bids and orderbook.asks:
@@ -10614,17 +10661,25 @@ class HMATSProductionRunner:
                 logger.debug(f"[WIRE-SOL-OC] SOL skipped: {_sol_oc_err}")
 
         # [WIRE-SHIELD] Kraken Integrity Shield -orderbook health check (SHADOW)
-        if self._integrity_shield is not None and not p0_abort_tick:
+        # [P384] Report the PRIMARY shield (`self.integrity_shield`, the one
+        # the P0 block FEEDS REST snapshots) when it exists; the secondary
+        # `_integrity_shield` instance is constructed with the module-default
+        # symbols (XBT/USD, not BTC/USD) and is never fed, so reading it here
+        # would publish None forever beside a fed, judging primary (P172:
+        # two instances of one monitor is how the diag stops describing the
+        # control). Falls back to the secondary only when no primary exists.
+        _wire_shield = getattr(self, "integrity_shield", None) or self._integrity_shield
+        if _wire_shield is not None and not p0_abort_tick:
             try:
                 # [P383] an unfed shield cannot be "healthy" — report None
                 # (unknown) rather than a constant True (no consumer reads
                 # this key; it is attribution-only, P382 audit)
-                _shield_healthy = (self._integrity_shield.is_healthy()
-                                   if getattr(self._integrity_shield, "is_fed",
+                _shield_healthy = (_wire_shield.is_healthy()
+                                   if getattr(_wire_shield, "is_fed",
                                               lambda: True)() else None)
                 agent_signals['orderbook_integrity_healthy'] = _shield_healthy
                 if _shield_healthy is False:
-                    _shield_metrics = self._integrity_shield.get_metrics()
+                    _shield_metrics = _wire_shield.get_metrics()
                     logger.warning(
                         f"[WIRE-SHIELD] Orderbook integrity UNHEALTHY: {_shield_metrics}"
                     )

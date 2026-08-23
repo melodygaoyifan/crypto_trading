@@ -41,7 +41,8 @@ class TestIntegrityShieldIsInertUntilFed:
     def test_p0_block_is_gated_on_fed(self):
         src = inspect.getsource(m.HMATSProductionRunner._process_4h_tick_inner)
         i = src.index("KRAKEN INTEGRITY SHIELD")
-        blk = src[i:i + 3000]
+        j = src.index("TASK 3: ENHANCED REGIME NAVIGATOR", i)
+        blk = src[i:j]   # the whole P0 shield block (it grew with the P384 feed)
         assert "if self.integrity_shield and _shield_fed:" in blk
         assert "integrity check is INERT" in blk
 
@@ -55,7 +56,7 @@ class TestIntegrityShieldIsInertUntilFed:
     def test_wire_shield_key_is_unknown_not_true_when_unfed(self):
         src = inspect.getsource(m.HMATSProductionRunner._process_4h_tick_inner)
         i = src.index("[WIRE-SHIELD] Kraken Integrity Shield")
-        blk = src[i:i + 1200]
+        blk = src[i:i + 2500]   # widened: the P384 primary-shield note sits above the code
         assert "else None" in blk
         assert "if _shield_healthy is False:" in blk, (
             "`if not _shield_healthy` would log UNHEALTHY on the None (unfed) "

@@ -10,7 +10,11 @@ Steps 1-7 of the Ultimate Rebuild:
      CoinGlass 1d rows are stamped at day OPEN with day CLOSE content, so
      every CoinGlass daily feature is shift(1)'d before the merge_asof
      (P247/P253 funding, P382 OI + liquidation) — see the DAY-OPEN STAMP
-     CONVENTION block above _derive_coinglass_daily.
+     CONVENTION block above _derive_coinglass_daily. [P384] liq_imbalance
+     is taken from the 4h liquidation archive as a causal TRAILING-24H
+     series (last six completed 4h buckets) whenever that file exists —
+     the same quantity the live CoinGlass feed serves — and falls back to
+     the 1d-shifted series only when it does not.
   4. Per-asset GMM with BIC search (k=3-8, 12 features)
   5. Generate DRL training parquets with regime labels + regime_proba[8]
   6. Generate feature manifest (configs/feature_manifest.json)
@@ -19,6 +23,7 @@ Steps 1-7 of the Ultimate Rebuild:
 Data sources:
   training/training_data/raw/{BTC,ETH,SOL}_60m.parquet  -> 1H OHLCV
   training/training_data/coinglass_history/{ASSET}_{funding,oi,liquidation}_1d.parquet  -> Coinglass daily
+  training/training_data/coinglass_history/{ASSET}_liquidation_4h.parquet   -> Coinglass 4h liquidations (P384)
   training/training_data/futures/{ASSET}_futures_daily.parquet -> Futures daily
 
 Usage:
@@ -244,6 +249,90 @@ def _rolling_zscore(series: pd.Series, window: int = 30) -> pd.Series:
 # source column, so bars on day D read day D-1's completed value. The
 # Binance futures daily file is NOT shifted here because its fetcher already
 # stamps day-D content at the day-CLOSE boundary (P281).
+#
+# ── [P384] liq_imbalance: the 4h TRAILING-24H path (preferred) ─────────────
+# The 1d-shifted liq_imbalance above is CAUSAL but is NOT what the live
+# system computes: `data_mgmt/feeds/coinglass_feed.py` serves CoinGlass's
+# trailing-24h (long-short)/total at fetch time, while the 1d-shifted value
+# is day D-1's COMPLETED (long-short)/total — a train/serve skew recorded in
+# P382 as "not closed". The 4h archive closes it on the TRAINING side:
+#   * `{ASSET}_liquidation_4h.parquet` rows are stamped at the 4h bucket
+#     OPEN (hours 0/4/8/12/16/20 UTC) with that bucket's content — P382
+#     measured sum(six 4h rows of day D) == 1d row D to corr 1.0000, and the
+#     1d rows are day-open-stamped, so the 4h row stamped t IS bucket
+#     [t, t+4h), complete at t+4h.
+#   * A 4H parquet bar is stamped t = the Binance kline OPEN; its close is
+#     at t+4h and every other feature on that row is as-of that close. The
+#     trailing-24h window at the row's close is therefore the six buckets
+#     stamped t-20h .. t inclusive — all complete by t+4h — so a rolling
+#     six-bucket sum stamped at the bucket OPEN t, merged with
+#     merge_asof(direction="backward") at bar t, picks the row stamped t
+#     and is causal as-of the row's close by construction.
+#   * Live: the feed fetches at ~t+4h+10min, when CoinGlass's trailing-24h
+#     window is [t-20h+10min, t+4h+10min) — the same six buckets minus the
+#     first ~10 minutes of bucket t-20h plus the first ~10 minutes of the
+#     NEW bucket [t+4h, t+8h). That two-sliver residual (~1.4% of the
+#     window) is the honest remaining gap; the 1d-shifted path carried a
+#     4h-to-28h misalignment instead.
+# The rolling sum runs over long/short/total SEPARATELY (then
+# (long-short)/total, clipped [-1,1]) — a mean of six per-bucket ratios is
+# not the trailing-24h ratio the feed computes. A window with fewer than six
+# completed buckets, or with total == 0, is NaN (absence), never 0.0
+# ("balanced"), and the archive is reindexed onto the full 4h grid first so
+# a gap in the file cannot be silently bridged by six non-adjacent buckets.
+# merge_external_data logs which source (4h trailing / 1d shifted) it used.
+LIQ_4H_WINDOW = 6          # six completed 4h buckets == trailing 24h
+LIQ_4H_FREQ = "4h"
+
+
+def _derive_liq_trailing_24h(liq4h: pd.DataFrame) -> pd.DataFrame:
+    """Pure seam: 4h liquidation archive -> causal trailing-24h imbalance.
+
+    Input columns: `timestamp` (bucket OPEN, UTC), `long_liq_usd`,
+    `short_liq_usd`, `total_liq_usd`. Output: `timestamp`, `liq_imbalance`
+    on the FULL 4h grid spanning the archive, NaN where the trailing six
+    buckets are not all present or total == 0. Stamped at the bucket open
+    (see the P384 block above for why that is causal as-of the parquet
+    row's close). An empty input yields an empty frame.
+    """
+    out_cols = ["timestamp", "liq_imbalance"]
+    if liq4h is None or len(liq4h) == 0:
+        return pd.DataFrame(columns=out_cols)
+    need = {"timestamp", "long_liq_usd", "short_liq_usd", "total_liq_usd"}
+    missing = need - set(liq4h.columns)
+    if missing:
+        raise ValueError(f"[P384] 4h liquidation archive missing columns {sorted(missing)}")
+    df = liq4h[["timestamp", "long_liq_usd", "short_liq_usd", "total_liq_usd"]].copy()
+    df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+    for c in ("long_liq_usd", "short_liq_usd", "total_liq_usd"):
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+    df = df.sort_values("timestamp").drop_duplicates("timestamp", keep="last")
+    df = df.set_index("timestamp")
+    grid = pd.date_range(df.index.min(), df.index.max(), freq=LIQ_4H_FREQ, tz="UTC")
+    off_grid = int((~df.index.isin(grid)).sum())
+    if off_grid:
+        logger.warning(f"    [P384] {off_grid} 4h liquidation row(s) are off the "
+                       f"{LIQ_4H_FREQ} grid and are DROPPED (window integrity)")
+    df = df.reindex(grid)
+    roll = df.rolling(LIQ_4H_WINDOW, min_periods=LIQ_4H_WINDOW).sum()
+    long_s, short_s, total_s = roll["long_liq_usd"], roll["short_liq_usd"], roll["total_liq_usd"]
+    imb = (long_s - short_s) / total_s.where(total_s > 0)   # total<=0 -> NaN, never 0.0
+    imb = imb.clip(-1.0, 1.0)
+    out = pd.DataFrame({"timestamp": grid, "liq_imbalance": imb.to_numpy()})
+    return out.reset_index(drop=True)
+
+
+def _load_coinglass_liq_4h(asset: str) -> pd.DataFrame:
+    """Load `{asset}_liquidation_4h.parquet` and derive the causal
+    trailing-24h `liq_imbalance` via `_derive_liq_trailing_24h`. A missing
+    file yields an EMPTY frame, which makes merge_external_data fall back to
+    the P382 1d-shifted series (logged)."""
+    fpath = COINGLASS_DIR / f"{asset}_liquidation_4h.parquet"
+    if not fpath.exists():
+        return pd.DataFrame(columns=["timestamp", "liq_imbalance"])
+    return _derive_liq_trailing_24h(pd.read_parquet(fpath))
+
+
 def _derive_coinglass_daily(funding: pd.DataFrame, oi: pd.DataFrame,
                             liq: pd.DataFrame) -> pd.DataFrame:
     """Derive the three CoinGlass daily features from loaded 1d frames.
@@ -380,9 +469,17 @@ def merge_external_data(df_4h: pd.DataFrame, asset: str) -> pd.DataFrame:
     of day D is day D-1's completed value — never day D's. The futures daily
     features are stamped at day close by their fetcher (P281) and need no
     shift.
+
+    [P384] liq_imbalance precedence: when the 4h liquidation archive exists
+    its causal trailing-24h series (see the P384 block) REPLACES the
+    1d-shifted column — merged SEPARATELY with its own 4h-tolerance
+    merge_asof, never outer-joined into the daily frame (that would put NaN
+    funding/oi rows between the daily rows and hand bars those NaNs). The
+    daily funding/oi merge is byte-identical in both cases.
     """
     cg = _load_coinglass_daily(asset)
     fut = _load_futures_daily(asset)
+    liq4h = _load_coinglass_liq_4h(asset)
 
     # Merge Coinglass + futures into single daily df
     daily = cg.merge(fut, on="timestamp", how="outer").sort_values("timestamp").reset_index(drop=True)
@@ -418,6 +515,25 @@ def merge_external_data(df_4h: pd.DataFrame, asset: str) -> pd.DataFrame:
     df = pd.merge_asof(df, daily[["timestamp"] + ext_cols],
                        on="timestamp", direction="backward",
                        tolerance=pd.Timedelta(days=3))
+
+    # [P384] liq_imbalance: the 4h trailing-24h series takes precedence over
+    # the 1d-shifted column merged above. Merged against the 4H bars on its
+    # own (bucket-open stamps, backward, tolerance one bucket) so the daily
+    # frame's row set — and therefore every funding/oi/futures value — is
+    # untouched. Overwritten IN PLACE so the column order and every other
+    # column are byte-identical to the 1d path.
+    if len(liq4h) > 0:
+        liq4h = liq4h.sort_values("timestamp").reset_index(drop=True)
+        liq_m = pd.merge_asof(df[["timestamp"]], liq4h[["timestamp", "liq_imbalance"]],
+                              on="timestamp", direction="backward",
+                              tolerance=pd.Timedelta(LIQ_4H_FREQ))
+        df["liq_imbalance"] = liq_m["liq_imbalance"].to_numpy()
+        _liq_src = "4h trailing-24h (P384)"
+    else:
+        _liq_src = "1d day-shifted (P382 fallback — no 4h archive)"
+    n_liq = int(df["liq_imbalance"].notna().sum())
+    logger.info(f"    liq_imbalance source for {asset}: {_liq_src}; "
+                f"{n_liq}/{len(df)} bars non-NaN")
 
     # has_external_data flag: 1 where ANY external feature is non-NaN
     df["has_external_data"] = (~df[ext_cols].isna().all(axis=1)).astype(float)

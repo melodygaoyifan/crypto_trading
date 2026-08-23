@@ -169,6 +169,78 @@ def gmm_shape_mismatch(scaler_mean, features) -> bool:
         return False       # length disagreement; the caller's own guards run
 
 
+# [P384] The shield-feed payload's upper bound on depth. Kraken's WS V2
+# checksum is defined over the top 10 levels; the REST feed carries the same
+# window so the two paths are comparable if a WS feed ever coexists.
+ORDERBOOK_SNAPSHOT_LEVELS = 10
+# [P384] An exchange-supplied orderbook timestamp farther than this from the
+# receipt time is not trusted (clock skew / unit mistake); the fetch time
+# stands in. 7 days is generous on purpose — the shield's own staleness
+# bound (6h) is what actually judges age.
+_ORDERBOOK_TS_SANE_SEC = 7 * 24 * 3600.0
+
+
+def build_orderbook_snapshot(ob: Any, now: float) -> Optional[Dict[str, Any]]:
+    """[P384] Build the `market_data["orderbook_snapshot"]` payload from a
+    ccxt order book that has ALREADY passed the ob block's validity check
+    (non-empty bids and asks). Pure; returns None instead of raising on any
+    shape it does not understand, so the caller's success branch cannot be
+    tripped into the stale path by the feed-builder (which would misreport a
+    builder defect as an "Orderbook fetch failed", P155).
+
+    Shape (the contract `KrakenIntegrityShield.feed_rest_snapshot` and the
+    P0 block in main.py consume):
+        {"bids": [[price, qty], ...]   top ORDERBOOK_SNAPSHOT_LEVELS, floats
+         "asks": [[price, qty], ...]
+         "ts":   float epoch — the exchange's `timestamp` (ms) when present
+                 and within _ORDERBOOK_TS_SANE_SEC of `now`, else `now`
+         "source": "kraken_rest",
+         "depth_levels": number of bid levels the venue returned}
+    The key is published ONLY when a book was fetched this call; the failure
+    path never publishes it (absence = not fetched, never an empty dict, P2).
+    """
+    if not isinstance(ob, dict):
+        return None
+    raw_bids = ob.get("bids")
+    raw_asks = ob.get("asks")
+    if not isinstance(raw_bids, (list, tuple)) or not isinstance(raw_asks, (list, tuple)):
+        return None
+    if not raw_bids or not raw_asks:
+        return None
+
+    def _levels(side: Any) -> Optional[List[List[float]]]:
+        out: List[List[float]] = []
+        for lvl in side[:ORDERBOOK_SNAPSHOT_LEVELS]:
+            if not isinstance(lvl, (list, tuple)) or len(lvl) < 2:
+                return None
+            px, qty = lvl[0], lvl[1]
+            if isinstance(px, bool) or isinstance(qty, bool):
+                return None
+            if not isinstance(px, (int, float)) or not isinstance(qty, (int, float)):
+                return None
+            out.append([float(px), float(qty)])
+        return out
+
+    bids = _levels(raw_bids)
+    asks = _levels(raw_asks)
+    if bids is None or asks is None:
+        return None
+
+    ts = float(now)
+    ex_ts = ob.get("timestamp")
+    if isinstance(ex_ts, (int, float)) and not isinstance(ex_ts, bool) and math.isfinite(float(ex_ts)):
+        cand = float(ex_ts) / 1000.0
+        if cand > 0 and abs(cand - float(now)) <= _ORDERBOOK_TS_SANE_SEC:
+            ts = cand
+    return {
+        "bids": bids,
+        "asks": asks,
+        "ts": ts,
+        "source": "kraken_rest",
+        "depth_levels": len(raw_bids),
+    }
+
+
 class MarketDataPipeline:
     """Fetches live Kraken data, computes TA indicators, GMM regime, quant signals."""
 
@@ -1830,6 +1902,9 @@ class MarketDataPipeline:
             orderbook_fallback_reason = "live"
             orderbook_cache_age_seconds = 0.0
             orderbook_failure_streak = 0
+            # [P384] The raw L2 snapshot for the integrity shield. None =
+            # not fetched this call (the key is then NOT published, P2).
+            orderbook_snapshot_payload = None
             try:
                 if isinstance(ob_res, BaseException):
                     raise ob_res
@@ -1870,6 +1945,10 @@ class MarketDataPipeline:
                 self._last_orderbook_depth_usd[asset] = float(orderbook_depth_1pct)
                 self._last_orderbook_imbalance[asset] = float(order_book_imbalance)
                 self._last_orderbook_ts[asset] = _time.time()
+                # [P384] Last statement of the success branch, pure and
+                # non-raising by construction (build_orderbook_snapshot),
+                # so it can never convert a good book into the stale path.
+                orderbook_snapshot_payload = build_orderbook_snapshot(ob, _time.time())
             except Exception as _ob_err:
                 _streak = self._orderbook_failure_streak.get(asset, 0) + 1
                 self._orderbook_failure_streak[asset] = _streak
@@ -2174,6 +2253,14 @@ class MarketDataPipeline:
             # as LITERAL-key assignments, not a **splat — a splat registers
             # as a dynamic write site in the P174 orphan scanner, whose
             # dynamic_site_count is deliberately not re-baselineable.
+            # [P384] The raw Kraken L2 snapshot this call fetched, for the
+            # integrity shield (`feed_rest_snapshot`, main.py P0 block).
+            # Published ONLY when a book was fetched this call — on the
+            # stale/fallback path the key is ABSENT, never an empty dict
+            # (P2: absence = not fetched; an empty dict would read as a
+            # fetched-but-empty book and fail the shield's own validation).
+            if orderbook_snapshot_payload is not None:
+                _ret["orderbook_snapshot"] = orderbook_snapshot_payload
             if _bid_quoted > 0 and _ask_quoted > 0:
                 _ret["bid"] = _bid_quoted
                 _ret["ask"] = _ask_quoted

@@ -179,6 +179,13 @@ class TestMergeStalenessBound:
         daily = self._daily(pd, ext_cols, ["2026-01-01", "2026-01-02"])
         monkeypatch.setattr(rbp_mod, "_load_coinglass_daily",
                             lambda a: daily)
+        # [P384] the 4h trailing-24h liq path (when the real archive exists)
+        # OVERWRITES liq_imbalance from a different source; this test pins
+        # the DAILY merge/tolerance, so hold the 4h loader to its
+        # "no file" shape (the P382 1d fallback).
+        monkeypatch.setattr(rbp_mod, "_load_coinglass_liq_4h",
+                            lambda a: pd.DataFrame(
+                                columns=["timestamp", "liq_imbalance"]))
         monkeypatch.setattr(
             rbp_mod, "_load_futures_daily",
             lambda a: pd.DataFrame(
@@ -213,6 +220,13 @@ class TestMergeStalenessBound:
         daily = self._daily(pd, ext_cols, days)
         monkeypatch.setattr(rbp_mod, "_load_coinglass_daily",
                             lambda a: daily)
+        # [P384] the 4h trailing-24h liq path (when the real archive exists)
+        # OVERWRITES liq_imbalance from a different source; this test pins
+        # the DAILY merge/tolerance, so hold the 4h loader to its
+        # "no file" shape (the P382 1d fallback).
+        monkeypatch.setattr(rbp_mod, "_load_coinglass_liq_4h",
+                            lambda a: pd.DataFrame(
+                                columns=["timestamp", "liq_imbalance"]))
         monkeypatch.setattr(
             rbp_mod, "_load_futures_daily",
             lambda a: pd.DataFrame(

@@ -2561,7 +2561,13 @@ class HMATSv36Engine:
         # is BELOW 0.5, the writer at main.py:7424 caught a predict failure
         # and the drl_direction we just read is from a previous tick. Force
         # confidence to 0 so the fusion-entry gate (>0.05) excludes DRL.
-        _drl_dq = float(agent_signals.get("drl_data_quality", 1.0))
+        # [P384] ABSENT reads as 0.0 (fail CLOSED), not 1.0: main.py writes
+        # this key on BOTH branches of the DRL block (1.0 fresh / 0.0 failed),
+        # so absence means the block did not run this tick — "not measured"
+        # must not read as "fresh" (P170's rule, applied to the sibling key
+        # it left at 1.0). Behaviour-neutral on the live path today (DRL is
+        # SHADOW and `drl_direction` is 0.0 when the block is skipped).
+        _drl_dq = float(agent_signals.get("drl_data_quality", 0.0))
         if _drl_dq < 0.5:
             logger.warning(
                 f"[P126] DRL excluded from fusion: data_quality={_drl_dq:.2f} "
@@ -2659,7 +2665,12 @@ class HMATSv36Engine:
         # two_stage_data_quality=0.0 when strategic_check produced no
         # consensus this tick. Without this guard, the stale prior_direction
         # from a previous tick would feed into fusion as if fresh.
-        two_stage_dq = float(agent_signals.get("two_stage_data_quality", 1.0))
+        # [P384] ABSENT reads as 0.0 (fail CLOSED) — main.py writes the key
+        # on both branches (1.0 consensus / 0.0 none); an absent key means
+        # the strategic block did not run, and a prior from a tick that did
+        # not happen is not fresh (P170/P2). Neutral today: the direction
+        # default is 0.0 -> confidence 0.0 -> already excluded.
+        two_stage_dq = float(agent_signals.get("two_stage_data_quality", 0.0))
         if two_stage_dq < 0.5:
             two_stage_confidence = 0.0  # excludes from fusion (gate is >0)
 

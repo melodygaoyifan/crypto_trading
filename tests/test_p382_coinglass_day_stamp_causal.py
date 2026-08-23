@@ -11,6 +11,13 @@ carried day D's realised liquidation imbalance and OI change — up to 24h of
 same-day look-ahead (leaked liq_imbalance: IC +0.38 vs 16h fwd return,
 decaying by bar-of-day h0 +0.74 -> h20 +0.02; causal −0.06..−0.09).
 
+[P384] The 1d-shifted liq_imbalance is now the FALLBACK path: when the 4h
+liquidation archive exists, merge_external_data replaces the column with the
+causal trailing-24h series (see tests/test_p384_liq_4h_alignment.py). The
+fixtures here write NO 4h archive, so every pin below exercises — and must
+keep holding for — the 1d fallback; `TestP384Precedence` pins that the 4h
+series wins when present while funding/oi stay byte-identical.
+
 These tests pin the fix BEHAVIOURALLY (by calling the rebuild's own merge
 function and its pure derivation seam), never by grepping for `.shift(1)`:
 
@@ -324,3 +331,42 @@ class TestPremiseOnTheRealArchive:
         jo = pd.concat([s1o.rename("d1"), last20.rename("l20")], axis=1).dropna()
         frac_exact = float((jo["d1"] == jo["l20"]).mean())
         assert frac_exact > 0.95, (asset, frac_exact)
+
+
+class TestP384Precedence:
+    """[P384] With a 4h liquidation archive present, the merged liq_imbalance
+    is the trailing-24h series, NOT the 1d-shifted one — and the 1d-shifted
+    fallback (every pin above) is untouched: funding/oi are byte-identical
+    across the two paths."""
+
+    def _archive_4h(self):
+        rng = np.random.default_rng(3)
+        ts = pd.date_range("2026-01-01", periods=N_DAYS * 6, freq="4h", tz="UTC")
+        long_l = rng.uniform(1e5, 5e6, len(ts))
+        short_l = rng.uniform(1e5, 5e6, len(ts))
+        return pd.DataFrame({"timestamp": ts, "long_liq_usd": long_l,
+                             "short_liq_usd": short_l, "total_liq_usd": long_l + short_l,
+                             "liq_imbalance": (long_l - short_l) / (long_l + short_l)})
+
+    def test_4h_archive_takes_precedence_and_funding_oi_are_byte_identical(
+            self, rp, monkeypatch, tmp_path):
+        funding, oi, liq = _synthetic_sources()
+        fallback = _merge(rp, monkeypatch, tmp_path / "fb", funding, oi, liq)
+        cg, fu = _write_sources(tmp_path / "p384", funding, oi, liq)
+        arch = self._archive_4h()
+        arch.to_parquet(cg / "BTC_liquidation_4h.parquet", index=False)
+        monkeypatch.setattr(rp, "COINGLASS_DIR", cg)
+        monkeypatch.setattr(rp, "FUTURES_DIR", fu)
+        with_4h = rp.merge_external_data(_bars_4h(), "BTC")
+        # funding / oi / futures: byte-identical in both paths
+        for c in ("funding_rate_zscore", "oi_change_5d", "taker_ratio_zscore",
+                  "tradecount_zscore", "taker_vol_momentum"):
+            assert with_4h[c].equals(fallback[c]), c
+        # liq: the 4h trailing series (bar t == row t), not day D-1's 1d value
+        series = rp._derive_liq_trailing_24h(arch)["liq_imbalance"].fillna(0.0).to_numpy()
+        assert np.allclose(with_4h["liq_imbalance"].to_numpy(), series, atol=1e-12)
+        assert not with_4h["liq_imbalance"].equals(fallback["liq_imbalance"])
+        # and the fallback is still exactly the P382 semantics (day D reads D-1)
+        fb_day = fallback[fallback["day"] == _daily_index()[D]]["liq_imbalance"].to_numpy()
+        assert np.allclose(fb_day, float(np.clip(liq.loc[D - 1, "liq_imbalance"], -1, 1)))
+

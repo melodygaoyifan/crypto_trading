@@ -1,0 +1,413 @@
+{
+  "entry": "P384",
+  "verdict": "HOLD_STANDS",
+  "blockers": [
+    "design: FLATTEN-HOLD -6.094pp <= 0",
+    "design: FLATTEN-HOLD -6.094pp does not beat random-mask p90 +5.060pp",
+    "pre_design: FLATTEN-HOLD +0.000pp <= 0",
+    "pre_design: FLATTEN-HOLD +0.000pp does not beat random-mask p90 +3.358pp"
+  ],
+  "verdict_rule": "FLATTEN EARNS iff, for the THREE-ASSET sleeve book summed: FLATTEN-HOLD net > 0 in the DESIGN era AND FLATTEN-HOLD net > 0 in the PRE-DESIGN era AND in BOTH eras it exceeds the 90th percentile of the turnover-matched random-mask control (200 seeds); otherwise HOLD STANDS. If the mask never fires the trigger is UNREACHABLE and HOLD/FLATTEN is moot.",
+  "aligned_bars": 12651,
+  "pnl_bars": 12650,
+  "aligned_span": [
+    "2020-11-12",
+    "2026-08-21"
+  ],
+  "era_dates": {
+    "pre_design": [
+      "2021-03-25",
+      "2022-03-27"
+    ],
+    "design": [
+      "2022-03-27",
+      "2025-01-07"
+    ],
+    "validation": [
+      "2025-01-07",
+      "2026-08-21"
+    ]
+  },
+  "fired_bars": 17,
+  "fire_rate_pct": 0.134,
+  "corr_ge_threshold_pct": 8.102,
+  "all_same_direction_pct": 21.919,
+  "episodes": 7,
+  "episode_length_mean": 2.429,
+  "episode_length_max": 5,
+  "fired_episodes": [
+    {
+      "start": "2023-02-07 00:00:00+00:00",
+      "end": "2023-02-07 00:00:00+00:00",
+      "length": 1,
+      "corr20_max": 0.927
+    },
+    {
+      "start": "2023-02-07 16:00:00+00:00",
+      "end": "2023-02-07 16:00:00+00:00",
+      "length": 1,
+      "corr20_max": 0.9212
+    },
+    {
+      "start": "2023-02-09 00:00:00+00:00",
+      "end": "2023-02-09 12:00:00+00:00",
+      "length": 4,
+      "corr20_max": 0.9315
+    },
+    {
+      "start": "2023-02-17 16:00:00+00:00",
+      "end": "2023-02-17 16:00:00+00:00",
+      "length": 1,
+      "corr20_max": 0.9316
+    },
+    {
+      "start": "2023-02-18 00:00:00+00:00",
+      "end": "2023-02-18 00:00:00+00:00",
+      "length": 1,
+      "corr20_max": 0.9337
+    },
+    {
+      "start": "2023-02-18 12:00:00+00:00",
+      "end": "2023-02-19 00:00:00+00:00",
+      "length": 4,
+      "corr20_max": 0.9302
+    },
+    {
+      "start": "2024-11-06 00:00:00+00:00",
+      "end": "2024-11-06 16:00:00+00:00",
+      "length": 5,
+      "corr20_max": 0.9576
+    }
+  ],
+  "premise": {
+    "fired_bar_sleeve_net_bps": 8.84,
+    "fired_bar_sleeve_net_negative": false,
+    "per_asset_fired_bar_net_bps": {
+      "BTC": -1.78,
+      "ETH": 13.01,
+      "SOL": -2.4
+    },
+    "per_asset_fired_bar_net_negative": {
+      "BTC": true,
+      "ETH": false,
+      "SOL": true
+    },
+    "all_fired_bars_are_all_long": true
+  },
+  "sleeve": {
+    "hold_net_pct": 746.681,
+    "flatten_minus_hold_pct": -6.094,
+    "fired_bar_book_net_bps": 8.84,
+    "unfired_bar_book_net_bps": 5.9,
+    "by_era": {
+      "pre_design": {
+        "bars": 2200,
+        "fired_bars": 0,
+        "fire_rate_pct": 0.0,
+        "episodes": 0,
+        "hold_net_pct": 159.238,
+        "flatten_minus_hold_pct": 0.0,
+        "flatten_minus_hold_ci90_pct": [
+          0.0,
+          0.0
+        ],
+        "fired_bar_book_net_bps": null,
+        "unfired_bar_book_net_bps": 7.24
+      },
+      "design": {
+        "bars": 6100,
+        "fired_bars": 17,
+        "fire_rate_pct": 0.279,
+        "episodes": 7,
+        "hold_net_pct": 226.444,
+        "flatten_minus_hold_pct": -6.094,
+        "flatten_minus_hold_ci90_pct": [
+          -24.24,
+          7.69
+        ],
+        "fired_bar_book_net_bps": 8.84,
+        "unfired_bar_book_net_bps": 3.7
+      },
+      "validation": {
+        "bars": 3550,
+        "fired_bars": 0,
+        "fire_rate_pct": 0.0,
+        "episodes": 0,
+        "hold_net_pct": 8.667,
+        "flatten_minus_hold_pct": 0.0,
+        "flatten_minus_hold_ci90_pct": [
+          0.0,
+          0.0
+        ],
+        "fired_bar_book_net_bps": null,
+        "unfired_bar_book_net_bps": 0.24
+      }
+    },
+    "flatten_minus_hold_ci90_pct": [
+      -25.096,
+      8.569
+    ]
+  },
+  "per_asset": {
+    "BTC": {
+      "hold_net_pct": 171.632,
+      "flatten_net_pct": 170.412,
+      "flatten_minus_hold_pct": -1.22,
+      "extra_cost_pct": 1.522,
+      "fired_bar_book_net_bps": -1.78,
+      "fired_bar_book_gross_bps": -1.28,
+      "unfired_bar_book_net_bps": 1.36,
+      "unfired_bar_book_gross_bps": 2.45,
+      "fired_bars_held_long": 17,
+      "fired_bars_held_short": 0,
+      "by_era": {
+        "pre_design": {
+          "bars": 2200,
+          "fired_bars": 0,
+          "fire_rate_pct": 0.0,
+          "hold_net_pct": -22.721,
+          "flatten_minus_hold_pct": 0.0,
+          "flatten_minus_hold_ci90_pct": [
+            0.0,
+            0.0
+          ],
+          "fired_bar_book_net_bps": null,
+          "fired_bar_book_gross_bps": null,
+          "unfired_bar_book_net_bps": -1.03
+        },
+        "design": {
+          "bars": 6100,
+          "fired_bars": 17,
+          "fire_rate_pct": 0.279,
+          "hold_net_pct": 90.437,
+          "flatten_minus_hold_pct": -1.22,
+          "flatten_minus_hold_ci90_pct": [
+            -5.544,
+            1.876
+          ],
+          "fired_bar_book_net_bps": -1.78,
+          "fired_bar_book_gross_bps": -1.28,
+          "unfired_bar_book_net_bps": 1.49
+        },
+        "validation": {
+          "bars": 3550,
+          "fired_bars": 0,
+          "fire_rate_pct": 0.0,
+          "hold_net_pct": 2.902,
+          "flatten_minus_hold_pct": 0.0,
+          "flatten_minus_hold_ci90_pct": [
+            0.0,
+            0.0
+          ],
+          "fired_bar_book_net_bps": null,
+          "fired_bar_book_gross_bps": null,
+          "unfired_bar_book_net_bps": 0.08
+        }
+      },
+      "flatten_minus_hold_ci90_pct": [
+        -5.154,
+        2.12
+      ]
+    },
+    "ETH": {
+      "hold_net_pct": 176.612,
+      "flatten_net_pct": 172.156,
+      "flatten_minus_hold_pct": -4.456,
+      "extra_cost_pct": 2.071,
+      "fired_bar_book_net_bps": 13.01,
+      "fired_bar_book_gross_bps": 14.53,
+      "unfired_bar_book_net_bps": 1.38,
+      "unfired_bar_book_gross_bps": 2.16,
+      "fired_bars_held_long": 17,
+      "fired_bars_held_short": 0,
+      "by_era": {
+        "pre_design": {
+          "bars": 2200,
+          "fired_bars": 0,
+          "fire_rate_pct": 0.0,
+          "hold_net_pct": 43.547,
+          "flatten_minus_hold_pct": 0.0,
+          "flatten_minus_hold_ci90_pct": [
+            0.0,
+            0.0
+          ],
+          "fired_bar_book_net_bps": null,
+          "fired_bar_book_gross_bps": null,
+          "unfired_bar_book_net_bps": 1.98
+        },
+        "design": {
+          "bars": 6100,
+          "fired_bars": 17,
+          "fire_rate_pct": 0.279,
+          "hold_net_pct": 22.461,
+          "flatten_minus_hold_pct": -4.456,
+          "flatten_minus_hold_ci90_pct": [
+            -15.784,
+            2.172
+          ],
+          "fired_bar_book_net_bps": 13.01,
+          "fired_bar_book_gross_bps": 14.53,
+          "unfired_bar_book_net_bps": 0.33
+        },
+        "validation": {
+          "bars": 3550,
+          "fired_bars": 0,
+          "fire_rate_pct": 0.0,
+          "hold_net_pct": 14.336,
+          "flatten_minus_hold_pct": 0.0,
+          "flatten_minus_hold_ci90_pct": [
+            0.0,
+            0.0
+          ],
+          "fired_bar_book_net_bps": null,
+          "fired_bar_book_gross_bps": null,
+          "unfired_bar_book_net_bps": 0.4
+        }
+      },
+      "flatten_minus_hold_ci90_pct": [
+        -15.305,
+        2.463
+      ]
+    },
+    "SOL": {
+      "hold_net_pct": 398.437,
+      "flatten_net_pct": 398.019,
+      "flatten_minus_hold_pct": -0.418,
+      "extra_cost_pct": 0.33,
+      "fired_bar_book_net_bps": -2.4,
+      "fired_bar_book_gross_bps": 1.03,
+      "unfired_bar_book_net_bps": 3.16,
+      "unfired_bar_book_gross_bps": 3.9,
+      "fired_bars_held_long": 17,
+      "fired_bars_held_short": 0,
+      "by_era": {
+        "pre_design": {
+          "bars": 2200,
+          "fired_bars": 0,
+          "fire_rate_pct": 0.0,
+          "hold_net_pct": 138.411,
+          "flatten_minus_hold_pct": 0.0,
+          "flatten_minus_hold_ci90_pct": [
+            0.0,
+            0.0
+          ],
+          "fired_bar_book_net_bps": null,
+          "fired_bar_book_gross_bps": null,
+          "unfired_bar_book_net_bps": 6.29
+        },
+        "design": {
+          "bars": 6100,
+          "fired_bars": 17,
+          "fire_rate_pct": 0.279,
+          "hold_net_pct": 113.546,
+          "flatten_minus_hold_pct": -0.418,
+          "flatten_minus_hold_ci90_pct": [
+            -5.539,
+            5.057
+          ],
+          "fired_bar_book_net_bps": -2.4,
+          "fired_bar_book_gross_bps": 1.03,
+          "unfired_bar_book_net_bps": 1.87
+        },
+        "validation": {
+          "bars": 3550,
+          "fired_bars": 0,
+          "fire_rate_pct": 0.0,
+          "hold_net_pct": -8.57,
+          "flatten_minus_hold_pct": 0.0,
+          "flatten_minus_hold_ci90_pct": [
+            0.0,
+            0.0
+          ],
+          "fired_bar_book_net_bps": null,
+          "fired_bar_book_gross_bps": null,
+          "unfired_bar_book_net_bps": -0.24
+        }
+      },
+      "flatten_minus_hold_ci90_pct": [
+        -5.852,
+        5.43
+      ]
+    }
+  },
+  "control": {
+    "seeds": 200,
+    "overall": {
+      "mean_pct": -3.507,
+      "p10_pct": -15.187,
+      "p50_pct": -2.604,
+      "p90_pct": 7.817,
+      "observed_percentile": 34.5
+    },
+    "by_era": {
+      "pre_design": {
+        "mean_pct": -1.124,
+        "p10_pct": -6.499,
+        "p50_pct": 0.0,
+        "p90_pct": 3.358,
+        "observed_percentile": 33.0
+      },
+      "design": {
+        "mean_pct": -1.455,
+        "p10_pct": -8.583,
+        "p50_pct": -1.17,
+        "p90_pct": 5.06,
+        "observed_percentile": 16.0
+      },
+      "validation": {
+        "mean_pct": -0.336,
+        "p10_pct": -2.945,
+        "p50_pct": 0.0,
+        "p90_pct": 2.313,
+        "observed_percentile": 42.0
+      }
+    },
+    "per_asset_p90_pct": {
+      "BTC": 3.335,
+      "ETH": 2.961,
+      "SOL": 4.718
+    }
+  },
+  "provenance": {
+    "git_rev": "ae72d9a",
+    "run_utc": "2026-08-23T09:26:13Z",
+    "data_file_mtimes": {
+      "training\\training_data\\drl_training\\BTC_4H_ohlcv.parquet": "2026-08-22T13:53:42Z",
+      "training\\training_data\\coinglass_history\\BTC_funding_1d.parquet": "2026-08-08T05:16:36Z",
+      "training\\training_data\\drl_training\\ETH_4H_ohlcv.parquet": "2026-08-22T13:53:55Z",
+      "training\\training_data\\coinglass_history\\ETH_funding_1d.parquet": "2026-08-08T05:17:37Z",
+      "training\\training_data\\drl_training\\SOL_4H_ohlcv.parquet": "2026-08-22T13:54:08Z",
+      "training\\training_data\\coinglass_history\\SOL_funding_1d.parquet": "2026-08-08T05:18:39Z"
+    },
+    "corr_window": 20,
+    "corr_threshold": 0.92,
+    "direction_min": 0.2,
+    "corr_fallbacks": {
+      "BTC/ETH": 0.85,
+      "BTC/SOL": 0.8,
+      "ETH/SOL": 0.8
+    },
+    "bootstrap": {
+      "block": 90,
+      "n": 2000,
+      "seed": 7
+    },
+    "control_seeds": 200,
+    "eras_positional_bands": {
+      "pre_design": [
+        800,
+        3000
+      ],
+      "design": [
+        3000,
+        9100
+      ],
+      "validation": [
+        9100,
+        null
+      ]
+    },
+    "direction_source": "regimebook target via funding_legs_lab.build_positions (= _last_quant_directions under regimebook_mode enforce)",
+    "cost_model": "funding_legs_lab.pnl (honest CDE per-leg cost, carry every bar)"
+  }
+}
