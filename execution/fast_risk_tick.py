@@ -123,7 +123,8 @@ class FastRiskTick:
         # [P367] velocity trigger: price at the PREVIOUS evaluation, so a
         # move can be measured between ticks instead of against a 4H-old
         # anchor. Shadow counters accrue the evidence for arming it.
-        self._last_eval_price: Dict[str, float] = {}
+        # [P382] (price, ts) tuples; a pre-P382 bare float is read as stale
+        self._last_eval_price: Dict[str, Any] = {}
         self._shadow_drift_fires: Dict[str, int] = {}
         self._shadow_velocity_fires: Dict[str, int] = {}
         self._shadow_evals: Dict[str, int] = {}

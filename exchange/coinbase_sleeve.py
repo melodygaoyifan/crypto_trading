@@ -32,7 +32,7 @@ import os
 import re
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 from exchange.symbol_mapping import from_venue_symbol, to_venue_symbol
 
@@ -1818,11 +1818,15 @@ class CoinbaseSleeve:
     # and the disagreement is logged). Closes the up-to-4h windows P207/P265
     # left: an oversized stop on a reduced position, an unprotected entry.
     STOP_FOLLOWUP_MAX_SEC = 600.0
+    # annotation only — instances built via object.__new__ (tests, operator
+    # scripts) may lack it, so every reader goes through getattr (P85)
+    _stop_followup: Dict[str, Tuple[float, float]]
 
     def _request_stop_followup(self, asset: str, intended: float) -> None:
-        m = getattr(self, "_stop_followup", None)
+        m: Optional[Dict[str, Tuple[float, float]]] = getattr(self, "_stop_followup", None)
         if m is None:
-            m = self._stop_followup = {}
+            m = {}
+            self._stop_followup = m
         # keep the FIRST request's clock; re-stamp only the intent
         _prev = m.get(asset)
         m[asset] = (float(intended),
@@ -1838,14 +1842,14 @@ class CoinbaseSleeve:
             pass
 
     def stop_followup_pending(self) -> Dict[str, float]:
-        m = getattr(self, "_stop_followup", None) or {}
+        m: Dict[str, Tuple[float, float]] = getattr(self, "_stop_followup", None) or {}
         return {a: v[0] for a, v in m.items()}
 
     async def followup_protective_stop(self, asset: str) -> Optional[Dict[str, Any]]:
         """Re-reconcile a pending stop. Returns None when nothing is pending
         for `asset`, else the ensure_protective_stop result (or a PENDING /
         SKIPPED_STALE marker). Never raises."""
-        m = getattr(self, "_stop_followup", None) or {}
+        m: Dict[str, Tuple[float, float]] = getattr(self, "_stop_followup", None) or {}
         if asset not in m:
             return None
         intended, since = m[asset]
