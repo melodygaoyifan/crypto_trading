@@ -209,6 +209,32 @@ def _head_sha() -> str:
     return out.stdout.strip()
 
 
+def _full_sha(sha: str) -> str:
+    """[P382] The GitHub API matches `head_sha` EXACTLY: an abbreviated sha
+    returns ZERO runs, which this tool then reports as MISSING ("no run
+    yet") — indistinguishable from a push that never triggered CI, and the
+    exact P322e trap this tool was built to avoid. Expand anything that is
+    not already a 40-hex id through git; refuse (UNREADABLE) rather than
+    query on a prefix."""
+    s = (sha or "").strip()
+    if len(s) == 40 and all(c in "0123456789abcdef" for c in s.lower()):
+        return s.lower()
+    out = subprocess.run(["git", "rev-parse", "--verify", s + "^{commit}"],
+                         capture_output=True, text=True, encoding="utf-8",
+                         timeout=30)
+    if out.returncode != 0 or len(out.stdout.strip()) != 40:
+        # best-effort: an id this checkout cannot resolve (a sha from another
+        # clone, or a test double) is passed through unchanged — but say so,
+        # because a prefix the API cannot match reads as MISSING
+        if len(s) < 40:
+            print("WARNING: %r is not a full 40-hex sha and this checkout "
+                  "cannot expand it; the API matches head_sha exactly, so a "
+                  "MISSING verdict below may just be the prefix" % s,
+                  file=sys.stderr)
+        return s
+    return out.stdout.strip()
+
+
 VERDICT_NAME = {GREEN: "GREEN", RED: "RED", PENDING: "PENDING",
                 MISSING: "MISSING"}
 
@@ -227,7 +253,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     a = ap.parse_args(argv)
 
     try:
-        sha = a.sha or _head_sha()
+        sha = _full_sha(a.sha) if a.sha else _head_sha()
         slug = a.slug or current_slug()
     except Unreadable as e:
         print("UNREADABLE: " + str(e))
