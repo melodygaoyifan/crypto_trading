@@ -558,6 +558,17 @@ class KrakenIntegrityShield:
             return self.orderbooks[symbol].get_snapshot()
         return None
     
+    def is_fed(self) -> bool:
+        """[P383] True only once at least one orderbook manager has processed
+        an update. `is_healthy()` is True on a shield that has NEVER received
+        a message (no failures can accumulate on no data) and `get_orderbook`
+        returns an empty `validated=True` snapshot — so a P0 check built on
+        those two reads "healthy" forever with no feed (the P382 audit:
+        `handle_ws_message` has zero callers; the check was vacuous since it
+        was written). Callers must treat an unfed shield as INERT, not as a
+        pass."""
+        return any(m.metrics.total_updates > 0 for m in self.orderbooks.values())
+
     def get_metrics(self) -> Dict[str, Any]:
         """Get integrity metrics."""
         result = {

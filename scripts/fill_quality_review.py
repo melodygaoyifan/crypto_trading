@@ -112,7 +112,7 @@ def main() -> int:
               f"{str(_med(spreads)):>11s}  {note}")
     print()
     print("Per-liquidity medians (slippage bps/leg, + = paid worse than mid):")
-    for liq in ("maker", "taker_cross", "direct"):
+    for liq in ("maker", "taker_cross", "direct", "market_urgent"):  # [P383] urgent exits are MARKET
         lr = [float(r["realized_slippage_bps"]) for r in filled
               if r.get("liquidity") == liq]
         if lr:

@@ -9546,7 +9546,28 @@ class HMATSProductionRunner:
         # TASK 2: KRAKEN INTEGRITY SHIELD - Data Validation
         # If data is stale/corrupt, abort this tick entirely
         # -----------------------------------------------------------------
+        # [P383] The shield has NO FEED (`handle_ws_message` has no caller in
+        # the tree), so `get_orderbook` returns an empty validated=True
+        # snapshot and `is_healthy()` is True on zero data: this check has
+        # been VACUOUS since it was written (P382 audit). An unfed shield is
+        # INERT, not a pass — it is skipped (logged once) rather than allowed
+        # to report `healthy` in the diag and, should a feed ever start
+        # failing, to abort the tick on a Kraken data problem that the
+        # Coinbase book does not depend on. Re-arming it is a decision:
+        # wire a feed AND decide what a Kraken integrity verdict should mean
+        # for a Coinbase-routed asset (P141).
+        _shield_fed = False
         if self.integrity_shield:
+            try:
+                _shield_fed = bool(getattr(self.integrity_shield, "is_fed", lambda: True)())
+            except Exception:  # noqa: silent-swallow — an unreadable shield is treated as unfed (inert), logged below
+                _shield_fed = False
+            if not _shield_fed and not getattr(self, "_shield_unfed_logged", False):
+                self._shield_unfed_logged = True
+                logger.info("[INTEGRITY] Kraken integrity shield has received no "
+                            "orderbook updates — the P0 integrity check is INERT "
+                            "(no feed is wired), not healthy (P383)")
+        if self.integrity_shield and _shield_fed:
             try:
                 # TASK B (P1): Use canonical symbol mapping for Kraken pair format
                 canonical_pair = self._normalize_kraken_pair(asset)
@@ -9771,7 +9792,11 @@ class HMATSProductionRunner:
                 _btc_price = market_data.get('current_price', 0.0) if asset == 'BTC' else (
                     self._latest_prices.get('BTC', 0.0) if hasattr(self, '_latest_prices') else 0.0
                 )
-                _bull_signal = self._bull_detector.evaluate(
+                # [P383] one detector PER ASSET (P306 pattern). The singleton
+                # was fed this asset's inputs three times per tick in
+                # sequence, so its entry time reset ~3x/tick and CONFIRMED
+                # (5 continuous days) could never arm.
+                _bull_signal = self._bull_detector_for(asset).evaluate(
                     btc_price=_btc_price,
                     btc_ma50=_btc_ma50,
                     sol_btc_relative_strength=market_data.get('relative_alpha_vs_btc', 0.0),
@@ -10591,9 +10616,14 @@ class HMATSProductionRunner:
         # [WIRE-SHIELD] Kraken Integrity Shield -orderbook health check (SHADOW)
         if self._integrity_shield is not None and not p0_abort_tick:
             try:
-                _shield_healthy = self._integrity_shield.is_healthy()
+                # [P383] an unfed shield cannot be "healthy" — report None
+                # (unknown) rather than a constant True (no consumer reads
+                # this key; it is attribution-only, P382 audit)
+                _shield_healthy = (self._integrity_shield.is_healthy()
+                                   if getattr(self._integrity_shield, "is_fed",
+                                              lambda: True)() else None)
                 agent_signals['orderbook_integrity_healthy'] = _shield_healthy
-                if not _shield_healthy:
+                if _shield_healthy is False:
                     _shield_metrics = self._integrity_shield.get_metrics()
                     logger.warning(
                         f"[WIRE-SHIELD] Orderbook integrity UNHEALTHY: {_shield_metrics}"
@@ -12365,7 +12395,18 @@ class HMATSProductionRunner:
         _diag_record('sol_dominance', called=bool(_is_sol_asset), output={'active': sol_dom_result.get('active') if sol_dom_result else False, 'strength': sol_dom_result.get('abs_strength') if sol_dom_result else 0}, consumed=bool(sol_dom_result and sol_dom_result.get('active')), note='fallback only when onchain unavailable', applicable=_is_sol_asset, expect_consumption=bool(sol_dom_result and sol_dom_result.get('active')))
         _diag_record('macro_gci', called=bool(GLOBAL_CONTEXT_AVAILABLE and self.global_context), output={'leverage_cap': agent_signals.get('macro_leverage_cap', 'N/A'), 'risk_appetite': agent_signals.get('macro_risk_appetite', 'N/A'), 'regime': agent_signals.get('macro_regime', 'N/A'), 'short_opp': agent_signals.get('macro_short_opportunity', 'N/A'), 'vix_urg': agent_signals.get('macro_vix_urgency', 'N/A')}, consumed=bool(agent_signals.get('macro_leverage_cap') is not None))
         _diag_record('strategic_coord', called=bool(strategic_check), output={'two_stage_dir': agent_signals.get('two_stage_direction', 'N/A'), 'two_stage_conf': agent_signals.get('two_stage_confidence', 'N/A'), 'portfolio_rec_exp': portfolio_recommended_exposure}, consumed=bool(strategic_check))
-        _diag_record('integrity_shield', called=bool(self.integrity_shield), output={'healthy': not p0_abort_tick or 'INTEGRITY' not in p0_abort_reason, 'validated_mid': market_data.get('validated_mid_price', 'N/A')}, consumed=bool(self.integrity_shield))
+        # [P383] `healthy` was a CONSTANT True on an unfed shield; the diag now
+        # says whether the check ran at all (fed) and is only `consumed` when it did
+        _diag_record('integrity_shield', called=bool(self.integrity_shield),
+                     output={'fed': bool(self.integrity_shield) and bool(
+                                 getattr(self.integrity_shield, "is_fed", lambda: True)()),
+                             'healthy': (not p0_abort_tick or 'INTEGRITY' not in p0_abort_reason)
+                                        if (self.integrity_shield and getattr(
+                                            self.integrity_shield, "is_fed", lambda: True)())
+                                        else None,
+                             'validated_mid': market_data.get('validated_mid_price', 'N/A')},
+                     consumed=bool(self.integrity_shield) and bool(
+                         getattr(self.integrity_shield, "is_fed", lambda: True)()))
         _diag_record('regime_navigator', called=bool(regime_tensor), output={'regime': regime_tensor.market_regime.name if regime_tensor else 'N/A', 'confidence': regime_tensor.regime_confidence if regime_tensor else 'N/A', 'squeeze': agent_signals.get('p0_squeeze_risk', 0)}, consumed=bool(regime_tensor))
         _diag_record('short_bias', called=bool(short_bias_signal), output={'direction': agent_signals.get('short_bias_direction', 'N/A'), 'confidence': agent_signals.get('short_bias_confidence', 'N/A'), 'veto_active': short_bias_signal.veto_active if short_bias_signal else False}, consumed=bool(self.short_bias_agent), note='ACTIVE' if self.short_bias_agent else 'DISABLED')
         _diag_record('funding_rate_agent', called=bool(self.funding_rate_agent), output={'rate': agent_signals.get('funding_rate', 'N/A'), 'carry_dir': agent_signals.get('funding_carry_direction', 'N/A'), 'dir': agent_signals.get('funding_direction', 'N/A')}, consumed=bool(agent_signals.get('funding_direction') and abs(agent_signals.get('funding_direction', 0)) > 0.01), expect_consumption=bool(agent_signals.get('funding_direction') and abs(agent_signals.get('funding_direction', 0)) > 0.01))
@@ -13346,6 +13387,25 @@ class HMATSProductionRunner:
             market_data["sleeve_position_contracts"] = 0
         market_data["alpha_gate_hold_ratio"] = float(
             getattr(self.config, "alpha_gate_hold_ratio", 0.0) or 0.0)
+
+        # [P383] CORRELATION_COLLAPSE all-three-same-direction conjunct input.
+        # Current-reading stash (P155-L5: written unconditionally at the
+        # quant-signal site and overridden by the armed seats), so absence
+        # means "not yet produced", never "flat". The checker refuses to
+        # fire on an absent/short map (P2); on the first tick of a process
+        # the map holds only the assets already processed, which reads as
+        # `directions_incomplete` (one WARNING) and does not fire.
+        try:
+            market_data["cross_asset_directions"] = {
+                _a: float(_d or 0.0)
+                for _a, _d in (getattr(self, "_last_quant_directions", {}) or {}).items()
+                if _a in ("BTC", "ETH", "SOL")
+            }
+        except Exception as _p383_err:
+            logger.warning(f"[P383] cross_asset_directions stash failed for {asset}: "
+                           f"{type(_p383_err).__name__}: {_p383_err} — conjunct "
+                           f"absent this tick")
+            market_data.pop("cross_asset_directions", None)
 
         # [P232] RegimeICFusion SHADOW wiring. The module (built for the P143
         # alpha/beta fix, walk-forward-validated as a NON-win for enforce and
@@ -19403,10 +19463,11 @@ class HMATSProductionRunner:
                 # that binds the sleeve, blocking naked shorts) needs 5
                 # CONTINUOUS days of 2+ conditions and could never arm across
                 # the deploy cadence. RAM-only-control class (P148/P150/P209).
-                "bull_transition_state": (
-                    self._bull_detector.to_dict()
-                    if getattr(self, "_bull_detector", None) else {}
-                ),
+                # [P383] PER-ASSET map {asset_or_"": to_dict()} via the module
+                # registry (falls back to the single instance's to_dict if the
+                # registry helper is unavailable); the restore side accepts both
+                # shapes.
+                "bull_transition_state": self._bull_transition_states_payload(),
                 # [P232] RegimeICFusion shadow state — the per-(agent,regime)
                 # rolling-IC windows are the promotion-path evidence; losing
                 # them on every deploy restarts the clock (P150 class).
@@ -20660,6 +20721,27 @@ class HMATSProductionRunner:
         except Exception as exc:
             logger.debug(f"[STEP15] Status export failed: {exc}")
 
+    # [P383] BullTransitionDetector, one per asset (P306 pattern)
+    def _bull_detector_for(self, asset: str):
+        """Per-asset detector from the module registry; falls back to the
+        single shared instance if the registry helper is unavailable (a
+        pre-P383 module), so the call site can never AttributeError."""
+        try:
+            from risk.bull_transition_detector import get_bull_transition_detector
+            return get_bull_transition_detector(asset=asset)
+        except TypeError:  # noqa: silent-swallow — pre-P383 accessor takes no arguments; fall back to the shared instance
+            return getattr(self, "_bull_detector", None)
+        except Exception:  # noqa: silent-swallow — fall back to the shared instance; the evaluate call site logs its own failures
+            return getattr(self, "_bull_detector", None)
+
+    def _bull_transition_states_payload(self):
+        try:
+            from risk.bull_transition_detector import all_bull_transition_states
+            return all_bull_transition_states()
+        except Exception:  # noqa: silent-swallow — pre-P383 module: persist the single instance as before
+            _bd = getattr(self, "_bull_detector", None)
+            return _bd.to_dict() if _bd else {}
+
     def _export_dashboard_state(self, round_count: int, tick_count: int, asset_data: dict):
         """Export current system state as JSON for the Streamlit dashboard."""
         try:
@@ -20679,12 +20761,64 @@ class HMATSProductionRunner:
             self._dashboard_asset_snapshot = merged_asset_data
 
             active_positions = self._normalize_runtime_position_state(prune=True)
-            equity = self.config.initial_capital  # FIX3: was hardcoded $100K
+            # [P383] The export's `equity` is now COMBINED (Kraken + Coinbase
+            # sleeve), the same denomination as `peak_equity` (P351). Before
+            # this it was `account_sync.get_equity()` — KRAKEN-ONLY, ~$0.40
+            # since the June flatten — beside a combined peak of ~$10.9k, so
+            # api/server's /pnl/summary reported ~99.99% drawdown and
+            # /positions/current counted 0 while the sleeve held positions
+            # (P382 audit). Parts are exported separately with validity so a
+            # consumer can never mistake a partial book for the whole
+            # (P261/P265g). An unreadable sleeve half falls back to the last
+            # known COMBINED value, never the Kraken-only figure.
+            _kr_equity = None
+            _kr_equity_valid = False
             if hasattr(self, 'account_sync') and self.account_sync:
                 try:
-                    equity = self.account_sync.get_equity()
-                except Exception:
-                    pass
+                    _kr_equity = float(self.account_sync.get_equity())
+                    _kr_equity_valid = True
+                except Exception:  # noqa: silent-swallow — diagnostics export; the Kraken half reads as absent (null) + equity_valid False, never fabricated
+                    _kr_equity = None
+            _sl_equity = None
+            _sl_equity_valid = False
+            _sl_positions = []
+            _sl_reconcile_ok = None
+            try:
+                _sl_obj = getattr(self, "_coinbase_sleeve", None)
+                if _sl_obj is not None:
+                    _sl_reconcile_ok = bool(getattr(_sl_obj, "_reconcile_ok", False))
+                    _se = _sl_obj.sleeve_equity_usd()
+                    if _se is not None and float(_se) > 0:
+                        _sl_equity = float(_se)
+                        _age = getattr(_sl_obj, "sleeve_equity_age_sec", None)
+                        _age_v = _age() if callable(_age) else None
+                        _sl_equity_valid = (_age_v is None) or (float(_age_v) <= 8 * 3600)
+                    for _pa, _pp in (getattr(_sl_obj, "_last_positions", {}) or {}).items():
+                        try:
+                            _sl_positions.append({
+                                "asset": _pa, "venue": "coinbase",
+                                "signed_contracts": float(_pp.get("signed_contracts", 0.0) or 0.0),
+                                "entry_vwap": _pp.get("entry_vwap"),
+                                "current_price": _pp.get("current_price"),
+                            })
+                        except Exception:  # noqa: silent-swallow — one malformed row must not blank the export; diagnostics only
+                            continue
+            except Exception:  # noqa: silent-swallow — diagnostics export; the sleeve half reads as absent (null), never fabricated
+                _sl_equity = None
+            _held_combined = getattr(self, "_p0_last_combined_equity", None)
+            if _kr_equity is not None and _sl_equity is not None:
+                equity = _kr_equity + _sl_equity
+                _equity_basis = "combined"
+            elif _held_combined is not None:
+                equity = float(_held_combined)
+                _equity_basis = "combined"        # last known combined (P261)
+            elif _kr_equity is not None:
+                equity = _kr_equity
+                _equity_basis = "kraken_only"     # first-ever boot, no combined yet
+            else:
+                equity = self.config.initial_capital  # FIX3: was hardcoded $100K
+                _equity_basis = "notional_fallback"
+            _equity_valid = bool(_kr_equity_valid and _sl_equity_valid)
             cumulative_pnl = 0.0
             if self.account_sync and self.account_sync.dry_run:
                 cumulative_pnl = float(self.account_sync._dry_run_pnl or 0.0)
@@ -20722,6 +20856,14 @@ class HMATSProductionRunner:
                 "round": round_count,
                 "tick_count": tick_count,
                 "equity": equity,
+                # [P383] parts + validity, so api/server can refuse to compute
+                # a drawdown from a mixed-denomination pair
+                "kraken_equity": _kr_equity,
+                "sleeve_equity": _sl_equity,
+                "equity_valid": _equity_valid,
+                "equity_basis": _equity_basis,
+                "sleeve_positions": _sl_positions,
+                "sleeve_reconcile_ok": _sl_reconcile_ok,
                 "cumulative_pnl": cumulative_pnl,
                 "peak_equity": getattr(self, "_peak_equity", equity),
                 # [FIX 2026-04-22] was hardcoded "PAPER"; now reflects actual runtime mode.
@@ -21151,11 +21293,20 @@ class HMATSProductionRunner:
             bt_data = data.get("bull_transition_state", {})
             if bt_data and getattr(self, "_bull_detector", None):
                 try:
-                    self._bull_detector.from_dict(bt_data)
-                    logger.info(
-                        f"[P227b] Restored bull transition state: "
-                        f"{bt_data.get('state', '?')}"
-                    )
+                    # [P383] per-asset registry restore (accepts the pre-P383
+                    # flat shape too — restores it into the shared instance)
+                    try:
+                        from risk.bull_transition_detector import (
+                            restore_bull_transition_states)
+                        _n_bt = restore_bull_transition_states(bt_data)
+                        logger.info(f"[P383] Restored bull transition state for "
+                                    f"{_n_bt} detector(s)")
+                    except ImportError:
+                        self._bull_detector.from_dict(bt_data)
+                        logger.info(
+                            f"[P227b] Restored bull transition state: "
+                            f"{bt_data.get('state', '?')}"
+                        )
                 except Exception as e:
                     logger.warning(f"[P227b] Bull transition restore failed: {e}")
 

@@ -352,7 +352,17 @@ class TestBullTransitionPersistence:
         assert '"bull_transition_state"' in MAIN
 
     def test_restore_calls_from_dict(self):
-        assert "self._bull_detector.from_dict(bt_data)" in MAIN
+        # [P383] the restore now goes through the per-asset registry
+        # (`restore_bull_transition_states`), which accepts the per-asset map
+        # AND the legacy flat shape; the legacy single-detector restore is
+        # exactly what re-created P306's cross-asset state leak.
+        i_reg = MAIN.find("restore_bull_transition_states(bt_data)")
+        i_leg = MAIN.find("self._bull_detector.from_dict(bt_data)")
+        assert i_reg > 0
+        # the legacy single-detector restore survives ONLY as the
+        # ImportError fallback, after the registry call
+        assert i_leg > i_reg
+        assert "except ImportError:" in MAIN[i_reg:i_leg]
 
     def test_restore_is_in_the_governor_section_not_positions_gated(self):
         """P211: run_live restores with restore_positions=False; the bull

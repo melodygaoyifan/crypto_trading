@@ -261,6 +261,14 @@ class CoinbaseAdapter(ExchangeAdapter):
         # an opposite-side order of the position size; reduce_only is not sent.
         try:
             if request.order_type.upper() == "MARKET":
+                # [P383] The URGENT exit path (CoinbaseSleeve.URGENT_ORDER_TYPE).
+                # Verified against coinbase-advanced-py 1.8.3: `market_order`
+                # builds `market_market_ioc={"base_size": ...}` with `side`
+                # passed through — IOC at the venue, fills or dies, never
+                # rests. `base_size` is the CONTRACT count computed above
+                # (P195: CDE base_size is contracts, not base units); no
+                # price field exists for this order type, and reduce_only is
+                # not sent (CDE rejects it) exactly as for the other branches.
                 resp = self._client.market_order(
                     client_order_id=coid, product_id=product_id, side=side,
                     base_size=size_str, leverage=lev,

@@ -630,7 +630,9 @@ classic 锁定 (+642), sharpe (+318), sortino (+166)
 ### 39c. Cancel-on-Disconnect — ✅ ACTIVE
 on_error/on_disconnect → cancel all + set latch → watchdog → on_recovered
 
-### 39d. Kraken Integrity Shield (CRC32) — ✅ ACTIVE
+### 39d. Kraken Integrity Shield (CRC32) — ⚠️ INERT (constructed, NO FEED — P382 audit / P383)
+
+> **[P383 correction]** The shield is instantiated but `handle_ws_message()` has no caller anywhere in the tree, so it never receives an orderbook update. `is_healthy()` is True on zero data and `get_orderbook()` returns an empty `validated=True` snapshot, so the P0 "[INTEGRITY]" tick-abort below was vacuous since it was written. Since P383 the check is skipped (logged once at INFO) while the shield is unfed, the diag reports `fed=False`, and `[INTEGRITY]` is HOLD-classified for the sleeve. Re-arming = wire a Kraken WS orderbook feed AND decide what a Kraken integrity verdict should mean for a Coinbase-routed asset (P141). The description below is the original design, kept for reference.
 CRC32 orderbook 校验 + WS Hot/REST Escape 双通道
 
 ### 39e. Startup Reconciler — ✅ ACTIVE

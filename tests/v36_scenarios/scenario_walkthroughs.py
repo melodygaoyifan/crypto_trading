@@ -167,7 +167,10 @@ def get_no_trade_scenarios() -> List[Scenario]:
         Scenario(
             name="NT004_CorrelationCollapse",
             type=ScenarioType.NO_TRADE_TRIGGER,
-            description="Correlation >= 0.92 should trigger NO_TRADE",
+            description="Correlation >= 0.92 AND all three assets aligned past "
+                        "+/-0.2 AND no validated edge should trigger NO_TRADE "
+                        "([P383]: corr alone no longer fires — the two "
+                        "conjuncts are now live in the checker)",
             input_data=ScenarioInput(
                 market_data={
                     "current_price": 150.0,
@@ -176,6 +179,9 @@ def get_no_trade_scenarios() -> List[Scenario]:
                     "dvol_zscore": 2.0,
                     "vpin": 0.5,
                     "correlation_btc_eth_sol": 0.94,  # >= 0.92 threshold
+                    # [P383] the two conjuncts the live checker now requires
+                    "cross_asset_directions": {"BTC": 0.6, "ETH": 0.5, "SOL": 0.7},
+                    "has_validated_edge": False,
                 }
             ),
             expected=ExpectedOutput(

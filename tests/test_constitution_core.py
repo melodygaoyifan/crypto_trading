@@ -262,12 +262,22 @@ class TestNoTradeCorrelationCollapse:
             for c in state.active_conditions
         )
 
+    # [P383] These two tests used to pin the corr-ALONE firing (a 0.92
+    # reading with no other input). That was the defect P382 measured
+    # (>= 0.92 on 7.8% of bars, fired live 2026-08-19): the live verdict
+    # now requires the two conjuncts P253d cited — all-three-same-direction
+    # AND no validated edge — so the fixtures supply an aligned direction map.
+    # The ">=" boundary and the trigger_scores contract are unchanged; the
+    # full truth table lives in tests/test_p383_correlation_collapse_conjuncts.py.
+    _ALIGNED = {"BTC": 0.6, "ETH": 0.5, "SOL": 0.7}
+
     def test_correlation_at_threshold_triggers(self, checker):
         # Threshold = 0.92, the trigger uses >= so 0.92 should trigger
         state = checker.compute_triggers(
             market_data={
                 "current_price": 100_000.0,
                 "correlation_btc_eth_sol": 0.92,
+                "cross_asset_directions": dict(self._ALIGNED),  # [P383]
             },
             signal_data={},
         )
@@ -281,6 +291,7 @@ class TestNoTradeCorrelationCollapse:
             market_data={
                 "current_price": 100_000.0,
                 "correlation_btc_eth_sol": 0.99,
+                "cross_asset_directions": dict(self._ALIGNED),  # [P383]
             },
             signal_data={},
         )

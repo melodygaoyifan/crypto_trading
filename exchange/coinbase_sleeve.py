@@ -88,6 +88,23 @@ class CoinbaseSleeve:
         assets: HMATS-canonical assets this sleeve covers.
     """
 
+    # [P383] The order type an URGENT exit (FORCE_FLAT kill switch, the
+    # FastRiskTick EXIT_ONLY/REDUCE_50 watchdog — every `urgent=True` caller)
+    # is sent as. ONE named decision, not a literal at the call site.
+    #
+    # WHY MARKET and not the 0.2%-through GTC LIMIT the non-urgent cross
+    # uses: an urgent exit fires in exactly the condition — a fast move —
+    # where a limit 0.2% through a stale mid can be LEFT RESTING UNFILLED,
+    # and execute_target has already SWEPT the protective stop by the time it
+    # places the cross (P197/P207 ordering). An emergency exit that can rest
+    # unfilled beside a swept stop is not an exit; the P382 stop follow-up
+    # bounds the stranded window but does not remove it. MARKET is IOC at
+    # the venue (market_market_ioc): it fills or it dies, it never rests.
+    # The fee difference (taker either way) is nil; what is bought is
+    # certainty of NOT holding through the move the watchdog fired on.
+    # Non-urgent behaviour is untouched: maker ladder, then the LIMIT cross.
+    URGENT_ORDER_TYPE = "MARKET"
+
     def __init__(self, adapter, assets=("BTC", "ETH", "SOL"),
                  max_sleeve_drawdown_pct: float = 0.15,
                  max_contracts_per_asset: int = 1,
@@ -2503,6 +2520,13 @@ class CoinbaseSleeve:
         short, 0 flat) via a single marketable order. Risk-gated by can_trade.
         This is the isolated Coinbase execution primitive the engine fork calls.
 
+        `urgent=True` (FORCE_FLAT, the FastRiskTick watchdog) skips the maker
+        ladder AND [P383] sends the cross as URGENT_ORDER_TYPE (MARKET, IOC)
+        instead of the 0.2%-through GTC limit — an emergency exit must never
+        be left resting unfilled beside a swept protective stop. Every
+        refusal (stale reconcile, unverifiable sweep, unknown contract size,
+        can_trade) applies to urgent and non-urgent alike.
+
         Returns a dict {status, ...}. fail-closed: never raises.
         """
         try:
@@ -2582,12 +2606,26 @@ class CoinbaseSleeve:
             # [P253] A failed/empty get_product yields mid=0.0, and a SELL
             # limit priced at ~0 is "sell at any price". _notional_usd guards
             # exactly this case; the ORDER path did not. No price -> no order.
-            if not (mid and math.isfinite(mid) and mid > 0):
+            # [P383] ...for a LIMIT. An URGENT exit is sent as MARKET (no
+            # limit price exists to be ~0), so an unreadable mid must NOT
+            # block the emergency exit — reconcile just succeeded, so the
+            # venue is up; what failed is one product read. The mid is still
+            # read here as the decision reference for the fill-quality
+            # ledger; when unusable the ledger records it ABSENT (P2), never
+            # a fabricated 0.0.
+            _mid_ok = bool(mid and math.isfinite(mid) and mid > 0)
+            if not _mid_ok and not urgent:
                 logger.error(f"[COINBASE_SLEEVE] execute_target {asset}: no "
                              f"usable price from venue (mid={mid!r}) — "
                              f"refusing to place a priceless order")
                 return {"status": "ERROR", "asset": asset,
                         "reason": f"no_price:mid={mid!r}"}
+            _fq_mid: Optional[float] = mid if _mid_ok else None
+            if not _mid_ok:
+                logger.warning(f"[COINBASE_SLEEVE] execute_target {asset}: "
+                               f"URGENT exit with no usable decision mid "
+                               f"(mid={mid!r}) — MARKET order proceeds; the "
+                               f"fill-quality row records mid=None")
             # [P290] ONE decision-time book read for the fill-quality ledger
             # (spread context). Fail-soft to None fields — never a fabricated
             # book, and never a second attempt: this is observation, not a
@@ -2686,10 +2724,24 @@ class CoinbaseSleeve:
                     if not (mid and math.isfinite(mid) and mid > 0):
                         return {"status": "ERROR", "asset": asset,
                                 "reason": f"no_price_post_maker:mid={mid!r}"}
+                    _fq_mid = mid
                 # _mk == "FALLBACK": fall through to the marketable cross
-            px = mid * (1.002 if side == "BUY" else 0.998)
-            req = OrderRequest(symbol=pid, side=side, size=base_size,
-                               order_type=order_type, price=px, post_only=False)
+            if urgent:
+                # [P383] URGENT -> MARKET (IOC at the venue): fills or dies,
+                # never rests. See URGENT_ORDER_TYPE for why a 0.2%-through
+                # GTC limit is the wrong order for an emergency exit. No
+                # price is sent — the adapter's MARKET branch takes base_size
+                # only (contracts = size / contract_size, P195).
+                req = OrderRequest(symbol=pid, side=side, size=base_size,
+                                   order_type=self.URGENT_ORDER_TYPE,
+                                   price=None, post_only=False)
+            else:
+                # non-urgent: byte-identical to pre-P383 — marketable GTC
+                # limit 0.2% through the mid (adapter rounds to tick)
+                px = mid * (1.002 if side == "BUY" else 0.998)
+                req = OrderRequest(symbol=pid, side=side, size=base_size,
+                                   order_type=order_type, price=px,
+                                   post_only=False)
             res = await self._adapter.place_order(req)
             self.reconcile_positions()
             # [P290] Realized-fill record for the cross/direct leg: ONE
@@ -2702,18 +2754,25 @@ class CoinbaseSleeve:
                     _fq_oid = str(res.order_id or "") or None
                     _fq_op = (await self._adapter.get_order(_fq_oid)
                               if _fq_oid else None)
+                    # [P383] urgent MARKET legs carry their own liquidity
+                    # class so the maker/taker review (P375) can separate
+                    # emergency exits from the non-urgent cross.
                     self._record_fill_quality(
                         asset=asset, order_id=_fq_oid, side=side,
                         contracts=n_contracts,
-                        liquidity="taker_cross" if _maker_ran else "direct",
-                        urgent=urgent, decision_mid=mid,
+                        liquidity=("market_urgent" if urgent
+                                   else "taker_cross" if _maker_ran
+                                   else "direct"),
+                        urgent=urgent, decision_mid=_fq_mid,
                         decision_bid=_fq_bid, decision_ask=_fq_ask,
                         order_payload=_fq_op)
                 except Exception as e:  # noqa: silent-swallow — logs; observation must never affect the order path (Iron Law 7)
                     logger.warning(f"[FILL-QUALITY] {asset}: cross-fill "
                                    f"record failed ({type(e).__name__})")
             logger.info(f"[COINBASE_SLEEVE] execute_target {asset} {side} "
-                        f"{n_contracts}ct -> success={res.success} "
+                        f"{n_contracts}ct {req.order_type}"
+                        f"{' URGENT' if urgent else ''} -> "
+                        f"success={res.success} "
                         f"now={self.signed_contracts(asset)}ct"
                         + (f" ({maker_note})" if maker_note else ""))
             return {"status": "OK" if res.success else "FAILED", "asset": asset,

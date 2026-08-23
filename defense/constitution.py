@@ -319,7 +319,21 @@ class NoTradeTriggerChecker:
     
     CORRELATION_COLLAPSE_THRESHOLD = 0.92
     CORRELATION_RECOVERY_THRESHOLD = 0.88
-    
+    # [P383] The two conjuncts P253d believed this trigger carried when it
+    # armed the real correlation measure — ported VERBATIM from the parallel
+    # implementation in signals/no_trade_triggers.py::_check_correlation_collapse
+    # (which is NOT on the live path, P287). There, `all_same` is
+    #   (btc > 0.2 and eth > 0.2 and sol > 0.2) or
+    #   (btc < -0.2 and eth < -0.2 and sol < -0.2)
+    # and the verdict is `corr > thr and not has_validated_edge and all_same`.
+    # The live threshold stays >= (FIX-C2). Direction map is read from
+    # market_data[CORRELATION_DIRECTIONS_KEY] = {"BTC": d, "ETH": d, "SOL": d}
+    # (main.py produces it from `_last_quant_directions` before decide()).
+    CORRELATION_ALIGNMENT_DIRECTION_MIN = 0.2
+    CORRELATION_ALIGNMENT_ASSETS = ("BTC", "ETH", "SOL")
+    CORRELATION_DIRECTIONS_KEY = "cross_asset_directions"
+    CORRELATION_VALIDATED_EDGE_KEY = "has_validated_edge"
+
     LIQUIDITY_CRITICAL_USD = 100_000
     LIQUIDITY_RECOVERY_USD = 500_000
     
@@ -343,7 +357,78 @@ class NoTradeTriggerChecker:
         self._price_history: Dict[str, List[Tuple[datetime, float]]] = {}  # per-asset
         # [P287] deliberately unused — see FEED_DISAGREEMENT_DURATION note.
         self._feed_disagreement_start: Optional[datetime] = None
-    
+        # [P383] one-shot-per-process latch, keyed by the REASON a
+        # CORRELATION_COLLAPSE conjunct input was unusable, so a missing
+        # producer makes the trigger VISIBLY inert (one WARNING) rather than
+        # silently so. Keyed per reason, not a single bool — a single latch
+        # would let the first reason consume the one shot (P193/P202).
+        self._corr_conjunct_warned: set = set()
+
+    def _correlation_conjuncts(
+        self, market_data: Dict, signal_data: Dict,
+    ) -> Tuple[Optional[bool], bool, Optional[str]]:
+        """[P383] Evaluate the two CORRELATION_COLLAPSE conjuncts.
+
+        Returns (all_same, has_validated_edge, unusable_reason):
+          * all_same — True iff every asset in CORRELATION_ALIGNMENT_ASSETS
+            carries a direction strictly beyond ±CORRELATION_ALIGNMENT_DIRECTION_MIN
+            and all share one sign; False when the map is complete and they
+            do not; **None when the map is ABSENT, not a mapping, short of
+            the three assets, or non-numeric** — absence is not evidence of
+            alignment (P2), and the caller must NOT fire on None.
+          * has_validated_edge — market_data[CORRELATION_VALIDATED_EDGE_KEY]
+            (signal_data fallback), coerced to bool; ABSENT reads False,
+            exactly as the parallel module's `signal_data.get(..., False)`.
+            Absence of an EXEMPTION is not a fabricated hazard, so it does
+            not disable the trigger — it only declines to exempt.
+          * unusable_reason — a short token naming why all_same is None,
+            or None when the map was usable.
+        """
+        key = self.CORRELATION_DIRECTIONS_KEY
+        dirs = market_data.get(key)
+        if dirs is None:
+            dirs = signal_data.get(key) if isinstance(signal_data, dict) else None
+
+        edge_raw = market_data.get(self.CORRELATION_VALIDATED_EDGE_KEY)
+        if edge_raw is None and isinstance(signal_data, dict):
+            edge_raw = signal_data.get(self.CORRELATION_VALIDATED_EDGE_KEY)
+        has_validated_edge = bool(edge_raw) if edge_raw is not None else False
+
+        if dirs is None:
+            return None, has_validated_edge, "directions_absent"
+        if not isinstance(dirs, dict):
+            return None, has_validated_edge, "directions_not_a_mapping"
+        vals: List[float] = []
+        for a in self.CORRELATION_ALIGNMENT_ASSETS:
+            v = dirs.get(a)
+            if v is None:
+                return None, has_validated_edge, "directions_incomplete"
+            try:
+                f = float(v)
+            except (TypeError, ValueError):  # noqa: silent-swallow — returns a REASON token; the caller logs it ONCE per process via _warn_corr_conjunct_once (a per-tick log here would be wallpaper, P202)
+                return None, has_validated_edge, "directions_non_numeric"
+            if f != f:  # NaN is not a direction
+                return None, has_validated_edge, "directions_non_numeric"
+            vals.append(f)
+        m = self.CORRELATION_ALIGNMENT_DIRECTION_MIN
+        all_same = all(v > m for v in vals) or all(v < -m for v in vals)
+        return all_same, has_validated_edge, None
+
+    def _warn_corr_conjunct_once(self, reason: str, correlation: float) -> None:
+        if reason in self._corr_conjunct_warned:
+            return
+        self._corr_conjunct_warned.add(reason)
+        logger.warning(
+            "[P383][CORRELATION_COLLAPSE] conjunct input unusable (%s): "
+            "market_data['%s'] must be {'BTC': d, 'ETH': d, 'SOL': d} "
+            "floats. While it is unusable the CORRELATION_COLLAPSE NO_TRADE "
+            "trigger is INERT (corr=%.2f, threshold=%.2f) — absence is not "
+            "evidence of all-three-same-direction (P2). Check the main.py "
+            "producer before decide(). Logged once per process per reason.",
+            reason, self.CORRELATION_DIRECTIONS_KEY, correlation,
+            self.CORRELATION_COLLAPSE_THRESHOLD,
+        )
+
     def compute_triggers(
         self,
         market_data: Dict,
@@ -447,13 +532,37 @@ class NoTradeTriggerChecker:
             else:
                 corr_score = 0.0  # Normal correlation — no danger
             trigger_scores['correlation_collapse'] = corr_score
+            # [P383] The NO_TRADE VERDICT requires ALL THREE conjuncts —
+            # corr >= 0.92 AND all-three-same-direction AND no validated
+            # edge — the semantics P253d cited when it armed the real
+            # correlation measure (ported from signals/no_trade_triggers.py,
+            # which is not on the live path; P382 measured the corr-alone
+            # form firing on 7.8% of bars / 17% last year and live on
+            # 2026-08-19). The continuous corr_score above is UNCHANGED —
+            # only the verdict gains the conjuncts. FAIL DIRECTION: an
+            # absent / short / non-numeric direction map means the trigger
+            # does NOT fire (absence is not evidence of alignment, P2) and
+            # says so once per process; an absent validated-edge flag is
+            # merely "no exemption claimed" (the parallel module's default).
+            # The conjuncts are evaluated whenever a correlation is present
+            # so a missing producer is reported on the FIRST tick, not the
+            # first >= 0.92 tick.
+            _all_same, _has_edge, _unusable = self._correlation_conjuncts(
+                market_data, signal_data)
+            if _unusable is not None:
+                self._warn_corr_conjunct_once(_unusable, correlation)
             if correlation >= self.CORRELATION_COLLAPSE_THRESHOLD:  # [FIX-C2] was > (inconsistent with score check at line 422)
-                active_conditions.append(NoTradeCondition(
-                    trigger_type=NoTradeTriggerType.CORRELATION_COLLAPSE,
-                    is_active=True,
-                    triggered_at=datetime.now(timezone.utc),
-                    details=f"Correlation {correlation:.2f} >= {self.CORRELATION_COLLAPSE_THRESHOLD}"
-                ))
+                if _all_same is True and not _has_edge:
+                    active_conditions.append(NoTradeCondition(
+                        trigger_type=NoTradeTriggerType.CORRELATION_COLLAPSE,
+                        is_active=True,
+                        triggered_at=datetime.now(timezone.utc),
+                        details=(f"Correlation {correlation:.2f} >= "
+                                 f"{self.CORRELATION_COLLAPSE_THRESHOLD}, "
+                                 f"all three assets same direction "
+                                 f"(|d| > {self.CORRELATION_ALIGNMENT_DIRECTION_MIN}), "
+                                 f"no validated edge")
+                    ))
         
         # === SIGNAL CONFLICT CHECK ===
         

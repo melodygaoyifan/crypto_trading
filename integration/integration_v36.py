@@ -196,6 +196,35 @@ from core.canonical_enums import (
 GATE_HYST_SHADOW_RATIO = 0.65
 
 
+def _deadlock_friction_bps(alpha_result, market_data) -> float:
+    """[P383] The friction the deadlock resolver / patience manager compare
+    the seat's ROUND-TRIP edge against.
+
+    They used to read `market_data["estimated_friction_bps"]` — ONE leg of
+    spread+impact, no exchange fee, Kraken-book spread (market_data_pipeline
+    ~:1648) — against an edge that, under the regimebook seat, is the
+    calibrated gross per ROUND TRIP (ETH 88 / SOL 222 bps). Two
+    implementations of "friction" ~5-10x apart (P172), inflating
+    edge/friction so a stuck position resolved FORCE_AGGRESSIVE (a no-op on
+    the sleeve) rather than ABORT. Now: the alpha gate's own
+    `friction_total_bps` (legs x per-leg fee+spread+latency + margin, P167)
+    when the gate ran this tick; else the pipeline's one-leg figure DOUBLED
+    (the round-trip form of the only number available), never the bare
+    15.0 fabrication.
+    """
+    try:
+        f = float(getattr(alpha_result, "friction_total_bps", 0.0) or 0.0)
+        if f > 0.0:
+            return f
+    except (TypeError, ValueError):
+        pass
+    try:
+        one_leg = float(market_data.get("estimated_friction_bps", 0.0) or 0.0)
+    except (TypeError, ValueError, AttributeError):
+        one_leg = 0.0
+    return 2.0 * one_leg if one_leg > 0.0 else 15.0
+
+
 def gate_hysteresis_decision(
     sleeve_position_contracts: int,
     hold_ratio: float,
@@ -1796,7 +1825,7 @@ class HMATSv36Engine:
         deadlock_result = self.patience_manager.check_deadlock(
             asset=asset,
             current_edge_bps=_edge_bps,
-            current_friction_bps=market_data.get("estimated_friction_bps", 15.0),
+            current_friction_bps=_deadlock_friction_bps(self._last_alpha_result, market_data),
         )
         
         # [PROD Patch 5] Tranche-aware deadlock resolution
@@ -1812,7 +1841,7 @@ class HMATSv36Engine:
             asset=asset,
             tranche_level=current_tranche,
             current_edge_bps=_edge_bps,  # [P170] resolved above, never fabricated
-            friction_bps=market_data.get("estimated_friction_bps", 15.0),
+            friction_bps=_deadlock_friction_bps(self._last_alpha_result, market_data),
             is_stuck=is_stuck,
             mode=self._current_mode.name,
         )
@@ -1953,7 +1982,7 @@ class HMATSv36Engine:
                     intended_action="ENTRY",
                     delay_reason="poor_timing",
                     timing_score=timing_score.total_score,
-                    estimated_friction_bps=market_data.get("estimated_friction_bps", 15.0),
+                    estimated_friction_bps=_deadlock_friction_bps(self._last_alpha_result, market_data),
                     signal_direction=intent.direction,
                     signal_edge_bps=_edge_bps,  # [P170] resolved above, never fabricated
                 )

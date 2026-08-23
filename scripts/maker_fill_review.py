@@ -181,7 +181,7 @@ def ledger_report(rows):
           f"| maker {len(maker)}"
           + (f" -> maker fill rate f = {f:.2f}" if f is not None else ""))
     print("  realized slippage bps by liquidity (mean/n; +=paid worse than mid):")
-    for k in ("maker", "taker_cross", "direct"):
+    for k in ("maker", "taker_cross", "direct", "market_urgent"):  # [P383] urgent exits are MARKET
         if slip.get(k):
             v = slip[k]
             print(f"    {k:12s} {sum(v)/len(v):+7.2f}  n={len(v)}")
