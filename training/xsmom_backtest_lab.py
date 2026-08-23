@@ -25,7 +25,10 @@ HONEST CAVEATS, stated before the result:
     correlated majors are not a cross-section" (P277).
   * Hourly closes; costs are the measured CDE round trip where known
     (BTC 27.7 / ETH 44.0 / SOL 41.0 bps) and an assumed 45bps for the 5
-    unmeasured alts (P167: an unmeasured cost is assumed expensive). Shorts on
+    unmeasured alts (P167: an unmeasured cost is assumed expensive), charged
+    HALF per leg (COST_RT/2 per unit |dpos|, [P382]; the P373 run charged the
+    full RT per leg — the pre-correction report is kept as
+    xsmom_backtest_p373_p382_precorrection.json). Shorts on
     alts are charged the same round trip; funding carry is NOT modelled here
     (it would only make the short legs worse, so the long-only verdict is the
     conservative one and is the one that decides).
@@ -52,6 +55,16 @@ LOOKBACK_BARS = 30 * 24          # 30-day trailing momentum, hourly
 REBAL_BARS = 24                  # rebalance daily
 
 
+def turnover_cost(dpos, assets) -> float:
+    """[P382] The ONE place this lab charges cost. `dpos` is |new - pos| per
+    asset (one unit = one LEG); COST_RT is a ROUND-TRIP cost, so a leg costs
+    COST_RT/2 — the repo convention (P166/P281, mechanism_lab.pnl_after_cost).
+    The P373 run charged the full RT per leg, a 2x overcharge on every
+    rebalance. Parity pinned by tests/test_p382_lab_cost_per_leg.py."""
+    legs = np.array([COST_RT[a] / 2.0 for a in assets])
+    return float(np.dot(np.asarray(dpos, float), legs))
+
+
 def load_panel(assets) -> pd.DataFrame:
     cols = {}
     for a in assets:
@@ -69,7 +82,7 @@ def backtest(panel: pd.DataFrame, assets, *, k: int, long_only: bool) -> dict:
     ret = np.vstack([np.zeros((1, m)), px[1:] / px[:-1] - 1.0])
     mom = np.full((n, m), np.nan)
     mom[LOOKBACK_BARS:] = px[LOOKBACK_BARS:] / px[:-LOOKBACK_BARS] - 1.0
-    costs = np.array([COST_RT[a] for a in assets])
+    assets = tuple(assets)
 
     pos = np.zeros(m)
     pnl = np.zeros(n)
@@ -83,7 +96,7 @@ def backtest(panel: pd.DataFrame, assets, *, k: int, long_only: bool) -> dict:
             if not long_only:
                 shorts = order[:k]
                 new[shorts] = -1.0 / k
-            pnl[i] -= float(np.dot(np.abs(new - pos), costs))
+            pnl[i] -= turnover_cost(np.abs(new - pos), assets)   # [P382] half-RT per leg
             pos = new
     return _stats(pnl, ts)
 
@@ -114,7 +127,8 @@ def _stats(pnl: np.ndarray, ts: pd.Index) -> dict:
 
 
 def main() -> int:
-    results = {}
+    results = {"cost_convention": "COST_RT/2 per unit |dpos| (one leg) — P382; pre-correction "
+                                  "(full RT per leg) report kept as xsmom_backtest_p373_p382_precorrection.json"}
     # 8-asset signal test
     panel8 = load_panel(UNIVERSE)
     b8 = bnh(panel8, UNIVERSE)

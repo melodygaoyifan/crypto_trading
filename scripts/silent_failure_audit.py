@@ -34,6 +34,10 @@ LIVE_DIRS = [
     "agents", "analytics", "core", "data_mgmt", "defense", "drl",
     "execution", "infra", "integration", "liquidity", "market",
     "orchestration", "risk", "signals",
+    # [P382] exchange/ (100% of directional risk since Phase B), api/ and
+    # portfolio/ were never scanned — P366 recorded the blind spot. Adding
+    # them is COVERAGE, not regression (baseline bumped with attribution).
+    "exchange", "api", "portfolio",
     # configs/ scanned for ENABLE_* flag declarations (Pattern 3) and the
     # full repo (already-included LIVE_DIRS) for readers.
     "configs",

@@ -21,8 +21,11 @@ each asset and the equal-weight 3-asset portfolio.
 
 CONVENTIONS: 4H bars (live cadence) resampled from the 6y 60m archives; SMA over
 200 4H bars (~33d); causal (position at bar i from close/SMA at i-1); honest CDE
-round-trip cost charged on each position change (BTC 27.7 / ETH 44.0 / SOL 41.0
-bps, P315/P334); additive per-bar return sums, the repo lab convention.
+round-trip cost (BTC 27.7 / ETH 44.0 / SOL 41.0 bps, P315/P334) charged HALF per
+leg, i.e. COST_RT/2 per unit |dpos| ([P382] — the P377 run charged the full RT
+per leg, a 2x overcharge; numbers in the report are the corrected ones, the
+pre-correction report is kept as overlay_backtest_p377_p382_precorrection.json);
+additive per-bar return sums, the repo lab convention.
 """
 from __future__ import annotations
 import json
@@ -42,6 +45,17 @@ ERAS = {"2020-22": ("2020-01-01", "2023-01-01"),
         "2025-26": ("2025-01-01", "2027-01-01")}
 DD_CUT_MIN = 0.25       # overlay must cut maxDD by >= 25%
 RET_KEEP_MIN = 0.50     # while retaining >= 50% of hold's return
+
+
+def turnover_cost(turn, asset):
+    """[P382] The ONE place this lab charges cost. `turn` is |dpos| per bar
+    (one unit = one LEG); COST_RT is a ROUND-TRIP cost, so a leg costs
+    COST_RT/2 — the repo convention (P166/P281, mechanism_lab.pnl_after_cost,
+    strategy_threshold_audit_lab.book_pnl). The P377 run charged the full RT
+    per leg, a 2x overcharge on every overlay entry/exit (hold pays only its two
+    end legs, so the overcharge hit the overlay almost exclusively). Parity
+    with mechanism_lab is pinned by tests/test_p382_lab_cost_per_leg.py."""
+    return turn * (COST_RT[asset] / 2.0)
 
 
 def load_4h(asset):
@@ -85,7 +99,7 @@ def run_asset(asset):
     def pnl_of(pos):
         p = pos * ret
         turn = np.abs(np.diff(pos, prepend=pos[0]))
-        p = p - turn * COST_RT[asset]
+        p = p - turnover_cost(turn, asset)   # [P382] half-RT per leg, see turnover_cost
         return p
 
     hold_pnl = pnl_of(hold)
@@ -124,7 +138,10 @@ def run_asset(asset):
 
 
 def main():
-    res = {"assets": {}, "cost_rt": COST_RT, "bar": {"dd_cut_min": DD_CUT_MIN, "ret_keep_min": RET_KEEP_MIN}}
+    res = {"assets": {}, "cost_rt": COST_RT,
+           "cost_convention": "COST_RT/2 per unit |dpos| (one leg) — P382; pre-correction "
+                              "(full RT per leg) report kept as overlay_backtest_p377_p382_precorrection.json",
+           "bar": {"dd_cut_min": DD_CUT_MIN, "ret_keep_min": RET_KEEP_MIN}}
     per = {}
     for a in ASSETS:
         per[a] = run_asset(a)
@@ -155,6 +172,33 @@ def main():
                         "overlay": {k: v for k, v in os_.items() if not k.startswith("_")},
                         "dd_cut": dd_cut, "ret_keep": ret_keep,
                         "verdict": "VIABLE PRODUCT" if (dd_cut >= DD_CUT_MIN and ret_keep >= RET_KEEP_MIN) else "fails"}
+    # [P382] INFORMATIONAL era breakdown for the portfolio. The portfolio
+    # verdict above is the full-window bar exactly as P377 coded it (it never
+    # applied the per-asset era clause at the portfolio level); the era clause
+    # is a pre-committed rule and is NOT retro-fitted here after seeing the
+    # corrected number — it is reported beside the verdict so a reader can
+    # see both, and deciding whether the portfolio verdict should carry it is
+    # its own recorded decision, not a side effect of a cost fix.
+    pf_eras = {}
+    for name, (a, b) in ERAS.items():
+        hp, _ = _era_slice(hold_pf, idx, a, b)
+        op, _ = _era_slice(ovl_pf, idx, a, b)
+        if len(hp) < 200:
+            continue
+        h_eq = np.cumprod(1 + hp); h_dd = float(((np.maximum.accumulate(h_eq) - h_eq) / np.maximum.accumulate(h_eq)).max())
+        o_eq = np.cumprod(1 + op); o_dd = float(((np.maximum.accumulate(o_eq) - o_eq) / np.maximum.accumulate(o_eq)).max())
+        h_ret = float(hp.sum()); o_ret = float(op.sum())
+        dcut = (1 - o_dd / h_dd) if h_dd > 0 else 0.0
+        rkeep = (o_ret / h_ret) if h_ret > 0 else (1.0 if o_ret >= 0 else 0.0)
+        pf_eras[name] = {"hold_ret": round(h_ret * 100, 1), "ovl_ret": round(o_ret * 100, 1),
+                         "hold_dd": round(h_dd * 100, 1), "ovl_dd": round(o_dd * 100, 1),
+                         "dd_cut": round(dcut, 2), "ret_keep": round(rkeep, 2),
+                         "pass": bool(dcut >= DD_CUT_MIN and rkeep >= RET_KEEP_MIN)}
+    res["portfolio"]["eras_informational"] = pf_eras
+    res["portfolio"]["era_pass_informational"] = sum(1 for e in pf_eras.values() if e["pass"])
+    res["portfolio"]["verdict_rule"] = ("full-window dd_cut>=%.2f AND ret_keep>=%.2f (as coded P377; "
+                                        "era clause applied per asset, reported informationally here)"
+                                        % (DD_CUT_MIN, RET_KEEP_MIN))
     (REPO / "training" / "reports" / "overlay_backtest_p377.json").write_text(
         json.dumps(res, indent=2), encoding="utf-8")
 
@@ -181,6 +225,10 @@ def main():
     print("  overlay : ret %+8.1f%%  Sharpe %+.2f  maxDD %.1f%%   -> DD cut %.0f%%, ret kept %.0f%%   [%s]"
           % (p["overlay"]["total_pct"], p["overlay"]["sharpe"], p["overlay"]["maxdd_pct"],
              p["dd_cut"] * 100, p["ret_keep"] * 100, p["verdict"]))
+    for e, ev in p["eras_informational"].items():
+        print("    %-8s hold %+7.0f%% / dd %.0f%%  vs  overlay %+7.0f%% / dd %.0f%%  (cut %.0f%%, keep %.0f%%) %s  [informational]"
+              % (e, ev["hold_ret"], ev["hold_dd"], ev["ovl_ret"], ev["ovl_dd"],
+                 ev["dd_cut"] * 100, ev["ret_keep"] * 100, "OK" if ev["pass"] else "-"))
     print("\nreport -> training/reports/overlay_backtest_p377.json")
     return 0
 

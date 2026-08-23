@@ -1,10 +1,11 @@
 {
-  "total_count": 688,
-  "files_with_findings": 120,
+  "total_count": 704,
+  "files_with_findings": 123,
   "by_kind": {
     "debug": 316,
-    "no-log-early-exit": 149,
-    "pass": 223
+    "no-log-early-exit": 162,
+    "pass": 226
   },
-  "_p226_note": "Rose because the linter started SEEING main.py: it read encoding=\"utf-8\" while main.py carries a UTF-8 BOM, so ast.parse raised SyntaxError and the largest file in the repo was skipped. Not new defects \u2014 newly VISIBLE ones. Same as P171; counts now identical with and without the BOM. main.py contributes the 272 findings."
+  "_p226_note": "Rose because the linter started SEEING main.py: it read encoding=\"utf-8\" while main.py carries a UTF-8 BOM, so ast.parse raised SyntaxError and the largest file in the repo was skipped. Not new defects \u2014 newly VISIBLE ones. Same as P171; counts now identical with and without the BOM. main.py contributes the 272 findings.",
+  "_p382_note": "688 -> 704 (+16), COVERAGE not regression: P382 added exchange/, api/ and portfolio/ to LIVE_DIRS (P366 recorded that exchange/ \u2014 100% of the directional risk since the 2026-06-13 Phase B cutover \u2014 had never been scanned). Attribution, measured by scanning ONLY the new dirs: exchange/coinbase_sleeve.py 10 no-log-early-exit + 1 pass; exchange/coinbase_adapter.py 1 no-log-early-exit + 2 pass; api/server.py 2 no-log-early-exit; portfolio/ 0. by_kind: no-log-early-exit 149 -> 162 (+13), pass 223 -> 226 (+3), debug unchanged; files_with_findings 120 -> 123 (+3). Hand-bumped, never --update (P171). NOTE: the scanning working tree also carried a parallel session's UNCOMMITTED edits reading -7 debug / -1 pass vs this baseline; decreases do not fail the gate and were deliberately NOT baked in."
 }

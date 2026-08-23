@@ -135,6 +135,12 @@ if git fetch -q origin main 2>/dev/null && [ -n "${DEPLOY_SHA}" ]; then
     fi
 fi
 
+# [P382] Under `set -euo pipefail` a non-zero scan exits the script BEFORE
+# `SCAN_RC=$?` is read, so the "Local scanner gate FAILED" message below never
+# printed — the deploy refused (correctly) with no explanation. Same pattern
+# as the CI-status block above: disarm -e only around the command whose rc we
+# branch on. Behaviour is unchanged (a failing scan still refuses).
+set +e
 if [ -n "${SCAN_TREE}" ]; then
     echo "  Running local env-independent scanners (--skip-mypy) on ${DEPLOY_SHA:0:9}..."
     ( cd "${SCAN_TREE}" && "${PY_BIN}" -X utf8 tools/ci_check_invariants.py --skip-mypy )
@@ -147,6 +153,7 @@ else
     "${PY_BIN}" -X utf8 tools/ci_check_invariants.py --skip-mypy
     SCAN_RC=$?
 fi
+set -e
 
 if [ ${SCAN_RC} -ne 0 ]; then
     echo "ERROR: Local scanner gate FAILED (types are adjudicated by the"

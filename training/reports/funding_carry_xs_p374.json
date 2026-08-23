@@ -12,44 +12,45 @@
   },
   "variants": {
     "bottom2_long_only": {
-      "total_pct": -329.2,
-      "sharpe": -0.7,
-      "maxdd_pct": 99.9,
+      "total_pct": 102.0,
+      "sharpe": 0.22,
+      "maxdd_pct": 97.1,
       "eras": {
-        "2020-22": 43.5,
-        "2023-24": -46.0,
-        "2025-26": -326.7
+        "2020-22": 196.8,
+        "2023-24": 87.2,
+        "2025-26": -182.0
       }
     },
     "bottom2_dollar_neutral": {
-      "total_pct": -1433.0,
-      "sharpe": -3.46,
-      "maxdd_pct": 100.0,
+      "total_pct": -515.4,
+      "sharpe": -1.25,
+      "maxdd_pct": 99.9,
       "eras": {
-        "2020-22": -368.6,
-        "2023-24": -433.0,
-        "2025-26": -631.3
+        "2020-22": -34.8,
+        "2023-24": -147.7,
+        "2025-26": -332.9
       }
     },
     "bottom3_long_only": {
-      "total_pct": -176.1,
-      "sharpe": -0.4,
-      "maxdd_pct": 99.6,
+      "total_pct": 179.7,
+      "sharpe": 0.4,
+      "maxdd_pct": 92.7,
       "eras": {
-        "2020-22": 75.4,
-        "2023-24": 8.5,
-        "2025-26": -260.1
+        "2020-22": 202.8,
+        "2023-24": 119.1,
+        "2025-26": -142.2
       }
     },
     "bottom3_dollar_neutral": {
-      "total_pct": -1207.3,
-      "sharpe": -3.64,
-      "maxdd_pct": 100.0,
+      "total_pct": -467.2,
+      "sharpe": -1.41,
+      "maxdd_pct": 99.7,
       "eras": {
-        "2020-22": -324.5,
-        "2023-24": -394.0,
-        "2025-26": -488.9
+        "2020-22": -56.3,
+        "2023-24": -162.7,
+        "2025-26": -248.2
       }
     }
-  }
+  },
+  "cost_convention": "COST_RT/2 per unit |dpos| (one leg) \u2014 P382; pre-correction (full RT per leg) report kept as funding_carry_xs_p374_p382_precorrection.json"
 }

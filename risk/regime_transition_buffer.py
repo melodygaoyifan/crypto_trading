@@ -508,7 +508,11 @@ def check_regime_transition(
     try:
         from configs.sota_flags import get_sota_flags
         flags = get_sota_flags()
-        if not getattr(flags, 'ENABLE_REGIME_TRANSITION_BUFFER', True):
+        # [P382] Default must equal the declared value in configs/sota_flags.py
+        # (False). A True default here meant a missing attribute (rename,
+        # partial import) would ENABLE a buffer the flags file declares off —
+        # the P338 defect, at the site P338 did not reach.
+        if not getattr(flags, 'ENABLE_REGIME_TRANSITION_BUFFER', False):
             return True, "Buffer disabled", {}
     except ImportError:
         pass

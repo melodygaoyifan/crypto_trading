@@ -1807,6 +1807,88 @@ class CoinbaseSleeve:
         pct = self._protective_stop_pct
         return float(anchor) * ((1.0 - pct) if cur > 0 else (1.0 + pct))
 
+    # [P382] The stop FOLLOW-UP: the protective stop is reconciled on the 4H
+    # tick, but the venue's position read lags a fill by up to a few seconds
+    # (observed: every taker-cross leg on 2026-08-22 read back the PRE-trade
+    # size). Whenever ensure_protective_stop sees intent and snapshot
+    # disagree (entry from flat, same-sign resize, flip, flatten) it records
+    # the intent here, and the 30s loop calls followup_protective_stop until
+    # the venue agrees with the intent (then the stop is sized from truth)
+    # or a bounded wait expires (then the stop is sized from the snapshot
+    # and the disagreement is logged). Closes the up-to-4h windows P207/P265
+    # left: an oversized stop on a reduced position, an unprotected entry.
+    STOP_FOLLOWUP_MAX_SEC = 600.0
+
+    def _request_stop_followup(self, asset: str, intended: float) -> None:
+        m = getattr(self, "_stop_followup", None)
+        if m is None:
+            m = self._stop_followup = {}
+        # keep the FIRST request's clock; re-stamp only the intent
+        _prev = m.get(asset)
+        m[asset] = (float(intended),
+                    _prev[1] if _prev else time.time())
+
+    def request_stop_followup(self, asset: str, intended: float) -> None:
+        """Public entry for callers that just changed a position (the 30s
+        watchdog's exit/reduce): ask the next loop pass to re-check the stop
+        against the venue rather than waiting for the 4H tick."""
+        try:
+            self._request_stop_followup(asset, intended)
+        except Exception:  # noqa: silent-swallow — bookkeeping for a re-check; must never raise into an order path
+            pass
+
+    def stop_followup_pending(self) -> Dict[str, float]:
+        m = getattr(self, "_stop_followup", None) or {}
+        return {a: v[0] for a, v in m.items()}
+
+    async def followup_protective_stop(self, asset: str) -> Optional[Dict[str, Any]]:
+        """Re-reconcile a pending stop. Returns None when nothing is pending
+        for `asset`, else the ensure_protective_stop result (or a PENDING /
+        SKIPPED_STALE marker). Never raises."""
+        m = getattr(self, "_stop_followup", None) or {}
+        if asset not in m:
+            return None
+        intended, since = m[asset]
+        try:
+            if not self._stop_enabled_for(asset):
+                m.pop(asset, None)
+                return {"status": "DISABLED", "asset": asset}
+            self.reconcile_positions()
+            if not getattr(self, "_reconcile_ok", False):
+                return {"status": "SKIPPED_STALE", "asset": asset}
+            cur = self.signed_contracts(asset)
+            agrees = ((abs(cur) <= 1e-9 and abs(intended) <= 1e-9) or
+                      (abs(cur) > 1e-9 and abs(intended) > 1e-9
+                       and (cur > 0) == (intended > 0)
+                       and abs(abs(cur) - abs(intended)) < 1e-9))
+            waited = time.time() - since
+            if agrees:
+                res = await self.ensure_protective_stop(
+                    asset, intended_target=intended)
+                if res.get("status") in ("OK_EXISTS", "PLACED", "FLAT_NONE",
+                                         "FLAT_CANCELLED", "DISABLED"):
+                    m.pop(asset, None)
+                    logger.info(f"[COINBASE_STOP] {asset}: follow-up settled "
+                                f"({res.get('status')}) {waited:.0f}s after "
+                                f"the order (P382)")
+                return res
+            if waited > self.STOP_FOLLOWUP_MAX_SEC:
+                # the venue never showed the intended position — size the stop
+                # to what the venue DOES show and stop waiting; say so, because
+                # intent and reality disagreeing for this long is a finding
+                m.pop(asset, None)
+                logger.warning(
+                    f"[COINBASE_STOP] {asset}: follow-up gave up after "
+                    f"{waited:.0f}s — venue shows {cur:+.0f}ct vs intended "
+                    f"{intended:+.0f}ct; sizing the stop to the VENUE (P382)")
+                return await self.ensure_protective_stop(asset)
+            return {"status": "PENDING", "asset": asset, "snapshot": cur,
+                    "intended": intended, "waited_sec": waited}
+        except Exception as e:
+            logger.warning(f"[COINBASE_STOP] {asset}: follow-up failed "
+                           f"({type(e).__name__}: {e}); retrying next pass")
+            return {"status": "ERROR", "asset": asset, "reason": str(e)}
+
     async def ensure_protective_stop(self, asset: str,
                                      intended_target: Optional[float] = None
                                      ) -> Dict[str, Any]:
@@ -1844,6 +1926,10 @@ class CoinbaseSleeve:
             # flatten placed a moment ago may not have filled yet, so `cur` can
             # still show the position we just closed.
             if intended_target is not None and abs(float(intended_target)) < 1e-9:
+                if abs(cur) > 1e-9:
+                    # [P382] the flatten may STRAND; re-check within the
+                    # 30s loop rather than at the next 4H tick
+                    self._request_stop_followup(asset, 0.0)
                 cur = 0.0
             # [P265] FLIP IN FLIGHT: a nonzero intent whose SIGN disagrees with
             # a nonzero snapshot means the flip order was accepted but has not
@@ -1865,8 +1951,75 @@ class CoinbaseSleeve:
                     f"{cur:+.0f}ct vs intended {float(intended_target):+.0f}ct)"
                     f" — placing NO stop this tick; either side could double "
                     f"the final position (P265)")
+                self._request_stop_followup(asset, float(intended_target))
                 return {"status": "FLIP_IN_TRANSITION", "asset": asset,
                         "snapshot": cur, "intended": float(intended_target)}
+            # [P382] THE THIRD CASE, observed live 2026-08-22 and the one the
+            # two carve-outs above cannot see: a nonzero intent with the SAME
+            # sign as a nonzero snapshot but a DIFFERENT size. The venue's
+            # position read lags the fill on the taker-cross leg (4 of 4 cross
+            # legs that day logged `now=` equal to the PRE-trade size), so a
+            # reduce 5->3 ran this method against a snapshot of 5 and placed a
+            # 5ct SELL stop on a 3ct long; a touch would have closed the long
+            # and OPENED a 2ct short (no reduce_only on CDE, no can_trade gate
+            # on a venue-triggered fill). Venue-verified the same afternoon:
+            # SOL 1ct long guarded by a 2ct stop. An oversized stop opens the
+            # opposite side; an undersized one under-protects until the
+            # follow-up below re-sizes it seconds later. So size by the SMALLER
+            # of snapshot and intent (never the larger), keep the snapshot's
+            # sign, and ask the 30s loop to re-reconcile.
+            elif (intended_target is not None
+                    and abs(cur) > 1e-9
+                    and abs(float(intended_target)) > 1e-9
+                    and abs(abs(float(intended_target)) - abs(cur)) >= 1e-9):
+                _sized = math.copysign(
+                    min(abs(cur), abs(float(intended_target))), cur)
+                logger.info(
+                    f"[COINBASE_STOP] {asset}: snapshot {cur:+.0f}ct vs "
+                    f"intended {float(intended_target):+.0f}ct — sizing the "
+                    f"stop to the SMALLER ({_sized:+.0f}ct; an oversized stop "
+                    f"opens the opposite side, P382) and re-checking within "
+                    f"the 30s loop")
+                self._request_stop_followup(asset, float(intended_target))
+                cur = _sized
+            # [P382] ENTRY FROM FLAT whose fill the snapshot has not seen yet:
+            # the old path fell into the FLAT branch below, returned an
+            # unlogged FLAT_NONE, and left the new position with NO venue stop
+            # until the next 4H tick. One fresh reconcile first (the cross leg
+            # places then reconciles immediately, so the cached snapshot is
+            # the stale one); if the venue still shows flat, place NOTHING
+            # (a stop sized to the intent is the P207 orphan if the entry
+            # strands) and let the follow-up re-check within ~34s.
+            elif (intended_target is not None
+                    and abs(float(intended_target)) > 1e-9
+                    and abs(cur) <= 1e-9):
+                try:
+                    self.reconcile_positions()
+                    if getattr(self, "_reconcile_ok", False):
+                        cur = self.signed_contracts(asset)
+                except Exception:  # noqa: silent-swallow — a failed re-read keeps the cached snapshot; the follow-up below retries
+                    pass
+                if abs(cur) <= 1e-9:
+                    self._request_stop_followup(asset, float(intended_target))
+                    logger.warning(
+                        f"[COINBASE_STOP] {asset}: entry in transition "
+                        f"(intended {float(intended_target):+.0f}ct, venue "
+                        f"still shows flat) — placing NO stop this pass; the "
+                        f"30s loop re-checks and places it once the fill is "
+                        f"visible (P382)")
+                    return {"status": "ENTRY_IN_TRANSITION", "asset": asset,
+                            "intended": float(intended_target)}
+                elif (float(intended_target) > 0) != (cur > 0):
+                    # the fresh read shows the OPPOSITE side — that is the
+                    # flip window above, by a different route
+                    self._request_stop_followup(asset, float(intended_target))
+                    return {"status": "FLIP_IN_TRANSITION", "asset": asset,
+                            "snapshot": cur,
+                            "intended": float(intended_target)}
+                elif abs(abs(float(intended_target)) - abs(cur)) >= 1e-9:
+                    self._request_stop_followup(asset, float(intended_target))
+                    cur = math.copysign(
+                        min(abs(cur), abs(float(intended_target))), cur)
             # [P287] Listing failure is handled HERE, explicitly, not by the
             # generic ERROR catch below: with the adapter's old swallow this
             # read `resting=[]` on a venue error and fell into clear-and-place

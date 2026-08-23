@@ -45,8 +45,37 @@ MANIFEST = _TRAINING_DIR.parent / "configs" / "feature_manifest.json"
 GAP = 12            # purge bars between train end and prediction start
 REFIT = 500         # walk-forward refit cadence (bars)
 MIN_TRAIN = 3000    # first fit needs this much history
-COST_RT_BPS = 6.0   # coinbase taker 3bps x 2 legs
+COST_RT_BPS = 6.0   # [P382] FLOOR only — the refuted 3bps/side percentage
+                    # model (P315/P334). The bar actually used per asset is
+                    # cost_rt_bps_for(asset): 2 x the measured CDE taker leg
+                    # (BTC ~19.7 / ETH ~29.0 / SOL ~29.0 bps RT), so this probe
+                    # prices the same venue the other two P166 gates do
+                    # (compute_shadow_ic / agent_ic_review, P382). `--cost-rt-bps`
+                    # overrides for a what-if (e.g. a percentage venue).
 HORIZONS = (1, 4)   # 4h, 16h forward
+COST_RT_OVERRIDE = None  # set by --cost-rt-bps
+
+
+def cost_rt_bps_for(asset: str):
+    """[P382] Round-trip cost bar for `asset`: max(floor, 2 x CDE taker leg).
+    Returns (bps, source). Falls back to the floor — LOUDLY — if the
+    calibration cannot be read, so a probe run on the refuted model says so."""
+    if COST_RT_OVERRIDE is not None:
+        return float(COST_RT_OVERRIDE), "override"
+    try:
+        import sys as _sys
+        _root = str(_TRAINING_DIR.parent)
+        if _root not in _sys.path:
+            _sys.path.insert(0, _root)
+        from core.cde_fees import CDE_FEE_BPS
+        row = CDE_FEE_BPS.get(asset) or {}
+        taker = float(row.get("taker"))
+        return max(COST_RT_BPS, 2.0 * taker), "cde_fees"
+    except Exception as e:
+        print(f"WARNING: core.cde_fees unreadable ({type(e).__name__}: {e}) — "
+              f"pricing {asset} at the REFUTED {COST_RT_BPS}bps RT floor",
+              file=__import__("sys").stderr)
+        return COST_RT_BPS, "fallback_refuted_model"
 
 GROUPS = {
     "ALL": None,  # resolved from manifest (+ any fv2_* extras present)
@@ -129,15 +158,18 @@ def probe_asset(asset: str) -> dict:
     feats += [c for c in df.columns if c.startswith("fv2_")]
     close = df["close"].to_numpy(dtype=float)
 
-    out = {"asset": asset, "n_bars": len(df), "results": []}
-    print(f"\n===== {asset}: {len(df)} bars, {len(feats)} features =====")
+    cost_bps, cost_src = cost_rt_bps_for(asset)   # [P382] measured CDE bar
+    out = {"asset": asset, "n_bars": len(df), "results": [],
+           "cost_rt_bps": cost_bps, "cost_source": cost_src}
+    print(f"\n===== {asset}: {len(df)} bars, {len(feats)} features "
+          f"(cost bar {cost_bps:.1f}bps RT, {cost_src}) =====")
     for h in HORIZONS:
         fwd = np.full(len(close), np.nan)
         fwd[:-h] = close[h:] / close[:-h] - 1.0
         sigma_bps = float(np.nanstd(fwd)) * 1e4
-        req = required_ic(COST_RT_BPS, sigma_bps)
+        req = required_ic(cost_bps, sigma_bps)
         print(f"\n-- horizon {h * 4}h: sigma_fwd={sigma_bps:.0f}bps, "
-              f"required IC >= {req:.3f} (for {COST_RT_BPS}bps RT) --")
+              f"required IC >= {req:.3f} (for {cost_bps:.1f}bps RT) --")
         print(f"{'group':<10}{'model':<7}{'n_oos':>7}{'IC':>8}{'t':>7}"
               f"{'hit':>7}{'bps/trade@q75':>15}{'verdict':>10}")
         for gname, sel in GROUPS.items():
@@ -158,7 +190,7 @@ def probe_asset(asset: str) -> dict:
                 # threshold rule: trade only when |pred| >= its own 75th pct
                 thr = np.nanquantile(np.abs(preds[m]), 0.75) if n_oos else np.nan
                 tm = m & (np.abs(preds) >= thr)
-                bps = (float(np.nanmean(np.sign(preds[tm]) * y[tm])) * 1e4 - COST_RT_BPS) \
+                bps = (float(np.nanmean(np.sign(preds[tm]) * y[tm])) * 1e4 - cost_bps) \
                     if tm.sum() > 30 else float("nan")
                 clears = (not math.isnan(ic)) and ic >= req and abs(t) >= 2.0 and bps > 0
                 verdict = "CLEARS" if clears else ""
@@ -189,8 +221,16 @@ def main() -> int:
                          "after it. Use ~7200 to keep ALL predictions past the "
                          "split-aware GMM fit boundary (regime features fully "
                          "out-of-fit) — the falsification setting.")
+    ap.add_argument("--cost-rt-bps", type=float, default=None,
+                    help="[P382] Override the round-trip cost bar (default: "
+                         "per-asset 2 x measured CDE taker leg from "
+                         "core.cde_fees, floored at 6.0). Use for what-ifs "
+                         "(e.g. a percentage-fee venue), never for the "
+                         "promotion read.")
     args = ap.parse_args()
     MIN_TRAIN = args.min_train
+    global COST_RT_OVERRIDE
+    COST_RT_OVERRIDE = args.cost_rt_bps
     assets = [args.asset] if args.asset else ["BTC", "ETH", "SOL"]
     reports = [probe_asset(a) for a in assets]
     overall = ("EDGE_CANDIDATE" if any(r["verdict"] == "EDGE_CANDIDATE" for r in reports)

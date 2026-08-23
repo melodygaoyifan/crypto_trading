@@ -303,7 +303,7 @@ For full deploy procedure see [`README_DEPLOY_HETZNER.md`](README_DEPLOY_HETZNER
 | 0 trades in 7+ days, system "running normally" | Re-run gate-rejection forensics; **don't add patches** | CLAUDE.md "Trade Frequency Reality Check" |
 | Restart loop, RestartCount > 0 | `journalctl -u docker.service` for cascade pattern; check parallel-edit conflicts | CLAUDE.md P85 |
 | Replay snapshot diff in CI | Re-baseline if intentional: `python -X utf8 tests/test_replay_fusion.py --update-snapshot` | CLAUDE.md P116 |
-| Scanner baseline INCREASE blocking deploy | Either fix the new finding or re-baseline: `python -X utf8 tools/ci_check_invariants.py --update` | CLAUDE.md P72 |
+| Scanner baseline INCREASE blocking deploy | Fix the new finding, or — if the rise is attributable coverage/intentional — **hand-edit ONLY the counters that moved** in `tools/scanner_baselines/*.json` and add a `_p<N>_note` field naming the files and counts (see the `_note` convention in the existing baselines). **Never run `ci_check_invariants.py --update`**: it re-seeds all seven baselines at once, including the mypy one, and bakes environment/parallel-session noise in as the new floor (P171/P175). | CLAUDE.md P72 / P171 / P175 |
 
 ---
 

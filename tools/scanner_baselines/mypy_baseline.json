@@ -1,14 +1,14 @@
 {
   "by_code": {
     "arg-type": 83,
-    "assignment": 453,
+    "assignment": 454,
     "attr-defined": 70,
     "call-arg": 8,
-    "call-overload": 5,
+    "call-overload": 6,
     "dict-item": 28,
     "float": 8,
     "has-type": 3,
-    "index": 26,
+    "index": 27,
     "int": 14,
     "misc": 68,
     "name-defined": 2,
@@ -19,10 +19,11 @@
     "str": 33,
     "truthy-function": 4,
     "type-var": 1,
-    "union-attr": 139,
+    "union-attr": 143,
     "valid-type": 8,
-    "var-annotated": 56
+    "var-annotated": 57
   },
   "mypy_version": "2.3.0",
-  "total_count": 1076
+  "total_count": 1084,
+  "_p382_note": "1076 -> 1084 (+8) at the SAME mypy 2.3.0 (stamp unchanged): COVERAGE not regression \u2014 P382 added exchange/ to CRITICAL_DIRS (P366: the package holding 100% of the directional risk since Phase B was never type-checked as a root; most of it was already FOLLOWED via imports, which is why only +8). Attribution = per-code diff of the SAME working tree scanned with vs without exchange/ as a root: assignment 453 -> 454 (+1), call-overload 5 -> 6 (+1), index 26 -> 27 (+1), union-attr 139 -> 143 (+4), var-annotated 56 -> 57 (+1). Hand-edited, never --update (P171/P175). The local tree ALSO measured +9 on the OLD dirs (assignment +14, misc +3, list-item +1, return-value +1, minus decreases) \u2014 that is the P227/P344 environment fingerprint plus a parallel session's uncommitted edits, attributed and deliberately NOT baked in."
 }

@@ -1,0 +1,106 @@
+{
+ "full": {
+  "BTC": {
+   "ic": -0.0047,
+   "t": -0.35,
+   "bps_after_cost_q75": -22.98,
+   "required_ic": 0.0962,
+   "clears_bar": false,
+   "n_oos": 5747
+  },
+  "ETH": {
+   "ic": -0.0204,
+   "t": -1.54,
+   "bps_after_cost_q75": -30.25,
+   "required_ic": 0.1067,
+   "clears_bar": false,
+   "n_oos": 5747
+  },
+  "SOL": {
+   "ic": 0.0136,
+   "t": 1.03,
+   "bps_after_cost_q75": -17.12,
+   "required_ic": 0.0701,
+   "clears_bar": false,
+   "n_oos": 5686
+  }
+ },
+ "no_funding": {
+  "BTC": {
+   "ic": -0.0195,
+   "t": -1.48,
+   "bps_after_cost_q75": -15.98,
+   "required_ic": 0.0962,
+   "clears_bar": false,
+   "n_oos": 5747
+  },
+  "ETH": {
+   "ic": -0.0175,
+   "t": -1.33,
+   "bps_after_cost_q75": -29.64,
+   "required_ic": 0.1067,
+   "clears_bar": false,
+   "n_oos": 5747
+  },
+  "SOL": {
+   "ic": 0.0109,
+   "t": 0.82,
+   "bps_after_cost_q75": -24.77,
+   "required_ic": 0.0701,
+   "clears_bar": false,
+   "n_oos": 5686
+  }
+ },
+ "no_liq": {
+  "BTC": {
+   "ic": -0.0053,
+   "t": -0.4,
+   "bps_after_cost_q75": -20.44,
+   "required_ic": 0.0962,
+   "clears_bar": false,
+   "n_oos": 5747
+  },
+  "ETH": {
+   "ic": -0.0044,
+   "t": -0.34,
+   "bps_after_cost_q75": -18.63,
+   "required_ic": 0.1067,
+   "clears_bar": false,
+   "n_oos": 5747
+  },
+  "SOL": {
+   "ic": 0.0081,
+   "t": 0.61,
+   "bps_after_cost_q75": -10.53,
+   "required_ic": 0.0701,
+   "clears_bar": false,
+   "n_oos": 5686
+  }
+ },
+ "no_funding_no_liq": {
+  "BTC": {
+   "ic": -0.0206,
+   "t": -1.56,
+   "bps_after_cost_q75": -11.02,
+   "required_ic": 0.0962,
+   "clears_bar": false,
+   "n_oos": 5747
+  },
+  "ETH": {
+   "ic": -0.0055,
+   "t": -0.42,
+   "bps_after_cost_q75": -21.99,
+   "required_ic": 0.1067,
+   "clears_bar": false,
+   "n_oos": 5747
+  },
+  "SOL": {
+   "ic": 0.0061,
+   "t": 0.46,
+   "bps_after_cost_q75": -19.5,
+   "required_ic": 0.0701,
+   "clears_bar": false,
+   "n_oos": 5686
+  }
+ }
+}

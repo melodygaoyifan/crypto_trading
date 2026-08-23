@@ -1,4 +1,5 @@
 {
+  "cost_convention": "COST_RT/2 per unit |dpos| (one leg) \u2014 P382; pre-correction (full RT per leg) report kept as xsmom_backtest_p373_p382_precorrection.json",
   "universe8": {
     "years": 5.97,
     "buy_and_hold_eqw": {
@@ -13,43 +14,43 @@
     },
     "variants": {
       "top2_long_only": {
-        "total_pct": 385.7,
-        "sharpe": 0.67,
-        "maxdd_pct": 94.1,
+        "total_pct": 514.4,
+        "sharpe": 0.9,
+        "maxdd_pct": 86.7,
         "eras": {
-          "2020-22": 388.3,
-          "2023-24": 160.5,
-          "2025-26": -163.1
+          "2020-22": 438.1,
+          "2023-24": 204.9,
+          "2025-26": -128.6
         }
       },
       "top2_long_short": {
-        "total_pct": -96.0,
-        "sharpe": -0.22,
-        "maxdd_pct": 98.7,
+        "total_pct": 170.8,
+        "sharpe": 0.39,
+        "maxdd_pct": 88.1,
         "eras": {
-          "2020-22": 193.5,
-          "2023-24": -87.5,
-          "2025-26": -202.1
+          "2020-22": 296.9,
+          "2023-24": 5.5,
+          "2025-26": -131.6
         }
       },
       "top3_long_only": {
-        "total_pct": 396.9,
-        "sharpe": 0.77,
-        "maxdd_pct": 88.9,
+        "total_pct": 502.6,
+        "sharpe": 0.98,
+        "maxdd_pct": 83.9,
         "eras": {
-          "2020-22": 357.4,
-          "2023-24": 187.0,
-          "2025-26": -147.6
+          "2020-22": 399.0,
+          "2023-24": 220.8,
+          "2025-26": -117.2
         }
       },
       "top3_long_short": {
-        "total_pct": -38.4,
-        "sharpe": -0.11,
-        "maxdd_pct": 96.2,
+        "total_pct": 177.8,
+        "sharpe": 0.53,
+        "maxdd_pct": 77.5,
         "eras": {
-          "2020-22": 173.4,
-          "2023-24": -56.8,
-          "2025-26": -155.0
+          "2020-22": 258.9,
+          "2023-24": 13.9,
+          "2025-26": -95.0
         }
       }
     }
@@ -66,13 +67,13 @@
       }
     },
     "top1_long_only": {
-      "total_pct": 510.3,
-      "sharpe": 0.92,
-      "maxdd_pct": 88.2,
+      "total_pct": 604.4,
+      "sharpe": 1.09,
+      "maxdd_pct": 85.7,
       "eras": {
-        "2020-22": 371.1,
-        "2023-24": 209.9,
-        "2025-26": -70.6
+        "2020-22": 406.8,
+        "2023-24": 239.3,
+        "2025-26": -41.7
       }
     }
   }

@@ -455,9 +455,15 @@ class TradeGate:
         try:
             from configs.sota_flags import get_sota_flags
             flags = get_sota_flags()
+            # [P382] The getattr default is a policy statement about the
+            # ABSENT case and must agree with the declaration in
+            # configs/sota_flags.py (ENABLE_REGIME_TRANSITION_BUFFER = False,
+            # "1 tick delay is too slow for 4H bars"). P338 corrected the same
+            # default in defense/governor_integration.py; this sibling site
+            # and risk/regime_transition_buffer.py were left at True.
             if not any([
                 getattr(flags, 'ENABLE_OPPORTUNITY_BUDGET_GOVERNOR', True),
-                getattr(flags, 'ENABLE_REGIME_TRANSITION_BUFFER', True),
+                getattr(flags, 'ENABLE_REGIME_TRANSITION_BUFFER', False),
                 getattr(flags, 'ENABLE_CASCADE_EXHAUSTION_GOVERNOR', True),
             ]):
                 self._governor_enabled = False

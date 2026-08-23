@@ -6,7 +6,11 @@ HMATS v7 - Ultimate Rebuild: Data Pipeline + Per-Asset GMM + External Data
 Steps 1-7 of the Ultimate Rebuild:
   1. Resample 1H -> 4H from historical parquets (8.5y BTC/ETH, 5.5y SOL)
   2. Feature engineering with FeatureEngineer (103 base dims)
-  3. Merge external data (7 new features from Coinglass + Futures)
+  3. Merge external data (7 new features from Coinglass + Futures).
+     CoinGlass 1d rows are stamped at day OPEN with day CLOSE content, so
+     every CoinGlass daily feature is shift(1)'d before the merge_asof
+     (P247/P253 funding, P382 OI + liquidation) — see the DAY-OPEN STAMP
+     CONVENTION block above _derive_coinglass_daily.
   4. Per-asset GMM with BIC search (k=3-8, 12 features)
   5. Generate DRL training parquets with regime labels + regime_proba[8]
   6. Generate feature manifest (configs/feature_manifest.json)
@@ -224,47 +228,74 @@ def _rolling_zscore(series: pd.Series, window: int = 30) -> pd.Series:
     return z.clip(-10, 10)
 
 
-def _load_coinglass_daily(asset: str) -> pd.DataFrame:
-    """Load and derive features from Coinglass 1D data (funding, OI, liquidation)."""
+# ── CoinGlass 1d DAY-OPEN STAMP CONVENTION (the P247 / P253 / P382 class) ──
+# Every CoinGlass `*_1d.parquet` row is stamped at the day's OPEN (00:00 UTC)
+# while its CONTENT is the day's CLOSE: `funding_close` is the day's last
+# 16:00 event (P247), `oi_close` on day D equals the 4h file's 20:00 close of
+# day D exactly, and `liq_*` on day D equals the SUM of day D's six 4h rows
+# (measured 2026-08-22, P382: corr 1.0000 over n=181 days, oi exact 179/180).
+# merge_asof(direction="backward") below therefore hands every 4H bar of day
+# D the realised value of the WHOLE of day D — up to 24h of look-ahead —
+# unless the daily series is shifted by one row first. P253 shifted funding
+# and left OI + liquidation unshifted; measured on the old parquets, the
+# leaked `liq_imbalance` read IC +0.38 vs 16h forward return (h0 +0.74
+# decaying to h20 +0.02 by bar-of-day), the causal series −0.06..−0.09.
+# RULE: every CoinGlass daily feature is derived from `.shift(1)` of its
+# source column, so bars on day D read day D-1's completed value. The
+# Binance futures daily file is NOT shifted here because its fetcher already
+# stamps day-D content at the day-CLOSE boundary (P281).
+def _derive_coinglass_daily(funding: pd.DataFrame, oi: pd.DataFrame,
+                            liq: pd.DataFrame) -> pd.DataFrame:
+    """Derive the three CoinGlass daily features from loaded 1d frames.
+
+    Pure (no I/O): takes the three source frames (each with a UTC
+    `timestamp` and its native columns; an EMPTY frame means the file was
+    absent) and returns one daily frame with `timestamp`,
+    `funding_rate_zscore`, `oi_change_5d`, `liq_imbalance`. Split out of
+    `_load_coinglass_daily` so the causal-shift contract can be tested by
+    calling it (P310) rather than by grepping for `.shift(1)`.
+    """
     # Funding -> funding_rate_zscore
-    fpath = COINGLASS_DIR / f"{asset}_funding_1d.parquet"
-    if fpath.exists():
-        funding = pd.read_parquet(fpath)
+    if len(funding) > 0:
+        funding = funding.copy()
         funding["timestamp"] = pd.to_datetime(funding["timestamp"], utc=True)
         funding = funding.sort_values("timestamp")
         # [P253] CAUSAL SHIFT — this was the P247-F1 leak's last unfixed
         # carrier (flagged in P247 as "still carries the leak for the DRL
-        # feature set ... for the next parquet rebuild"). Daily rows are
-        # stamped at day-OPEN while funding_close is the day's LAST
-        # (16:00 UTC) event, so z-scoring the unshifted series and
-        # merge_asof(backward)-ing it below hands every 00:00-12:00 bar up to
-        # 16h of FUTURE funding. shift(1) makes bars on day D read day D-1's
-        # close, z-scored over a trailing window ending at D-1 — the same
-        # semantics as regime_model_lab._causal_funding_z, applied at the
-        # source so train_drl_full/train_supervised_full stop consuming the
-        # leaked column through the manifest.
+        # feature set ... for the next parquet rebuild"). shift(1) makes bars
+        # on day D read day D-1's close, z-scored over a trailing window
+        # ending at D-1 — the same semantics as
+        # regime_model_lab._causal_funding_z, applied at the source so
+        # train_drl_full/train_supervised_full stop consuming the leaked
+        # column through the manifest. (Convention: see the block above.)
         funding["funding_rate_zscore"] = _rolling_zscore(
             funding["funding_close"].shift(1), 30)
     else:
         funding = pd.DataFrame(columns=["timestamp", "funding_rate_zscore"])
 
     # OI -> oi_change_5d
-    fpath = COINGLASS_DIR / f"{asset}_oi_1d.parquet"
-    if fpath.exists():
-        oi = pd.read_parquet(fpath)
+    if len(oi) > 0:
+        oi = oi.copy()
         oi["timestamp"] = pd.to_datetime(oi["timestamp"], utc=True)
         oi = oi.sort_values("timestamp")
-        oi["oi_change_5d"] = oi["oi_close"].pct_change(5).clip(-5, 5)
+        # [P382] CAUSAL SHIFT — same day-open-stamp convention as funding
+        # (block above): oi_close on row D is day D's 20:00 close, so shift
+        # BEFORE the 5d change; bars on day D then read day D-1's 5d change.
+        oi["oi_change_5d"] = oi["oi_close"].shift(1).pct_change(5).clip(-5, 5)
     else:
         oi = pd.DataFrame(columns=["timestamp", "oi_change_5d"])
 
     # Liquidation -> liq_imbalance (already computed in source, just clip)
-    fpath = COINGLASS_DIR / f"{asset}_liquidation_1d.parquet"
-    if fpath.exists():
-        liq = pd.read_parquet(fpath)
+    if len(liq) > 0:
+        liq = liq.copy()
         liq["timestamp"] = pd.to_datetime(liq["timestamp"], utc=True)
         liq = liq.sort_values("timestamp")
-        liq["liq_imbalance"] = liq["liq_imbalance"].clip(-1, 1)
+        # [P382] CAUSAL SHIFT — liq row D is the sum of day D's six 4h rows,
+        # so the unshifted merge gave every bar of day D the whole day's
+        # realised imbalance (the h0 IC +0.74 artifact). Bars on day D now
+        # read day D-1's completed imbalance. `liq_imbalance` is the only
+        # liquidation column this rebuild emits (EXTERNAL_FEATURE_COLS).
+        liq["liq_imbalance"] = liq["liq_imbalance"].shift(1).clip(-1, 1)
     else:
         liq = pd.DataFrame(columns=["timestamp", "liq_imbalance"])
 
@@ -275,6 +306,19 @@ def _load_coinglass_daily(asset: str) -> pd.DataFrame:
         liq[["timestamp", "liq_imbalance"]], on="timestamp", how="outer"
     )
     return merged.sort_values("timestamp").reset_index(drop=True)
+
+
+def _load_coinglass_daily(asset: str) -> pd.DataFrame:
+    """Load the Coinglass 1D files (funding, OI, liquidation) and derive
+    their features via `_derive_coinglass_daily` (causal-shifted, see the
+    DAY-OPEN STAMP CONVENTION block above). A missing file contributes an
+    empty frame -> that feature is absent (NaN -> 0.0 after the merge)."""
+    def _read(name: str) -> pd.DataFrame:
+        fpath = COINGLASS_DIR / f"{asset}_{name}_1d.parquet"
+        return pd.read_parquet(fpath) if fpath.exists() else pd.DataFrame()
+
+    return _derive_coinglass_daily(_read("funding"), _read("oi"),
+                                   _read("liquidation"))
 
 
 def _load_futures_daily(asset: str) -> pd.DataFrame:
@@ -329,6 +373,13 @@ def merge_external_data(df_4h: pd.DataFrame, asset: str) -> pd.DataFrame:
       has_external_data    - binary flag (1 where external data available)
 
     Pre-data-start: all external = 0.0, has_external_data = 0.
+
+    Timing contract ([P382], see the DAY-OPEN STAMP CONVENTION block above
+    `_derive_coinglass_daily`): every CoinGlass daily feature arriving here
+    is already shifted by one day, so the value merge_asof hands the 4H bars
+    of day D is day D-1's completed value — never day D's. The futures daily
+    features are stamped at day close by their fetcher (P281) and need no
+    shift.
     """
     cg = _load_coinglass_daily(asset)
     fut = _load_futures_daily(asset)

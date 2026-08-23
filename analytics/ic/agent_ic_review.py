@@ -22,7 +22,10 @@ report under analytics/ic/reports/. Places no orders, mutates no state.
 VERDICT SEMANTICS (mirrors analytics/shadow_ic P166 arithmetic):
   expected_edge_bps(h) = 0.7979 * 2*sin(pi*IC/6) * fwd_vol_bps(h)
   bar: IC > 0 at every horizon, |t| >= 2 (t = IC*sqrt(n-1)), and
-  expected_edge >= 2.0 x 6bps (Coinbase taker round trip, safety margin 2).
+  expected_edge >= 2.0 x round-trip cost. [P382] The round trip is derived
+  from `core.cde_fees.CDE_FEE_BPS` (2 legs x the asset's taker bps; an agent
+  row takes the max over the assets it signalled on), floored at the refuted
+  6bps model; every row carries `rt_cost_bps` + `cost_source`.
   A PROMOTE-CANDIDATE here is a candidate for a WEIGHT in
   ADVISE_WEIGHTS_BY_REGIME with its own P-entry — never an automatic change.
   [P371] A signal that barely moved in the window is REFUSED-DEGENERATE, never
@@ -48,10 +51,83 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 HORIZON_BARS = (1, 4)          # 4h, 16h on the 4H clock
-TAKER_RT_BPS = 6.0             # Coinbase 3bps taker x 2 legs (P166)
 SAFETY_MARGIN = 2.0            # spread/impact absent from the fee number
 MIN_N = 30
 KRAKEN_PAIRS = {"BTC": "XBTUSD", "ETH": "ETHUSD", "SOL": "SOLUSD"}
+
+# [P382] ROUND-TRIP COST. Was the literal 6.0 — "Coinbase 3bps taker x 2
+# legs" — which is the percentage model P315/P334 REFUTED: the CDE fee is
+# 9.4-14.5 bps PER LEG (flat per contract -> a percentage of notional), and
+# P374 measured the all-in round trip at BTC 27.7 / ETH 44.0 / SOL 41.0 bps.
+# The required-IC inverter below was therefore asking agents to clear a bar
+# ~3x lower than the venue actually charges. The cost is now DERIVED from the
+# registered calibration `core.cde_fees.CDE_FEE_BPS` (P327): 2 legs x taker
+# bps per asset, floored at the refuted 6.0, then x SAFETY_MARGIN. An agent
+# row mixes assets, so its bar is the MAX over the assets it actually signalled
+# on (a mixed row must not be cheaper than its dearest member); with no asset
+# attribution it is the max over all three.
+REFUTED_MODEL_RT_BPS = 6.0     # the FLOOR, named for what it is
+COST_SOURCE_CDE = "cde_fees"
+COST_SOURCE_FALLBACK = "fallback_refuted_model"
+_CDE_LEGS = 2.0
+
+
+def _cde_taker_leg_bps() -> dict | None:
+    """asset -> per-LEG taker bps from core.cde_fees, or None (logged)."""
+    try:
+        # Run as a script (docker exec ... python analytics/ic/agent_ic_review.py)
+        # sys.path[0] is this file's directory, not the repo root.
+        _repo = str(Path(__file__).resolve().parents[2])
+        if _repo not in sys.path:
+            sys.path.insert(0, _repo)
+        from core.cde_fees import CDE_FEE_BPS
+    except Exception as e:  # noqa: silent-swallow — reported below
+        print(f"  WARNING [P382]: core.cde_fees unavailable ({type(e).__name__}: "
+              f"{e}) — the required-IC bar is on the REFUTED 3bps/side model "
+              f"({REFUTED_MODEL_RT_BPS:.1f}bps round trip, P315/P334); every "
+              f"edge-vs-cost verdict is ~3x too generous. "
+              f"cost_source={COST_SOURCE_FALLBACK}", file=sys.stderr)
+        return None
+    out: dict = {}
+    for a, sides in dict(CDE_FEE_BPS).items():
+        try:
+            v = float(sides["taker"])
+        except (KeyError, TypeError, ValueError):  # noqa: silent-swallow — shape coercion
+            continue
+        if math.isfinite(v) and v > 0:
+            out[str(a).upper()] = v
+    return out or None
+
+
+def rt_cost_bps_for(assets=None) -> tuple:
+    """(round_trip_bps, cost_source) for a set of assets (P382).
+
+    Per-asset: 2 x that asset's CDE taker leg. Several assets: the MAX.
+    None/empty: the max over the whole table. Unknown asset: the WORST in
+    the table (P167 — an unmeasured cost is assumed expensive). Calibration
+    unreadable: the refuted 6.0 floor, with cost_source saying so. The floor
+    applies in every branch, so this can only ever RAISE the bar (P248).
+    """
+    table = _cde_taker_leg_bps()
+    if table is None:
+        return REFUTED_MODEL_RT_BPS, COST_SOURCE_FALLBACK
+    worst = max(table.values())
+    names = [str(a).upper() for a in (assets or []) if a]
+    if names:
+        # membership test: a deliberate worst-case fallback, written so the
+        # silent_failure_audit's two-variable-default heuristic (P47-Bug-2)
+        # does not flag it
+        rt = max(_CDE_LEGS * (table[a] if a in table else worst) for a in names)
+    else:
+        rt = _CDE_LEGS * worst
+    return max(REFUTED_MODEL_RT_BPS, rt), COST_SOURCE_CDE
+
+
+# The default bar when a caller has no asset attribution: the dearest of the
+# three. Computed ONCE at import (it is a constant table); the P230 test's
+# round-trip identity `edge(required_ic(vol)) == SAFETY_MARGIN * TAKER_RT_BPS`
+# still holds against this value.
+TAKER_RT_BPS, COST_SOURCE = rt_cost_bps_for(None)
 
 
 def _refuse(msg: str) -> None:
@@ -137,9 +213,12 @@ def _pearson(xs: list[float], ys: list[float]) -> float | None:
     return sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / (sx * sy)
 
 
-def required_ic(fwd_vol_bps: float) -> float | None:
-    """Invert P166's edge model: IC needed for SAFETY_MARGIN x TAKER_RT."""
-    need = SAFETY_MARGIN * TAKER_RT_BPS
+def required_ic(fwd_vol_bps: float, rt_bps: float | None = None) -> float | None:
+    """Invert P166's edge model: IC needed for SAFETY_MARGIN x round-trip cost.
+
+    [P382] `rt_bps` defaults to TAKER_RT_BPS (the dearest asset's CDE round
+    trip); decide_agent_verdict passes the per-agent figure."""
+    need = SAFETY_MARGIN * (TAKER_RT_BPS if rt_bps is None else float(rt_bps))
     if fwd_vol_bps <= 0:
         return None
     x = need / (0.7979 * 2.0 * fwd_vol_bps)
@@ -272,6 +351,12 @@ def decide_agent_verdict(dirs_by_h: dict, rets_by_h: dict, fwd_vol: dict,
     # the declaration rather than baselining the finding (P284b/P287g).
     rows: dict[int, dict] = {}  # [P371]
     verdict_bits: list = []  # [P371]
+    # [P382] The cost bar for THIS agent: max over the assets it signalled on
+    # (union across horizons); no attribution -> the dearest of the three.
+    _agent_assets: set = set()
+    for _h_assets in (assets_by_h or {}).values():
+        _agent_assets.update(a for a in (_h_assets or []) if a)
+    rt_bps, cost_source = rt_cost_bps_for(sorted(_agent_assets))
     for h in HORIZON_BARS:  # [P371]
         xs, ys = list(dirs_by_h.get(h, [])), list(rets_by_h.get(h, []))  # [P371]
         n = len(xs)  # [P371]
@@ -293,7 +378,7 @@ def decide_agent_verdict(dirs_by_h: dict, rets_by_h: dict, fwd_vol: dict,
         t = ic * math.sqrt(n_eff - 1)  # [P371] (moved, unchanged)
         vol_h = fwd_vol.get(h, 0.0)  # [P371]
         edge = 0.7979 * 2.0 * math.sin(math.pi * ic / 6.0) * vol_h  # [P371]
-        req = required_ic(vol_h)  # [P371]
+        req = required_ic(vol_h, rt_bps)  # [P371] [P382] per-agent CDE cost
         clears_arith = (ic > 0 and abs(t) >= 2.0  # [P371]
                         and req is not None and ic >= req)  # [P371]
         # [P371] The guard. n_eff above corrects for overlap; it cannot see a
@@ -327,6 +412,10 @@ def decide_agent_verdict(dirs_by_h: dict, rets_by_h: dict, fwd_vol: dict,
                    "t": round(t, 2), "t_note": f"overlap-corrected (n/{h})",  # [P371]
                    "edge_bps": round(edge, 2),  # [P371]
                    "required_ic": round(req, 4) if req else None,  # [P371]
+                   # [P382] the bar this row was priced against + provenance
+                   "rt_cost_bps": round(rt_bps, 2),
+                   "required_bps": round(SAFETY_MARGIN * rt_bps, 2),
+                   "cost_source": cost_source,
                    "clears_p166": clears,  # [P371]
                    "clears_p166_arithmetic": clears_arith,  # [P371]
                    "degenerate": degenerate,  # [P371]
@@ -375,7 +464,13 @@ def build_agent_entry(rows: dict, verdict: str) -> dict:
 def build_report(window_days: int, fwd_vol: dict, generated: str) -> dict:
     """The report skeleton. `agents` is filled with build_agent_entry values."""
     return {"generated": generated, "window_days": window_days,
-            "fwd_vol_bps": fwd_vol, AGENTS_CONTAINER_KEY: {}}
+            "fwd_vol_bps": fwd_vol,
+            # [P382] the cost model the whole report was judged on
+            "cost_model": {"default_rt_bps": TAKER_RT_BPS,
+                           "cost_source": COST_SOURCE,
+                           "safety_margin": SAFETY_MARGIN,
+                           "floor_rt_bps": REFUTED_MODEL_RT_BPS},
+            AGENTS_CONTAINER_KEY: {}}
 
 
 def main() -> int:
@@ -432,8 +527,12 @@ def main() -> int:
     report = build_report(args.window_days, fwd_vol,
                           datetime.now(timezone.utc).isoformat())
 
+    print(f"\ncost model [P382]: CDE taker x 2 legs from core.cde_fees, "
+          f"per agent = max over its assets (floor {REFUTED_MODEL_RT_BPS:.1f}"
+          f"bps, default {TAKER_RT_BPS:.1f}bps, source={COST_SOURCE}) "
+          f"x {SAFETY_MARGIN:.1f} margin")
     print(f"\n{'agent':<14}{'h':>3}{'n':>6}{'IC':>8}{'t':>7}"
-          f"{'edge_bps':>9}{'req_IC':>8}  verdict")
+          f"{'edge_bps':>9}{'req_IC':>8}{'rt_bps':>8}  verdict")
     for agent in sorted(dirs):
         # [P371] The verdict rule is a pure function now (see
         # [P371] decide_agent_verdict) so a synthetic series can drive it; the
@@ -448,6 +547,7 @@ def main() -> int:
                   f"{r.get('t', float('nan')):>7.2f}"
                   f"{r.get('edge_bps', float('nan')):>9.2f}"
                   f"{(r.get('required_ic') or float('nan')):>8.3f}"
+                  f"{(r.get('rt_cost_bps') or float('nan')):>8.1f}"
                   f"  {verdict if h == HORIZON_BARS[-1] else ''}")
         if verdict == REFUSED_DEGENERATE:  # [P371]
             # [P371] Say WHY, at the row, or the refusal reads like a HOLD.

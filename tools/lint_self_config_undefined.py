@@ -40,6 +40,9 @@ LIVE_DIRS = [
     "agents", "analytics", "core", "data_mgmt", "defense", "drl",
     "execution", "infra", "integration", "liquidity", "market",
     "orchestration", "risk", "signals", "strategies", "tools",
+    # [P382] the venue layer + API + portfolio packages were never scanned
+    # (P366's LIVE_DIRS finding); coverage, not regression.
+    "exchange", "api", "portfolio",
 ]
 
 
@@ -162,7 +165,9 @@ def _gather_paths(args) -> List[Path]:
     if args.paths:
         out = []
         for p in args.paths:
-            pp = Path(p)
+            # [P382] resolve() first: a RELATIVE CLI path (e.g. `exchange`)
+            # crashed in the per-file scan's `path.relative_to(REPO_ROOT)`.
+            pp = Path(p).resolve()
             if pp.is_dir():
                 out.extend(pp.rglob("*.py"))
             elif pp.exists():

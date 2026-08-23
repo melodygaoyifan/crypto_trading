@@ -2525,6 +2525,31 @@ class ProductionConfig:
 # must never be read as "no position wanted".
 _SLEEVE_HOLD_VETOES = ("EXPOSURE_DELTA_BELOW_THRESHOLD", "FLIP_PERSIST_HOLD",
                        "TICK_CRASH_HOLD", "EXCHANGE_DISCONNECTED_HOLD",
+                       # [P382] MAX_HOLD is a KRAKEN forced exit (the only
+                       # writer of _position_entry_times sits past the P152
+                       # return); its early return used to hand the sleeve a
+                       # bare TradeIntentV36() -> zero_target_exposure ->
+                       # FLATTEN the Coinbase book as a side effect (the third
+                       # P253 early return). The sleeve holds.
+                       "MAX_HOLD_EXIT_HOLD",
+                       # [P382] PATCH-4 SOFT block: "block NEW entries (don't
+                       # flatten existing positions)" by its own comment, but
+                       # its has-position test reads the Kraken book ({} since
+                       # 2026-06-13) so it always takes the block branch — and
+                       # "[PATCH-4]" sat in the FLATTEN roster. The INV-1
+                       # checker already classifies it hold-shaped; the two
+                       # rosters now agree. HARD stays flatten (matched below
+                       # via "[PATCH-4]" only when this, more specific, string
+                       # misses).
+                       "[PATCH-4] SOFT block",
+                       # [P382] The Kraken integrity-shield P0 abort: a KRAKEN
+                       # data-integrity verdict (currently vacuous — the shield
+                       # has no feed, P382 audit), i.e. "state of the world
+                       # unknown", which is the P265 data class, not a
+                       # position instruction. Runtime-composed via
+                       # p0_abort_reason, so the roster guard's corpus is
+                       # widened to that assignment form.
+                       "[INTEGRITY]",
                        # [P265] Data-integrity vetoes: the STATE OF THE WORLD
                        # is unknown, not "no position wanted". Before this, a
                        # single degraded-data tick — stale/missing/NaN inputs
@@ -2650,7 +2675,25 @@ _SLEEVE_HOLD_VETOES = ("EXPOSURE_DELTA_BELOW_THRESHOLD", "FLIP_PERSIST_HOLD",
 # as "NO_TRADE: <name>" and the drift guard pins them against the ENUM (a
 # source-text pin cannot see an f-string-composed write site).
 _SLEEVE_HOLD_NO_TRADE_TRIGGERS = ("DATA_INTEGRITY_FAIL", "STALE_DATA",
-                                  "FEED_DISAGREEMENT")
+                                  "FEED_DISAGREEMENT",
+                                  # [P382] CORRELATION_COLLAPSE: the LIVE
+                                  # checker (defense/constitution.py ~:443)
+                                  # fires on correlation_btc_eth_sol >= 0.92
+                                  # ALONE — the "all-three-same-direction AND
+                                  # no validated edge" conjuncts P253d cited
+                                  # when arming the real correlation live
+                                  # only in signals/no_trade_triggers.py,
+                                  # which is NOT on the live path. P253d's own
+                                  # measurement: >= 0.92 on 7.8% of bars (17%
+                                  # in the last year); it fired live
+                                  # 2026-08-19 16:02 and 20:02 on all three
+                                  # assets. A routine 0.92 reading must not
+                                  # LIQUIDATE a held book (the P364 shape);
+                                  # "correlation crisis" means do not ADD
+                                  # risk, which NO_TRADE already does by
+                                  # vetoing the intent. The venue stop and the
+                                  # halts keep guarding what is held.
+                                  "CORRELATION_COLLAPSE")
 
 # Vetoes that exist only because KRAKEN SPOT cannot express the position. They
 # do not apply to a perp venue, which can. B1 blocks short entries when
@@ -2681,6 +2724,17 @@ _SLEEVE_FLATTEN_INTENDED_VETOES = (
     "[P0_SAFETY]", "[P0_SAFETY_EXCEPTION]", "[P0 FORCE FLAT]",
     "[P0 SHORT BLOCK]", "[BLACK_SWAN_SENTINEL]", "[SOTA]", "[SOTA-ACT]",
     "[PATCH-4]", "[GHOST-E]", "[SOL_TOXICITY]", "[STRATEGY_SUSPENDED]",
+    # [P382] the P0 correlation-crisis abort (runtime-composed
+    # `p0_abort_reason = f"CORRELATION_CRISIS: ..."`): flat IS the intended
+    # posture at >= 0.98 (P265 classification), now stated rather than
+    # inherited from the default. "[PATCH-4] SOFT block" is carved out to HOLD
+    # above; "[PATCH-4]" here keeps HARD on flatten.
+    "CORRELATION_CRISIS:",
+    # [P382] the SOL-defense P0 aborts (`[SOL DEFENSE] FORCE FLAT -` /
+    # `[SOL DEFENSE] CRITICAL -`) both set p0_force_flat=True at the write
+    # site — flat IS the intended posture; surfaced by widening the roster
+    # guard's corpus to `p0_abort_reason =` assignments.
+    "[SOL DEFENSE]",
     "[AUTO_RECOVERY_LATCH]", "NO_TRADE mode active", "[v3.6.1] NO_TRADE:",
     # ^ NO_TRADE subtype split (data->HOLD) handled by
     #   _SLEEVE_HOLD_NO_TRADE_TRIGGERS, enum-pinned; market-risk rest flatten
@@ -2754,7 +2808,17 @@ _SLEEVE_FLATTEN_INTENDED_VETOES = (
 # instruction), ADDON_BLOCKED (an add implies the direction already agrees),
 # and every data/mechanics fault, where flattening is the P265b bug.
 _SLEEVE_ENTRY_QUALITY_VETOES = ("[VETO]", "[OP_BUDGET]", "[GAMBLER_GATE]",
-                                "[FLIP_GATE]", "[REBUILD_COOLDOWN]")
+                                "[FLIP_GATE]", "[REBUILD_COOLDOWN]",
+                                # [P382] trade_gate's "no bottom-fishing"
+                                # check (long + price down + volume_ratio <
+                                # 0.20) is an ENTRY-quality veto and position-
+                                # blind; it reached the sleeve as
+                                # "[TRADE_GATE] VOLUME_CONTRACTING" (and via
+                                # P0 as "Trade gate reject: VOLUME_CONTRACTING")
+                                # and both were FLATTEN-classified. Fired live
+                                # 2026-08-22 08:27 on SOL (a no-op only because
+                                # SOL was flat). Same class as the P338 moves.
+                                "VOLUME_CONTRACTING")
 
 # Sentinel: "make no change to this asset this tick".
 SLEEVE_HOLD = object()
@@ -3503,6 +3567,14 @@ async def sleeve_fast_risk_action(sleeve, asset: str, action_name: str,
             # maker-wait window here would hold risk open to save 3bps
             res = await sleeve.execute_target(asset, 0, urgent=True)
             _vs = res.get('status')
+            # [P382] execute_target swept the venue stop BEFORE the exit; if
+            # the exit limit is left behind or refused, the position has NO
+            # stop until the next 4H tick. Ask the 30s loop to re-reconcile
+            # against the venue (intent 0: a confirmed flat cancels any
+            # orphan; a stranded exit gets its stop back).
+            _rf = getattr(sleeve, "request_stop_followup", None)
+            if callable(_rf):
+                _rf(asset, 0.0)
             # [P366] classify, never assume. "EXITED" used to be returned here
             # unconditionally — see the note above sleeve_exit_status.
             return (sleeve_exit_status(_vs, "EXITED"),
@@ -3515,6 +3587,9 @@ async def sleeve_fast_risk_action(sleeve, asset: str, action_name: str,
             _tgt = int(cur / 2)  # truncates toward zero = a genuine reduce
             res = await sleeve.execute_target(asset, _tgt, urgent=True)
             _vs = res.get('status')
+            _rf = getattr(sleeve, "request_stop_followup", None)  # [P382]
+            if callable(_rf):
+                _rf(asset, float(_tgt))
             # [P366] same collapse existed here: a BLOCKED or FAILED reduce
             # reported as "REDUCED" refreshed the depth baseline (P287), which
             # masks the very depth collapse the trigger fired on.
@@ -7757,7 +7832,17 @@ class HMATSProductionRunner:
                     self._save_paper_positions(force=True)
 
                     # Return non-actionable intent -tick is done for this asset
-                    return TradeIntentV36()
+                    # [P382] ...as a HOLD veto, not a bare intent: a bare
+                    # TradeIntentV36() is veto_active=False, target_exposure=0
+                    # -> sleeve_direction_from_intent reads zero_target_exposure
+                    # -> FLATTENS the Coinbase book as a side effect of a KRAKEN
+                    # max-hold exit (the third P253 early return). Latent
+                    # today (the only live writer of _position_entry_times is
+                    # past the P152 return) — closed before it can fire.
+                    return TradeIntentV36(
+                        veto_active=True,
+                        veto_reason="MAX_HOLD_EXIT_HOLD - Kraken max-hold "
+                                    "exit; sleeve holds")
                 else:
                     # No position but entry tracked -cleanup stale entry
                     self._position_entry_times.pop(asset, None)
@@ -7910,9 +7995,17 @@ class HMATSProductionRunner:
                 )
                 if self.alert_manager:
                     try:
+                        # [P382] the real signature is (alert_type, title,
+                        # message, severity=AlertSeverity) — the old call
+                        # passed the message as `alert_type` and omitted
+                        # title/message, so it raised TypeError into the
+                        # handler below on EVERY fire: this CRITICAL has
+                        # never reached the AlertManager channel.
                         self.alert_manager.send_alert(
-                            "Dead-man switch refresh failed -orders at risk",
-                            severity="CRITICAL",
+                            AlertType.CONNECTION_LOST,
+                            "Dead-man switch refresh failed",
+                            "Dead-man switch refresh failed - orders at risk",
+                            severity=AlertSeverity.CRITICAL,
                         )
                     except Exception as _h4_err:
                         logger.warning(f"[AUDIT H4] Alert send failed (dead-man): {_h4_err}")
@@ -8076,9 +8169,15 @@ class HMATSProductionRunner:
                     market_data["_failed_feeds"] = _live_failures
                     if self.alert_manager and len(_live_failures) >= 3:
                         try:
+                            # [P382] same signature fix as the dead-man
+                            # alert: alert_type/title/message positional,
+                            # severity an AlertSeverity — the old form raised
+                            # TypeError into the `except: pass` below.
                             self.alert_manager.send_alert(
+                                AlertType.SYSTEM_ERROR,
+                                f"{len(_live_failures)} data feeds failed",
                                 f"CRITICAL: {len(_live_failures)} data feeds failed: {_live_failures}",
-                                severity="CRITICAL",
+                                severity=AlertSeverity.CRITICAL,
                             )
                         except Exception:
                             pass
@@ -18305,6 +18404,8 @@ class HMATSProductionRunner:
         _HOLD_VETOES = {
             "THESIS BUDGET",            # all thesis budget variants
             "VOLUME CONTRACTING",
+            "MAX HOLD EXIT HOLD",       # [P382] Kraken max-hold early return; sleeve holds
+            "PATCH-4] SOFT BLOCK",      # [P382] block NEW entries, never flatten
             "EXPOSURE DELTA BELOW THRESHOLD",
             "V6 SHORT FILTER",
             "SHORT FILTER",
@@ -20987,8 +21088,21 @@ class HMATSProductionRunner:
             cascade_data = data.get("cascade_state", {})
             if cascade_data:
                 try:
-                    from risk.cascade_exhaustion_governor import get_cascade_exhaustion_governor
-                    get_cascade_exhaustion_governor().from_dict(cascade_data)
+                    # [P382] The writer is `all_governor_states()` — a PER-
+                    # ASSET map {"": {...}, "BTC": {...}, ...} since P306 —
+                    # and this reader fed it to the single-instance
+                    # `from_dict`, which reads `phase` at the TOP level: every
+                    # key absent -> the shared instance set to NONE and
+                    # "[CASCADE] State restored: phase=NONE" logged as a
+                    # success. LIVE only restores through this path
+                    # (run_paper also calls _restore_governor_state), so the
+                    # per-asset governors started at NONE on every deploy.
+                    # `restore_governor_states` accepts both shapes.
+                    from risk.cascade_exhaustion_governor import (
+                        restore_governor_states)
+                    _n_cg = restore_governor_states(cascade_data)
+                    logger.info(f"[P382] Cascade governor state restored for "
+                                f"{_n_cg} instance(s) (per-asset shape)")
                 except Exception as e:
                     logger.warning(f"[PAPER] Cascade restore failed: {e}")
 
@@ -22295,6 +22409,31 @@ class HMATSProductionRunner:
                                             _frt_sl.signed_contracts(frt_asset) or 0.0)) > 0
                                 except Exception:  # noqa: silent-swallow — severity hint only; None keeps full-severity alerting
                                     _frt_has_pos = None
+                                # [P382] Protective-stop FOLLOW-UP: when the
+                                # 4H driver (or a watchdog exit) left intent
+                                # and venue snapshot disagreeing, re-reconcile
+                                # the stop here, within ~34s, instead of
+                                # leaving an oversized/absent stop for up to
+                                # 4h (observed live 2026-08-22: a 5ct stop on
+                                # a 3ct long for 2h28m; a 2ct stop on a 1ct
+                                # long). Never raises; no-op when nothing is
+                                # pending (and in run_paper, where there is no
+                                # sleeve).
+                                try:
+                                    _frt_sl2 = getattr(self, "_coinbase_sleeve", None)
+                                    _frt_fu = getattr(_frt_sl2, "followup_protective_stop", None)
+                                    if callable(_frt_fu) and frt_asset in (
+                                            getattr(_frt_sl2, "stop_followup_pending", dict)() or {}):
+                                        _fu_res = await _frt_fu(frt_asset)
+                                        if _fu_res and _fu_res.get("status") not in (
+                                                "PENDING", "SKIPPED_STALE", None):
+                                            logger.info(
+                                                f"[COINBASE-STOP] {frt_asset}: follow-up -> "
+                                                f"{_fu_res.get('status')}")
+                                except Exception as _fu_e:
+                                    logger.warning(
+                                        f"[COINBASE-STOP] {frt_asset}: follow-up raised "
+                                        f"{type(_fu_e).__name__}: {_fu_e} — next pass retries")
                                 frt_result = self.fast_risk_tick.evaluate(
                                     frt_asset, frt_md, has_position=_frt_has_pos)
                                 # Act on result when not in shadow mode
@@ -23326,6 +23465,16 @@ class HMATSProductionRunner:
                 # Flag-gated (default OFF) + fail-soft -> NEVER affects the
                 # Kraken trading path. No Coinbase orders. See
                 # docs/COINBASE_ENGINE_INTEGRATION_PLAN.md.
+                # [P382] `_enh_gated_dirs` is the eventfilter ledger's claim
+                # for THIS loop pass. It was created once (`if not hasattr`)
+                # and never reset, so on any pass where the driver block did
+                # not run (adapter not connected, block exception, sleeve not
+                # built) the PREVIOUS pass's directions were re-stamped with a
+                # fresh timestamp — P155-L5's high-water-mark shape, in a
+                # September evidence ledger. Reset here, at loop level: an
+                # absent key makes the family write nothing, which is the
+                # module's documented "absence is never a fabricated claim".
+                self._enh_gated_dirs = {}
                 if getattr(self.config, "coinbase_routing_enabled", False):
                     try:
                         if getattr(self, "_coinbase_adapter", None) is None:
@@ -23335,18 +23484,33 @@ class HMATSProductionRunner:
                         _cb = self._coinbase_adapter
                         if _cb.is_connected():
                             _cbg = lambda o, k: (o.get(k) if isinstance(o, dict) else getattr(o, k, None))
+                            # [P382] The parity read is DIAGNOSTIC and sits
+                            # UPSTREAM of the sleeve driver inside the same
+                            # try; unguarded, one transient 5xx/403 on a
+                            # get_product here (P378 showed those happen)
+                            # skipped manage / stop-reconcile / fuse-feed /
+                            # halt-evaluation for the whole 4H tick. A
+                            # logging read must never be load-bearing for
+                            # order flow (P227's rule, one block over).
                             for _cb_a in self.config.assets:
-                                _cb_pid = to_venue_symbol(_cb_a, "coinbase", "perp")
-                                _cb_p = _cb._client.get_product(product_id=_cb_pid)
-                                _cb_mark = float(_cbg(_cb_p, "mid_market_price") or _cbg(_cb_p, "price") or 0)
-                                _cb_fpd = _cbg(_cb_p, "future_product_details") or {}
-                                _cb_fr = _cbg(_cb_fpd, "funding_rate")
-                                _cb_kr = float(_live_prices.get(_cb_a, 0) or 0)
-                                _cb_basis = ((_cb_mark - _cb_kr) / _cb_kr * 1e4) if _cb_kr else 0.0
-                                logger.info(
-                                    f"[COINBASE-SHADOW] {_cb_a}: CB={_cb_mark:.2f} "
-                                    f"KR={_cb_kr:.2f} basis={_cb_basis:+.1f}bps funding={_cb_fr}"
-                                )
+                                try:
+                                    _cb_pid = to_venue_symbol(_cb_a, "coinbase", "perp")
+                                    _cb_p = _cb._client.get_product(product_id=_cb_pid)
+                                    _cb_mark = float(_cbg(_cb_p, "mid_market_price") or _cbg(_cb_p, "price") or 0)
+                                    _cb_fpd = _cbg(_cb_p, "future_product_details") or {}
+                                    _cb_fr = _cbg(_cb_fpd, "funding_rate")
+                                    _cb_kr = float(_live_prices.get(_cb_a, 0) or 0)
+                                    _cb_basis = ((_cb_mark - _cb_kr) / _cb_kr * 1e4) if _cb_kr else 0.0
+                                    logger.info(
+                                        f"[COINBASE-SHADOW] {_cb_a}: CB={_cb_mark:.2f} "
+                                        f"KR={_cb_kr:.2f} basis={_cb_basis:+.1f}bps funding={_cb_fr}"
+                                    )
+                                except Exception as _cb_pe:
+                                    logger.warning(
+                                        f"[COINBASE-SHADOW] {_cb_a}: parity read failed "
+                                        f"({type(_cb_pe).__name__}: {str(_cb_pe)[:120]}) — "
+                                        f"diagnostic only; the sleeve driver below still runs"
+                                    )
                             # [COINBASE-SLEEVE] the LIVE sleeve: venue-reconciled
                             # position/equity state (anti-P139), and the SAME
                             # instance is the sole order driver — manage_to_signal
@@ -24435,6 +24599,31 @@ class HMATSProductionRunner:
                                             _frt_sl.signed_contracts(frt_asset) or 0.0)) > 0
                                 except Exception:  # noqa: silent-swallow — severity hint only; None keeps full-severity alerting
                                     _frt_has_pos = None
+                                # [P382] Protective-stop FOLLOW-UP: when the
+                                # 4H driver (or a watchdog exit) left intent
+                                # and venue snapshot disagreeing, re-reconcile
+                                # the stop here, within ~34s, instead of
+                                # leaving an oversized/absent stop for up to
+                                # 4h (observed live 2026-08-22: a 5ct stop on
+                                # a 3ct long for 2h28m; a 2ct stop on a 1ct
+                                # long). Never raises; no-op when nothing is
+                                # pending (and in run_paper, where there is no
+                                # sleeve).
+                                try:
+                                    _frt_sl2 = getattr(self, "_coinbase_sleeve", None)
+                                    _frt_fu = getattr(_frt_sl2, "followup_protective_stop", None)
+                                    if callable(_frt_fu) and frt_asset in (
+                                            getattr(_frt_sl2, "stop_followup_pending", dict)() or {}):
+                                        _fu_res = await _frt_fu(frt_asset)
+                                        if _fu_res and _fu_res.get("status") not in (
+                                                "PENDING", "SKIPPED_STALE", None):
+                                            logger.info(
+                                                f"[COINBASE-STOP] {frt_asset}: follow-up -> "
+                                                f"{_fu_res.get('status')}")
+                                except Exception as _fu_e:
+                                    logger.warning(
+                                        f"[COINBASE-STOP] {frt_asset}: follow-up raised "
+                                        f"{type(_fu_e).__name__}: {_fu_e} — next pass retries")
                                 frt_result = self.fast_risk_tick.evaluate(
                                     frt_asset, frt_md, has_position=_frt_has_pos)
                                 if not self.fast_risk_tick.shadow_mode:

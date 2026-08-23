@@ -35,7 +35,11 @@ REPO = Path(__file__).resolve().parents[1]
 
 # Critical directories — full mypy scan covers these.
 # Smaller scope = faster CI run + sharper signal.
-CRITICAL_DIRS = ["risk", "core", "defense", "analytics", "signals", "execution"]
+# [P382] exchange/ added: it has held 100% of the directional risk since the
+# 2026-06-13 Phase B cutover and predates this list (P366). Baseline
+# re-stamped by hand at the SAME mypy version, never via --update (P171/P175).
+CRITICAL_DIRS = ["risk", "core", "defense", "analytics", "signals", "execution",
+                 "exchange"]
 
 
 class MypyUnavailable(RuntimeError):

@@ -209,13 +209,16 @@ class TestCli:
         assert "REFUSING" in r.stderr
 
     def test_incumbent_is_read_from_the_live_config(self):
-        """Seat precedence must mirror main.py's ordering (last seat wins:
-        whale > regimebook > trend)."""
+        """[P382 re-pointed] Seat precedence must mirror what actually holds
+        the DECIDE slot: regimebook > whale > trend. The whale seat still
+        RUNS last, but P298 made it DEFER to a directional book target, so
+        with `regimebook_mode: enforce` (the live profile since 2026-08-18)
+        the book is the incumbent and whale fills its flat ticks."""
         r = _run("--stats", json.dumps(
             {"whale": {"ic_4h": 0.04, "ic_16h": 0.011,
                        "t_4h": 0.98, "t_16h": 0.14, "n": 605}}))
-        assert r.returncode == 0
-        assert re.search(r"incumbent\s*:\s*whale", r.stdout), r.stdout
+        assert r.returncode in (0, 2, 3), r.stderr
+        assert re.search(r"incumbent\s*:\s*regimebook", r.stdout), r.stdout
 
     def test_caveats_are_surfaced_with_the_winner(self):
         r = _run("--incumbent", "whale", "--stats", json.dumps(

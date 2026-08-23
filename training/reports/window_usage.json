@@ -551,6 +551,33 @@
    "start": 7203,
    "end": 13095,
    "purpose": "validation"
+  },
+  {
+   "ts": "2026-08-22T12:00:00+00:00",
+   "experiment": "regimebook_adj_validation_read:p379",
+   "asset": "BTC",
+   "start": 9100,
+   "end": 13095,
+   "purpose": "validation:regimebook_adj_p379",
+   "note": "BACKFILL recorded by P382 (2026-08-22): the P379 one-shot read of the validation era by training/scripts/regimebook_adj_validation_read.py (report training/reports/regimebook_adj_validation_p379.json, verdict OVERFIT) was not ledgered at the time \u2014 P379 called it 'a deliberate one-shot lockbox spend, like P259b', but P259b IS in this ledger. ts is the backfill time, not the read time (2026-08-22, same day). That script still lacks a record_window_usage() call."
+  },
+  {
+   "ts": "2026-08-22T12:00:00+00:00",
+   "experiment": "regimebook_adj_validation_read:p379",
+   "asset": "ETH",
+   "start": 9100,
+   "end": 13095,
+   "purpose": "validation:regimebook_adj_p379",
+   "note": "BACKFILL recorded by P382 (2026-08-22): the P379 one-shot read of the validation era by training/scripts/regimebook_adj_validation_read.py (report training/reports/regimebook_adj_validation_p379.json, verdict OVERFIT) was not ledgered at the time \u2014 P379 called it 'a deliberate one-shot lockbox spend, like P259b', but P259b IS in this ledger. ts is the backfill time, not the read time (2026-08-22, same day). That script still lacks a record_window_usage() call."
+  },
+  {
+   "ts": "2026-08-22T12:00:00+00:00",
+   "experiment": "regimebook_adj_validation_read:p379",
+   "asset": "SOL",
+   "start": 9100,
+   "end": 13034,
+   "purpose": "validation:regimebook_adj_p379",
+   "note": "BACKFILL recorded by P382 (2026-08-22): the P379 one-shot read of the validation era by training/scripts/regimebook_adj_validation_read.py (report training/reports/regimebook_adj_validation_p379.json, verdict OVERFIT) was not ledgered at the time \u2014 P379 called it 'a deliberate one-shot lockbox spend, like P259b', but P259b IS in this ledger. ts is the backfill time, not the read time (2026-08-22, same day). That script still lacks a record_window_usage() call."
   }
  ]
 }

@@ -23,8 +23,11 @@ CONVENTIONS: causal (previous COMPLETED day's funding decides today's book,
 the P247-F1 no-in-progress rule); dollar-neutral long-bottom-k/short-top-k plus
 a long-only-bottom-k variant for the routable read; funding modelled at 3
 intervals/day (standard 8h perp funding; a long collects -funding); honest CDE
-round-trip cost per rebalance (measured BTC 27.7/ETH 44.0/SOL 41.0 bps, 45bps
-assumed for the 5 unmeasured alts, P167); additive per-bar return sums.
+round-trip cost (measured BTC 27.7/ETH 44.0/SOL 41.0 bps, 45bps assumed for the
+5 unmeasured alts, P167) charged HALF per leg on each rebalance — COST_RT/2 per
+unit |dpos| ([P382]; the P374 run charged the full RT per leg, pre-correction
+report kept as funding_carry_xs_p374_p382_precorrection.json); additive
+per-bar return sums.
 CAVEAT: an 8-asset book is a SIGNAL test — the sleeve routes only BTC/ETH/SOL
 (P292); the 5 alts have no live perp routing and thin volume.
 """
@@ -43,6 +46,16 @@ ERAS = {"2020-22":("2020-01-01","2023-01-01"),
         "2023-24":("2023-01-01","2025-01-01"),
         "2025-26":("2025-01-01","2027-01-01")}
 FUND_INTERVALS_PER_DAY = 3   # standard 8h perp funding
+
+
+def turnover_cost(dpos, assets=UNIVERSE) -> float:
+    """[P382] The ONE place this lab charges cost. `dpos` is |new - pos| per
+    asset (one unit = one LEG); COST_RT is a ROUND-TRIP cost, so a leg costs
+    COST_RT/2 — the repo convention (P166/P281, mechanism_lab.pnl_after_cost).
+    The P374 run charged the full RT per leg, a 2x overcharge on every daily
+    rebalance. Parity pinned by tests/test_p382_lab_cost_per_leg.py."""
+    legs = np.array([COST_RT[a] / 2.0 for a in assets])
+    return float(np.dot(np.asarray(dpos, float), legs))
 
 
 def load_daily():
@@ -87,7 +100,6 @@ def backtest(P, F, *, k, long_only):
     px = P.to_numpy(float); fund = F.to_numpy(float); ts = P.index
     n, m = px.shape
     ret = np.vstack([np.zeros((1,m)), px[1:]/px[:-1]-1.0])
-    costs = np.array([COST_RT[a] for a in UNIVERSE])
     pos = np.zeros(m); pnl = np.zeros(n)
     for i in range(2, n):
         # price PnL of yesterday's book
@@ -101,7 +113,7 @@ def backtest(P, F, *, k, long_only):
         new[order[:k]] = 1.0/k            # long the lowest funders (collect carry)
         if not long_only:
             new[order[-k:]] = -1.0/k      # short the highest funders
-        pnl[i] -= float(np.dot(np.abs(new-pos), costs))
+        pnl[i] -= turnover_cost(np.abs(new-pos), UNIVERSE)   # [P382] half-RT per leg
         pos = new
     return _stats(pnl, ts)
 
@@ -110,7 +122,9 @@ def main():
     P, F = load_daily()
     yrs = round(len(P)/365.25, 2)
     bh = bnh(P)
-    res = {"years": yrs, "buy_and_hold_eqw": bh, "variants": {}}
+    res = {"years": yrs, "buy_and_hold_eqw": bh, "variants": {},
+           "cost_convention": "COST_RT/2 per unit |dpos| (one leg) — P382; pre-correction "
+                              "(full RT per leg) report kept as funding_carry_xs_p374_p382_precorrection.json"}
     for k in (2,3):
         for lo in (True, False):
             res["variants"][f"bottom{k}_{'long_only' if lo else 'dollar_neutral'}"] = backtest(P,F,k=k,long_only=lo)

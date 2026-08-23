@@ -51,7 +51,19 @@ def safe_import(module_path: str, class_name: str = None,
     try:
         module = __import__(module_path, fromlist=[class_name] if class_name else [])
         if class_name:
-            return getattr(module, class_name, None)
+            obj = getattr(module, class_name, None)
+            if obj is None:
+                # [P382] The module imported but the NAME is not in it — a
+                # typo or a rename. This used to return None SILENTLY, so a
+                # misspelled class (execution.rl_fallback "RLExecutionFallback"
+                # vs the real RLExecutionFallbackManager) read exactly like a
+                # deliberately-absent optional dependency. Absence and a
+                # wrong name are different faults and must not share one
+                # silent outcome (P2/P192).
+                logger.warning(
+                    "%s imported but has no attribute %r — wrong class name? "
+                    "(the feature it backs is inert)", module_path, class_name)
+            return obj
         return module
     except ImportError as e:
         if archived:
@@ -70,7 +82,14 @@ CorrelationAwarePositionSizer = safe_import("risk.correlation_position_sizer", "
 
 # Execution Engine
 Level2Analyzer = safe_import("execution.level2_analyzer", "Level2Analyzer")
-RLExecutionFallback = safe_import("execution.rl_fallback", "RLExecutionFallback")
+# [P382] The class is RLExecutionFallbackManager; "RLExecutionFallback" never
+# existed, so this binding was None for the life of the file (silently —
+# safe_import now warns on a missing attribute). Behaviourally inert either
+# way: its only consumer, `plan_execution`, has NO production caller (grep),
+# and it calls `decide(symbol, side, size)` against a manager whose `decide`
+# takes a different signature — so this is the name made honest, not a path
+# armed (P177 shape, recorded).
+RLExecutionFallback = safe_import("execution.rl_fallback", "RLExecutionFallbackManager")
 SOTAExecutionScheduler = safe_import("execution.sota_scheduler", "SOTAExecutionScheduler")
 
 # Monitoring

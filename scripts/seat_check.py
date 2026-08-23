@@ -12,13 +12,24 @@ or operator-local with --stats to feed numbers by hand.
 EVIDENCE SOURCES (all pre-existing; this adds no new pipeline):
   * per-agent forward IC   analytics/ic/agent_ic_review.py
   * shadow ledgers         data/strategy_shadow/regimebook_*.jsonl
-  * live decider           the `quant` agent series (trend, when enforce)
+  * live decider           the `quant` agent series — whoever holds the
+                           DECIDE slot. [P382] Since P298 that is the
+                           REGIMEBOOK (regimebook_mode enforce): the book
+                           target takes the quant slot and whale DEFERS to a
+                           directional book, seating only where the book is
+                           flat. The series is labelled by the live
+                           `primary_strategy` convention (P313): "regimebook"
+                           when regimebook_mode is enforce, else "trend".
 
-STRUCTURAL FACTS ENCODED HERE (inspected 2026-08-18, P294 §inspection):
-  * regimebook/SOL is UNAVAILABLE, not flat — its bear-leg model was DELETED
-    in P250 (it was the leak artifact) and configs/regimebook/ does not exist,
-    so it emits `flat_degraded` forever. Scoring it as a flat opinion would
-    let a broken candidate win by default.
+STRUCTURAL FACTS ENCODED HERE (inspected 2026-08-18, P294 §inspection;
+seat precedence + SOL corrected 2026-08-22, P382):
+  * regimebook/SOL was read as UNAVAILABLE because P250 DELETED its bear-leg
+    model (the leak artifact). [P299 REVERSED THAT READING]: the missing leg
+    was never certified for SOL, so SOL now runs ETH's certified trend-only
+    book verbatim (`book_version=v1_trend_only`, available=True). The
+    availability check below still reads the ledger's OWN `available` flag —
+    a book that genuinely degrades (feature-coverage gap) still must not be
+    scored as a flat opinion and win by default.
   * regimebook/BTC currently expresses ONLY its funding legs (funding_short,
     funding_contrarian_short) — and P262 records those as the UNCERTIFIED
     slice of that book. Surfaced as a warning on the recommendation.
@@ -49,8 +60,9 @@ CAVEATS = {
     "regimebook": (
         "BTC's book is currently expressing ONLY its funding legs, which "
         "P262 records as the UNCERTIFIED slice; its certified trend/hold leg "
-        "is flat in the present regime. SOL's book is structurally inert "
-        "(model deleted in P250)."
+        "is flat in the present regime. SOL's book is the certified "
+        "trend-only form (v1_trend_only, P299 — the P250 bear-leg deletion "
+        "removed a leg SOL never certified, not the book)."
     ),
     "trend": (
         "trend is a 3-lookback vote quantized to {+-1/3, +-1}: it asserts "
@@ -107,7 +119,8 @@ def availability_from_ledger(ledger_dir: Path, asset: str) -> Optional[bool]:
     """[P295] Read the regimebook ledger's own `available` flag.
 
     The book now stamps availability on every row (False when its version is
-    degraded, e.g. SOL whose bear-leg model was deleted in P250), so the seat
+    degraded — e.g. a feature-coverage gap; SOL's P250 bear-leg deletion no
+    longer degrades it, P299 made SOL v1_trend_only), so the seat
     controller reads the producer's OWN statement instead of a hand-maintained
     list here that would drift the moment a model is restored.
 
@@ -161,24 +174,48 @@ def main(argv=None) -> int:
     ap.add_argument("--config", default=str(REPO / "configs" / "live_high_risk.json"))
     args = ap.parse_args(argv)
 
+    # --- live config (best-effort) ---------------------------------------
+    # Read once: it decides the incumbent AND how the `quant` series is
+    # labelled. [P382] An unreadable config only REFUSES when the incumbent
+    # has to come from it; with --incumbent given the label falls back to
+    # the historical "trend" and says nothing more than it knows.
+    cfg: dict = {}
+    cfg_err: Optional[Exception] = None
+    try:
+        cfg = json.loads(Path(args.config).read_text(encoding="utf-8-sig"))
+    except Exception as e:  # noqa: silent-swallow — surfaced below
+        cfg_err = e
+
+    def _enforce(key: str) -> bool:
+        return str(cfg.get(key, "off")).lower() == "enforce"
+
     # --- incumbent -----------------------------------------------------
     incumbent = args.incumbent
     if incumbent is None:
-        try:
-            cfg = json.loads(Path(args.config).read_text(encoding="utf-8-sig"))
-        except Exception as e:
-            return _refuse(f"cannot read live config ({type(e).__name__}) and "
-                           f"no --incumbent given")
-        # Precedence mirrors main.py's seat ordering: the LAST seat to run
-        # wins, so whale outranks regimebook outranks trend.
-        if str(cfg.get("whale_seat_mode", "off")).lower() == "enforce":
-            incumbent = "whale"
-        elif str(cfg.get("regimebook_mode", "off")).lower() == "enforce":
+        if cfg_err is not None:
+            return _refuse(f"cannot read live config "
+                           f"({type(cfg_err).__name__}) and no --incumbent given")
+        # [P382] Precedence: regimebook > whale > trend. The OLD ordering
+        # ("the LAST seat to run wins, so whale outranks regimebook") was
+        # true only until P298: the whale seat still runs last, but P298 made
+        # it DEFER to a directional book target — whale seats only where the
+        # book is FLAT — so with regimebook_mode enforce the BOOK holds the
+        # DECIDE slot and whale is the gap-filler (config note
+        # `_regimebook_mode_note`, "SEAT PRECEDENCE"). Labelling whale as the
+        # incumbent scored the wrong series as the seat holder.
+        if _enforce("regimebook_mode"):
             incumbent = "regimebook"
-        elif str(cfg.get("trend_following_mode", "off")).lower() == "enforce":
+        elif _enforce("whale_seat_mode"):
+            incumbent = "whale"
+        elif _enforce("trend_following_mode"):
             incumbent = "trend"
         else:
             incumbent = FLAT
+    # [P382] The `quant` attribution series IS whoever holds the DECIDE slot.
+    # main.py writes primary_strategy="regimebook" when the book seat is
+    # enforced (P313) and "trend_following" otherwise; mirror that here so the
+    # series is compared under the name of the decider that produced it.
+    quant_label = "regimebook" if _enforce("regimebook_mode") else "trend"
 
     # --- evidence ------------------------------------------------------
     if args.stats:
@@ -194,12 +231,15 @@ def main(argv=None) -> int:
         if not raw:
             return _refuse(f"ic report {p} held no agent rows")
         stats = {}
-        # `quant` IS the seat holder's series (trend when enforce, whale when
-        # the whale seat is on) — it is the decider slot, whoever occupies it.
+        # `quant` IS the seat holder's series — the decider slot, whoever
+        # occupies it. [P382] labelled by the live primary_strategy convention
+        # ("regimebook" under regimebook_mode enforce, else "trend") — the old
+        # hard "trend" label compared the book's own series against itself
+        # under a name that had not held the seat since 2026-08-17.
         for agent, series in raw.items():
             if agent not in ("quant", "whale"):
                 continue
-            name = "trend" if agent == "quant" else agent
+            name = quant_label if agent == "quant" else agent
             ic4, t4, n4 = series.get(1, (None, None, 0))
             ic16, t16, n16 = series.get(4, (None, None, 0))
             stats[name] = {"ic_4h": ic4, "ic_16h": ic16, "t_4h": t4,
@@ -219,7 +259,8 @@ def main(argv=None) -> int:
         if known and not any(known):
             c.available = False
             c.note = ("every regimebook asset reports available=false "
-                      "(SOL's bear-leg model was deleted in P250)")
+                      "(the ledger's own flag; SOL is v1_trend_only since "
+                      "P299 — P250's deleted bear leg is no longer the cause)")
     if not cands:
         return _refuse("no candidates could be built from the evidence")
 

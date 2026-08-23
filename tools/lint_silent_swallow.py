@@ -50,6 +50,13 @@ LIVE_DIRS = (
     "agents", "analytics", "core", "data_mgmt", "defense", "drl",
     "execution", "infra", "integration", "liquidity", "market",
     "orchestration", "risk", "signals",
+    # [P382] exchange/ has held 100% of the directional risk since the
+    # 2026-06-13 Phase B cutover and was never in this list (P366 recorded
+    # the blind spot: 80 handlers in exchange/ had never been scanned). api/
+    # serves /health; portfolio/ is the remaining unscanned live package.
+    # Adding them is COVERAGE, not regression — baselines bumped with
+    # attribution (never --update, P171).
+    "exchange", "api", "portfolio",
 )
 SKIP_DIRS = {
     "archive", "tests", "training", "scripts", "tools", "venv",

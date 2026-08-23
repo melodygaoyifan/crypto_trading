@@ -96,19 +96,37 @@ the alpha bar, the sizing, or the promotion standard.
 > model verdict on the current data basis is restored to the P281 arc's
 > conclusion: dead at every rung under fully honest conditions.
 
-## Sep 1 — the trend tripwire (P237)
+## Sep 1 — the trend tripwire (P237) — **PRESCRIPTION RETIRED (P299), detection kept**
 
-**Instrument:** `tripwire_check.py` on the weekly slope-calibrator reports
-(crons 08-10 ✓ armed, 08-17, 08-24, 08-31 → exactly 4 weekly-spaced reports
-by the date gate).
+**[P382 brought to the P299 state.]** The original table told the operator
+to **remove an asset from `trend_assets`** on 4/4 GATE-CLOSED. **Do NOT do
+that.** P299 retired the prescription (`tripwire_check.py` no longer exits 3;
+it prints "SUPERSEDED" and "do NOT edit trend_assets") for two reasons:
+(a) its actuator no longer targets the decider — trend has not held the
+DECIDE seat since 2026-08-17 (whale P293j, then the regimebook P298), so
+removing an asset from `trend_assets` only removes the FALLBACK that covers
+whale's silent ticks and hands them to Best-of-N, whose weights are modulated
+by the never-validated `[SENT-SWITCH]` firing on ~47% of days (P293i) —
+removing a measured-weak signal into an unmeasured one is not de-risking;
+(b) the **P295 seat controller** (`scripts/seat_check.py`, Monday cron)
+reaches the same verdict BY COMPARISON across candidates, and it is the one
+instrument allowed to recommend a seat change (it never edits config; P141).
+
+**Instrument (detection only):** `tripwire_check.py` on the weekly
+slope-calibrator reports (crons 08-10, 08-17, 08-24, 08-31 → exactly 4
+weekly-spaced reports by the date gate). A GATE-CLOSED streak is still real
+evidence and is **fed into the seat decision**; the no-reports REFUSAL
+(exit 2) is untouched — "cannot be evaluated" must never read as "not fired"
+(P199).
 
 | outcome | action |
 |---|---|
-| 4/4 GATE-CLOSED for an asset AND no promotable basis from the reads below | **remove that asset from `trend_assets`** in the live profile + redeploy (the trend injection comes off; the sleeve goes flat on that asset unless another seat is promoted). One config line; the P237 addendum built the lever. |
-| any report shows the gate honestly OPEN for an asset | that asset's trend injection stays; re-arm the 4-report window |
+| 4/4 GATE-CLOSED for an asset | **no config edit from this tool.** The streak is recorded evidence for the seat controller's comparison; the seat controller decides whether trend (now the fallback) keeps its role, by comparing candidates on the same window. |
+| any report shows the gate honestly OPEN for an asset | noted; the 4-report window re-arms. |
+| no reports readable | exit 2 refusal — not a verdict. |
 
-This is the recorded operator decision with a date; nothing before Sep 1
-should fire it. (Status at pre-commit: 1/4 reports, all three assets armed.)
+(Status at pre-commit: 1/4 reports, all three assets armed. P361/P362
+recorded the cron healthy through 08-17 with 08-24/08-31 still to come.)
 
 ## ~Sep 7 — ma_filter (ledger since 08-08)
 
@@ -156,12 +174,24 @@ window, never one spanning both.
 
 ## ~Sep 9 — regimebook raw + adjusted (ledgers since 08-10)
 
+**[P382 brought to the P298/P299/P379 state.]** The table below was written
+when `regimebook_mode` was `"off"`. Three things have moved since:
+`regimebook_mode` has been **`"enforce"` since 2026-08-18 (P298, on the P297
+six-year evidence)** — the book ALREADY holds the DECIDE slot and whale
+defers to it; **P299 relabelled SOL `v1_trend_only`** (ETH's certified
+trend-only book — the P250 deletion removed a leg SOL never certified, so
+SOL's rows are scoreable, not "unavailable"); and **P379 ran the adjusted
+book's out-of-sample validation read: OVERFIT** (adj loses net on ALL three
+assets — BTC +0.628 vs raw +0.688, ETH +0.468 vs +0.500, SOL **−0.415** vs
++0.093 — despite winning in-design; the churn cut generalises, the timing
+does not). So this read **confirms or disarms**; it no longer arms anything.
+
 | outcome | action |
 |---|---|
-| raw book PASSES | `regimebook_mode: "enforce"` (P256 seat) — the book target takes the direction seat, replacing the trend layer where they disagree (+ its own P-entry). |
-| adjusted book PASSES and beats raw | seat consumes the ADJ target instead. |
-| BTC passes but its funding legs' cells are the failing part | enforce trend/hold legs only; the funding legs stay shadow (P262 already marks them the UNCERTIFIED slice). |
-| FAIL | books stay observation-only; the trend/hold mechanism remains certified (P262) but unexpressed; combined with a fired tripwire the honest system is FLAT until evidence changes. |
+| raw book PASSES (pooled — `regimebook` is in `POOLABLE_FAMILIES`) | **confirms** the standing `regimebook_mode: "enforce"`. No config change. Record the pass. |
+| raw book FAILS | a **DISARM decision**, not a non-event: the revert is `regimebook_mode: "shadow"` (harness keeps recording, zero live effect) + its own P-entry + operator decision (P141). On disarm the whale seat covers its ticks and trend is the fallback (P299 §tripwire above); the honest system may be mostly FLAT. |
+| adjusted book PASSES and beats raw on the ledger | **stays OFF regardless.** P379 measured `regimebook_adj` OVERFIT out-of-sample on all three assets; a 30-day forward read cannot outrank a six-year out-of-sample FAIL (P243/P244 era-fragility). A pass here is recorded as a forward-vs-history disagreement worth a trace, never as an arming. |
+| BTC passes but its funding legs' cells are the failing part | funding legs remain the UNCERTIFIED slice (P262; P297 certified them over six years on the INCREMENT with a CI that includes zero — the criterion that also rejects buy-and-hold). Record per-leg; a leg-level change to the enforced book is its own P-entry. |
 
 ## ~Sep 9 — derivflow (ledger since 08-08)
 

@@ -66,6 +66,15 @@ class FastRiskTick:
     # normally-late tick does not trip it, short enough that two consecutive
     # missed anchors do.
     ANCHOR_MAX_AGE_SEC = 21600.0  # 6h
+    # [P382] How old the previous-evaluation price may be and still serve as
+    # the VELOCITY reference. The 30s loop measures ~34s between evaluations
+    # (P353); 180s is ~5 loop periods — long enough that one slow pass or one
+    # invalid tick does not blind the control, short enough that the first
+    # valid evaluation after a fetch outage / stale-anchor period measures
+    # nothing (absence is never a trigger, P367) instead of "the move since
+    # whenever we last looked". A real >3% dislocation inside the NEXT 34s
+    # still fires, because that tick has a fresh reference.
+    VELOCITY_REF_MAX_AGE_SEC = 180.0
 
     def __init__(self, shadow_mode: bool = True,
                  velocity_trigger: bool = False,
@@ -319,30 +328,73 @@ class FastRiskTick:
         # times, while drift from the 4H anchor was >= 3% on ~19% of samples
         # — a ~650x gap, because drift accumulates over up to four hours
         # while the loop runs every ~34 seconds.
-        _prev = self._last_eval_price.get(asset)
-        velocity_pct = (abs(current_price - _prev) / _prev
-                        if _prev and _prev > 0 else 0.0)
-        self._last_eval_price[asset] = current_price
+        # [P382] The velocity REFERENCE is written only from a VALID, positive,
+        # non-synthetic price — and is read only while fresh. Before this fix
+        # the reference was written BEFORE the data_valid gate below, so the
+        # pipeline's fetch-failure fallback (`generate_verification_data`:
+        # `data_valid=False`, `_source="synthetic_fallback"`, and a HARDCODED
+        # current_price of BTC 95,000 / ETH 3,500 / SOL 185) became the
+        # previous-evaluation price. That tick correctly HOLDed on
+        # data_invalid, but the NEXT real tick computed
+        # velocity = |64k - 95k| / 95k ~ 33% > 3% -> EXIT_ONLY -> a real
+        # taker flatten of a healthy book + the P232 re-entry cooldown. With
+        # the velocity trigger ARMED (P380) one transient Kraken fetch failure
+        # was therefore a guaranteed false emergency exit. P380's "0% false-
+        # fire over 257 evaluations" arming evidence simply contained no
+        # fetch failure. Fail direction: an invalid tick neither writes nor
+        # clears the reference; a reference older than VELOCITY_REF_MAX_AGE_SEC
+        # is not compared against (P156's staleness rule applied to the
+        # watchdog's own memory) — so the first valid tick after an outage can
+        # never fire on velocity, and absence is never a trigger (P367).
+        data_valid = bool(market_data.get("data_valid", True))
+        _synthetic = str(market_data.get("_source", "") or "") == "synthetic_fallback"
+        _price_ok = False
+        try:
+            _price_ok = bool(current_price) and float(current_price) > 0.0 \
+                and float(current_price) == float(current_price)  # not NaN
+        except (TypeError, ValueError):
+            _price_ok = False
+        _ref_ok = data_valid and not _synthetic and _price_ok
 
-        # Shadow counters — both are always measured so the arming decision
-        # rests on forward evidence rather than on one 24h sample (P287's
-        # shadow-first pattern). Reported once per anchor refresh.
-        self._shadow_evals[asset] = self._shadow_evals.get(asset, 0) + 1
-        if drift_pct > self.PRICE_MOVE_THRESHOLD:
-            self._shadow_drift_fires[asset] = \
-                self._shadow_drift_fires.get(asset, 0) + 1
-        if velocity_pct > self.PRICE_MOVE_THRESHOLD:
-            self._shadow_velocity_fires[asset] = \
-                self._shadow_velocity_fires.get(asset, 0) + 1
+        _prev_entry = self._last_eval_price.get(asset)
+        _prev_px, _prev_ts = (None, 0.0)
+        if isinstance(_prev_entry, tuple):
+            _prev_px, _prev_ts = _prev_entry
+        elif _prev_entry is not None:
+            # pre-P382 shape (bare float) — treat as unstamped, i.e. stale
+            _prev_px, _prev_ts = float(_prev_entry), 0.0
+        _ref_fresh = (_prev_px is not None and _prev_px > 0
+                      and (now - _prev_ts) <= self.VELOCITY_REF_MAX_AGE_SEC)
+        velocity_pct = (abs(current_price - _prev_px) / _prev_px
+                        if (_ref_ok and _ref_fresh) else 0.0)
+        if _ref_ok:
+            self._last_eval_price[asset] = (float(current_price), now)
+
+        # Shadow counters — both are measured on every VALID evaluation so
+        # the arming decision rests on forward evidence rather than on one
+        # 24h sample (P287's shadow-first pattern). Reported once per anchor
+        # refresh. [P382] an invalid/synthetic tick is NOT an evaluation of
+        # the market and is not counted — counting it was how the arming
+        # evidence looked clean while containing no fetch failure.
+        if _ref_ok:
+            self._shadow_evals[asset] = self._shadow_evals.get(asset, 0) + 1
+            if drift_pct > self.PRICE_MOVE_THRESHOLD:
+                self._shadow_drift_fires[asset] = \
+                    self._shadow_drift_fires.get(asset, 0) + 1
+            if velocity_pct > self.PRICE_MOVE_THRESHOLD:
+                self._shadow_velocity_fires[asset] = \
+                    self._shadow_velocity_fires.get(asset, 0) + 1
 
         # The quantity the trigger acts on. DEFAULT is the historical drift,
         # so this ships changing nothing (P201 trio; the flag is absent from
         # the live profile and pinned absent).
         price_move_pct = velocity_pct if self.velocity_trigger else drift_pct
-        data_valid = bool(market_data.get("data_valid", True))
-        if not data_valid:
+        if not _ref_ok:
             self._depth_drop_streak[asset] = 0
-            return FastRiskResult(FastRiskAction.HOLD, "data_invalid", price_move_pct, now)
+            _why = ("data_invalid" if not data_valid
+                    else "synthetic_fallback" if _synthetic
+                    else "no_valid_price")
+            return FastRiskResult(FastRiskAction.HOLD, _why, price_move_pct, now)
 
         # Cooldown: skip REDUCE/EXIT if recently triggered (except EXIT_ONLY which always fires)
         _in_cooldown = False

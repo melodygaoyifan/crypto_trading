@@ -342,8 +342,15 @@ class TestVetoRosterCompleteness:
         src = re.sub(r"_SLEEVE_FLATTEN_INTENDED_VETOES\s*=\s*\([^)]*\)", "",
                      src)
         lits = set()
-        for m in re.finditer(r'veto_reason\s*=\s*\(?\s*f?"([^"\n]{2,})"',
-                             src):
+        # [P382] `p0_abort_reason = "..."` is the SECOND assignment form that
+        # reaches `intent.veto_reason` (main.py stamps it verbatim at the P0
+        # abort return): "[INTEGRITY] ..." and f"CORRELATION_CRISIS: ..."
+        # were runtime-composed and therefore invisible to the veto_reason-
+        # only scan — P276's own recorded blind spot. Both prefixes are now
+        # extracted, so their roster entries are justified by a REAL writer.
+        for m in re.finditer(
+                r'(?:veto_reason|p0_abort_reason)\s*=\s*\(?\s*f?"([^"\n]{2,})"',
+                src):
             prefix = m.group(1).split("{")[0].strip()
             if len(prefix) >= 4:
                 lits.add(prefix)
@@ -545,9 +552,30 @@ class TestP265DataIntegrityVetoesHold:
         # gate's freshness veto); the others via the NO_TRADE trigger tuple.
         assert "hold_veto" in r
 
+    def test_correlation_collapse_holds_rather_than_liquidates(self):
+        # [P382] MOVED from the flatten list above to HOLD, and the reason is
+        # a premise correction, not a loosening preference: the LIVE checker
+        # (defense/constitution.py ~:443) fires CORRELATION_COLLAPSE on
+        # correlation_btc_eth_sol >= 0.92 ALONE. P253d armed the real
+        # correlation believing it "ALSO requires all-three-same-direction
+        # AND no validated edge" — those conjuncts live in
+        # signals/no_trade_triggers.py, which is NOT the live path. By
+        # P253d's own measurement the measure is >= 0.92 on 7.8% of bars
+        # (17% in the last year), and it fired live 2026-08-19 16:02/20:02
+        # on all three assets. A routine correlation reading must not
+        # LIQUIDATE a held book (the P364 shape); NO_TRADE still refuses
+        # NEW risk by vetoing the intent, and the venue stop + halts keep
+        # guarding what is held.
+        d, r = translate(
+            _intent(veto_active=True,
+                    veto_reason="[v3.6.1] NO_TRADE: CORRELATION_COLLAPSE"),
+            fallback_dir=0.9)
+        assert d is SLEEVE_HOLD
+        assert "hold_veto" in r
+
     @pytest.mark.parametrize("trigger", [
         "FLASH_CRASH", "EXTREME_DVOL", "LIQUIDITY_CRITICAL",
-        "CORRELATION_COLLAPSE", "ALL_CONFLICT_FLAT"])
+        "ALL_CONFLICT_FLAT"])
     def test_market_risk_no_trade_subtypes_still_flatten(self, trigger):
         # The carve-out must not swallow the risk responses — those NO_TRADE
         # subtypes mean "get out", and flattening is the intended action.

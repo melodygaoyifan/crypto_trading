@@ -233,6 +233,36 @@ class DeribitFeed:
             self._fetch_errors += 1
             return self._last_data if self._last_data else snap
 
+        # [P382] PARTIAL fetch: one currency raised, the other came back. The
+        # per-currency isolation above kept BTC's reading, but replacing the
+        # whole cache with `snap` DROPPED the currency that failed for the
+        # next poll_interval_sec (15 min) — and stamped `_last_fetch_time`
+        # so fetch_if_stale would not even retry it. Mirror the P287/P294
+        # per-family carry: a configured currency missing from this cycle
+        # keeps its PREVIOUS metric, with its ORIGINAL timestamp (carrying is
+        # not re-measuring — a carried reading must not look fresh), and the
+        # carried set is logged so a sustained one-currency outage is visible.
+        prev = self._last_data
+        carried = []
+        if prev is not None:
+            for cur in self._currencies:
+                if cur in snap.metrics:
+                    continue
+                old_m = prev.metrics.get(cur)
+                if old_m is None:
+                    continue
+                snap.metrics[cur] = old_m  # timestamp untouched, by design
+                carried.append(cur)
+        if carried:
+            snap.errors.append("carried_forward:" + ",".join(carried))
+            logger.warning(
+                "[DERIBIT] partial fetch — carried forward the previous reading "
+                "for %s (fresh: %s); the carried metrics keep their ORIGINAL "
+                "timestamp and are NOT re-measured",
+                ",".join(carried),
+                ",".join(sorted(c for c in snap.metrics if c not in carried)) or "none",
+            )
+
         self._last_data = snap
         self._last_fetch_time = now
 

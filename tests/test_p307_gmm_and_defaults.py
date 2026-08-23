@@ -201,10 +201,13 @@ class TestDefaultOnAudit:
         """13 profit_max_* switches default TRUE with no live-profile key.
         P287 found their vetoes were an unclassified sleeve-liquidation door;
         the classification is what makes leaving them on defensible."""
-        src = _src("main.py")
-        blk = src[src.index("_SLEEVE_HOLD_VETOES"):][:4000]
+        # [P382] re-anchored from a 4000-char source window (which any
+        # documented addition to the roster pushes these entries out of —
+        # P320's character-window lesson) to the roster itself.
+        import main as m
         for veto in ("[FALSE_BREAKOUT_VETO]", "[LOSS_STREAK_HALT]"):
-            assert veto in blk, f"{veto} left the sleeve HOLD roster"
+            assert veto in m._SLEEVE_HOLD_VETOES, (
+                f"{veto} left the sleeve HOLD roster")
 
 
 # ---------------------------------------------------------------------------

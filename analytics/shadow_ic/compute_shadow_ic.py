@@ -11,9 +11,17 @@ across configurable horizons, and emits a promotion verdict per strategy:
                 * IC positive (nothing downstream inverts a negative-IC strategy)
                 * |IC| > 0.05 floor, and Sharpe > 0.5
                 * |t| = |IC|*sqrt(n-1) >= 2.0  (distinguishable from zero)
-                * expected edge >= 6.0bps round-trip cost x 2.0 margin, priced
-                  off the measured forward-return volatility
+                * expected edge >= round-trip cost x 2.0 margin, priced off the
+                  measured forward-return volatility. [P382] The round-trip
+                  cost is PER ASSET, derived from `core.cde_fees.CDE_FEE_BPS`
+                  (2 legs x the asset's taker bps; pooled rows take the max
+                  over their members), floored at the refuted 6.0bps model —
+                  and each row prints which one it was judged on.
               A missing volatility measurement is a REFUSAL, not a skip.
+              [P382] In pooled mode the forward vol is the n-weighted RMS of
+              each member asset's RAW sigma, never the sigma of the z-scored
+              pooled series (which is 1.0 == 10,000 bps, a cost bar nothing
+              could fail to clear).
     HOLD    : not yet 30 days of data, OR mixed signal, OR any bar above unmet
     KILL    : 14d window has IC < 0.05 (kill-criteria per v5.1 prompt)
 
@@ -96,7 +104,24 @@ REPORT_DIR = REPO / "analytics" / "shadow_ic" / "reports"
 # tier), i.e. ~400x the 0.078 bps that `training/backtest_framework.FeeSchedule`
 # assumes by default. 6.0 is the forward-looking Coinbase number; it is a floor,
 # not a measurement, which is why COST_MARGIN exists.
+#
+# [P382] ...and 6.0 is now ONLY a floor. P315/P334 measured the CDE fee at
+# 9.4-14.5 bps PER LEG (flat per contract -> percentage of notional), and P374
+# measured the all-in round trip at BTC 27.7 / ETH 44.0 / SOL 41.0 bps. The
+# gate was still pricing the REFUTED 3bps/side model, so every edge-vs-cost
+# verdict it printed was ~3x too generous. The round-trip cost a row is judged
+# against is now DERIVED from `core.cde_fees.CDE_FEE_BPS` (the registered
+# calibration, P327): 2 legs x that asset's taker bps, floored at this
+# constant, then the x2 margin on top. See `round_trip_cost_bps_for`.
 DEFAULT_ROUND_TRIP_COST_BPS = 6.0
+REFUTED_MODEL_RT_BPS = DEFAULT_ROUND_TRIP_COST_BPS   # [P382] the FLOOR, named honestly
+
+# [P382] Provenance of the cost a row was judged against (P169: a number
+# without its source is not a measurement). Printed per row and carried in
+# the report.
+COST_SOURCE_CDE = "cde_fees"
+COST_SOURCE_FALLBACK = "fallback_refuted_model"
+_CDE_LEGS = 2.0   # entry + exit; the margin below is NOT a leg count
 
 # Require the estimated edge to cover costs this many times over. The margin
 # absorbs (a) spread and market impact, which the fee number excludes entirely,
@@ -146,6 +171,9 @@ class PromotionAssessment:
     per_horizon: Dict[int, Dict[str, Any]] = field(default_factory=dict)
     round_trip_cost_bps: float = 0.0
     cost_margin: float = 0.0
+    # [P382] where round_trip_cost_bps came from (P169 provenance):
+    # "cde_fees" | "fallback_refuted_model" | "" (caller supplied, untagged)
+    cost_source: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -154,6 +182,7 @@ class PromotionAssessment:
             "per_horizon": {str(k): v for k, v in self.per_horizon.items()},
             "round_trip_cost_bps": self.round_trip_cost_bps,
             "cost_margin": self.cost_margin,
+            "cost_source": self.cost_source,
         }
 
 
@@ -201,6 +230,95 @@ def required_ic_for_costs(
     if r_pearson >= 2.0:          # asin domain: no correlation can get there
         return math.inf
     return (6.0 / math.pi) * math.asin(r_pearson / 2.0)
+
+
+# ---------------------------------------------------------------------------
+# [P382] Round-trip cost, derived from the registered CDE fee calibration
+# ---------------------------------------------------------------------------
+
+_cde_fallback_warned = False
+
+
+def _cde_taker_leg_bps() -> Optional[Dict[str, float]]:
+    """asset -> per-LEG taker fee in bps, read from `core.cde_fees.CDE_FEE_BPS`.
+
+    Returns None when the calibration cannot be read, and LOGS that the gate
+    is then running on the refuted model — never silently (P169/P199).
+    `core.cde_fees` fails toward the expensive side itself (an assumed asset
+    carries the worst measured fee, P167), so reading the table is enough.
+    """
+    global _cde_fallback_warned
+    try:
+        # Run as a script (`python analytics/shadow_ic/compute_shadow_ic.py`)
+        # sys.path[0] is this file's directory, not the repo root.
+        if str(REPO) not in sys.path:
+            sys.path.insert(0, str(REPO))
+        from core.cde_fees import CDE_FEE_BPS
+    except Exception as e:  # noqa: silent-swallow — logged below, once
+        if not _cde_fallback_warned:
+            logger.warning(
+                "[SHADOW_IC][P382] core.cde_fees unavailable (%s: %s) — the "
+                "promotion gate is pricing the REFUTED 3bps/side model "
+                "(%.1fbps round trip, P315/P334). Every edge-vs-cost verdict "
+                "below is ~3x too generous; cost_source=%s",
+                type(e).__name__, e, REFUTED_MODEL_RT_BPS, COST_SOURCE_FALLBACK)
+            _cde_fallback_warned = True
+        return None
+    table: Dict[str, float] = {}
+    for a, sides in dict(CDE_FEE_BPS).items():
+        try:
+            v = float(sides["taker"])
+        except (KeyError, TypeError, ValueError):  # noqa: silent-swallow — shape coercion
+            continue
+        if math.isfinite(v) and v > 0.0:
+            table[str(a).upper()] = v
+    return table or None
+
+
+def round_trip_cost_bps_for(
+    assets: Optional[Any] = None,
+    floor_bps: float = REFUTED_MODEL_RT_BPS,
+) -> Tuple[float, str, Dict[str, float]]:
+    """The round-trip cost a row is judged against, with its provenance.
+
+    Returns ``(rt_bps, cost_source, per_asset_rt_bps)``.
+
+      * per-asset row  -> that asset's 2 x taker leg;
+      * pooled row     -> the MAX over the pooled assets: a pooled bar must
+                          not be cheaper than its dearest member, or pooling
+                          would silently buy a lower cost bar along with the
+                          larger n;
+      * no asset given -> the MAX over the whole table (the conservative
+                          reading for a row the caller could not attribute);
+      * an asset the table does not know -> the WORST in the table (P167:
+        an unmeasured cost is assumed expensive, never cheap);
+      * the calibration unreadable -> `floor_bps` with
+        cost_source=COST_SOURCE_FALLBACK, logged once.
+
+    `floor_bps` (the refuted 6.0) is a FLOOR in every branch: the derived
+    cost can only ever be higher than the model it replaces, so this change
+    cannot loosen the gate anywhere (P167/P248).
+    """
+    floor = float(floor_bps)
+    table = _cde_taker_leg_bps()
+    if table is None:
+        return floor, COST_SOURCE_FALLBACK, {}
+    worst_leg = max(table.values())
+    names = [str(a).upper() for a in (assets or []) if a]
+    per_asset: Dict[str, float] = {}
+    if names:
+        for a in names:
+            # an asset the table does not know prices at the WORST (P167);
+            # written as a membership test so the silent_failure_audit's
+            # two-variable-default heuristic does not read a deliberate
+            # fallback as the P47-Bug-2 shape
+            leg = table[a] if a in table else worst_leg
+            per_asset[a] = max(floor, _CDE_LEGS * leg)
+        rt = max(per_asset.values())
+    else:
+        per_asset = {a: max(floor, _CDE_LEGS * leg) for a, leg in table.items()}
+        rt = max(per_asset.values())
+    return max(floor, rt), COST_SOURCE_CDE, per_asset
 
 
 # ---------------------------------------------------------------------------
@@ -576,6 +694,20 @@ def compute_per_strategy_ic(
                     else:
                         per_trade_returns.append(direction * fr_large)
 
+        # [P382] RAW forward-return dispersion per horizon, accumulated per
+        # asset BEFORE standardization. The pooled IC below is correctly
+        # computed on the z-scored series (P299) — but the P166 cost bar needs
+        # the dispersion in BPS, and a z-scored series has sigma == 1 by
+        # construction, i.e. "10,000 bps of forward vol". The pooled row was
+        # therefore handed a vol ~50-100x any real asset's, `required_ic`
+        # collapsed to ~0.001, and the cost bar was VACUOUS on exactly the read
+        # P332 pre-committed as GOVERNING for a poolable family. Pooled vol is
+        # now the n-weighted RMS of each member's OWN sigma:
+        #     sqrt( sum_a n_a * sigma_a^2 / sum_a n_a )
+        # which lands inside [min_a sigma_a, max_a sigma_a] by construction.
+        _pooled_var_acc: Dict[int, float] = {h: 0.0 for h in horizons_bars}
+        _pooled_var_n: Dict[int, int] = {h: 0 for h in horizons_bars}
+
         if pooled:
             for _a, _slot in _by_asset.items():
                 for h in horizons_bars:
@@ -589,6 +721,10 @@ def compute_per_strategy_ic(
                         # A constant series carries no rank information; a
                         # zero-divide would fabricate one (P2).
                         continue
+                    if len(ys) >= 2:
+                        # [P382] raw sigma, weighted by this asset's n
+                        _pooled_var_acc[h] += len(ys) * _var
+                        _pooled_var_n[h] += len(ys)
                     per_h[h][0].extend(xs)
                     per_h[h][1].extend([(y - _m) / _sd for y in ys])
             for _a, _pts in _pt_by_asset.items():
@@ -605,12 +741,26 @@ def compute_per_strategy_ic(
         # concluding that a zero-vol asset needs zero edge (P164/P159).
         fwd_vol_bps_per_h: Dict[int, float] = {}
         for h in horizons_bars:
+            if pooled:
+                # [P382] NEVER from per_h[h][1] here — that series is z-scored
+                # (sigma == 1 -> 10,000 bps) and would make the cost bar vacuous.
+                if _pooled_var_n[h] < 2:
+                    continue
+                fwd_vol_bps_per_h[h] = (
+                    (_pooled_var_acc[h] / _pooled_var_n[h]) ** 0.5) * 10_000.0
+                continue
             ys = per_h[h][1]
             if len(ys) < 2:
                 continue
             mean_y = sum(ys) / len(ys)
             var_y = sum((y - mean_y) ** 2 for y in ys) / (len(ys) - 1)
             fwd_vol_bps_per_h[h] = (var_y ** 0.5) * 10_000.0
+
+        # [P382] The cost THIS row is judged against, with provenance. Pooled
+        # rows take the max over their member assets (a pooled bar must not be
+        # cheaper than its dearest member); per-asset rows take that asset's.
+        _cost_assets = (sorted(_ok) if pooled else [asset])
+        _rt_bps, _cost_src, _rt_by_asset = round_trip_cost_bps_for(_cost_assets)
 
         # Annualized Sharpe at the largest horizon (per-tick re-evaluations,
         # NOT per-trade — these are signals-as-positions, idealized)
@@ -632,7 +782,14 @@ def compute_per_strategy_ic(
             "fwd_vol_bps_per_horizon": fwd_vol_bps_per_h,  # [P166]
             "annualized_sharpe": sharpe,
             "n_directional": len(per_trade_returns),
+            # [P382] the cost bar this row is judged against + its provenance
+            "round_trip_cost_bps": _rt_bps,
+            "cost_source": _cost_src,
+            "cost_assets": _cost_assets,
+            "round_trip_cost_bps_by_asset": _rt_by_asset,
         }
+        if pooled:
+            out[(strat, asset)]["pooled_assets"] = list(_cost_assets)
 
     return out
 
@@ -655,6 +812,7 @@ def assess_promotion(
     cost_margin: float = DEFAULT_COST_MARGIN,
     min_ic_t_stat: float = DEFAULT_MIN_IC_T_STAT,
     require_positive_ic: bool = True,
+    cost_source: str = "",
 ) -> PromotionAssessment:
     """[P166] The promotion gate, with the reasoning attached.
 
@@ -686,6 +844,7 @@ def assess_promotion(
         verdict=Verdict.HOLD,
         round_trip_cost_bps=round_trip_cost_bps,
         cost_margin=cost_margin,
+        cost_source=cost_source,
     )
 
     if not n_per_h or all(n < min_samples for n in n_per_h.values()):
@@ -864,13 +1023,30 @@ def assess_record(record: Dict[str, Any], window_days: int) -> PromotionAssessme
     `render_summary` and the JSON report used to call `determine_verdict`
     separately with their own argument lists. Two call sites deriving the same
     verdict independently is how a console PROMOTE and a report HOLD end up in
-    the same run; route both through here instead."""
+    the same run; route both through here instead.
+
+    [P382] The cost bar comes FROM THE RECORD (`round_trip_cost_bps` +
+    `cost_source`, written by compute_per_strategy_ic from core.cde_fees). A
+    record without one — a report written before P382 — is judged on the
+    refuted-model floor and SAYS so in cost_source, rather than pretending the
+    CDE price was applied."""
+    rt = record.get("round_trip_cost_bps")
+    src = record.get("cost_source")
+    try:
+        rt_f = float(rt) if rt is not None else None
+    except (TypeError, ValueError):  # noqa: silent-swallow — shape coercion
+        rt_f = None
+    if rt_f is None or not math.isfinite(rt_f) or rt_f <= 0.0:
+        rt_f = DEFAULT_ROUND_TRIP_COST_BPS
+        src = f"record_missing_cost:{COST_SOURCE_FALLBACK}"
     return assess_promotion(
         record.get("ic_per_horizon", {}) or {},
         record.get("n_per_horizon", {}) or {},
         record.get("annualized_sharpe", 0.0) or 0.0,
         window_days,
         fwd_vol_bps_per_h=record.get("fwd_vol_bps_per_horizon", {}) or {},
+        round_trip_cost_bps=max(DEFAULT_ROUND_TRIP_COST_BPS, rt_f),
+        cost_source=str(src or ""),
     )
 
 
@@ -901,6 +1077,16 @@ def render_summary(
             f"  {strat:<24} {asset:<5} {n_max:>6} {ic_strs} {sharpe:+8.2f} "
             f"{assessment.verdict.value:>20}"
         )
+        # [P382] The cost this row was judged against, and WHERE it came from
+        # (P169). A reader must be able to tell a CDE-priced verdict from one
+        # rendered on the refuted 6bps model without opening the source.
+        _pa = v.get("pooled_assets")
+        lines.append(
+            f"      cost={assessment.round_trip_cost_bps:.1f}bps round trip "
+            f"x {assessment.cost_margin:.1f} margin  "
+            f"cost_source={assessment.cost_source or 'unstated'}"
+            + (f"  pooled_assets={','.join(_pa)}" if _pa else "")
+        )
         # [P166] A verdict without its arithmetic is not auditable. Print the
         # edge-vs-cost line for every horizon, then why promotion was refused.
         for h in horizons_bars:
@@ -919,11 +1105,27 @@ def render_summary(
         for b in assessment.blockers:
             lines.append(f"      BLOCKED: {b}")
     lines.append("=" * 90)
-    lines.append(
-        f"  cost model: {DEFAULT_ROUND_TRIP_COST_BPS:.1f}bps round trip "
-        f"x {DEFAULT_COST_MARGIN:.1f} margin | significance: |t| >= "
-        f"{DEFAULT_MIN_IC_T_STAT:.1f} | IC floor: {DEFAULT_IC_FLOOR}   [P166]"
-    )
+    # [P382] The footer states the MODEL, per asset, not one number: the cost
+    # is per-asset (CDE taker x 2 legs from core.cde_fees), floored at the
+    # refuted 6.0, then x margin. If the calibration could not be read the
+    # footer says the whole table is on the refuted model.
+    _rt_all, _src_all, _rt_by = round_trip_cost_bps_for(None)
+    if _src_all == COST_SOURCE_CDE:
+        _per = ", ".join(f"{a}={b:.1f}" for a, b in sorted(_rt_by.items()))
+        lines.append(
+            f"  cost model: CDE taker x {_CDE_LEGS:.0f} legs from core.cde_fees "
+            f"({_per} bps round trip; floor {REFUTED_MODEL_RT_BPS:.1f}) "
+            f"x {DEFAULT_COST_MARGIN:.1f} margin | significance: |t| >= "
+            f"{DEFAULT_MIN_IC_T_STAT:.1f} | IC floor: {DEFAULT_IC_FLOOR}   [P166/P382]"
+        )
+    else:
+        lines.append(
+            f"  cost model: {REFUTED_MODEL_RT_BPS:.1f}bps round trip "
+            f"x {DEFAULT_COST_MARGIN:.1f} margin — {COST_SOURCE_FALLBACK}: "
+            f"core.cde_fees UNREADABLE, this is the REFUTED 3bps/side model "
+            f"(P315/P334) | significance: |t| >= {DEFAULT_MIN_IC_T_STAT:.1f} "
+            f"| IC floor: {DEFAULT_IC_FLOOR}   [P166/P382]"
+        )
     return "\n".join(lines)
 
 
