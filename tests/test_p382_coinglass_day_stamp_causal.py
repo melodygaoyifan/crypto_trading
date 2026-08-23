@@ -47,6 +47,12 @@ def _load_rebuild_module():
     saved = {k: sys.modules.pop(k) for k in list(sys.modules)
              if k == "scripts" or k.startswith("scripts.")}
     training_dir = str(REPO / "training")
+    # [P382] rebuild_pipeline.py PREPENDS its own dirs to sys.path at import
+    # time; restoring only our own insert left `training/` ahead of the repo
+    # root, so a later bare `import scripts.seat_check` resolved `scripts`
+    # to training/scripts (ModuleNotFoundError in an unrelated test file —
+    # seen only in a clean worktree). Snapshot and restore the WHOLE path.
+    saved_path = list(sys.path)
     sys.path.insert(0, training_dir)
     try:
         spec = importlib.util.spec_from_file_location(
@@ -60,8 +66,7 @@ def _load_rebuild_module():
                   if k == "scripts" or k.startswith("scripts.")]:
             sys.modules.pop(k, None)
         sys.modules.update(saved)
-        if training_dir in sys.path:
-            sys.path.remove(training_dir)
+        sys.path[:] = saved_path
 
 
 @pytest.fixture(scope="module")
