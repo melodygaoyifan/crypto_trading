@@ -1,0 +1,68 @@
+{
+  "ndays": 120,
+  "min_whales": 2,
+  "assets": {
+    "ETH": {
+      "asset": "ETH",
+      "n_bars": 720,
+      "window": [
+        "2026-03-25 00:00:00+00:00",
+        "2026-07-22 20:00:00+00:00"
+      ],
+      "horizons": {
+        "4h": {
+          "n_entry": 51,
+          "n_agree": 3,
+          "n_disagree": 1,
+          "agree_bps": 14.9,
+          "disagree_bps": -9.5,
+          "contrast_bps": 24.4
+        },
+        "16h": {
+          "n_entry": 51,
+          "n_agree": 3,
+          "n_disagree": 1,
+          "agree_bps": 24.41,
+          "disagree_bps": 86.91,
+          "contrast_bps": -62.5
+        }
+      },
+      "verdict": "NOT_EARNED (disagreements not worse)"
+    },
+    "SOL": {
+      "asset": "SOL",
+      "n_bars": 720,
+      "window": [
+        "2026-03-25 00:00:00+00:00",
+        "2026-07-22 20:00:00+00:00"
+      ],
+      "horizons": {
+        "4h": {
+          "n_entry": 80,
+          "n_agree": 6,
+          "n_disagree": 14,
+          "agree_bps": 21.9,
+          "disagree_bps": 24.09,
+          "contrast_bps": -2.18
+        },
+        "16h": {
+          "n_entry": 80,
+          "n_agree": 6,
+          "n_disagree": 14,
+          "agree_bps": 2.83,
+          "disagree_bps": 3.98,
+          "contrast_bps": -1.15
+        }
+      },
+      "verdict": "NOT_EARNED (disagreements not worse)"
+    }
+  },
+  "note": "point estimate; not significance (P348: ~2.8y needed)",
+  "fidelity": {
+    "sample": 200000,
+    "real_whales": 2537,
+    "vec_whales": 2535,
+    "match_rate": 0.99999,
+    "abs_only_whales": 2556
+  }
+}
