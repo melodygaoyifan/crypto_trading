@@ -84,6 +84,23 @@ ENDPOINTS = {
         "exchange": None,
         "parser": "liquidation",
     },
+    # [P389] positioning: long/short ACCOUNT ratio — the crowded-leverage
+    # metric P388's screen flagged (OI-level lead's sibling). Per-exchange
+    # (Binance) + pair symbol. Verified on the key 2026-08-24.
+    "lsr_global": {
+        "path": "/api/futures/globalLongShortAccountRatio/history",
+        "desc": "Global long/short account ratio (Binance)",
+        "symbol_type": "pair",
+        "exchange": "Binance",
+        "parser": "lsr",
+    },
+    "lsr_top": {
+        "path": "/api/futures/topLongShortAccountRatio/history",
+        "desc": "Top-trader long/short account ratio (Binance)",
+        "symbol_type": "pair",
+        "exchange": "Binance",
+        "parser": "lsr",
+    },
 }
 
 # Symbol mapping
@@ -236,6 +253,34 @@ def parse_ohlc_data(raw_data: list, symbol: str, data_type: str) -> pd.DataFrame
     return df
 
 
+def parse_lsr_data(raw_data: list, symbol: str) -> pd.DataFrame:
+    """[P389] Parse long/short account-ratio response. Items carry `time`
+    (epoch), `longAccount`, `shortAccount`, `longShortRatio`."""
+    if not raw_data:
+        return pd.DataFrame()
+    rows = []
+    for item in raw_data:
+        if not isinstance(item, dict):
+            continue
+        ts = item.get("time", item.get("t", 0))
+        if not ts:
+            continue
+        ts_pd = (pd.Timestamp(ts, unit="ms", tz="UTC") if ts > 1e12
+                 else pd.Timestamp(ts, unit="s", tz="UTC"))
+        rows.append({
+            "timestamp": ts_pd,
+            "long_account": _to_float(item.get("longAccount", 0)),
+            "short_account": _to_float(item.get("shortAccount", 0)),
+            "long_short_ratio": _to_float(item.get("longShortRatio", 0)),
+        })
+    if not rows:
+        return pd.DataFrame()
+    df = pd.DataFrame(rows)
+    df = df.sort_values("timestamp").drop_duplicates(subset=["timestamp"]).reset_index(drop=True)
+    df["asset"] = symbol
+    return df
+
+
 def parse_liquidation_data(raw_data: list, symbol: str) -> pd.DataFrame:
     """Parse liquidation response into DataFrame."""
     if not raw_data:
@@ -376,6 +421,8 @@ def main(interval: str = INTERVAL):
                 df = parse_ohlc_data(raw, asset, name)
             elif ep["parser"] == "liquidation":
                 df = parse_liquidation_data(raw, asset)
+            elif ep["parser"] == "lsr":
+                df = parse_lsr_data(raw, asset)
             else:
                 df = parse_ohlc_data(raw, asset, name)
 

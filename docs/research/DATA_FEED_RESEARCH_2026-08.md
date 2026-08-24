@@ -128,3 +128,38 @@ full-resolution OI/liq/long-short data now, so the probe becomes possible. Every
 else (retrain, DRL) stays gated behind that probe. And the surest lever remains the
 one the venue constraint rules out or defers — scale/percentage-fee — which would
 make the IC-0.04 signal we ALREADY have tradeable without any new data.
+
+---
+
+## 6. IMPLEMENTATION STATUS (P389, 2026-08-24)
+
+Implemented against the plan (the enabling action + evidence):
+
+- **The forward accumulation is LIVE.** `fetch_coinglass_history.py` now also fetches
+  **long/short account ratio** (global + top-trader, Binance) alongside funding/OI/
+  liquidation, and P266's union-by-timestamp MERGE means each re-run GROWS the
+  archive (verified: funding/OI/liq 4h grew 1119 -> 1179 rows this run). New files:
+  `{BTC,ETH,SOL}_lsr_{global,top}_4h.parquet` (~1080 rows, from 2026-02-25).
+- **Triage of the OI-level lead (held-position, not raw IC), 186d in-sample:** SOL's
+  `oi_z` contrarian signal is STABLE and strong across deadbands (band 1.0 +48% /
+  Sharpe 1.72, band 1.5 +81% / 2.92, DD 19-31%, vs buy&hold -9%) — the signature of a
+  real signal, not the one-band overfit that sank the ML signal (P386). BTC marginal,
+  ETH unstable. This is what JUSTIFIES the accumulation (the lead is not a pure raw-IC
+  artifact on SOL).
+- **Long/short ratio screen:** SOL level +0.10, ETH `lsr_z` +0.097 — above the
+  ceiling, same contrarian/positioning family. But SOL's z collapses to ~0 (its level
+  IC is likely a trend artifact); ETH's z is the cleaner signal. Same 180d in-sample
+  caveat.
+
+**Cadence (operational):** re-run `python -X utf8 training/scripts/fetch_coinglass_history.py`
+at BOTH `--interval 4h` and `--interval 1d` at least monthly (the OI/liq rolling
+window is ~186d, so monthly re-runs guarantee full overlap and never lose a bar). It
+is already chained in `make refresh-data` (P266). The robust upgrade is a server cron
+so accumulation is unattended.
+
+**Still NOT tradeable / NOT retrained:** every positioning signal above is 180d
+in-sample with level-vs-z artifact risk (P348 + the secular-growth caveat). The gate
+is the hold-aware probe on ACCUMULATED OOS data (§4), months out. Building the
+`oi_z`/`lsr_z` features into the basis and any retrain waits for that — a retrain on
+the 180d in-sample now is the thin-window leak trap (P164/P200).
+
