@@ -1,0 +1,51 @@
+{
+  "ndays": 125,
+  "cost_rt_bps": {
+    "BTC": 27.7,
+    "ETH": 44.0,
+    "SOL": 41.0
+  },
+  "assets": {
+    "BTC": {
+      "n_bars": 750,
+      "window": [
+        "2026-03-29",
+        "2026-07-31"
+      ],
+      "horizons": {
+        "4h": {
+          "req_ic": 0.4056,
+          "model_oos_ic": -0.0575,
+          "n_oos": 378,
+          "best_raw_feat": "aggr_cnt_imb",
+          "best_raw_ic": -0.0713,
+          "raw_ic": {
+            "signed_imb": -0.0329,
+            "aggr_cnt_imb": -0.0713,
+            "vpin_z": 0.0067,
+            "large_share_z": 0.0293,
+            "size_cv_z": -0.0282,
+            "intensity_z": -0.0655
+          },
+          "clears": false
+        },
+        "16h": {
+          "req_ic": 0.2165,
+          "model_oos_ic": -0.2669,
+          "n_oos": 375,
+          "best_raw_feat": "intensity_z",
+          "best_raw_ic": -0.0545,
+          "raw_ic": {
+            "signed_imb": 0.0079,
+            "aggr_cnt_imb": 0.001,
+            "vpin_z": 0.0402,
+            "large_share_z": 0.042,
+            "size_cv_z": 0.0007,
+            "intensity_z": -0.0545
+          },
+          "clears": false
+        }
+      }
+    }
+  }
+}
