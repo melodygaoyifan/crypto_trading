@@ -69,17 +69,19 @@ KNOWN_SILENT_CAUSES = {
         "check (P358c/P2). Repair = P141 arming."),
     # [P358c] WARMUP clocks measured, not assumed. Buffers are fed ~3x per 4H
     # tick (generate_signal runs once per asset and appends for all three),
-    # are in-memory, and have no persistence — so a deploy resets them
-    # (P301/P316). The days figure is samples/3 ticks x 4h.
+    # were in-memory with no persistence — a deploy reset them (P301/P316).
+    # [P390] RelativeStrength + KalmanCointegration now PERSIST via
+    # strategies/_warmup_state, so their clocks are CUMULATIVE uptime;
+    # FundingDivergence remains unpersisted. Days = samples/3 ticks x 4h.
     "RelativeStrengthStrategy": (
         "WARMUP",
-        ">=50 price samples ~= 17 ticks ~= 2.8 days of uninterrupted uptime; "
-        "in-memory, no persistence (P358c/P301/P316)."),
+        ">=50 price samples ~= 17 ticks ~= 2.8 days of CUMULATIVE uptime "
+        "(P358c clock; buffers persisted across restarts since P390)."),
     "KalmanCointegration_SOL_ETH": (
         "WARMUP",
         ">=50 price AND >=30 spread samples (the spread only accrues once "
-        "prices are full) ~= 27 ticks ~= 4.5 days of uninterrupted uptime "
-        "(P358c/P301/P316)."),
+        "prices are full) ~= 27 ticks ~= 4.5 days of CUMULATIVE uptime "
+        "(P358c clock; buffers + Kalman state persisted since P390)."),
     "FundingDivergenceStrategy": (
         "WARMUP",
         ">=240 price samples ~= 80 ticks ~= 13.3 days of uninterrupted "

@@ -55,6 +55,13 @@ SQRT_2 = np.sqrt(2)
 LOG_2 = np.log(2)
 EULER_GAMMA = 0.5772156649
 
+# [P390] Warmup-persistence bound for the two starvation-fixed strategies
+# (RelativeStrength, KalmanCointegration — P358c's WARMUP class). 7 days is
+# the pipeline bound P301/P371 use everywhere else: a two-week-old
+# spread/RS distribution is not the current regime, and silently z-scoring
+# against it would be worse than warming up again.
+KQ_WARMUP_MAX_AGE_SEC = 7 * 24 * 3600.0
+
 
 # =============================================================================
 # ENUMS & DATA STRUCTURES
@@ -1421,7 +1428,103 @@ class RelativeStrengthStrategy(BaseStrategy):
         
         self.rs_buffer = deque(maxlen=100)
         self.rs_threshold = 1.2
+
+        # [P390] AUTHORIZED ARMING (the operator, told explicitly this item
+        # "touches an order path", instructed "fix all"): these buffers were
+        # per-process deques appended ~3x per 4H tick, so the >=50-sample
+        # warmup needed ~2.8 days of UNINTERRUPTED uptime in the BULL bucket
+        # and this strategy has NEVER once fired (P358c). Persisting them
+        # makes the warmup CUMULATIVE — ~17 BULL-bucket update calls (~2.8
+        # days of cumulative in-bucket uptime; restarts no longer reset the
+        # clock) — after which it can fire at kraken_quant's existing DECIDE
+        # seat. Every downstream gate (fusion multi-DECIDE, alpha gate,
+        # caps, stops) still binds. Restore only PRE-FILLS: update() still
+        # appends once per call and persists AFTER the append, so a restart
+        # resumes exactly where the file left off — no tick is ever
+        # double-counted (the P371 parity rule).
+        self._restore_warmup()
         
+    # [P390] The kq_ prefix namespaces this away from the v5.1 shadow
+    # strategies' files that share data/v5_1_warmup/ (P301's helper owns
+    # the directory, the version stamp, and the staleness rule — P172).
+    _WARMUP_STATE_NAME = "kq_relative_strength"
+
+    def _restore_warmup(self) -> None:
+        """[P390] Restore the price/RS buffers saved by the previous process.
+
+        Fail directions (P301, all pinned by test): a missing / corrupt /
+        version-mismatched / stale (>7d) file restores NOTHING and the
+        strategy warms up exactly as it did before P390, with the cold
+        start LOGGED. The BTC/SOL price series are PARALLEL per-tick
+        appends, so they restore ONLY when their lengths agree — a mismatch
+        would pair bar i of one asset with bar j of the other, so the whole
+        restore is dropped instead (P371's rule for paired series). A
+        non-finite or non-positive restored price also drops the restore: a
+        0.0 price would poison the rolling returns (P2 — a bad value must
+        never wear a measurement's name). Restored values are appended into
+        the BOUNDED deques, so overflow rolls off structurally.
+        """
+        try:
+            from strategies._warmup_state import load as _wload
+            saved = _wload(self._WARMUP_STATE_NAME,
+                           max_age_sec=KQ_WARMUP_MAX_AGE_SEC)
+            if not saved:
+                logger.info("[KQ-WARMUP] %s: no saved state — cold start, "
+                            "warming up from scratch", self.name)
+                return
+            px_b = saved.get("px::BTC") or []
+            px_s = saved.get("px::SOL") or []
+            if not px_b or len(px_b) != len(px_s):
+                logger.warning(
+                    "[KQ-WARMUP] %s: BTC/SOL price series lengths disagree "
+                    "(%d vs %d) — restore DROPPED, cold start (a mismatched "
+                    "pair is worse than none)",
+                    self.name, len(px_b), len(px_s))
+                return
+            if any((not np.isfinite(v)) or v <= 0 for v in px_b + px_s):
+                logger.warning(
+                    "[KQ-WARMUP] %s: restored prices contain a non-finite "
+                    "or non-positive value — restore DROPPED, cold start",
+                    self.name)
+                return
+            for v in px_b:
+                self.price_buffer['BTC'].append(float(v))
+            for v in px_s:
+                self.price_buffer['SOL'].append(float(v))
+            for v in (saved.get("rs") or []):
+                if np.isfinite(v):
+                    self.rs_buffer.append(float(v))
+            logger.info("[KQ-WARMUP] %s: restored px=%d rs=%d — the warmup "
+                        "clock is now CUMULATIVE across restarts",
+                        self.name, len(px_b), len(self.rs_buffer))
+        except Exception as e:  # noqa: silent-swallow — logged; cold start is pre-P390 behaviour
+            logger.warning("[KQ-WARMUP] %s: restore failed (%s: %s) — cold "
+                           "start, warming up from scratch",
+                           self.name, type(e).__name__, e)
+
+    def _persist_warmup(self) -> None:
+        """[P390] Save the buffers. Never raises: a warmup that cannot be
+        saved must not take a tick down (the helper's own contract, P301;
+        this wrapper guards the payload build too). `state.in_position` is
+        deliberately NOT persisted — it is intra-process signal-lifecycle
+        state, not a warmup, and persisting it would change entry/exit
+        emission after a restart beyond the authorized scope.
+        """
+        try:
+            from strategies._warmup_state import save as _wsave
+            series: Dict[str, List[float]] = {}
+            if len(self.price_buffer['BTC']):
+                series["px::BTC"] = [float(v) for v in self.price_buffer['BTC']]
+            if len(self.price_buffer['SOL']):
+                series["px::SOL"] = [float(v) for v in self.price_buffer['SOL']]
+            if len(self.rs_buffer):
+                series["rs"] = [float(v) for v in self.rs_buffer]
+            if series:
+                _wsave(self._WARMUP_STATE_NAME, series)
+        except Exception as e:  # noqa: silent-swallow — logged; persistence only
+            logger.debug("[KQ-WARMUP] %s: persist skipped (%s: %s)",
+                         self.name, type(e).__name__, e)
+
     def update(self, market_data: Dict) -> Optional[Signal]:
         """Calculate relative strength and generate signals."""
         timestamp = market_data.get('timestamp', time.time())
@@ -1429,7 +1532,11 @@ class RelativeStrengthStrategy(BaseStrategy):
         for asset in ['BTC', 'SOL']:
             if asset in market_data.get('prices', {}):
                 self.price_buffer[asset].append(market_data['prices'][asset])
-        
+
+        # [P390] after the appends, so the warmup-gate return below still
+        # banks this tick's prices toward the cumulative warmup.
+        self._persist_warmup()
+
         if len(self.price_buffer['SOL']) < 50 or len(self.price_buffer['BTC']) < 50:
             return None
         
@@ -1442,6 +1549,8 @@ class RelativeStrengthStrategy(BaseStrategy):
         
         rs = sol_return / (btc_return + 1e-10) if btc_return != 0 else 1.0
         self.rs_buffer.append(rs)
+        # [P390] rs mutated after the first persist; no buffer mutates below.
+        self._persist_warmup()
         
         # RS trend
         rs_array = np.array(self.rs_buffer)
@@ -1610,7 +1719,116 @@ class KalmanCointegrationStrategy(BaseStrategy):
         self.spread_buffer = deque(maxlen=200)
         self.entry_zscore = 2.0
         self.exit_zscore = 0.5
+
+        # [P390] AUTHORIZED ARMING (the operator, told explicitly this item
+        # "touches an order path", instructed "fix all"): the price/spread
+        # buffers AND the Kalman filter state above were per-process, so the
+        # >=50-price + >=30-spread warmup needed ~4.5 days of UNINTERRUPTED
+        # uptime in the SIDEWAYS bucket and this strategy has NEVER once
+        # fired (P358c). Persisting them makes the warmup CUMULATIVE — ~27
+        # SIDEWAYS-bucket update calls (~4.5 days of cumulative in-bucket
+        # uptime; restarts no longer reset the clock) — after which it can
+        # fire at kraken_quant's existing DECIDE seat. Every downstream gate
+        # (fusion multi-DECIDE, alpha gate, caps, stops) still binds.
+        # Per-pair state name, so a future ('BTC','ETH') instance can never
+        # restore SOL/ETH state into the wrong pair.
+        self._warmup_state_name = (
+            f"kq_kalman_{self.asset_a.lower()}_{self.asset_b.lower()}")
+        self._restore_warmup()
         
+    def _restore_warmup(self) -> None:
+        """[P390] Restore price buffers, spread buffer AND the Kalman filter
+        state (theta = [beta, alpha], P covariance) ATOMICALLY.
+
+        THE KALMAN-STATE DECISION (persisted, not recomputed):
+        `kalman_update` assigns `self.theta = theta_pred + K * innovation`
+        and rebuilds `self.P` on every call — the hedge ratio is a RECURSIVE
+        filter estimate, incrementally updated across calls; no code path
+        recomputes theta from the buffers. And every value in spread_buffer
+        is an innovation produced BY that filter state. So the filter state
+        and its spreads are inseparable: restoring full buffers with a reset
+        filter (theta=[1,0], P=I) would z-score a reset filter's innovations
+        against a converged filter's distribution — a mismatch WORSE than a
+        cold start. The restore is therefore all-or-nothing: theta must
+        carry exactly 2 finite values, P exactly 4, the paired price series
+        equal lengths and positive, or EVERYTHING is dropped and the
+        strategy warms up from scratch (today's behaviour, logged — the
+        P301 fail directions, plus P371's paired-series rule).
+        """
+        try:
+            from strategies._warmup_state import load as _wload
+            saved = _wload(self._warmup_state_name,
+                           max_age_sec=KQ_WARMUP_MAX_AGE_SEC)
+            if not saved:
+                logger.info("[KQ-WARMUP] %s: no saved state — cold start, "
+                            "warming up from scratch", self.name)
+                return
+            px_a = saved.get(f"px::{self.asset_a}") or []
+            px_b = saved.get(f"px::{self.asset_b}") or []
+            theta = saved.get("theta") or []
+            p_flat = saved.get("P") or []
+            spread = saved.get("spread") or []
+            ok = (
+                bool(px_a)
+                and len(px_a) == len(px_b)
+                and len(theta) == 2
+                and len(p_flat) == 4
+                and all(np.isfinite(v) and v > 0 for v in px_a + px_b)
+                and all(np.isfinite(v) for v in theta + p_flat + spread)
+            )
+            if not ok:
+                logger.warning(
+                    "[KQ-WARMUP] %s: saved state is inconsistent (px %d/%d, "
+                    "theta %d, P %d) — restore DROPPED, cold start: the "
+                    "filter state and its spreads are inseparable, and a "
+                    "partial restore is worse than none",
+                    self.name, len(px_a), len(px_b), len(theta), len(p_flat))
+                return
+            for v in px_a:
+                self.price_buffer[self.asset_a].append(float(v))
+            for v in px_b:
+                self.price_buffer[self.asset_b].append(float(v))
+            for v in spread:
+                self.spread_buffer.append(float(v))
+            self.theta = np.array([float(theta[0]), float(theta[1])])
+            P = np.array([float(v) for v in p_flat],
+                         dtype=float).reshape(2, 2)
+            self.P = (P + P.T) / 2  # re-symmetrize, as kalman_update does
+            logger.info("[KQ-WARMUP] %s: restored px=%d spread=%d beta=%.4f "
+                        "— the warmup clock is now CUMULATIVE across "
+                        "restarts", self.name, len(px_a), len(spread),
+                        float(self.theta[0]))
+        except Exception as e:  # noqa: silent-swallow — logged; cold start is pre-P390 behaviour
+            logger.warning("[KQ-WARMUP] %s: restore failed (%s: %s) — cold "
+                           "start, warming up from scratch",
+                           self.name, type(e).__name__, e)
+
+    def _persist_warmup(self) -> None:
+        """[P390] Save buffers + filter state TOGETHER (they are only
+        meaningful as a set — see _restore_warmup). Never raises: a warmup
+        that cannot be saved must not take a tick down. `state.in_position`
+        is deliberately NOT persisted — intra-process signal-lifecycle
+        state, not a warmup (see RelativeStrengthStrategy._persist_warmup).
+        """
+        try:
+            from strategies._warmup_state import save as _wsave
+            a_buf = self.price_buffer[self.asset_a]
+            b_buf = self.price_buffer[self.asset_b]
+            if not len(a_buf) and not len(b_buf):
+                return
+            series: Dict[str, List[float]] = {
+                f"px::{self.asset_a}": [float(v) for v in a_buf],
+                f"px::{self.asset_b}": [float(v) for v in b_buf],
+                "theta": [float(self.theta[0]), float(self.theta[1])],
+                "P": [float(v) for v in np.asarray(self.P).ravel()],
+            }
+            if len(self.spread_buffer):
+                series["spread"] = [float(v) for v in self.spread_buffer]
+            _wsave(self._warmup_state_name, series)
+        except Exception as e:  # noqa: silent-swallow — logged; persistence only
+            logger.debug("[KQ-WARMUP] %s: persist skipped (%s: %s)",
+                         self.name, type(e).__name__, e)
+
     def kalman_update(self, y: float, x: float) -> Tuple[np.ndarray, float, float]:
         """
         Single Kalman filter update step.
@@ -1667,8 +1885,15 @@ class KalmanCointegrationStrategy(BaseStrategy):
         for asset in [self.asset_a, self.asset_b]:
             if asset in market_data.get('prices', {}):
                 self.price_buffer[asset].append(market_data['prices'][asset])
-        
-        if (len(self.price_buffer[self.asset_a]) < 50 or 
+
+        # [P390] after the appends, so the warmup-gate / bad-price returns
+        # below still bank this tick's prices toward the cumulative warmup.
+        # (Filter state here is one step stale until the post-kalman_update
+        # persist below runs; a process death in between loses at most one
+        # observation's filter update, which the recursion absorbs.)
+        self._persist_warmup()
+
+        if (len(self.price_buffer[self.asset_a]) < 50 or
             len(self.price_buffer[self.asset_b]) < 50):
             return None
         
@@ -1689,6 +1914,9 @@ class KalmanCointegrationStrategy(BaseStrategy):
         
         # Store spread
         self.spread_buffer.append(spread)
+        # [P390] theta/P/spread mutated after the first persist; no buffer
+        # mutates below this line (signal branches only read).
+        self._persist_warmup()
         
         if len(self.spread_buffer) < 30:
             return None

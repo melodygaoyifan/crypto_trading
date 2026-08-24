@@ -33,6 +33,7 @@ Production fixes (v6.8):
 import logging
 import os
 import json
+import re
 import time
 import asyncio
 from dataclasses import dataclass, field
@@ -1251,6 +1252,74 @@ class LLMSentimentAgent:
 
 _HEADLINE_WINDOW = timedelta(hours=4)
 
+# ============================================================================
+# [P390] KEY-FIGURE HEADLINE TAG — EVIDENCE ONLY
+# ============================================================================
+# The operator asked whether key-person speech (Trump, Powell, ...) is
+# fetched. It is — as ordinary headlines through the three-source blend
+# (CryptoPanic + CC News + RSS, P322d) — but NOTHING tagged it, so nobody
+# could later measure "do key-figure headline days behave differently".
+# This roster + counter is that measurement plumbing and nothing else:
+#
+#   * NO consumer may act on it. It writes two meta keys
+#     (`keyfig_hits`, `keyfig_total`) and changes nothing about which
+#     headlines are returned, their content, or their order — pinned by
+#     tests/test_p390_keyfig_tag.py.
+#   * Matching is WORD-BOUNDED and lowercase BY CONSTRUCTION (every term is
+#     wrapped in \b...\b below). P293c is the reason: a bare substring test
+#     matched "sol" inside solution/sold/console; "sec" inside
+#     "second"/"insecure"/"consecutive" is the same trap, and only the
+#     boundary makes its false-positive risk LOW (a standalone "sec" as a
+#     seconds abbreviation remains a rare, accepted false positive).
+#   * OFFICES AND STABLE SURNAMES ONLY — no guessed officeholders. A roster
+#     entry that names the wrong person measures nothing.
+#   * Counts are PER HEADLINE (how many headlines mention the figure), not
+#     per occurrence — "Trump, Trump, Trump" is one headline about Trump.
+KEY_FIGURE_TERMS: Dict[str, tuple] = {
+    "trump": ("trump",),
+    "powell": ("powell",),
+    "musk": ("musk",),
+    "fed": ("federal reserve", "fomc", "rate cut", "rate cuts",
+            "rate hike", "rate hikes"),
+    "sec": ("sec", "securities and exchange"),
+    "whitehouse": ("white house", "executive order", "executive orders"),
+    "treasury": ("treasury",),
+    "tariff": ("tariff", "tariffs"),
+}
+
+# One compiled, word-bounded, alternation pattern per figure. Terms are
+# re.escape'd so a term can never smuggle in regex syntax, and the \b pair
+# is applied by THIS builder for every figure — the tests pin that shape so
+# a hand-edited unbounded pattern cannot slip in.
+_KEYFIG_PATTERNS: Dict[str, "re.Pattern[str]"] = {
+    _fig: re.compile(
+        r"\b(?:" + "|".join(re.escape(_t) for _t in _terms) + r")\b"
+    )
+    for _fig, _terms in KEY_FIGURE_TERMS.items()
+}
+
+
+def keyfig_hits(headlines: List[str]) -> Dict[str, int]:
+    """[P390] Count key-figure mentions across a headline list.
+
+    Returns {figure: n_headlines_mentioning} for figures with n > 0 only.
+    An empty dict is a MEASURED ZERO over a real list (P2: distinct from
+    the key being absent, which means the blend never ran).
+
+    Pure and read-only: never mutates `headlines`, never raises on
+    non-string items (they are skipped — a malformed item must not take
+    the evidence tag down, and the tag must never take the blend down).
+    """
+    hits: Dict[str, int] = {}
+    for h in headlines:
+        if not isinstance(h, str):
+            continue
+        tl = h.lower()
+        for fig, pat in _KEYFIG_PATTERNS.items():
+            if pat.search(tl):
+                hits[fig] = hits.get(fig, 0) + 1
+    return hits
+
 
 async def fetch_headlines(
     asset: str,
@@ -1622,6 +1691,18 @@ async def fetch_headlines_with_meta(
         # now-populated list.
         if meta.get("headlines") and meta.get("error") == "empty_cache":
             meta["error"] = ""
+
+        # [P390] EVIDENCE-ONLY key-figure tag, computed on the FINAL deduped
+        # blended list that is actually returned (never on a per-source
+        # intermediate — the question is about the corpus Haiku sees).
+        # The keys are ALWAYS present when the blend ran; a meta dict
+        # WITHOUT them means the blend did not complete (the outer except
+        # below), which is P2's absence-vs-measured-zero distinction:
+        # `keyfig_hits == {}` is a measured zero, a missing key is not.
+        # No consumer may act on these — they are measurement plumbing.
+        _kf = keyfig_hits(meta.get("headlines") or [])
+        meta["keyfig_hits"] = _kf
+        meta["keyfig_total"] = int(sum(_kf.values()))
 
         return meta
     except Exception as e:

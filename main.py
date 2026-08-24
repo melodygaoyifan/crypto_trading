@@ -11915,7 +11915,7 @@ class HMATSProductionRunner:
                     f"->observed={_c5_dir:+.2f} effective={agent_signals['llm_sentiment_direction']:+.2f} "
                     f"src={_c3_result.source} status={agent_signals['llm_source_status']} "
                     f"crowding={_c3_result.crowding_risk} headlines={_c3_result.headline_count} "
-                    f"tradeable={_c3_tradeable}"
+                    f"tradeable={_c3_tradeable} kf={_c3_meta.get('keyfig_total', '?')}"  # [P390] key-figure headline count (evidence-only)
                 )
                 if self._lifecycle_llm_sentiment:
                     self._lifecycle_llm_sentiment.record_success()

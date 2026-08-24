@@ -81,6 +81,18 @@ CPI_RELEASE_DAYS_2026 = ("2026-09-11", "2026-10-13", "2026-11-10",
 FOMC_WINDOW_UTC = (12, 22)      # block-entry hours on decision day
 CPI_WINDOW_UTC = (10, 16)       # block-entry hours on release day
 SUNDAY_THIN_WINDOW = True       # Sun 22:00 -> Mon 00:30 UTC
+# [P390] Scheduled COMMUNICATION events, same static-2026 convention and the
+# same operator-verify warning as above. Minutes land three weeks after each
+# decision (14:00 ET = 18:00 UTC); NFP is the first Friday (08:30 ET = 12:30
+# UTC). Unscheduled speech (Trump posts, ad-hoc remarks) is DELIBERATELY not
+# here — a static calendar cannot carry it, and fabricated dates would be
+# worse than absence (P2); that coverage lives in the headline-sentiment
+# path (keyfig tagging, P390).
+FOMC_MINUTES_DAYS_2026 = ("2026-10-07", "2026-11-18", "2026-12-30")
+NFP_RELEASE_DAYS_2026 = ("2026-09-04", "2026-10-02", "2026-11-06",
+                         "2026-12-04")
+MINUTES_WINDOW_UTC = (17, 21)   # around the 18:00 UTC minutes release
+NFP_WINDOW_UTC = (12, 16)       # around the 12:30 UTC NFP print
 
 
 def in_event_window(now: Optional[datetime] = None) -> Optional[str]:
@@ -93,6 +105,12 @@ def in_event_window(now: Optional[datetime] = None) -> Optional[str]:
     if day in CPI_RELEASE_DAYS_2026 and \
             CPI_WINDOW_UTC[0] <= t.hour < CPI_WINDOW_UTC[1]:
         return "cpi"
+    if (day in FOMC_MINUTES_DAYS_2026
+            and MINUTES_WINDOW_UTC[0] <= t.hour < MINUTES_WINDOW_UTC[1]):
+        return "fomc_minutes"
+    if (day in NFP_RELEASE_DAYS_2026
+            and NFP_WINDOW_UTC[0] <= t.hour < NFP_WINDOW_UTC[1]):
+        return "nfp"
     if SUNDAY_THIN_WINDOW:
         if (t.weekday() == 6 and t.hour >= 22) or \
                 (t.weekday() == 0 and t.hour == 0 and t.minute <= 30):

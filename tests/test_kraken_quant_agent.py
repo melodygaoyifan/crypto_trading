@@ -29,6 +29,17 @@ from agents.kraken_quant_agent import (
 )
 
 
+# [P390] RelativeStrength and KalmanCointegration now RESTORE warmup state at
+# construction and PERSIST it from update() (strategies/_warmup_state). An
+# unisolated run of this file would write into the repo's data/v5_1_warmup/
+# and later constructions would inherit it — P294: construct the state, never
+# inherit it (the P371 precedent added the same fixture when the micro agent
+# gained construction-time reads).
+@pytest.fixture(autouse=True)
+def _isolated_warmup_state(tmp_path, monkeypatch):
+    monkeypatch.setenv("HMATS_DATA_DIR", str(tmp_path))
+
+
 # ============================================================================
 # HELPERS
 # ============================================================================
