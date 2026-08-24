@@ -274,6 +274,23 @@ class EtfFlowShadow:
         # drop the newest (the observation) and take the trailing window
         return completed[:-1][-window:] if len(completed) > 1 else []
 
+    def completed_prices(self, asset: str,
+                         now_ts: Optional[float] = None) -> list:
+        """[P404] Ordered completed-day `price_usd` (oldest->newest, INCLUDING
+        the newest). The flow-history endpoint carries price, so SMA200 and the
+        combination book are computable from the fetch we already do — no new
+        feed. Same completed-day filter (leak-free)."""
+        rows = self._fetch_rows(asset)
+        if not rows:
+            return []
+        now = now_ts if now_ts is not None else time.time()
+        midnight = (datetime.fromtimestamp(now, tz=timezone.utc)
+                    .replace(hour=0, minute=0, second=0, microsecond=0)
+                    .timestamp())
+        return [float(r["price_usd"]) for r in rows
+                if (r.get("timestamp", 0) / 1000.0) < midnight
+                and r.get("price_usd") is not None]
+
     # ---------------- observability ----------------
     def _transition_log(self, key: str, msg: str) -> None:
         """Log on REASON CHANGE per key, not per tick (a steady-state
@@ -307,6 +324,23 @@ class EtfFlowShadow:
                 self._save_state()
             # raw sign kept as a secondary field for A/B against the old signal
             raw_dir, raw_reason = etf_flow_direction(flow, age)
+            # [P404] combination shadow: SMA200 long/flat (the certified overlay,
+            # here on the flow-history price as a PROXY for the live 4H sleeve)
+            # + ETF-outflow de-risk. P404 measured this complementary on BTC
+            # (Sh +1.49 vs SMA-alone +0.37). Observation-only; arming would gate
+            # the LIVE sleeve position, not this proxy — the proxy just confirms
+            # the combination holds forward and is leak-free before any flip.
+            sma200 = None; sma_pos = None; combo_dir = None; combo_reason = "no_price"
+            prices = self.completed_prices(asset)
+            if len(prices) >= 200:
+                sma200 = sum(prices[-200:]) / 200.0
+                cur_px = prices[-1]
+                sma_pos = 1.0 if cur_px > sma200 else 0.0
+                # de-risk: long only when SMA trends AND ETF is not signaling
+                # outflow (direction < 0); anything else -> flat (P404 form)
+                combo_dir = 0.0 if direction < 0 else sma_pos
+                combo_reason = ("etf_outflow_derisk" if direction < 0
+                                else ("sma_long" if sma_pos > 0 else "sma_flat"))
             rec = {
                 "ts": time.time(),
                 "iso": datetime.now(timezone.utc).isoformat(),
@@ -323,6 +357,11 @@ class EtfFlowShadow:
                 "reason": reason,
                 "raw_sign": float(raw_dir),
                 "raw_reason": raw_reason,
+                # [P404] combination-shadow fields (observation-only)
+                "sma200": None if sma200 is None else round(sma200, 4),
+                "sma_pos": sma_pos,
+                "combo_direction": combo_dir,
+                "combo_reason": combo_reason,
             }
             path = self._dir / f"etfflow_{asset}.jsonl"
             with open(path, "a", encoding="utf-8") as f:

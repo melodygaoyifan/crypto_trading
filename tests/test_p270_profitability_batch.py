@@ -126,6 +126,33 @@ class TestInProgressDayExcluded:
         # raw sign is still recorded for A/B and does carry the -1
         assert rec["raw_sign"] == -1.0
 
+    def test_combination_shadow_derisks_on_outflow(self, tmp_path):
+        # [P404] combo book = SMA200 long/flat gated by ETF outflow. Needs >=200
+        # completed prices; a strong-outflow newest day -> combo flat regardless
+        # of SMA (de-risk). Rows carry price_usd so SMA200 is computable.
+        import time, random
+        random.seed(11)
+        now = time.time(); midn = int(now // 86400 * 86400)
+        rows = []; px = 100.0
+        for i in range(210):
+            px *= (1 + random.gauss(0.002, 0.01))   # gentle uptrend
+            rows.append({"timestamp": (midn - (210 - i) * 86400) * 1000,
+                         "flow_usd": random.gauss(0, 1e8), "price_usd": px})
+        rows[-1]["flow_usd"] = -9e8                   # strong outflow newest day
+        s = self._shadow(tmp_path, rows)
+        rec = s.record_tick("BTC")
+        assert rec["combo_direction"] == 0.0
+        assert rec["combo_reason"] == "etf_outflow_derisk"
+        assert rec["sma200"] is not None
+
+    def test_combination_shadow_none_without_enough_prices(self, tmp_path):
+        # < 200 completed prices -> combo fields are None/no_price, never a crash
+        rows = [{"timestamp": (int(__import__("time").time()) // 86400 * 86400 - 86400) * 1000,
+                 "flow_usd": -5e7, "price_usd": 100.0}]
+        s = self._shadow(tmp_path, rows)
+        rec = s.record_tick("BTC")
+        assert rec["combo_direction"] is None and rec["combo_reason"] == "no_price"
+
     def test_flat_record_has_zero_confidence(self, tmp_path):
         s = self._shadow(tmp_path, [])
         s._cache = {}
