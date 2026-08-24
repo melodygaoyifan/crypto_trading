@@ -5,13 +5,14 @@
   "_p287_note": "146->148 (2026-08-16, P287): the two new keys are b6_lead_lag_edge / b6_lead_lag_confidence \u2014 RENAMES of the de-collided B6 writes (previously counted under lead_lag_edge/confidence). Not new unguarded signal surface.",
   "blind_only_keys_count": 156,
   "by_category": {
-    "BLIND": 241,
+    "BLIND": 240,
     "EXEMPT_TICK_LOCAL": 36,
     "GUARDED": 7,
-    "TIMESTAMPED": 22
+    "TIMESTAMPED": 25
   },
   "total_writes": 308,
   "_p293_note": "BLIND 228 -> 241, total 290 -> 303, blind-only keys 148 -> 156: the P293 data-coverage repair batch. Attribution is exact. +8 NEW KEYS (the +8 blind-only): deribit_put_call_ratio, deribit_put_call_ratio_volume, deribit_dvol, deribit_mean_iv, exchange_netflow_coins_1d, exchange_netflow_usd_1d, exchange_netflow_pct_1d, exchange_netflow_direction. The remaining +5 writes are re-writes of EXISTING keys inside the two default-OFF enforce branches (exchange_flow, flow_direction, options_short_confirmation, options_confidence, options_put_call_ratio). These are NOT actually unbounded: every one of the 8 new keys is written only when the producing feed reports is_usable() on a cache the feed itself throttles via cache_age_sec()/poll_interval_sec, which is a P156-style staleness bound the P120 scanner cannot see syntactically (it looks for per-write guard patterns). Counters by hand, never --update (P171).",
   "_p293d_note": "TIMESTAMPED 19 -> 22: the three P293d whale-SEAT writes (quant_direction / quant_confidence / signal_edge_bps). They land in the GUARDED-equivalent category because the seat is gated on a freshly-read whale_net_pressure and takes NO seat when the producer is absent. total_writes is unchanged: the seat REWRITES existing keys rather than adding new ones, exactly like the trend/regimebook/mlp seats it mirrors. Counters by hand, never --update (P171).",
-  "_p376_note": "total 303 -> 304 (2026-08-22, P376): the one new write site is agent_signals['primary_strategy'] = 'whale' in the whale-seat deciding branch \u2014 a new WRITE SITE of the existing primary_strategy key (regimebook already writes it, P313), so the whale seat names itself as the live decider instead of being misattributed to trend_following in the aging/attribution stream. Not new signal surface; a label write, coverage not regression. By hand, never --update (P171)."
+  "_p376_note": "total 303 -> 304 (2026-08-22, P376): the one new write site is agent_signals['primary_strategy'] = 'whale' in the whale-seat deciding branch \u2014 a new WRITE SITE of the existing primary_strategy key (regimebook already writes it, P313), so the whale seat names itself as the live decider instead of being misattributed to trend_following in the aging/attribution stream. Not new signal surface; a label write, coverage not regression. By hand, never --update (P171).",
+  "_p405_note": "TIMESTAMPED 22->25, BLIND 241->240 (2026-08-24, P405): the ETF-flow seat's agent_signals writes (quant_direction/quant_confidence/signal_edge_bps behind EtfFlowShadow.seat_direction's freshness+12h-age bound -> TIMESTAMPED, like the mlp/whale seats; quant_data_quality/primary_strategy re-write existing keys). Seat default-OFF in code, armed only in the live profile. By hand, never --update (P171)."
 }
