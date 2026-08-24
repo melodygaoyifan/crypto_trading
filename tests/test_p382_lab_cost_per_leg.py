@@ -289,6 +289,10 @@ COST_DICT_OWNERS = {
         "covered_by": "per-leg RT/2: _hold charges dp * (pl/2.0) so a flip pays "
                       "one full round-trip (P400 ETF-flow lag-1 Rung-0)",
         "pins": [r"dp \* \(pl / 2\.0\)"]},
+    "training/scripts/etf_sma_overlay_check.py": {
+        "covered_by": "per-leg RT/2: _stats charges dp * (pl/2.0) so a flip pays "
+                      "one full round-trip (P404 ETF+SMA200 complementarity check)",
+        "pins": [r"dp \* \(pl / 2\.0\)"]},
     "training/scripts/cot_probe.py": {
         "covered_by": "per-leg RT/2: _hold charges dp * (pl/2.0) so a flip pays "
                       "one full round-trip (P402 CFTC COT Rung-0, NOT_EARNED)",

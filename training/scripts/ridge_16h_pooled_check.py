@@ -7,7 +7,7 @@ sys.path.insert(0, ".")
 from training.train_drl_full import FullDRLTrainer
 from stable_baselines3.common.vec_env import DummyVecEnv
 
-manifest = json.load(open("configs/feature_manifest.json"))
+manifest = json.load(open("configs/feature_manifest.json", encoding="utf-8"))
 for asset in ("BTC", "ETH", "SOL"):
     df = pd.read_parquet(f"training/training_data/drl_training/{asset}_4H_full.parquet")
     fcols = [c for c in manifest["all_features"] if c in df.columns]
