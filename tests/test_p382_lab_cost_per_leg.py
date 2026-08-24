@@ -285,6 +285,14 @@ COST_DICT_OWNERS = {
                       "2 x core.cde_fees.CDE_FEE_BPS by "
                       "tests/test_p392_macro_factor_lab.py (P392)",
         "pins": [r"cost = RT_COST_BPS\[asset\]"]},
+    "training/scripts/exchange_flow_probe.py": {
+        "covered_by": "per-leg RT/2: _hold charges dpos * (per_leg/2.0) so a flip "
+                      "pays one full round-trip (P396 exchange-flow Rung-0)",
+        "pins": [r"dpos \* \(per_leg / 2\.0\)"]},
+    "training/scripts/newdata_gated_probe.py": {
+        "covered_by": "per-leg RT/2: _hold_stats charges dpos * (per_leg/2.0) so a "
+                      "flip pays one full round-trip (P396 gated put/call probe)",
+        "pins": [r"dpos \* \(per_leg / 2\.0\)"]},
     "training/scripts/metrics_oos_probe.py": {
         "covered_by": "per-leg RT/2: hold_sim charges dpos * (per_leg/2.0) so a "
                       "flip (|dpos|=2) pays one full round-trip and an entry "
