@@ -1854,6 +1854,8 @@ class ProductionConfig:
     etf_seat_mode: str = "off"
     etf_derisk_assets: Optional[List[str]] = None
     etf_decide_assets: Optional[List[str]] = None
+    skew_seat_mode: str = "off"           # [P407] contrarian 25d-skew direction seat
+    skew_seat_assets: Optional[List[str]] = None
     fusion_conviction_to_sleeve: bool = False
     # [P304] Feed the CascadeExhaustionGovernor a REAL short-window
     # liquidation figure (the change in the rolling 24h total) instead of the
@@ -2321,6 +2323,10 @@ class ProductionConfig:
             etf_decide_assets=(
                 list(data["etf_decide_assets"])
                 if isinstance(data.get("etf_decide_assets"), list) else None),
+            skew_seat_mode=str(data.get("skew_seat_mode", "off") or "off").lower(),
+            skew_seat_assets=(
+                list(data["skew_seat_assets"])
+                if isinstance(data.get("skew_seat_assets"), list) else None),
             fusion_conviction_to_sleeve=bool(
                 data.get("fusion_conviction_to_sleeve", False)),
             cascade_real_liquidation_window=bool(
@@ -2888,6 +2894,23 @@ def etf_seat_decision(asset, etf_dir, etf_fresh, book_dir,
         return ("etf_derisk", 0.0)
     if asset in (decide_assets or []) and abs(etf_dir) > 0:
         return ("etf_flow", float(etf_dir))
+    return None
+
+
+def skew_seat_decision(asset, skew_dir, fresh, decide_assets):
+    """[P407] Pure skew-seat decision -> (label, direction) or None.
+
+    None = NO seat (the incumbent certified book stands). Invariants:
+      * fail-safe: a non-fresh reading (no key / stale / warmup) -> None (P2).
+      * a fresh non-zero CONTRARIAN skew signal takes the seat for a decide-asset
+        (both BTC and ETH -- validated 6.6y era-stable incl. the 2022 crash); the
+        alpha gate / veto / caps / stops still bind downstream, and it fires only
+        at z-extremes (~15x/yr) so it is a sparse high-conviction override.
+    """
+    if not fresh:
+        return None
+    if asset in (decide_assets or []) and abs(skew_dir) > 0:
+        return ("skew_contra", float(skew_dir))
     return None
 
 
@@ -6872,6 +6895,17 @@ class HMATSProductionRunner:
         except Exception as _efs_err:
             logger.warning(f"  [P270] EtfFlowShadow init failed: "
                            f"{type(_efs_err).__name__}: {_efs_err}")
+
+        # [P407] Live 25d-skew contrarian direction signal (Laevitas).
+        self._skew_flow_signal = None
+        try:
+            from defense.skew_flow_signal import SkewFlowSignal
+            self._skew_flow_signal = SkewFlowSignal(data_dir="data")
+            logger.info("  [P407] SkewFlowSignal: ACTIVE (Deribit 25d skew, "
+                        "contrarian; BTC+ETH; live via LAEVITAS_API_KEY)")
+        except Exception as _sks_err:
+            logger.warning(f"  [P407] SkewFlowSignal init failed: "
+                           f"{type(_sks_err).__name__}: {_sks_err}")
 
         # [P277] Enhancement shadow families (stablecoinflow / oidiv twins /
         # calbasis / xsmom / eventfilter) — observation-only, Iron Law 7;
@@ -11209,6 +11243,42 @@ class HMATSProductionRunner:
                 logger.warning(
                     f"[ETF-SEAT] {asset}: seat skip on "
                     f"{type(_etf_e).__name__}: {_etf_e} — incumbent signal stands")
+
+        # [P407] Skew seat -- contrarian 25d-skew direction. Runs after ETF so it
+        # wins where it fires (sparse, ~15x/yr, high-conviction at z-extremes).
+        # Fail-safe: not fresh / no signal -> incumbent stands (P2). Arming is a
+        # config flip (skew_seat_mode); the alpha gate/veto/caps/stops still bind.
+        _skew_mode = str(getattr(self.config, "skew_seat_mode", "off") or "off")
+        if (_skew_mode == "enforce"
+                and getattr(self, "_skew_flow_signal", None) is not None):
+            try:
+                _skew_decide = getattr(self.config, "skew_seat_assets", None) or []
+                _ss = self._skew_flow_signal.seat_direction(asset)
+                if _ss is not None:
+                    _took = skew_seat_decision(
+                        asset, float(_ss[0]), bool(_ss[1]), _skew_decide)
+                    if _took is not None:
+                        _lbl, _nd = _took
+                        _sk_edge = 30.0 * abs(_nd)
+                        market_data["quant_direction"] = float(_nd)
+                        agent_signals["quant_direction"] = float(_nd)
+                        market_data["quant_confidence"] = 0.9 if _nd else 0.4
+                        agent_signals["quant_confidence"] = 0.9 if _nd else 0.4
+                        market_data["signal_edge_bps"] = _sk_edge
+                        agent_signals["signal_edge_bps"] = _sk_edge
+                        market_data["quant_data_quality"] = 1.0
+                        agent_signals["quant_data_quality"] = 1.0
+                        market_data["primary_strategy"] = _lbl
+                        agent_signals["primary_strategy"] = _lbl
+                        self._last_quant_directions[asset] = float(_nd)
+                        logger.info(
+                            f"[SKEW-SEAT] {asset}: {_lbl} "
+                            f"skew_dir={float(_ss[0]):+.1f} -> dir={_nd:+.1f} "
+                            f"edge={_sk_edge:.0f}bps")
+            except Exception as _sk_e:
+                logger.warning(
+                    f"[SKEW-SEAT] {asset}: seat skip on "
+                    f"{type(_sk_e).__name__}: {_sk_e} -- incumbent signal stands")
 
         _gmm_probs = market_data.get("_gmm_probs", [])
         _regime_name = market_data.get("regime_state", "UNKNOWN")
