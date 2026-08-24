@@ -227,15 +227,43 @@ class TestFailDirections:
         s = KalmanCointegrationStrategy(pair=("SOL", "ETH"))   # must not raise
         assert len(s.spread_buffer) == 0
 
-    def test_paired_length_mismatch_drops_the_whole_restore(self, caplog):
+    def test_pair_mismatch_beyond_tolerance_drops_the_whole_restore(self, caplog):
+        # [P390b] mismatch 7 > KQ_WARMUP_PAIR_TOLERANCE (5) — a foreign-
+        # shaped pair still drops everything
         _write_state("kq_relative_strength",
-                     {"px::BTC": [100.0] * 10, "px::SOL": [50.0] * 9})
+                     {"px::BTC": [100.0] * 10, "px::SOL": [50.0] * 3})
         with caplog.at_level(logging.WARNING, logger=LOGGER):
             b = RelativeStrengthStrategy()
         assert len(b.price_buffer["BTC"]) == 0
         assert len(b.price_buffer["SOL"]) == 0, (
-            "a length mismatch must drop the RESTORE, not pair bar i with bar j")
+            "a large mismatch must drop the RESTORE, not pair bar i with bar j")
         assert any("DROPPED" in r.getMessage() for r in caplog.records)
+
+    def test_small_pair_desync_truncates_to_the_common_tail(self):
+        # [P390b] the per-asset appends are independent (`if asset in
+        # prices`), so one missing price desyncs the pair by one for the
+        # rest of the warmup — the FIRST live state file showed exactly
+        # this (px::SOL 2 vs px::ETH 1). A small desync keeps the common
+        # TAIL instead of dropping the restore (which would silently
+        # restore the starvation P390 exists to remove).
+        _write_state("kq_relative_strength",
+                     {"px::BTC": [100.0 + i for i in range(10)],
+                      "px::SOL": [50.0 + i for i in range(9)]})
+        b = RelativeStrengthStrategy()
+        assert len(b.price_buffer["BTC"]) == 9
+        assert len(b.price_buffer["SOL"]) == 9
+        assert b.price_buffer["BTC"][0] == 101.0, "tail kept, head dropped"
+
+    def test_kalman_live_shape_2v1_restores_with_filter_state(self):
+        # the exact first live artifact (2026-08-24 07:56 UTC)
+        _write_state("kq_kalman_sol_eth", {
+            "px::SOL": [94.27, 94.27], "px::ETH": [2456.71],
+            "theta": [1.0, 0.0], "P": [1.0, 0.0, 0.0, 1.0],
+        })
+        b = KalmanCointegrationStrategy(pair=("SOL", "ETH"))
+        assert len(b.price_buffer["SOL"]) == 1
+        assert len(b.price_buffer["ETH"]) == 1
+        assert list(b.theta) == [1.0, 0.0]
 
     def test_kalman_partial_filter_state_drops_everything(self):
         """Filter state and its spreads are inseparable: theta with the
@@ -261,8 +289,11 @@ class TestFailDirections:
         b = RelativeStrengthStrategy()
         for buf in (b.price_buffer["BTC"], b.price_buffer["SOL"], b.rs_buffer):
             assert not any(math.isnan(v) for v in buf)
-        # the helper drops the NaN -> 9 vs 10 -> the pair rule drops it all
-        assert len(b.price_buffer["BTC"]) == 0
+        # the helper drops the NaN -> 9 vs 10 -> a SMALL desync now
+        # truncates to the common tail (P390b) instead of dropping all;
+        # the invariant under test is only that no NaN got in
+        assert len(b.price_buffer["BTC"]) == 9
+        assert len(b.price_buffer["SOL"]) == 9
 
     def test_non_positive_restored_price_drops_the_restore(self):
         _write_state("kq_kalman_sol_eth", {

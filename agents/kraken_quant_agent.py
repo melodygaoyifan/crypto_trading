@@ -61,6 +61,13 @@ EULER_GAMMA = 0.5772156649
 # spread/RS distribution is not the current regime, and silently z-scoring
 # against it would be worse than warming up again.
 KQ_WARMUP_MAX_AGE_SEC = 7 * 24 * 3600.0
+# [P390b] Paired-series restore tolerance: the per-asset appends are
+# independent (`if asset in prices`), so one missing price desyncs the
+# pair by one FOR THE REST OF THE WARMUP — observed on the FIRST live
+# state file (px::SOL 2 vs px::ETH 1). A small mismatch truncates both
+# series to the common TAIL at restore (loses <= tolerance samples);
+# a large one still drops everything (foreign/corrupt shape).
+KQ_WARMUP_PAIR_TOLERANCE = 5
 
 
 # =============================================================================
@@ -1474,13 +1481,22 @@ class RelativeStrengthStrategy(BaseStrategy):
                 return
             px_b = saved.get("px::BTC") or []
             px_s = saved.get("px::SOL") or []
-            if not px_b or len(px_b) != len(px_s):
+            if not px_b or not px_s or                     abs(len(px_b) - len(px_s)) > KQ_WARMUP_PAIR_TOLERANCE:
                 logger.warning(
                     "[KQ-WARMUP] %s: BTC/SOL price series lengths disagree "
-                    "(%d vs %d) — restore DROPPED, cold start (a mismatched "
-                    "pair is worse than none)",
+                    "beyond tolerance (%d vs %d) — restore DROPPED, cold "
+                    "start (a foreign-shaped pair is worse than none)",
                     self.name, len(px_b), len(px_s))
                 return
+            if len(px_b) != len(px_s):
+                # [P390b] small desync (per-asset appends: one missing price
+                # offsets the pair) — keep the common TAIL of both
+                _m = min(len(px_b), len(px_s))
+                logger.info("[KQ-WARMUP] %s: pair lengths %d/%d — truncated "
+                            "both to the last %d (P390b)",
+                            self.name, len(px_b), len(px_s), _m)
+                px_b = list(px_b)[-_m:]
+                px_s = list(px_s)[-_m:]
             if any((not np.isfinite(v)) or v <= 0 for v in px_b + px_s):
                 logger.warning(
                     "[KQ-WARMUP] %s: restored prices contain a non-finite "
@@ -1768,6 +1784,20 @@ class KalmanCointegrationStrategy(BaseStrategy):
             theta = saved.get("theta") or []
             p_flat = saved.get("P") or []
             spread = saved.get("spread") or []
+            if (px_a and px_b
+                    and abs(len(px_a) - len(px_b)) <= KQ_WARMUP_PAIR_TOLERANCE
+                    and len(px_a) != len(px_b)):
+                # [P390b] small pair desync from the independent per-asset
+                # appends (observed on the first live state file, 2 vs 1) —
+                # truncate to the common TAIL; theta/P/spread stay atomic
+                # below (they are the filter's own state, unrelated to the
+                # px pairing detail: kalman_update reads only [-1]).
+                _m = min(len(px_a), len(px_b))
+                logger.info("[KQ-WARMUP] %s: pair lengths %d/%d — truncated "
+                            "both to the last %d (P390b)",
+                            self.name, len(px_a), len(px_b), _m)
+                px_a = list(px_a)[-_m:]
+                px_b = list(px_b)[-_m:]
             ok = (
                 bool(px_a)
                 and len(px_a) == len(px_b)
