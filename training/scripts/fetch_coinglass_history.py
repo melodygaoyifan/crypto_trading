@@ -59,7 +59,14 @@ RATE_LIMIT_SLEEP = 0.5  # seconds between requests
 LOOKBACK_DAYS = 900
 
 _TRAINING_DIR = Path(__file__).resolve().parent.parent   # training/
-OUTPUT_DIR = _TRAINING_DIR / "training_data" / "coinglass_history"
+# [P389b] OUTPUT_DIR override so the unattended SERVER cron can write to the
+# PERSISTENT hmats-data volume (/opt/hmats/data/coinglass_history) — the repo's
+# training_data/ is ephemeral inside the container (not a mounted volume), so
+# without this the accumulated archive would vanish on every container recreate.
+# Default is unchanged (operator-local training_data/).
+OUTPUT_DIR = Path(os.environ.get(
+    "HMATS_COINGLASS_DIR",
+    str(_TRAINING_DIR / "training_data" / "coinglass_history")))
 
 # Verified working endpoints on v3 API (probed 2026-02-14)
 ENDPOINTS = {

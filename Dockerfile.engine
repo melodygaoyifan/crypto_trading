@@ -71,7 +71,7 @@ COPY --chown=hmats:hmats training/drl/__init__.py training/drl/features.py train
 # disagreed with training on those 5 columns for as long as this image has
 # existed. Needs PyWavelets in requirements-runtime.txt (added in the same
 # change) — shipping the module without the library just moves the failure.
-COPY --chown=hmats:hmats training/scripts/__init__.py training/scripts/wavelet_denoise.py ./training/scripts/
+COPY --chown=hmats:hmats training/scripts/__init__.py training/scripts/wavelet_denoise.py training/scripts/fetch_coinglass_history.py ./training/scripts/
 # [P214] Sequence-alpha class definitions. The CHECKPOINTS are in the models
 # volume but the classes that unpickle them were not in the image, so live
 # logged `No module named 'training.model_alpha'` and model_alpha — an ADVISE
