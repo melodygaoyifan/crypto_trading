@@ -1,0 +1,186 @@
+{
+  "cost_rt_bps": {
+    "BTC": 27.7,
+    "ETH": 44.0,
+    "SOL": 41.0
+  },
+  "assets": {
+    "BTC": {
+      "buy_and_hold": {
+        "net_pct": 81.7,
+        "sharpe": 0.44,
+        "maxdd_pct": 53.4
+      },
+      "sweep": {
+        "deadband_0.0": {
+          "net_pct": -301.6,
+          "sharpe": -1.6,
+          "maxdd_pct": 96.5,
+          "trades_per_yr": 347.3,
+          "gross_price_pct": -14.7,
+          "cost_pct": 287.4,
+          "funding_pct": 0.4,
+          "exposure": 0.442
+        },
+        "deadband_0.5": {
+          "net_pct": -49.5,
+          "sharpe": -0.26,
+          "maxdd_pct": 76.7,
+          "trades_per_yr": 121.0,
+          "gross_price_pct": 49.9,
+          "cost_pct": 100.1,
+          "funding_pct": 0.8,
+          "exposure": 0.442
+        },
+        "deadband_1.0": {
+          "net_pct": 104.1,
+          "sharpe": 0.56,
+          "maxdd_pct": 51.8,
+          "trades_per_yr": 58.7,
+          "gross_price_pct": 152.0,
+          "cost_pct": 48.6,
+          "funding_pct": 0.7,
+          "exposure": 0.442
+        },
+        "deadband_1.5": {
+          "net_pct": 2.0,
+          "sharpe": 0.01,
+          "maxdd_pct": 64.7,
+          "trades_per_yr": 34.6,
+          "gross_price_pct": 29.4,
+          "cost_pct": 28.7,
+          "funding_pct": 1.2,
+          "exposure": 0.442
+        },
+        "deadband_2.0": {
+          "net_pct": -27.1,
+          "sharpe": -0.15,
+          "maxdd_pct": 65.7,
+          "trades_per_yr": 16.9,
+          "gross_price_pct": -13.9,
+          "cost_pct": 14.0,
+          "funding_pct": 0.8,
+          "exposure": 0.442
+        }
+      }
+    },
+    "ETH": {
+      "buy_and_hold": {
+        "net_pct": 47.3,
+        "sharpe": 0.18,
+        "maxdd_pct": 68.0
+      },
+      "sweep": {
+        "deadband_0.0": {
+          "net_pct": -363.3,
+          "sharpe": -1.39,
+          "maxdd_pct": 98.8,
+          "trades_per_yr": 417.2,
+          "gross_price_pct": 184.5,
+          "cost_pct": 548.5,
+          "funding_pct": 0.7,
+          "exposure": 0.442
+        },
+        "deadband_0.5": {
+          "net_pct": -228.8,
+          "sharpe": -0.88,
+          "maxdd_pct": 96.1,
+          "trades_per_yr": 156.1,
+          "gross_price_pct": -24.4,
+          "cost_pct": 205.3,
+          "funding_pct": 0.8,
+          "exposure": 0.442
+        },
+        "deadband_1.0": {
+          "net_pct": 3.5,
+          "sharpe": 0.01,
+          "maxdd_pct": 63.5,
+          "trades_per_yr": 72.1,
+          "gross_price_pct": 97.8,
+          "cost_pct": 94.8,
+          "funding_pct": 0.5,
+          "exposure": 0.442
+        },
+        "deadband_1.5": {
+          "net_pct": -73.1,
+          "sharpe": -0.28,
+          "maxdd_pct": 82.8,
+          "trades_per_yr": 30.3,
+          "gross_price_pct": -34.4,
+          "cost_pct": 39.8,
+          "funding_pct": 1.1,
+          "exposure": 0.442
+        },
+        "deadband_2.0": {
+          "net_pct": 24.5,
+          "sharpe": 0.09,
+          "maxdd_pct": 72.4,
+          "trades_per_yr": 14.9,
+          "gross_price_pct": 43.0,
+          "cost_pct": 19.6,
+          "funding_pct": 1.1,
+          "exposure": 0.442
+        }
+      }
+    },
+    "SOL": {
+      "buy_and_hold": {
+        "net_pct": 104.5,
+        "sharpe": 0.32,
+        "maxdd_pct": 78.5
+      },
+      "sweep": {
+        "deadband_0.0": {
+          "net_pct": -324.1,
+          "sharpe": -0.99,
+          "maxdd_pct": 98.4,
+          "trades_per_yr": 418.5,
+          "gross_price_pct": 187.8,
+          "cost_pct": 510.2,
+          "funding_pct": -1.7,
+          "exposure": 0.44
+        },
+        "deadband_0.5": {
+          "net_pct": -163.0,
+          "sharpe": -0.5,
+          "maxdd_pct": 93.4,
+          "trades_per_yr": 145.8,
+          "gross_price_pct": 16.1,
+          "cost_pct": 177.7,
+          "funding_pct": -1.3,
+          "exposure": 0.44
+        },
+        "deadband_1.0": {
+          "net_pct": -173.0,
+          "sharpe": -0.53,
+          "maxdd_pct": 95.4,
+          "trades_per_yr": 63.4,
+          "gross_price_pct": -94.0,
+          "cost_pct": 77.3,
+          "funding_pct": -1.6,
+          "exposure": 0.44
+        },
+        "deadband_1.5": {
+          "net_pct": -223.1,
+          "sharpe": -0.69,
+          "maxdd_pct": 97.4,
+          "trades_per_yr": 24.4,
+          "gross_price_pct": -192.7,
+          "cost_pct": 29.7,
+          "funding_pct": -0.7,
+          "exposure": 0.44
+        },
+        "deadband_2.0": {
+          "net_pct": -153.4,
+          "sharpe": -0.47,
+          "maxdd_pct": 96.6,
+          "trades_per_yr": 11.6,
+          "gross_price_pct": -140.2,
+          "cost_pct": 14.1,
+          "funding_pct": 0.9,
+          "exposure": 0.439
+        }
+      }
+    }
+  }
+}
