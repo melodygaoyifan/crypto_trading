@@ -63,7 +63,19 @@ class TestInProgressDayExcluded:
         s._api_key = "k"
         s._cache = {"BTC": (time.time(), rows)}
         s._warned = {}
+        s._last_direction = {}
+        s._state_path = tmp_path / "etfflow_state.json"
         return s
+
+    @staticmethod
+    def _varied_trailing(midnight, n=20, base=-6e7):
+        # n completed days BEFORE the newest, with real variance so the
+        # z-score is defined (all-identical -> zero_var -> no claim).
+        import random
+        random.seed(7)
+        return [{"timestamp": (midnight - (n + 1 - i) * 86400) * 1000,
+                 "flow_usd": base + random.gauss(0, 3e7)}
+                for i in range(n)]
 
     def test_todays_row_is_never_the_signal(self, tmp_path):
         # The API's last row is TODAY and updates intraday — trading on it
@@ -81,19 +93,38 @@ class TestInProgressDayExcluded:
             "in-progress-bar trap")
 
     def test_record_confidence_is_abs_direction(self, tmp_path):
-        # P236: the scorer multiplies direction x confidence; P224: never a
-        # saturated confidence on a zero direction.
+        # P236/P224: confidence = |direction|. [P402] the signal is the z-score,
+        # so it needs a trailing window: a strong-outflow newest day against a
+        # varied trailing baseline -> -1.0 / conf 1.0.
         now = time.time()
         midnight = (int(now) // 86400) * 86400
-        rows = [{"timestamp": (midnight - 86400) * 1000, "flow_usd": -5e7}]
+        rows = self._varied_trailing(midnight, n=20, base=-6e7)
+        rows.append({"timestamp": (midnight - 86400) * 1000, "flow_usd": -1e9})
         s = self._shadow(tmp_path, rows)
         rec = s.record_tick("BTC")
         assert rec is not None
         assert rec["direction"] == -1.0
         assert rec["confidence"] == 1.0
+        assert rec["reason"] == "outflow_z"
+        assert "z_score" in rec
         assert rec["strategy"] == "etfflow"
         # and the file really landed under the registered prefix
         assert (tmp_path / "etfflow_BTC.jsonl").exists()
+
+    def test_single_row_is_warmup_not_raw_sign(self, tmp_path):
+        # [P402] a single completed row has NO trailing window -> WARMUP (flat),
+        # NOT the raw sign. This pins that the primary signal is the z-score:
+        # a silent revert to raw sign would return -1.0 here and fail.
+        now = time.time()
+        midnight = (int(now) // 86400) * 86400
+        rows = [{"timestamp": (midnight - 86400) * 1000, "flow_usd": -5e7}]
+        s = self._shadow(tmp_path, rows)
+        rec = s.record_tick("BTC")
+        assert rec["direction"] == 0.0
+        assert rec["confidence"] == 0.0
+        assert rec["reason"] == "warmup"
+        # raw sign is still recorded for A/B and does carry the -1
+        assert rec["raw_sign"] == -1.0
 
     def test_flat_record_has_zero_confidence(self, tmp_path):
         s = self._shadow(tmp_path, [])

@@ -289,6 +289,10 @@ COST_DICT_OWNERS = {
         "covered_by": "per-leg RT/2: _hold charges dp * (pl/2.0) so a flip pays "
                       "one full round-trip (P400 ETF-flow lag-1 Rung-0)",
         "pins": [r"dp \* \(pl / 2\.0\)"]},
+    "training/scripts/cot_probe.py": {
+        "covered_by": "per-leg RT/2: _hold charges dp * (pl/2.0) so a flip pays "
+                      "one full round-trip (P402 CFTC COT Rung-0, NOT_EARNED)",
+        "pins": [r"dp \* \(pl / 2\.0\)"]},
     "training/scripts/coinmetrics_onchain_probe.py": {
         "covered_by": "per-leg RT/2: _hold charges dpos * (per_leg/2.0) so a flip "
                       "pays one full round-trip (P397 CoinMetrics on-chain Rung-0)",
