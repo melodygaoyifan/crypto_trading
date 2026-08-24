@@ -279,6 +279,12 @@ COST_DICT_OWNERS = {
         "covered_by": "no leg charge: required-IC arithmetic compares one RT "
                       "against achievable IC/gross (P385c)",
         "pins": [r"COST_RT\[tgt\] / \(E_ABS_Z"]},
+    "training/scripts/macro_factor_lab.py": {
+        "covered_by": "no leg charge: RT enters only the P166 required-IC "
+                      "bar (edge >= 2*cost); values pinned equal to "
+                      "2 x core.cde_fees.CDE_FEE_BPS by "
+                      "tests/test_p392_macro_factor_lab.py (P392)",
+        "pins": [r"cost = RT_COST_BPS\[asset\]"]},
     "training/scripts/metrics_oos_probe.py": {
         "covered_by": "per-leg RT/2: hold_sim charges dpos * (per_leg/2.0) so a "
                       "flip (|dpos|=2) pays one full round-trip and an entry "

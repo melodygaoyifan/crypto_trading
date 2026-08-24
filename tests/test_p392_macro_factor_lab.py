@@ -276,3 +276,14 @@ class TestObsParsing:
         ch = lab.bd_changes(s, "diff")
         # one change spanning the missing print: 4.0 -> 4.5
         assert list(ch.to_numpy()) == [0.5]
+
+
+class TestRtCostIsSingleSourced:
+    def test_rt_cost_equals_twice_the_measured_cde_fee(self):
+        """[P392b] RT_COST_BPS is registered in the P382 cost-dict roster on
+        the claim that it equals 2 x the measured per-leg CDE fee — pin the
+        claim so the roster entry cannot rot (P361)."""
+        from core.cde_fees import CDE_FEE_BPS
+        for a, rt in lab.RT_COST_BPS.items():
+            leg = CDE_FEE_BPS[a]["taker"]   # the sleeve pays taker on a cross
+            assert abs(rt - 2.0 * leg) < 0.1, (a, rt, leg)
