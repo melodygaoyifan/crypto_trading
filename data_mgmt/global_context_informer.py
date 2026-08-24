@@ -83,6 +83,7 @@ MACRO_TICKERS = {
     'SPX': '^GSPC',         # S&P 500
     'VIX': '^VIX',          # Volatility Index
     'GOLD': 'GC=F',         # Gold Futures
+    'HY_OAS': 'HYOAS-FRED',  # [P393] HY credit spread - FRED-only (no yf symbol)
 }
 
 # Spot Crypto ETFs
@@ -195,6 +196,7 @@ class GlobalContextState:
     spx: Optional[MacroIndicator] = None
     vix: Optional[MacroIndicator] = None
     gold: Optional[MacroIndicator] = None
+    hy_oas: Optional[MacroIndicator] = None  # [P393] credit spreads
     
     # ETF flows
     btc_etf_flows: List[ETFFlowData] = field(default_factory=list)
@@ -211,6 +213,7 @@ class GlobalContextState:
     
     # Regime flags
     macro_regime: MacroRegime = MacroRegime.NEUTRAL
+    hy_stress_caution: bool = False  # [P393]
     btc_etf_signal: ETFFlowSignal = ETFFlowSignal.NEUTRAL
     eth_etf_signal: ETFFlowSignal = ETFFlowSignal.NEUTRAL
     
@@ -942,6 +945,7 @@ class GlobalContextInformer:
                 self._state.us10y = macro_data.get('US10Y')
                 self._state.spx = macro_data.get('SPX')
                 self._state.vix = macro_data.get('VIX')
+                self._state.hy_oas = macro_data.get('HY_OAS')  # [P393]
                 # [MACRO-FIX4] VIX gradient from change_pct
                 if self._state.vix:
                     self._state.vix_gradient = self._state.vix.change_pct
@@ -999,6 +1003,13 @@ class GlobalContextInformer:
         # === US10Y Yield Spike Check ===
         if self._state.us10y:
             self._state.yield_spike_caution = self._state.us10y.zscore_30d > 1.5
+        # [P393] HY credit-spread stress: the one macro factor measured
+        # significant with a stable sign in BOTH eras on all three assets
+        # (P392/P393 labs; widening spreads = crypto down, same day). A
+        # 30d z > 1.5 counts as a caution exactly like a yield spike; an
+        # absent series contributes nothing (P2 - never a fabricated calm).
+        self._state.hy_stress_caution = bool(
+            self._state.hy_oas and self._state.hy_oas.zscore_30d > 1.5)
         
         # === ETF Flow Signal Classification ===
         btc_flow = self._state.btc_total_daily_flow
@@ -1018,6 +1029,7 @@ class GlobalContextInformer:
             self._state.dxy_breakout_caution,
             self._state.etf_outflow_caution,
             self._state.yield_spike_caution,
+            self._state.hy_stress_caution,   # [P393] credit-spread stress
         ])
         
         vix_value = self._state.vix.value if self._state.vix else 15.0
@@ -1087,16 +1099,26 @@ class GlobalContextInformer:
         """
         Get macro signal for Authority Fusion integration.
 
-        [MACRO-FIX1] SHORT-BIAS REALIGNMENT:
-        For a short-biased system, risk-off/crisis = FAVORABLE (crypto sells off).
-        Caps >= 1.0 bypass the direction-aware adjustment in authority_fusion.py
-        (which only fires when cap < 1.0). This is intentional - in CRISIS
-        and DOLLAR_BREAKOUT, shorts should have NO macro restriction.
+        [P393] ADVERSE-RESTRICTS orientation (replaces [MACRO-FIX1]).
 
-        Previous mapping (direction-agnostic):
-          RISK_ON=1.5, RISK_OFF=1.0, DOLLAR_BREAKOUT=0.5, CRISIS=0.3
-        New mapping (short-biased):
-          CRISIS=1.5, DOLLAR_BREAKOUT=1.3, RISK_OFF=1.2, NEUTRAL=1.0, RISK_ON=0.7
+        MACRO-FIX1 inverted this map for a SHORT-BIASED system (CRISIS=1.5
+        so "shorts should have NO macro restriction"). That premise died
+        with the P140 era: the live books are structurally LONG-biased
+        (ETH/SOL books never short). And the P393 audit measured that the
+        sole consumer (authority_fusion LAYER 6) acts ONLY on cap < 1.0 -
+        caps above 1.0 have NO reader anywhere - so under MACRO-FIX1 the
+        fetched macro classification could only ever penalize the book in
+        BENIGN regimes (RISK_ON 0.7 cut the long book ~50-58% via the
+        conviction channel, observed live at conviction 0.42-0.52 on
+        RISK_ON days) while providing ZERO de-risking in CRISIS.
+
+        The map now encodes the one macro fact the P392/P393 labs
+        validated (risk-off asymmetry: adverse macro = crypto down,
+        contemporaneous): ADVERSE regimes carry cap < 1.0 and restrict the
+        LONG side (shorts get relief in the consumer, never a boost);
+        favorable/neutral regimes restrict NOTHING. The cap can never
+        exceed 1.0 - macro de-risks, it never sizes UP (P293d de-risk-only
+        principle).
 
         Macro NEVER vetoes (v6.5 principle preserved).
         """
@@ -1117,11 +1139,11 @@ class GlobalContextInformer:
             dxy_zscore = state.dxy.zscore_30d if state.dxy else None
 
         leverage_cap_map = {
-            MacroRegime.CRISIS: 1.5,
-            MacroRegime.DOLLAR_BREAKOUT: 1.3,
-            MacroRegime.RISK_OFF: 1.2,
+            MacroRegime.CRISIS: 0.4,
+            MacroRegime.DOLLAR_BREAKOUT: 0.8,
+            MacroRegime.RISK_OFF: 0.7,
             MacroRegime.NEUTRAL: 1.0,
-            MacroRegime.RISK_ON: 0.7,
+            MacroRegime.RISK_ON: 1.0,
         }
         leverage_cap = leverage_cap_map.get(macro_regime, 1.0)
 
@@ -1140,8 +1162,12 @@ class GlobalContextInformer:
 
         etf_short_boost = 0.0
         if btc_flow_streak <= -3:
+            # [P393] sustained ETF OUTFLOWS are crypto-adverse for a LONG
+            # book: DE-RISK (was: a short-bias-era cap RAISE toward 1.5,
+            # which the consumer could never read anyway - caps > 1.0 have
+            # no reader). The streak magnitude is still exported.
             etf_short_boost = min(0.15, abs(btc_flow_streak) * 0.05)
-            leverage_cap = min(1.5, leverage_cap + etf_short_boost)
+            leverage_cap = min(leverage_cap, 0.8)
 
         vix_urgency = 0.0
         if vix_value > 25:

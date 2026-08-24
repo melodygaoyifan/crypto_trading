@@ -53,6 +53,12 @@ FRED_SERIES_MAP: Dict[str, str] = {
     "SPX": "SP500",
     "US10Y": "DGS10",
     "DXY": "DTWEXBGS",
+    # [P393] ICE BofA US High Yield OAS - credit spreads. The one macro
+    # factor the P392/P393 labs measured as significant with a STABLE sign
+    # in BOTH eras on all three assets (ETH R2 0.115). NOTE: FRED serves
+    # only a trailing ~3y window for this series (verified P393) - ample
+    # for the 30d z-score this module computes.
+    "HY_OAS": "BAMLH0A0HYM2",
 }
 
 # Series whose FRED id is a documented PROXY rather than the named index.

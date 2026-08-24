@@ -1080,12 +1080,20 @@ class AuthorityFusionEngine:
                 leverage_cap = cap_signal.leverage_cap
 
                 if leverage_cap < 1.0:
-                    # [SHORT-OPT SB-2] Direction-aware macro cap
-                    # Short positions benefit from risk-off/crisis macro environments
-                    if result.direction < 0:  # Short - macro headwind benefits shorts
-                        adjusted_cap = min(leverage_cap * 1.5, 0.75)
-                    else:  # Long or flat - full macro restriction
-                        adjusted_cap = leverage_cap * 0.6
+                    # [P393] Direction-aware macro cap, ADVERSE-RESTRICTS
+                    # orientation. cap < 1.0 now means ADVERSE macro (the
+                    # GCI map is adverse->low since P393; under MACRO-FIX1
+                    # it meant the opposite and this branch cut the LONG
+                    # book ~50-58% in RISK_ON while CRISIS was a no-op —
+                    # observed live at conviction 0.42-0.52, P393 audit).
+                    # Longs take the map's restriction as-is (no extra
+                    # x0.6 — the map value IS the decision); shorts get
+                    # RELIEF (adverse macro is a short tailwind), capped
+                    # at 1.0 so macro never sizes anything UP (P293d).
+                    if result.direction < 0:  # short — adverse macro favors shorts
+                        adjusted_cap = min(leverage_cap * 1.5, 1.0)
+                    else:  # long or flat — the map's restriction binds
+                        adjusted_cap = leverage_cap
                     base_exposure = min(base_exposure, adjusted_cap)
                     caps_applied[agent] = adjusted_cap
         
