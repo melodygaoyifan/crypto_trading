@@ -279,6 +279,11 @@ COST_DICT_OWNERS = {
         "covered_by": "no leg charge: required-IC arithmetic compares one RT "
                       "against achievable IC/gross (P385c)",
         "pins": [r"COST_RT\[tgt\] / \(E_ABS_Z"]},
+    "training/scripts/metrics_oos_probe.py": {
+        "covered_by": "per-leg RT/2: hold_sim charges dpos * (per_leg/2.0) so a "
+                      "flip (|dpos|=2) pays one full round-trip and an entry "
+                      "from flat pays one leg (P391 OI-positioning OOS gate)",
+        "pins": [r"dpos \* \(per_leg / 2\.0\)"]},
 }
 
 
