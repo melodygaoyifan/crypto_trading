@@ -18,6 +18,18 @@ The bar (from P166's arithmetic): required IC ~= cost_bps / (0.7979 *
 1.253 * sigma_fwd_bps). Anything statistically indistinguishable from zero,
 or below the bar, is a NO.
 
+[P386 CAVEAT — READ THIS BEFORE TREATING A "NO_EDGE" AS FINAL] The bps/trade
+and required-IC here charge cost PER BAR, as if every prediction is a round
+trip. That is the WORST-CASE execution and overstates the fee barrier by
+~20x (P386): a persistent signal should be HELD, paying the fee only on
+direction flips, which is how the live SMA200 rule is net-positive. So a
+"NO_EDGE" here is the worst-case bound, NOT the verdict. The verdict comes
+from the HOLD-AWARE evaluator `training/scripts/signal_hold_backtest.py`
+(position held across bars, fee on flips only, long/short + funding, deadband
+selected walk-forward not by lookahead sweep). Use THIS probe as the cheap
+first filter; use the hold-aware backtest as the actual Rung-0 gate before any
+DRL retrain (see docs/research/PROFITABILITY_ROOT_CAUSE_PLAN_2026-08.md).
+
 Verdict semantics:
   EDGE_CANDIDATE  — some group clears the cost bar with |t| >= 2 (justifies a
                     reformulated DRL/strategy build on that basis, SHADOW-first)
