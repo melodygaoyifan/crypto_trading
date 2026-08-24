@@ -66,8 +66,12 @@ STRATEGY_GROUPS = {
     # whale decisions as "trend_following". "universal" for the same reason
     # as regimebook: the whale seat is not regime-bucketed.
     # `trend` still arrives as `trend_following` (already covered).
+    # [P407] seat labels added so the live deciders are tracked (P317): the
+    # ETF seat (etf_flow/etf_derisk, P405) and the skew seat (skew_contra, P407)
+    # write these into primary_strategy; universal = not regime-bucketed.
     "universal": ["orderbook_imbalance", "funding_rate",
-                  "liquidation_cascade", "regimebook", "whale"],
+                  "liquidation_cascade", "regimebook", "whale",
+                  "etf_flow", "etf_derisk", "skew_contra"],
 }
 
 ALL_STRATEGIES = [s for group in STRATEGY_GROUPS.values() for s in group]
