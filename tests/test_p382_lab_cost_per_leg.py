@@ -267,6 +267,18 @@ COST_DICT_OWNERS = {
         "covered_by": "no leg charge: one RT compared against gross per trade "
                       "+ required-IC arithmetic (P375b)",
         "pins": [r"gross - COST_CDE_RT\[asset\]"]},
+    "training/scripts/signal_hold_backtest.py": {
+        "covered_by": "per-leg RT/2: PER_LEG halves COST_RT per |dpos| unit, "
+                      "cost = dpos * per_leg (P386 hold-position backtest)",
+        "pins": [r"COST_RT\[a\] / 2\.0 / 1e4"]},
+    "training/scripts/microstructure_edge_probe.py": {
+        "covered_by": "no leg charge: required-IC arithmetic compares one RT "
+                      "against achievable IC/gross (P385b)",
+        "pins": [r"COST_RT\[a\] / \(E_ABS_Z"]},
+    "training/scripts/breadth_edge_probe.py": {
+        "covered_by": "no leg charge: required-IC arithmetic compares one RT "
+                      "against achievable IC/gross (P385c)",
+        "pins": [r"COST_RT\[tgt\] / \(E_ABS_Z"]},
 }
 
 
