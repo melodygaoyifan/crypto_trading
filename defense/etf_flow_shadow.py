@@ -178,6 +178,30 @@ class EtfFlowShadow:
         # is not a limiter). Persisted per asset.
         self._state_path = self._dir / "etfflow_state.json"
         self._last_direction: dict = self._load_state()
+        # [P405] in-memory seat state for the live ETF seat: per asset,
+        # (direction, fresh, ts). Set each record_tick; the seat reads it
+        # one-tick-stale (a daily signal on a 4H loop — immaterial), and a
+        # non-fresh or aged reading yields NO seat (fail-safe, P2).
+        self._seat_state: dict = {}
+
+    # seat freshness: a held deadband position IS a live claim; warmup/no_data/
+    # stale/zero_var are NOT (absence must never seat a position, P2).
+    _SEAT_FRESH_REASONS = frozenset({"inflow_z", "outflow_z", "deadband_hold"})
+    _SEAT_MAX_AGE_SEC = 12 * 3600.0   # 3 ticks; a shadow that stopped updating -> no seat
+
+    def seat_direction(self, asset: str):
+        """[P405] (direction, fresh) for the live ETF seat, or None if no
+        usable reading. `direction` is the z-deadband position; `fresh` means
+        this tick produced a real claim (not warmup/no_data/stale) AND the
+        reading is younger than _SEAT_MAX_AGE_SEC. Never fetches (reads the
+        in-memory state set by the loop's record_tick) — no decision-path I/O."""
+        st = self._seat_state.get(asset)
+        if not st:
+            return None
+        direction, fresh, ts = st
+        if not fresh or (time.time() - ts) > self._SEAT_MAX_AGE_SEC:
+            return (float(direction), False)
+        return (float(direction), True)
 
     def _load_state(self) -> dict:
         try:
@@ -322,6 +346,11 @@ class EtfFlowShadow:
                     self._last_direction = {}
                 self._last_direction[asset] = float(direction)
                 self._save_state()
+            # [P405] publish the seat reading for the live ETF seat (in-memory)
+            if not hasattr(self, "_seat_state"):
+                self._seat_state = {}
+            self._seat_state[asset] = (
+                float(direction), reason in self._SEAT_FRESH_REASONS, time.time())
             # raw sign kept as a secondary field for A/B against the old signal
             raw_dir, raw_reason = etf_flow_direction(flow, age)
             # [P404] combination shadow: SMA200 long/flat (the certified overlay,

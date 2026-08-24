@@ -2,18 +2,18 @@
   "_description": "[SUPERSEDED 2026-08-23, P382] The sole order venue is the Coinbase US perp sleeve (Phase B since 2026-06-13; Kraken is data + structurally flat, P152). ORIGINAL: HMATS Live HIGH_RISK default. Preserves Kraken-only execution, BTC/ETH/SOL scope, 4H loop, and short-biased high-risk baseline.",
   "_created": "2026-03-08",
   "mode": "LIVE",
-  "_mode_note": "P227: `mode` is documentation only — from_file never reads it and main() overwrites config.mode from the CLI unconditionally. The real mode switch is the --mode flag in docker-compose.hetzner.yml.",
+  "_mode_note": "P227: `mode` is documentation only \u2014 from_file never reads it and main() overwrites config.mode from the CLI unconditionally. The real mode switch is the --mode flag in docker-compose.hetzner.yml.",
   "risk_profile": "HIGH_RISK",
-  "_coinbase_note": "LIVE (updated 2026-08-07; the previous 'Phase A only: read-only' text went stale on 2026-06-13 and was never corrected). coinbase_routing_enabled=true + data/coinbase_routing_state.json phase=DUAL_VENUE routes ALL 3 assets to the Coinbase perp sleeve, which places REAL orders every 4H tick via manage_to_signal (opens/flips/flattens; P198 flip-persistence; P197/P205 protective stops on ALL assets; P206 gated intent; P209 fuse feed). Kraken entries for routed assets are skipped (P152) — the sleeve is the SOLE directional path. Revert to Kraken-only: scripts/coinbase_set_assets.sh \"\" (inert routing) — but note Kraken then has no directional driver either; that is a full trading stop, not a venue swap.",
+  "_coinbase_note": "LIVE (updated 2026-08-07; the previous 'Phase A only: read-only' text went stale on 2026-06-13 and was never corrected). coinbase_routing_enabled=true + data/coinbase_routing_state.json phase=DUAL_VENUE routes ALL 3 assets to the Coinbase perp sleeve, which places REAL orders every 4H tick via manage_to_signal (opens/flips/flattens; P198 flip-persistence; P197/P205 protective stops on ALL assets; P206 gated intent; P209 fuse feed). Kraken entries for routed assets are skipped (P152) \u2014 the sleeve is the SOLE directional path. Revert to Kraken-only: scripts/coinbase_set_assets.sh \"\" (inert routing) \u2014 but note Kraken then has no directional driver either; that is a full trading stop, not a venue swap.",
   "coinbase_routing_enabled": true,
   "_l2_churn_note": "L2-CHURN 2026-06-13: flip-persistence whipsaw guard. Require an opposing direction signal to persist N consecutive 4H ticks before committing a flip. Set flip_persistence_enabled=false to disable. AC thresholds (min-hold/global/daily) tightened in main.py:~2105 literals.",
   "flip_persistence_enabled": true,
   "flip_persist_ticks": 2,
   "_trend_layer_note": "[SUPERSEDED 2026-08-23, P382] The regimebook (P298, regimebook_mode enforce) and the whale seat (P293j, whale seats only where the book is flat) hold the DECIDE slot; trend is the FALLBACK for ticks neither covers, there are no Kraken margin shorts (Kraken structurally flat since Phase B, P152), and the existence fuse is -15%/28d fed from sleeve equity (P209). ORIGINAL: TREND-LAYER 2026-06-14 (P146): trend-following IS the live decision layer (enforce). Replaces the quant signal with vol-targeted time-series momentum (backtest 3-asset Sharpe ~0.4, PBO 0.42, +5.4%/yr). Operator-chosen enforce on forward-UNCONFIRMED edge; bounded by net cap 0.5 + 20%/asset size cap + existence fuse -5% halt. Currently SHORT the downtrend (margin shorts via B2). Watch PnL; revert to off if it degrades. HMATS_TREND_MODE env overrides.",
   "trend_following_mode": "enforce",
-  "_v5_1_note": "v5.1 DEMOTED 2026-06-13 (P147): set OFF after shadow-IC validation found the harnesses were DEAD — 6188/6190 shadow records over 41d had direction=0 (P2 key-mismatch: funding strategies read funding_rate_8h but engine wrote funding_rate; kyle read current_price but engine had mark_price; vpin/ml_factor inputs/models absent). Promoting them into live ADVISE was promoting noise. P-SHADOW-WIRE (main.py:~7394) re-keys funding+kyle into a shadow-only copy so REAL signals now accumulate; re-enable only after compute_shadow_ic shows IC>0.05 over 30d. vpin_spike (needs computed VPIN threaded) + ml_factor (needs autoencoders trained) still dead — follow-ups.",
-  "_v5_1_reenable_note": "RE-ENABLED 2026-08-04 (P165) by explicit operator instruction ('loosen live risk'). This is an OVERRIDE, not a validation pass: the P147 re-enable criterion above (compute_shadow_ic IC>0.05 over 30d) has NOT been met and could not be evaluated from the operator laptop — the shadow ledgers live on the hmats-logs/hmats-data volumes, and data/strategy_shadow/ is empty in a checkout. Note the bar has also MOVED since that note was written: P166 replaced the IC>0.05 gate with a cost-aware one (IC positive at every horizon, |t|>=2, expected edge >= 6bps taker x 2.0 margin), under which IC 0.05 is BELOW break-even. Two of the four families were still dead as of P147-c follow-ups. Bounded by: ADVISE authority only (never DECIDE), net exposure cap 0.50 (P144), 20%/asset size cap, and the existence fuse -5%/28d halt. REVERT: set false and redeploy. VERIFY FIRST on the server: docker exec hmats-engine python -X utf8 -m analytics.shadow_ic.compute_shadow_ic — if it reports HOLD with a shortfall, this flag is trading noise.",
-  "_v5_1_gate_result_note": "DEMOTED AGAIN 2026-08-07 (P204). The verification the P165 note demanded has now actually been RUN — it could not be before, because compute_shadow_ic had never produced a verdict in its life (P199: its price series was the frozen DRL training parquet, ending 2026-03-31, with ZERO overlap with shadow ledgers starting 2026-04-30; and its default prefixes read only the two families that emit nothing). With fresh OHLCV and all four families, the 30d cost-aware P166 gate says: 6 of 9 strategies KILL with n_directional=0 — cascade_anticipation, funding_extreme, kyle_lambda, ofi, stop_hunt_defense, vpin_spike emit literally NOTHING. funding_mean_reversion and funding_post_etf_regime HOLD on n=4-14, statistically meaningless, several with negative IC. The ONLY real result is ml_factor BTC: PROMOTE, n=107, IC +0.181/+0.312/+0.201 at 4/12/24 bars, Sharpe +2.49 — and its autoencoder was trained ~2026-06-13, INSIDE this window, so treat it as a forward-test candidate, not a validated edge (ml_factor ETH HOLD at Sharpe -4.04, SOL KILL). The P165 note said: 'if it reports HOLD with a shortfall, this flag is trading noise.' It does. RE-ENABLE only per-strategy on out-of-sample evidence — note there is currently NO per-strategy gating (main.py:7611 gates one blended ADVISE signal), so that is new work. Re-run: python -X utf8 -m analytics.shadow_ic.compute_shadow_ic --window-days 30",
+  "_v5_1_note": "v5.1 DEMOTED 2026-06-13 (P147): set OFF after shadow-IC validation found the harnesses were DEAD \u2014 6188/6190 shadow records over 41d had direction=0 (P2 key-mismatch: funding strategies read funding_rate_8h but engine wrote funding_rate; kyle read current_price but engine had mark_price; vpin/ml_factor inputs/models absent). Promoting them into live ADVISE was promoting noise. P-SHADOW-WIRE (main.py:~7394) re-keys funding+kyle into a shadow-only copy so REAL signals now accumulate; re-enable only after compute_shadow_ic shows IC>0.05 over 30d. vpin_spike (needs computed VPIN threaded) + ml_factor (needs autoencoders trained) still dead \u2014 follow-ups.",
+  "_v5_1_reenable_note": "RE-ENABLED 2026-08-04 (P165) by explicit operator instruction ('loosen live risk'). This is an OVERRIDE, not a validation pass: the P147 re-enable criterion above (compute_shadow_ic IC>0.05 over 30d) has NOT been met and could not be evaluated from the operator laptop \u2014 the shadow ledgers live on the hmats-logs/hmats-data volumes, and data/strategy_shadow/ is empty in a checkout. Note the bar has also MOVED since that note was written: P166 replaced the IC>0.05 gate with a cost-aware one (IC positive at every horizon, |t|>=2, expected edge >= 6bps taker x 2.0 margin), under which IC 0.05 is BELOW break-even. Two of the four families were still dead as of P147-c follow-ups. Bounded by: ADVISE authority only (never DECIDE), net exposure cap 0.50 (P144), 20%/asset size cap, and the existence fuse -5%/28d halt. REVERT: set false and redeploy. VERIFY FIRST on the server: docker exec hmats-engine python -X utf8 -m analytics.shadow_ic.compute_shadow_ic \u2014 if it reports HOLD with a shortfall, this flag is trading noise.",
+  "_v5_1_gate_result_note": "DEMOTED AGAIN 2026-08-07 (P204). The verification the P165 note demanded has now actually been RUN \u2014 it could not be before, because compute_shadow_ic had never produced a verdict in its life (P199: its price series was the frozen DRL training parquet, ending 2026-03-31, with ZERO overlap with shadow ledgers starting 2026-04-30; and its default prefixes read only the two families that emit nothing). With fresh OHLCV and all four families, the 30d cost-aware P166 gate says: 6 of 9 strategies KILL with n_directional=0 \u2014 cascade_anticipation, funding_extreme, kyle_lambda, ofi, stop_hunt_defense, vpin_spike emit literally NOTHING. funding_mean_reversion and funding_post_etf_regime HOLD on n=4-14, statistically meaningless, several with negative IC. The ONLY real result is ml_factor BTC: PROMOTE, n=107, IC +0.181/+0.312/+0.201 at 4/12/24 bars, Sharpe +2.49 \u2014 and its autoencoder was trained ~2026-06-13, INSIDE this window, so treat it as a forward-test candidate, not a validated edge (ml_factor ETH HOLD at Sharpe -4.04, SOL KILL). The P165 note said: 'if it reports HOLD with a shortfall, this flag is trading noise.' It does. RE-ENABLE only per-strategy on out-of-sample evidence \u2014 note there is currently NO per-strategy gating (main.py:7611 gates one blended ADVISE signal), so that is new work. Re-run: python -X utf8 -m analytics.shadow_ic.compute_shadow_ic --window-days 30",
   "_p316_cascade_disarmed_note": "[P316 2026-08-18] P311 ARMED this and P316 DISARMED it the same day, on better data. P311 calibrated the threshold from 11 days of the derivflow ledger (85 observations/asset) and estimated a 1-2% firing rate. Six months of per-4H-bar liquidation history (1,039 bars x 3 assets) says the same multiple fires on 11-14% of bars - a ~6x error - and a replay of the DETECT against forward returns shows a 5x spike carries NO information (|t| <= 0.93 on all three). At 20x the rate is 1-2% and there is a weak BTC-only hint (-1.09%/24h, t=-2.31, n=21) that does not survive being one of 12 cells. The multiple is now 20 so any future arming starts calibrated, but the flag is OFF: an exceptional firing rate is a PRECONDITION, not evidence that a DETECT helps. The structural fix stands - the threshold is expressed in each asset own units instead of one dollar figure that was routine on BTC and unreachable on SOL.",
   "real_1h_price_change": true,
   "_p306_real_1h_note": "[P306 2026-08-18] The 1h price move fed to the cascade governor was price_change_4h_pct / 4.0 - a fixed rescale, not a measurement. Two consequences it caused, both on a live risk path: DETECT needs <= -3% in 1h, which under a /4 rescale needs a 12% 4H move (unreachable); and exhaustion is forced to >=0.5 whenever |1h| < 1%, which |4h/4| almost always is, so the governor claimed price was STABILIZING throughout any real cascade. Now the last COMPLETED Kraken hourly candle (public, keyless, same endpoint the regimebook harness already reads at interval=240). Enabled because it is a measurement replacing a fabrication with no free parameter, and both effects are protective. The measured value is logged and published as price_change_1h_pct_real regardless of this flag, so the comparison stays observable. REVERT: delete the key (falls back to the rescale; a Kraken outage already does so per-tick).",
@@ -43,20 +43,20 @@
   "seat_alpha_calibrated": true,
   "regimebook_mode": "enforce",
   "v5_1_strategies_live": false,
-  "_coinbase_venue_aware_fees_note": "ENABLED 2026-08-04 (P165) by explicit operator instruction. Implemented default-OFF by P155e because it LOOSENS the alpha gate: post-Phase-B every routed asset executes on Coinbase (~3/0bps) but alpha-gate friction was priced off Kraken's fee-tier API (~26/16bps), systematically shrinking target_exposure and a leading candidate for the ZERO_EXPOSURE blocker behind the ~7.5 weeks of no trades (P155/P162). Enabling it makes the gate price the venue the asset actually trades on, which is the CORRECT number — but it is still a real loosening, and it was not confirmed as the blocker first (scripts/why_no_trade.py needs the server; ssh hmats does not resolve from this machine). Wrong-way failures fall back to the Kraken tier (conservative) and log [VENUE-FEE]. REVERT: set false and redeploy.",
+  "_coinbase_venue_aware_fees_note": "ENABLED 2026-08-04 (P165) by explicit operator instruction. Implemented default-OFF by P155e because it LOOSENS the alpha gate: post-Phase-B every routed asset executes on Coinbase (~3/0bps) but alpha-gate friction was priced off Kraken's fee-tier API (~26/16bps), systematically shrinking target_exposure and a leading candidate for the ZERO_EXPOSURE blocker behind the ~7.5 weeks of no trades (P155/P162). Enabling it makes the gate price the venue the asset actually trades on, which is the CORRECT number \u2014 but it is still a real loosening, and it was not confirmed as the blocker first (scripts/why_no_trade.py needs the server; ssh hmats does not resolve from this machine). Wrong-way failures fall back to the Kraken tier (conservative) and log [VENUE-FEE]. REVERT: set false and redeploy.",
   "coinbase_venue_aware_fees": true,
-  "_coinbase_venue_aware_spreads_note": "ENABLED 2026-08-16 (P289) by explicit operator instruction ('the one lever that's a measurement'). The alpha gate's per-leg slippage constants ({BTC:3, ETH:5, SOL:10}) were Kraken-era spread assumptions applied to CDE nano contracts. Live read-only order-book probe 2026-08-16 (WEEKEND book = worst case, 6 samples/contract): median FULL spreads BTC 1.58 / ETH 5.26 / SOL 2.65 bps. CDE table charges the full spread rounded conservatively ({BTC:2.0, ETH:5.5, SOL:4.0} — true taker cost is the HALF-spread, so ~2x buffer, P167; note ETH ROSE 5.0->5.5, honest in both directions). Consequence: BTC threshold ~29 -> ~26bps (the 1-2bp ALLOW_EPSILON pass becomes robust); SOL ~55 -> ~40 and ETH ~43 — BOTH STILL ABOVE the 30bps asserted-alpha ceiling, so this does NOT re-open ETH/SOL (pinned by tests/test_p289_venue_spreads.py); only the P237 tripwire question can. Wrong-way failures keep the Kraken table (overcharge, safe). REVERT: set false and redeploy.",
+  "_coinbase_venue_aware_spreads_note": "ENABLED 2026-08-16 (P289) by explicit operator instruction ('the one lever that's a measurement'). The alpha gate's per-leg slippage constants ({BTC:3, ETH:5, SOL:10}) were Kraken-era spread assumptions applied to CDE nano contracts. Live read-only order-book probe 2026-08-16 (WEEKEND book = worst case, 6 samples/contract): median FULL spreads BTC 1.58 / ETH 5.26 / SOL 2.65 bps. CDE table charges the full spread rounded conservatively ({BTC:2.0, ETH:5.5, SOL:4.0} \u2014 true taker cost is the HALF-spread, so ~2x buffer, P167; note ETH ROSE 5.0->5.5, honest in both directions). Consequence: BTC threshold ~29 -> ~26bps (the 1-2bp ALLOW_EPSILON pass becomes robust); SOL ~55 -> ~40 and ETH ~43 \u2014 BOTH STILL ABOVE the 30bps asserted-alpha ceiling, so this does NOT re-open ETH/SOL (pinned by tests/test_p289_venue_spreads.py); only the P237 tripwire question can. Wrong-way failures keep the Kraken table (overcharge, safe). REVERT: set false and redeploy.",
   "coinbase_venue_aware_spreads": true,
-  "_coinbase_maker_reprice_note": "ENABLED 2026-08-17 (P291). Both live maker attempts so far posted at the touch, sat the full 45s unfilled, and crossed as taker. The ladder reprices ONCE at the half-way mark, and only when the touch has actually moved past our resting order (no move = no reprice = no churn). It rides INSIDE the existing coinbase_maker_wait_sec budget — never extends it, because a longer wait means a staler signal (P265 dead-signal-fill class). Enabled rather than shipped default-off because it cannot change WHAT trades (only how the passive leg is placed) and its worst case is byte-identical to today: cancel and cross at timeout. Invariants pinned by tests/test_p291_maker_ladder.py: never more than one live post-only at a time; a FAILED cancel refuses both the re-post and the cross; never re-post beside an unknown or partial fill (the venue reconcile sizes the remainder); urgent=True still bypasses the ladder entirely. REVERT: set false and redeploy.",
+  "_coinbase_maker_reprice_note": "ENABLED 2026-08-17 (P291). Both live maker attempts so far posted at the touch, sat the full 45s unfilled, and crossed as taker. The ladder reprices ONCE at the half-way mark, and only when the touch has actually moved past our resting order (no move = no reprice = no churn). It rides INSIDE the existing coinbase_maker_wait_sec budget \u2014 never extends it, because a longer wait means a staler signal (P265 dead-signal-fill class). Enabled rather than shipped default-off because it cannot change WHAT trades (only how the passive leg is placed) and its worst case is byte-identical to today: cancel and cross at timeout. Invariants pinned by tests/test_p291_maker_ladder.py: never more than one live post-only at a time; a FAILED cancel refuses both the re-post and the cross; never re-post beside an unknown or partial fill (the venue reconcile sizes the remainder); urgent=True still bypasses the ladder entirely. REVERT: set false and redeploy.",
   "coinbase_maker_reprice": true,
-  "_coinbase_venue_true_hold_armed_note": "ARMED 2026-08-17 (P291b) by EXPLICIT OPERATOR INSTRUCTION after being shown the full arithmetic and the asset-opening consequence verbatim ('push and deploy', quoting the finding). This is a P141 activation decision, recorded as such. WHAT CHANGES LIVE: thresholds BTC 26.4->19.1, ETH 44.0->26.7, SOL 40.3->29.0, so ETH and SOL can now pass the alpha gate at FULL CONVICTION only (|sig|=1.0 -> 30bps vs their new thresholds); at the common |sig|=0.33 (10bps) both still fail, so this widens the tradeable set rather than turning the book continuously on. At P274 fractions (0.15) and ~$10.8k equity that is ETH ~8ct / SOL ~4ct if both fire, ~0.45 max net vs the 0.50 P208 cap. SOL clears by only ~1bps and RE-CLOSES at funding 0.000400 (pinned) — its opening is conditional, not structural. WATCH after deploy: [VENUE-HOLD] behavior, the first ETH/SOL entries, and whether the 09-01 tripwire (which may retire the trend seat entirely) fires against a now-wider book. REVERT: set false and redeploy — one line, no code change.",
-  "_coinbase_venue_true_hold_note": "[SUPERSEDED BY THE ARMED NOTE ABOVE — kept for the arithmetic] Built 2026-08-17 (P291), initially NOT armed. The finding is real and verified: the alpha gate charges routed assets Kraken's spot-margin BORROW schedule (MARGIN_FEE_BPS opening + per-4h rollover x 6 hold periods = the live 'margin=7' BTC / '14.0bps hold' ETH+SOL), which fires on ~93% of ticks because regime_leverage is 2.0 for the two dominant regimes. CDE posts margin as COLLATERAL (P275 probe: INTRADAY_MARGIN_SETTING_STANDARD), not a borrow — the venue never levies that fee, and because update_funding_rate takes max(rollover, funding), the Kraken rollover has been masking P277's venue-aware funding on the hold path since it shipped (structurally inert, pinned by test). Venue-true thresholds: BTC 26.4->19.1, ETH 44.0->26.7, SOL 40.3->29.0. WHY IT IS OFF: unlike the P289 spread fix (which explicitly did NOT re-open ETH/SOL), this one crosses BOTH below the 30bps asserted-alpha ceiling — i.e. it OPENS ETH and SOL to live trading at full conviction. That is a P141 activation decision, on a signal whose measured alpha slope is ~0, fifteen days before the 09-01 tripwire that may remove the trend seat entirely. SOL clears by only ~1bps and re-closes at funding 0.000400 (pinned) — 'SOL opens' is conditional, not structural. ARM: set true + redeploy, with its own recorded P-entry. The gate is INDEPENDENT of coinbase_venue_aware_spreads by design.",
+  "_coinbase_venue_true_hold_armed_note": "ARMED 2026-08-17 (P291b) by EXPLICIT OPERATOR INSTRUCTION after being shown the full arithmetic and the asset-opening consequence verbatim ('push and deploy', quoting the finding). This is a P141 activation decision, recorded as such. WHAT CHANGES LIVE: thresholds BTC 26.4->19.1, ETH 44.0->26.7, SOL 40.3->29.0, so ETH and SOL can now pass the alpha gate at FULL CONVICTION only (|sig|=1.0 -> 30bps vs their new thresholds); at the common |sig|=0.33 (10bps) both still fail, so this widens the tradeable set rather than turning the book continuously on. At P274 fractions (0.15) and ~$10.8k equity that is ETH ~8ct / SOL ~4ct if both fire, ~0.45 max net vs the 0.50 P208 cap. SOL clears by only ~1bps and RE-CLOSES at funding 0.000400 (pinned) \u2014 its opening is conditional, not structural. WATCH after deploy: [VENUE-HOLD] behavior, the first ETH/SOL entries, and whether the 09-01 tripwire (which may retire the trend seat entirely) fires against a now-wider book. REVERT: set false and redeploy \u2014 one line, no code change.",
+  "_coinbase_venue_true_hold_note": "[SUPERSEDED BY THE ARMED NOTE ABOVE \u2014 kept for the arithmetic] Built 2026-08-17 (P291), initially NOT armed. The finding is real and verified: the alpha gate charges routed assets Kraken's spot-margin BORROW schedule (MARGIN_FEE_BPS opening + per-4h rollover x 6 hold periods = the live 'margin=7' BTC / '14.0bps hold' ETH+SOL), which fires on ~93% of ticks because regime_leverage is 2.0 for the two dominant regimes. CDE posts margin as COLLATERAL (P275 probe: INTRADAY_MARGIN_SETTING_STANDARD), not a borrow \u2014 the venue never levies that fee, and because update_funding_rate takes max(rollover, funding), the Kraken rollover has been masking P277's venue-aware funding on the hold path since it shipped (structurally inert, pinned by test). Venue-true thresholds: BTC 26.4->19.1, ETH 44.0->26.7, SOL 40.3->29.0. WHY IT IS OFF: unlike the P289 spread fix (which explicitly did NOT re-open ETH/SOL), this one crosses BOTH below the 30bps asserted-alpha ceiling \u2014 i.e. it OPENS ETH and SOL to live trading at full conviction. That is a P141 activation decision, on a signal whose measured alpha slope is ~0, fifteen days before the 09-01 tripwire that may remove the trend seat entirely. SOL clears by only ~1bps and re-closes at funding 0.000400 (pinned) \u2014 'SOL opens' is conditional, not structural. ARM: set true + redeploy, with its own recorded P-entry. The gate is INDEPENDENT of coinbase_venue_aware_spreads by design.",
   "coinbase_venue_true_hold": true,
-  "_coinbase_protective_stop_note": "[SUPERSEDED 2026-08-23, P382] Widened to ALL routed assets the same day (P205: empty assets list = all; verified live); the SOL-only rollout below is history. ORIGINAL: ENABLED 2026-08-07 (P197) for SOL ONLY, by explicit operator instruction. Places a REAL resting stop-limit at Coinbase so the perp position is protected if the engine process dies — until now the sleeve had zero venue-resting protection and every exit was a client-side call on the 4H tick. Distance is measured from the position's avg entry price (a fixed-risk stop, not trailing). SOL-first is the P141 rollout: watch a full [COINBASE-STOP] PLACED -> OK_EXISTS -> FLAT_CANCELLED cycle before widening. WIDEN: empty the assets list to cover BTC/ETH. REVERT: set pct to 0 and redeploy (pct<=0 disables the feature entirely). PRE-FLIGHT (read-only, places nothing; run FROM A REPO CHECKOUT, not the container — scripts/ is deliberately not baked into the image, P141/P190): python -X utf8 scripts/coinbase_stop_validate.py --pct 0.10 — verified 2026-08-07, all three contracts preview ACCEPTED. CAVEAT: CDE rejects reduce_only, so the stop is a plain order; it is reconciled every tick and cancelled the moment the asset is flat, because an orphan stop would OPEN an opposite position.",
-  "coinbase_protective_stop_pct": 0.10,
+  "_coinbase_protective_stop_note": "[SUPERSEDED 2026-08-23, P382] Widened to ALL routed assets the same day (P205: empty assets list = all; verified live); the SOL-only rollout below is history. ORIGINAL: ENABLED 2026-08-07 (P197) for SOL ONLY, by explicit operator instruction. Places a REAL resting stop-limit at Coinbase so the perp position is protected if the engine process dies \u2014 until now the sleeve had zero venue-resting protection and every exit was a client-side call on the 4H tick. Distance is measured from the position's avg entry price (a fixed-risk stop, not trailing). SOL-first is the P141 rollout: watch a full [COINBASE-STOP] PLACED -> OK_EXISTS -> FLAT_CANCELLED cycle before widening. WIDEN: empty the assets list to cover BTC/ETH. REVERT: set pct to 0 and redeploy (pct<=0 disables the feature entirely). PRE-FLIGHT (read-only, places nothing; run FROM A REPO CHECKOUT, not the container \u2014 scripts/ is deliberately not baked into the image, P141/P190): python -X utf8 scripts/coinbase_stop_validate.py --pct 0.10 \u2014 verified 2026-08-07, all three contracts preview ACCEPTED. CAVEAT: CDE rejects reduce_only, so the stop is a plain order; it is reconciled every tick and cancelled the moment the asset is flat, because an orphan stop would OPEN an opposite position.",
+  "coinbase_protective_stop_pct": 0.1,
   "fast_risk_price_move_threshold": 0.03,
   "fast_risk_velocity_trigger": true,
-  "_p380_velocity_note": "[P380] ARMED 2026-08-22 by operator instruction (\"I want all elements active\", risk appetite \"can afford to lose\"). This does NOT un-retire the P370 drift trigger: with fast_risk_velocity_trigger=true the emergency exit acts on INTER-TICK velocity (the move since the previous ~30s evaluation), not on cumulative drift from the resetting 4H anchor. P370 retired drift because it fired on 19% of evaluations (value-destroying, 33 flattens of profitable longs in 2 days). Velocity is the P367 replacement: live shadow over 257 evaluations fired 0.0%% on all 3 assets — it triggers ONLY on a genuine >3%% 30s dislocation (a flash crash), which is exactly what an emergency exit is for. Before this the sleeve had NO price-based emergency exit at all (drift retired, velocity off); the vol-spike REDUCE_50 @4x and the 10%% venue-resting stop were the only price protections. WORST CASE if wrong: one flatten+re-entry on a >3%% inter-tick move that reverses (rare). REVERT: set fast_risk_price_move_threshold 0.0 and remove fast_risk_velocity_trigger.",
+  "_p380_velocity_note": "[P380] ARMED 2026-08-22 by operator instruction (\"I want all elements active\", risk appetite \"can afford to lose\"). This does NOT un-retire the P370 drift trigger: with fast_risk_velocity_trigger=true the emergency exit acts on INTER-TICK velocity (the move since the previous ~30s evaluation), not on cumulative drift from the resetting 4H anchor. P370 retired drift because it fired on 19% of evaluations (value-destroying, 33 flattens of profitable longs in 2 days). Velocity is the P367 replacement: live shadow over 257 evaluations fired 0.0%% on all 3 assets \u2014 it triggers ONLY on a genuine >3%% 30s dislocation (a flash crash), which is exactly what an emergency exit is for. Before this the sleeve had NO price-based emergency exit at all (drift retired, velocity off); the vol-spike REDUCE_50 @4x and the 10%% venue-resting stop were the only price protections. WORST CASE if wrong: one flatten+re-entry on a >3%% inter-tick move that reverses (rare). REVERT: set fast_risk_price_move_threshold 0.0 and remove fast_risk_velocity_trigger.",
   "fast_risk_vol_spike_mult": 4.0,
   "coinbase_max_sleeve_drawdown_pct": 0.25,
   "_p370_risk_control_note": "[P370] ARMED 2026-08-22 by explicit operator instruction on the P369 six-year backtest (training/risk_control_audit_lab.py, three assets, three eras, criteria pre-committed). (1) fast_risk_price_move_threshold=0.0 RETIRES the 3% price-move EXIT_ONLY: it cost 10-93%/yr of notional, bought no tail protection, was era-unstable on BTC/SOL, fired at the 94th-99th percentile of routine drift, and measured drift from a RESETTING 4H anchor with no reference to the position (live: 33 flattens of profitable longs in ~2 days, ~$195 of churn vs -$118.64 PnL). The 10% venue-resting stop (coinbase_protective_stop_pct) is the real protection and stays. (2) fast_risk_vol_spike_mult=4.0 loosens the vol-spike REDUCE_50 from 2x (166-194 fires/yr, 29-40%/yr tax, ~zero tail effect) to 4x (one-fifth the cost); set 0 to retire it too. (3) coinbase_max_sleeve_drawdown_pct=0.25: at 15% the halt trips SOL 48-77x in six years and removes 60-85% of its return; at 25% it is a real, cheap insurance premium on all three (BTC +4pp, ETH -18..-51pp, SOL -87..-110pp over 6y) and matches the existing risk.hard_drawdown_halt. REVERT: delete the first two keys (class constants 3%/2x return) and set the third to 0.15.",
@@ -64,42 +64,63 @@
   "coinbase_protective_stop_assets": [],
   "_coinbase_flip_persist_note": "ADDED 2026-08-07 (P198). The Coinbase sleeve is driven by _last_quant_directions raw, so it inherited NONE of the P142 Layer-2 churn controls: BTC flipped direction 29 times in 54 days while the sleeve lost 5.64% (Sharpe -4.5, coinbase_sleeve_pnl.jsonl 2026-06-14 -> 08-06). A sign-FLIP of a live position must now persist this many CONSECUTIVE 4H ticks before executing; single-tick reversals hold. Entries, adds, reduces and flattens are NEVER deferred (exits stay instant, P195 principle). Tightening-only. REVERT: set 0 and redeploy.",
   "coinbase_flip_persist_ticks": 2,
-  "_coinbase_maker_first_note": "ENABLED 2026-08-16 (P270 activation) by explicit operator instruction. CDE charges 0bps maker vs 3bps taker, and the probe (scripts/coinbase_probe_maker_etf.py, 2026-08-15) confirmed post_only is genuinely ENFORCED on all three contracts — a crossing post-only is REJECTED (PREVIEW_INVALID_LIMIT_PRICE_POST_ONLY), so this cannot silently pay taker while reading as maker (P169 shape). Non-urgent sleeve orders now try a post-only at the touch, poll up to coinbase_maker_wait_sec INSIDE the same call, cancel, and cross the remainder at taker; an entry is never left resting across ticks (P265 class); a timeout with a FAILED cancel refuses the cross (P265 double-order class); FORCE_FLAT and the fast-risk watchdog pass urgent=True and never maker-wait. WATCH after deploy: [COINBASE-MAKER] lines on the next real order — 'filled at 0bps maker', 'taker fallback', or the CANCEL_FAILED warning. REVERT: set false and redeploy (byte-identical old taker path).",
+  "_coinbase_maker_first_note": "ENABLED 2026-08-16 (P270 activation) by explicit operator instruction. CDE charges 0bps maker vs 3bps taker, and the probe (scripts/coinbase_probe_maker_etf.py, 2026-08-15) confirmed post_only is genuinely ENFORCED on all three contracts \u2014 a crossing post-only is REJECTED (PREVIEW_INVALID_LIMIT_PRICE_POST_ONLY), so this cannot silently pay taker while reading as maker (P169 shape). Non-urgent sleeve orders now try a post-only at the touch, poll up to coinbase_maker_wait_sec INSIDE the same call, cancel, and cross the remainder at taker; an entry is never left resting across ticks (P265 class); a timeout with a FAILED cancel refuses the cross (P265 double-order class); FORCE_FLAT and the fast-risk watchdog pass urgent=True and never maker-wait. WATCH after deploy: [COINBASE-MAKER] lines on the next real order \u2014 'filled at 0bps maker', 'taker fallback', or the CANCEL_FAILED warning. REVERT: set false and redeploy (byte-identical old taker path).",
   "coinbase_maker_first": true,
   "coinbase_maker_wait_sec": 45.0,
-  "_coinbase_sizing_note": "ACTIVATED 2026-08-16 (P273) by explicit operator instruction ('make sure the system actually uses as much money as possible'). Per-asset target/cap sizes replace the flat +/-1: vol-parity within the STANDING policy caps — 1 BTC nano (~$630, $5.0 risk/4H bar), 3 ETH nano (~$565, $6.3), 1 SOL nano (~$377, $6.0); max all-same-direction book ~0.42x net, inside the recorded 0.50 net cap (P208, still enforced independently) and the P210 per-asset gross caps. The alpha gate still decides WHETHER anything trades — this changes HOW MUCH when it does. FastRisk REDUCE_50 becomes expressible on ETH (3ct -> 1ct). REVERT: remove this key (falls back to flat +/-1).",
-  "coinbase_max_contracts_by_asset": {"BTC": 1, "ETH": 3, "SOL": 1},
-  "_coinbase_fraction_sizing_note": "ADDED 2026-08-16 (P274) after the operator instructed deploying the idle Kraken $7k into the sleeve. Targets become floor(0.15 x sleeve equity / 1-contract notional) per asset — at the activation equity ($3,775) this reproduces the fixed {BTC:1, ETH:3, SOL:1} book EXACTLY (verified: 0.15x3775=$566 -> BTC 1ct/$630-floor, ETH 3ct/$188, SOL 1ct/$377), so behavior is identical until capital actually arrives, at which point the deposit deploys itself: at ~$10.9k -> {BTC 2, ETH 8, SOL 4} ~ 0.45x max net, still under the 0.50 net cap (P208) and the P210 per-asset caps, all of which are equity-fractions and scale automatically. The fixed contract dict above stays as the FALLBACK when pricing/equity is unreadable (sizing is never fabricated from missing data). REVERT: remove this key (falls back to the fixed contracts).",
-  "coinbase_target_fraction_by_asset": {"BTC": 0.20, "ETH": 0.15, "SOL": 0.095},
+  "_coinbase_sizing_note": "ACTIVATED 2026-08-16 (P273) by explicit operator instruction ('make sure the system actually uses as much money as possible'). Per-asset target/cap sizes replace the flat +/-1: vol-parity within the STANDING policy caps \u2014 1 BTC nano (~$630, $5.0 risk/4H bar), 3 ETH nano (~$565, $6.3), 1 SOL nano (~$377, $6.0); max all-same-direction book ~0.42x net, inside the recorded 0.50 net cap (P208, still enforced independently) and the P210 per-asset gross caps. The alpha gate still decides WHETHER anything trades \u2014 this changes HOW MUCH when it does. FastRisk REDUCE_50 becomes expressible on ETH (3ct -> 1ct). REVERT: remove this key (falls back to flat +/-1).",
+  "coinbase_max_contracts_by_asset": {
+    "BTC": 1,
+    "ETH": 3,
+    "SOL": 1
+  },
+  "_coinbase_fraction_sizing_note": "ADDED 2026-08-16 (P274) after the operator instructed deploying the idle Kraken $7k into the sleeve. Targets become floor(0.15 x sleeve equity / 1-contract notional) per asset \u2014 at the activation equity ($3,775) this reproduces the fixed {BTC:1, ETH:3, SOL:1} book EXACTLY (verified: 0.15x3775=$566 -> BTC 1ct/$630-floor, ETH 3ct/$188, SOL 1ct/$377), so behavior is identical until capital actually arrives, at which point the deposit deploys itself: at ~$10.9k -> {BTC 2, ETH 8, SOL 4} ~ 0.45x max net, still under the 0.50 net cap (P208) and the P210 per-asset caps, all of which are equity-fractions and scale automatically. The fixed contract dict above stays as the FALLBACK when pricing/equity is unreadable (sizing is never fabricated from missing data). REVERT: remove this key (falls back to the fixed contracts).",
+  "coinbase_target_fraction_by_asset": {
+    "BTC": 0.2,
+    "ETH": 0.15,
+    "SOL": 0.095
+  },
   "_p370_vol_parity_note": "[P370] VOL-PARITY 2026-08-22, operator: \"tackle all tasks\" on the P370 strategy-threshold audit (training/strategy_threshold_audit_lab.py). Flat 0.15 x3 put 48% of three-asset book RISK in SOL (annualised vol while long BTC 0.58 / ETH 0.77 / SOL 1.23, stable ranking in all three eras) and 2.1x BTC's share. These fractions equalise 1-sigma $/4H per asset at the SAME 0.45 aggregate budget; all sit under post_leverage_caps (.25/.25/.20). Backtest: 12% shallower max drawdown (-33.9% -> -29.7%) and a smaller worst 4H bar at equal Sharpe (1.11 vs 1.10), for ~12pp of in-sample return that was SOL's outperformance. This is NOT a loosening: ETH unchanged, SOL reduced, BTC raised but BTC cannot pass the alpha gate (24.1bps edge < 27.7bps fee floor), so net exposure FALLS. P274 notes flat 0.15 matched P273's vol-parity contract book only at the $3,775 activation equity by rounding coincidence; at ~$10.9k it was no longer parity. REVERT: {\"BTC\": 0.15, \"ETH\": 0.15, \"SOL\": 0.15}.",
-  "_venue_funding_note": "ENABLED 2026-08-16 (P277, operator: 'full enhancement'). P218 built this and proved it behaviorally inert (both venues' funding ~1e-5..1e-4, far below every consumer threshold) but the SIGN differs on BTC/SOL and — decisive for P277 — the alpha gate's hold-cost arithmetic (FrictionComponents.update_funding_rate -> _margin_cost_bps) charges whatever rate market_data carries: with this OFF the sleeve's hold cost was priced on KRAKEN's funding. Now routed assets price the venue that actually holds the position. Wrong-way failure keeps the Kraken rate (conservative). REVERT: set false.",
+  "_venue_funding_note": "ENABLED 2026-08-16 (P277, operator: 'full enhancement'). P218 built this and proved it behaviorally inert (both venues' funding ~1e-5..1e-4, far below every consumer threshold) but the SIGN differs on BTC/SOL and \u2014 decisive for P277 \u2014 the alpha gate's hold-cost arithmetic (FrictionComponents.update_funding_rate -> _margin_cost_bps) charges whatever rate market_data carries: with this OFF the sleeve's hold cost was priced on KRAKEN's funding. Now routed assets price the venue that actually holds the position. Wrong-way failure keeps the Kraken rate (conservative). REVERT: set false.",
   "coinbase_venue_aware_funding": true,
-  "_passive_advisory_note": "ADDED 2026-08-16 (P272). The operator holds ~12,300 XRP on Kraken and ~$3k BTC outside the system, both recorded as DELIBERATE holds ('leave the xrp') that the system does not trade or count. This surfaces the certified trend/hold book label for those assets in the 4H Discord heartbeat (+1=book says hold, 0=book says be flat, FLIPPED on a label change) — informational only, so the operator can manage the bags manually with the certified signal if they choose. REVERT: set to [].",
-  "passive_advisory_assets": ["BTC", "XRP"],
-  "_coinbase_use_gated_intent_note": "[SUPERSEDED 2026-08-23, P382] The 'signal reconnected, book not' caveat below is closed: P208 enforced the net cap on the sleeve's own book, P209 fed the existence fuse from sleeve equity, P210 added per-asset caps in sleeve equity, and P273/P274 gave the sleeve sized, equity-scaled targets. ORIGINAL: ENABLED 2026-08-07 (P206) by explicit operator decision. The Coinbase sleeve is the ONLY venue that places orders since Phase B, and it was driven from _last_quant_directions — captured at main.py:6480/:7834, BEFORE engine.decide() at :9737. So the alpha gate (Non-Negotiable Rule #1), veto chain, net cap, existence fuse and anti-churn all ran and bound on NOTHING (P201). This routes the sleeve through the gated intent instead, via sleeve_direction_from_intent(), which translates ORDER semantics into POSITION-TARGET semantics — see P206 for the five ways the naive mapping liquidates the book (notably EXPOSURE_DELTA_BELOW_THRESHOLD means HOLD, not FLAT). EXPECTED ON ACTIVATION: the alpha gate currently refuses ETH (30bps < 47bps threshold) and SOL (10bps < 59bps) and passes BTC (dir=+0.9998) — so ETH and SOL FLATTEN (closing an ETH long and a SOL short) and BTC stays long. That is Rule #1 binding on the venue that trades, for the first time since Phase B. This does NOT connect P144/existence-fuse/sizing: they measure _paper_positions (permanently empty) and speak target_exposure, which the +/-1-contract sleeve discards — signal reconnected, book not. REVERT: set false and redeploy; positions are then managed from the pre-gate signal again.",
-  "_p295_trend_floor_note": "[P295 2026-08-18, operator-instructed] Trend's signal is a mean of signs over 3 lookbacks, so |signal| is quantized to {1/3, 1} — nothing between. Through 40 x |sig| x 0.75 that is 10bps or 30bps, against live thresholds of 19.1/26.7/29.0, so a 2-of-3 majority is UNTRADEABLE by construction and the gate vetoed it every tick (this is what produced dir=+0.00 with Alpha 10bps). The old floor of 0.30 sat BELOW the smallest reachable |signal| (1/3=0.3333) and so could never fire — a control that could not act. 0.50 sits strictly between the two reachable values: the 2-of-3 vote now reads FLAT instead of asserting an opinion the gate must veto. DELIBERATELY NOT the other fix: raising base_edge_bps so 2-of-3 clears the bar would be manufacturing tradeability on a signal whose realized slope was measured at -0.74..+3.01 with every |t| < 0.8 (P293k) — the P231 error. Same resulting book, honest logs, and a clean hand-off to the whale seat, which does clear the gate. REVERT: set 0.30.",
-  "trend_min_abs_signal": 0.50,
-  "_p293j_whale_seat_note": "[P293j 2026-08-17, operator-instructed 'let the whale turn on'] whale takes the DECIDE slot when it HAS an opinion; the incumbent (trend) keeps the seat when whale is silent. WHY: the system was not trading — every tick logged dir=+0.00 with 'Alpha 10bps' against thresholds of 19-60bps, because trend emits |dir|~0.33 -> 40 x 0.33 x 0.75 = 10bps, below every threshold. whale emits +/-1.0 BINARY -> 30bps whenever it speaks, which clears BTC 19.1 / ETH 26.7 / SOL 29.0 (the P291b venue-true thresholds). Measured firing rate over 60d of attribution: BTC 54%% / ETH 43%% / SOL 12%% of ticks; whale speaks when trend cannot on 30%% / 25%% / 11%%. HONEST CAVEAT: whale clears the gate because it is BINARY, not because it is better evidenced — its live IC is +0.040 (4h) / +0.011 (16h), statistically indistinguishable from zero, though still better than the incumbent quant's NEGATIVE -0.046 at 16h. This deliberately trades 'no trades at all' for 'trades on a weak but positive signal', with flip-persistence (2 ticks), the alpha gate, caps and stops all still binding. A SILENT whale does NOT seat 0.0 (that would flatten the book on the 46/57/88%% of ticks where it has no opinion — P2). REVERT: set whale_seat_mode to \"off\".",
+  "_passive_advisory_note": "ADDED 2026-08-16 (P272). The operator holds ~12,300 XRP on Kraken and ~$3k BTC outside the system, both recorded as DELIBERATE holds ('leave the xrp') that the system does not trade or count. This surfaces the certified trend/hold book label for those assets in the 4H Discord heartbeat (+1=book says hold, 0=book says be flat, FLIPPED on a label change) \u2014 informational only, so the operator can manage the bags manually with the certified signal if they choose. REVERT: set to [].",
+  "passive_advisory_assets": [
+    "BTC",
+    "XRP"
+  ],
+  "_coinbase_use_gated_intent_note": "[SUPERSEDED 2026-08-23, P382] The 'signal reconnected, book not' caveat below is closed: P208 enforced the net cap on the sleeve's own book, P209 fed the existence fuse from sleeve equity, P210 added per-asset caps in sleeve equity, and P273/P274 gave the sleeve sized, equity-scaled targets. ORIGINAL: ENABLED 2026-08-07 (P206) by explicit operator decision. The Coinbase sleeve is the ONLY venue that places orders since Phase B, and it was driven from _last_quant_directions \u2014 captured at main.py:6480/:7834, BEFORE engine.decide() at :9737. So the alpha gate (Non-Negotiable Rule #1), veto chain, net cap, existence fuse and anti-churn all ran and bound on NOTHING (P201). This routes the sleeve through the gated intent instead, via sleeve_direction_from_intent(), which translates ORDER semantics into POSITION-TARGET semantics \u2014 see P206 for the five ways the naive mapping liquidates the book (notably EXPOSURE_DELTA_BELOW_THRESHOLD means HOLD, not FLAT). EXPECTED ON ACTIVATION: the alpha gate currently refuses ETH (30bps < 47bps threshold) and SOL (10bps < 59bps) and passes BTC (dir=+0.9998) \u2014 so ETH and SOL FLATTEN (closing an ETH long and a SOL short) and BTC stays long. That is Rule #1 binding on the venue that trades, for the first time since Phase B. This does NOT connect P144/existence-fuse/sizing: they measure _paper_positions (permanently empty) and speak target_exposure, which the +/-1-contract sleeve discards \u2014 signal reconnected, book not. REVERT: set false and redeploy; positions are then managed from the pre-gate signal again.",
+  "_p295_trend_floor_note": "[P295 2026-08-18, operator-instructed] Trend's signal is a mean of signs over 3 lookbacks, so |signal| is quantized to {1/3, 1} \u2014 nothing between. Through 40 x |sig| x 0.75 that is 10bps or 30bps, against live thresholds of 19.1/26.7/29.0, so a 2-of-3 majority is UNTRADEABLE by construction and the gate vetoed it every tick (this is what produced dir=+0.00 with Alpha 10bps). The old floor of 0.30 sat BELOW the smallest reachable |signal| (1/3=0.3333) and so could never fire \u2014 a control that could not act. 0.50 sits strictly between the two reachable values: the 2-of-3 vote now reads FLAT instead of asserting an opinion the gate must veto. DELIBERATELY NOT the other fix: raising base_edge_bps so 2-of-3 clears the bar would be manufacturing tradeability on a signal whose realized slope was measured at -0.74..+3.01 with every |t| < 0.8 (P293k) \u2014 the P231 error. Same resulting book, honest logs, and a clean hand-off to the whale seat, which does clear the gate. REVERT: set 0.30.",
+  "trend_min_abs_signal": 0.5,
+  "_p293j_whale_seat_note": "[P293j 2026-08-17, operator-instructed 'let the whale turn on'] whale takes the DECIDE slot when it HAS an opinion; the incumbent (trend) keeps the seat when whale is silent. WHY: the system was not trading \u2014 every tick logged dir=+0.00 with 'Alpha 10bps' against thresholds of 19-60bps, because trend emits |dir|~0.33 -> 40 x 0.33 x 0.75 = 10bps, below every threshold. whale emits +/-1.0 BINARY -> 30bps whenever it speaks, which clears BTC 19.1 / ETH 26.7 / SOL 29.0 (the P291b venue-true thresholds). Measured firing rate over 60d of attribution: BTC 54%% / ETH 43%% / SOL 12%% of ticks; whale speaks when trend cannot on 30%% / 25%% / 11%%. HONEST CAVEAT: whale clears the gate because it is BINARY, not because it is better evidenced \u2014 its live IC is +0.040 (4h) / +0.011 (16h), statistically indistinguishable from zero, though still better than the incumbent quant's NEGATIVE -0.046 at 16h. This deliberately trades 'no trades at all' for 'trades on a weak but positive signal', with flip-persistence (2 ticks), the alpha gate, caps and stops all still binding. A SILENT whale does NOT seat 0.0 (that would flatten the book on the 46/57/88%% of ticks where it has no opinion \u2014 P2). REVERT: set whale_seat_mode to \"off\".",
   "whale_seat_mode": "enforce",
-  "whale_seat_assets": ["BTC", "ETH", "SOL"],
+  "whale_seat_assets": [
+    "BTC",
+    "ETH",
+    "SOL"
+  ],
   "coinbase_use_gated_intent": true,
-  "_fast_risk_sleeve_note": "ENABLED 2026-08-08 (P228) by explicit operator decision, same deploy as the P227 sleeve branch. FastRiskTick (30s inter-tick watchdog) may now act on the Coinbase sleeve: EXIT_ONLY flattens via execute_target(0) (works under a halt per P195; the resting protective stop is cancelled first per P197 ordering, no orphan); REDUCE_50 at 1-contract granularity is a logged no-op; a stale venue snapshot refuses to act (P141). Before this the watchdog early-returned on the empty Kraken book every 30s — the sleeve's only inter-tick protection was the venue-resting stop. WORST CASE if wrong: an unwanted flatten on a >=3% inter-tick move against the position — the action FastRiskTick was designed to take. REVERT: set false and redeploy; triggered-but-disabled actions then log one warning per asset.",
+  "_fast_risk_sleeve_note": "ENABLED 2026-08-08 (P228) by explicit operator decision, same deploy as the P227 sleeve branch. FastRiskTick (30s inter-tick watchdog) may now act on the Coinbase sleeve: EXIT_ONLY flattens via execute_target(0) (works under a halt per P195; the resting protective stop is cancelled first per P197 ordering, no orphan); REDUCE_50 at 1-contract granularity is a logged no-op; a stale venue snapshot refuses to act (P141). Before this the watchdog early-returned on the empty Kraken book every 30s \u2014 the sleeve's only inter-tick protection was the venue-resting stop. WORST CASE if wrong: an unwanted flatten on a >=3% inter-tick move against the position \u2014 the action FastRiskTick was designed to take. REVERT: set false and redeploy; triggered-but-disabled actions then log one warning per asset.",
   "fast_risk_sleeve_enabled": true,
-  "_p237_decision_note": "OPERATOR DECISIONS 2026-08-08 (delegated; P237). (1) alpha_gate_hold_ratio=0.65: a held sleeve position survives an alpha-gate fail iff alpha >= 0.65 x threshold AND the signal still agrees with the held direction — flips and real decay still exit; enabled on the P231 research (Constantinides band) + P234's behavioral tests, with BTC sitting ~1bp above its threshold (the exact 16bps-per-flap case the band exists for). REVERT: remove the key. (2) coinbase_reentry_cooldown_ticks=2: 8h entry-from-flat cooldown after a sleeve flatten (P168 semantics; exits never deferred). REVERT: remove. (3) CALIBRATION TRIPWIRE: trading continues on the asserted alpha constants (trend 40 x 0.75) ONLY through the 4-report dual-log window — weekly Monday slope_calibrator reports, first 2026-08-11, fourth 2026-09-01. If report #4 still shows GATE-CLOSED for an asset and the p221b retrain has not produced a promotable basis, that asset's trend injection comes OFF. This note is the record; the P237 CLAUDE.md entry is the reasoning.",
+  "_p237_decision_note": "OPERATOR DECISIONS 2026-08-08 (delegated; P237). (1) alpha_gate_hold_ratio=0.65: a held sleeve position survives an alpha-gate fail iff alpha >= 0.65 x threshold AND the signal still agrees with the held direction \u2014 flips and real decay still exit; enabled on the P231 research (Constantinides band) + P234's behavioral tests, with BTC sitting ~1bp above its threshold (the exact 16bps-per-flap case the band exists for). REVERT: remove the key. (2) coinbase_reentry_cooldown_ticks=2: 8h entry-from-flat cooldown after a sleeve flatten (P168 semantics; exits never deferred). REVERT: remove. (3) CALIBRATION TRIPWIRE: trading continues on the asserted alpha constants (trend 40 x 0.75) ONLY through the 4-report dual-log window \u2014 weekly Monday slope_calibrator reports, first 2026-08-11, fourth 2026-09-01. If report #4 still shows GATE-CLOSED for an asset and the p221b retrain has not produced a promotable basis, that asset's trend injection comes OFF. This note is the record; the P237 CLAUDE.md entry is the reasoning.",
   "alpha_gate_hold_ratio": 0.65,
   "coinbase_reentry_cooldown_ticks": 2,
-  "_coinbase_ma_filter_enforce_note": "P253 2026-08-09: key added EXPLICITLY at its live value (false = shadow-only). It was the one sleeve flag absent from this file entirely, so its state was invisible from the production config — you could only learn it from the main.py default. The P236 ma_filter ledger accumulates regardless; flipping to true (block entry / demote flip-to-flat on model_alpha disagreement) requires the P166 forward gate on that ledger + its own P-entry.",
+  "_coinbase_ma_filter_enforce_note": "P253 2026-08-09: key added EXPLICITLY at its live value (false = shadow-only). It was the one sleeve flag absent from this file entirely, so its state was invisible from the production config \u2014 you could only learn it from the main.py default. The P236 ma_filter ledger accumulates regardless; flipping to true (block entry / demote flip-to-flat on model_alpha disagreement) requires the P166 forward gate on that ledger + its own P-entry.",
   "_coinbase_ma_filter_enforce_superseded": "STALE-CORRECTED P376: P298 flipped this true, then P356 (2026-08-21) DISARMED it back to false on the agent_disagreement_review evidence (NOT_EARNED). Current authority = the _note above; live value is false.",
-  "_trend_regime_gate_note": "ADDED 2026-08-07 (P198), SHADOW = measurement only, no live change. Trend-following's live loss concentrates in WEAK_CONSOLIDATION (n=364, hit 45.3%, -9.1bps/4H-tick, negative on all 3 assets) and NEUTRAL_DRIFT (n=11, -68.9bps), while QUIET_ACCUMULATION is mildly positive (+2.6bps) — measured 2026-06-14 -> 08-06, which is IN-SAMPLE, hence shadow-first. Logs would-gate verdicts to data/trend_regime_shadow.jsonl every tick. PROMOTE to \"enforce\" (zeroes trend in gated regimes -> sleeve flattens there) only on forward evidence: python scripts/trend_regime_review.py after >=3-4 weeks of accumulation.",
+  "_trend_regime_gate_note": "ADDED 2026-08-07 (P198), SHADOW = measurement only, no live change. Trend-following's live loss concentrates in WEAK_CONSOLIDATION (n=364, hit 45.3%, -9.1bps/4H-tick, negative on all 3 assets) and NEUTRAL_DRIFT (n=11, -68.9bps), while QUIET_ACCUMULATION is mildly positive (+2.6bps) \u2014 measured 2026-06-14 -> 08-06, which is IN-SAMPLE, hence shadow-first. Logs would-gate verdicts to data/trend_regime_shadow.jsonl every tick. PROMOTE to \"enforce\" (zeroes trend in gated regimes -> sleeve flattens there) only on forward evidence: python scripts/trend_regime_review.py after >=3-4 weeks of accumulation.",
   "trend_regime_gate": "shadow",
-  "_regimebook_mode_note_p256_historical": "P256 2026-08-10: the SEAT for the P248/P250 regime-book roster, built AHEAD of its ~2026-09-09 P166 forward-gate read so a passing candidate has an actuator (P230). 'off' (the P256-era value; regimebook_mode is NOW 'enforce' per P298 — this key is HISTORICAL) = harness records only, zero live effect. 'enforce' = the book target takes the direction seat via the same quant-slot injection the trend layer uses — the full existing chain (alpha gate, veto chain, P206 translation, sleeve caps/stops) stays binding, and the asserted alpha constant is the SAME 30bps-effective the trend seat uses (no loosening; P231/P237 discipline governs it). FLIP ONLY on the P166 read + its own P-entry (P141). If the P237 tripwire fires 09-01 before the book passes, the asset goes FLAT via trend_assets — that is the plan, not a failure.",
+  "_regimebook_mode_note_p256_historical": "P256 2026-08-10: the SEAT for the P248/P250 regime-book roster, built AHEAD of its ~2026-09-09 P166 forward-gate read so a passing candidate has an actuator (P230). 'off' (the P256-era value; regimebook_mode is NOW 'enforce' per P298 \u2014 this key is HISTORICAL) = harness records only, zero live effect. 'enforce' = the book target takes the direction seat via the same quant-slot injection the trend layer uses \u2014 the full existing chain (alpha gate, veto chain, P206 translation, sleeve caps/stops) stays binding, and the asserted alpha constant is the SAME 30bps-effective the trend seat uses (no loosening; P231/P237 discipline governs it). FLIP ONLY on the P166 read + its own P-entry (P141). If the P237 tripwire fires 09-01 before the book passes, the asset goes FLAT via trend_assets \u2014 that is the plan, not a failure.",
   "_regimebook_mode_superseded": "the pre-P298 'off' lived here; the decided value + its evidence note are above (JSON last-key-wins made this one silently override the new one - caught on read-back).",
-  "_drl_note": "[SUPERSEDED 2026-08-23, P382] The 'Iron Law 8 logs ONE expected CRITICAL per process start' sentence below is stale: P202 RETIRED that DRL clause (the replacement [CUTOVER-GUARDS] fires only on an unprotected routed asset, and P205's all-asset stops self-extinguished it) — expect ZERO such lines. ORIGINAL: P198 2026-08-07: drl.force_active=false makes the promotion gate's persisted level authoritative. Since 2026-04-11 a [DRL_FORCE_ACTIVE] block in main.py re-promoted ANY persisted level to ACTIVE on every boot whenever models loaded, so demotion (auto or manual) was cosmetic across restarts. DRL demoted ACTIVE -> SHADOW 2026-08-07 (state file on hmats-data volume): live IC +0.019 (4h, ns) / -0.081 (16h, t=-2.78 NEGATIVE) over 2026-06->08, +0.052 in Apr-Jun — no stable edge in two independent live windows, and the backtest Sharpes were P164-leak artifacts. In SHADOW the DRL still runs inference and logs signals every tick (IC monitoring continues) but is excluded from fusion (integration_v36 admits DRL only at EXIT_ONLY/ACTIVE). Iron Law 8 logs ONE expected CRITICAL per process start ([CUTOVER-IRON-LAW-8], observe-only) — that alert is the demotion being SEEN, not a fault. RE-PROMOTE only via a clean retrain (causal pipeline, P164/P179-P184 fixes) that passes the P182 baselines + P166 cost-aware gate on FORWARD data.",
-  "drl": {"force_active": false},
-  "assets": ["SOL", "BTC", "ETH"],
+  "_drl_note": "[SUPERSEDED 2026-08-23, P382] The 'Iron Law 8 logs ONE expected CRITICAL per process start' sentence below is stale: P202 RETIRED that DRL clause (the replacement [CUTOVER-GUARDS] fires only on an unprotected routed asset, and P205's all-asset stops self-extinguished it) \u2014 expect ZERO such lines. ORIGINAL: P198 2026-08-07: drl.force_active=false makes the promotion gate's persisted level authoritative. Since 2026-04-11 a [DRL_FORCE_ACTIVE] block in main.py re-promoted ANY persisted level to ACTIVE on every boot whenever models loaded, so demotion (auto or manual) was cosmetic across restarts. DRL demoted ACTIVE -> SHADOW 2026-08-07 (state file on hmats-data volume): live IC +0.019 (4h, ns) / -0.081 (16h, t=-2.78 NEGATIVE) over 2026-06->08, +0.052 in Apr-Jun \u2014 no stable edge in two independent live windows, and the backtest Sharpes were P164-leak artifacts. In SHADOW the DRL still runs inference and logs signals every tick (IC monitoring continues) but is excluded from fusion (integration_v36 admits DRL only at EXIT_ONLY/ACTIVE). Iron Law 8 logs ONE expected CRITICAL per process start ([CUTOVER-IRON-LAW-8], observe-only) \u2014 that alert is the demotion being SEEN, not a fault. RE-PROMOTE only via a clean retrain (causal pipeline, P164/P179-P184 fixes) that passes the P182 baselines + P166 cost-aware gate on FORWARD data.",
+  "drl": {
+    "force_active": false
+  },
+  "assets": [
+    "SOL",
+    "BTC",
+    "ETH"
+  ],
   "primary_asset": "SOL",
   "exchange": {
-    "_p230_note": "from_file reads ONLY exchange.primary (absent here -> default 'kraken'). The api_*_env names below are never parsed — ProductionConfig's hardcoded defaults happen to match; kept as documentation. rate_limit/ws_enabled/rest_enabled removed 2026-08-08 (P230): zero consumers repo-wide; real rate limiting lives in defense/rate_limit_manager.py + the infra/kraken_client.py token bucket.",
+    "_p230_note": "from_file reads ONLY exchange.primary (absent here -> default 'kraken'). The api_*_env names below are never parsed \u2014 ProductionConfig's hardcoded defaults happen to match; kept as documentation. rate_limit/ws_enabled/rest_enabled removed 2026-08-08 (P230): zero consumers repo-wide; real rate limiting lives in defense/rate_limit_manager.py + the infra/kraken_client.py token bucket.",
     "kraken": {
       "api_key_env": "KRAKEN_API_KEY",
       "api_secret_env": "KRAKEN_API_SECRET"
@@ -111,32 +132,32 @@
     "initial_capital_default": 10000.0,
     "hard_drawdown_halt": 0.25,
     "correlation_crisis": 0.98,
-    "max_position_pct": 0.80,
-    "max_exposure_total": 1.50,
-    "max_gross_exposure": 1.50,
+    "max_position_pct": 0.8,
+    "max_exposure_total": 1.5,
+    "max_gross_exposure": 1.5,
     "_net_cap_note": "NET-CAP 2026-06-14: caps |net signed exposure| (BTC+ETH+SOL). The book ran +0.54 net-long into a -23% market = ~half the Apr-Jun loss; gross caps don't constrain net direction. 0.50 allows a real directional/trend tilt but blocks all-in net-long. Only reduces requests that increase |net|; de-risking always free. Set null to disable.",
-    "max_net_exposure": 0.50,
-    "max_single_asset_pct": 0.80,
+    "max_net_exposure": 0.5,
+    "max_single_asset_pct": 0.8,
     "max_drawdown": 0.35,
     "daily_loss_limit": 0.08,
     "reduce_at_drawdown": 0.08,
     "critical_drawdown": 0.15,
     "max_leverage": 3.0,
     "per_asset_caps": {
-      "BTC": 0.40,
-      "ETH": 0.40,
-      "SOL": 0.50
+      "BTC": 0.4,
+      "ETH": 0.4,
+      "SOL": 0.5
     }
   },
   "exposure_caps": {
-    "BTC": 0.40,
-    "ETH": 0.40,
-    "SOL": 0.50
+    "BTC": 0.4,
+    "ETH": 0.4,
+    "SOL": 0.5
   },
   "post_leverage_caps": {
     "BTC": 0.25,
     "ETH": 0.25,
-    "SOL": 0.20
+    "SOL": 0.2
   },
   "regime_leverage": {
     "VOLATILE_CHOP": 3.0,
@@ -151,16 +172,40 @@
     "min_alpha_bps_default": 5,
     "min_alpha_bps_short_default": 3,
     "staged_schedule": [
-      {"stage": "HIGH_RISK", "min_alpha_bps": 5},
-      {"stage": "WEEK1", "min_alpha_bps": 5},
-      {"stage": "WEEK2_3", "min_alpha_bps": 4},
-      {"stage": "MONTH1", "min_alpha_bps": 3}
+      {
+        "stage": "HIGH_RISK",
+        "min_alpha_bps": 5
+      },
+      {
+        "stage": "WEEK1",
+        "min_alpha_bps": 5
+      },
+      {
+        "stage": "WEEK2_3",
+        "min_alpha_bps": 4
+      },
+      {
+        "stage": "MONTH1",
+        "min_alpha_bps": 3
+      }
     ],
     "staged_schedule_short": [
-      {"stage": "HIGH_RISK", "min_alpha_bps": 3},
-      {"stage": "WEEK1", "min_alpha_bps": 3},
-      {"stage": "WEEK2_3", "min_alpha_bps": 3},
-      {"stage": "MONTH1", "min_alpha_bps": 2}
+      {
+        "stage": "HIGH_RISK",
+        "min_alpha_bps": 3
+      },
+      {
+        "stage": "WEEK1",
+        "min_alpha_bps": 3
+      },
+      {
+        "stage": "WEEK2_3",
+        "min_alpha_bps": 3
+      },
+      {
+        "stage": "MONTH1",
+        "min_alpha_bps": 2
+      }
     ],
     "stage_selector": "HIGH_RISK",
     "quiet_accum_min_direction": 0.08,
@@ -174,7 +219,7 @@
       "BTC": 0.08,
       "ETH": 0.05
     },
-    "opportunity_actionable_min_direction_short": 0.10,
+    "opportunity_actionable_min_direction_short": 0.1,
     "opportunity_actionable_min_direction_short_by_asset": {
       "ETH": 0.04
     },
@@ -198,12 +243,12 @@
     "pre_alpha_hold_volume_breakout_long_in_quiet": true,
     "pre_alpha_hold_volume_breakout_long_max_direction": 0.05,
     "regime_alpha_gate_relax": {
-      "QUIET_ACCUMULATION": 0.90,
-      "WEAK_CONSOLIDATION": 0.90
+      "QUIET_ACCUMULATION": 0.9,
+      "WEAK_CONSOLIDATION": 0.9
     },
     "regime_alpha_gate_relax_short": {
-      "QUIET_ACCUMULATION": 1.10,
-      "WEAK_CONSOLIDATION": 1.10
+      "QUIET_ACCUMULATION": 1.1,
+      "WEAK_CONSOLIDATION": 1.1
     },
     "profit_calibration_shadow": {
       "enabled": true,
@@ -231,19 +276,19 @@
     }
   },
   "weekend_manager": {
-    "weekend_soft_veto_cap": 0.50,
-    "weekend_max_exposure": 0.50,
+    "weekend_soft_veto_cap": 0.5,
+    "weekend_max_exposure": 0.5,
     "weekend_leverage_cap": 3.0,
     "per_asset_weekend_caps": {
       "BTC": 0.25,
       "ETH": 0.25,
-      "SOL": 0.30
+      "SOL": 0.3
     },
     "_p253c_sentinel_note": "999 = disabled-by-sentinel (no hold ever reaches 999h): the weekend reduce/flatten ladders are deliberately OFF for 24/7 crypto (P42 recalibration). Was undocumented; a reader could not tell sentinel from typo.",
     "reduce_at_hours": 999,
     "flatten_at_hours": 999,
     "min_alpha_multiplier_weekend": 1.0,
-    "min_confidence_weekend": 0.30,
+    "min_confidence_weekend": 0.3,
     "opportunity_alpha_multiplier_weekend": 0.45,
     "opportunity_alpha_multiplier_weekend_by_asset": {
       "BTC": 0.25,
@@ -251,7 +296,7 @@
       "SOL": 0.19
     },
     "opportunity_confidence_weekend_by_asset": {
-      "BTC": 0.30,
+      "BTC": 0.3,
       "SOL": 0.18
     },
     "opportunity_confidence_weekend": 0.45
@@ -259,11 +304,25 @@
   "structure_gate": {
     "_description": "Mirror paper HIGH_RISK behavior: keep fractal confirmation as the preferred trigger, but allow reduced-size entries when net edge is positive and price is already near the break. Longs stay OPPORTUNITY-only; shorts may also soft-override in NORMAL during quiet/weak regimes, still at reduced size.",
     "soft_override_enabled": true,
-    "apply_in_system_modes": ["OPPORTUNITY"],
-    "apply_in_system_modes_long": ["OPPORTUNITY"],
-    "apply_in_system_modes_short": ["NORMAL", "OPPORTUNITY"],
-    "apply_in_regimes_long": ["QUIET_ACCUMULATION", "WEAK_CONSOLIDATION", "STEADY_UPTREND"],
-    "apply_in_regimes_short": ["QUIET_ACCUMULATION", "WEAK_CONSOLIDATION"],
+    "apply_in_system_modes": [
+      "OPPORTUNITY"
+    ],
+    "apply_in_system_modes_long": [
+      "OPPORTUNITY"
+    ],
+    "apply_in_system_modes_short": [
+      "NORMAL",
+      "OPPORTUNITY"
+    ],
+    "apply_in_regimes_long": [
+      "QUIET_ACCUMULATION",
+      "WEAK_CONSOLIDATION",
+      "STEADY_UPTREND"
+    ],
+    "apply_in_regimes_short": [
+      "QUIET_ACCUMULATION",
+      "WEAK_CONSOLIDATION"
+    ],
     "max_gap_bps_long": 200,
     "max_gap_bps_short": 250,
     "min_net_edge_bps_long": 8,
@@ -276,7 +335,7 @@
       "ETH": 1.5,
       "SOL": -2.0
     },
-    "min_abs_direction": 0.10,
+    "min_abs_direction": 0.1,
     "min_abs_direction_long_by_asset": {
       "BTC": 0.08,
       "ETH": 0.05
@@ -284,13 +343,15 @@
     "min_abs_direction_short_by_asset": {
       "ETH": 0.085
     },
-    "exposure_scale_long": 0.60,
+    "exposure_scale_long": 0.6,
     "exposure_scale_short": 0.45,
     "pre_veto_hold_short_enabled": true,
     "pre_veto_hold_max_support_gap_bps_short": 30,
     "pre_veto_hold_max_net_edge_bps_short": 1.5,
     "btc_short_shadow_relax_enabled": true,
-    "btc_short_shadow_relax_apply_in_regimes": ["QUIET_ACCUMULATION"],
+    "btc_short_shadow_relax_apply_in_regimes": [
+      "QUIET_ACCUMULATION"
+    ],
     "btc_short_shadow_relax_max_support_gap_bps": 45,
     "btc_short_shadow_relax_min_net_edge_bps": 2.0,
     "btc_short_shadow_relax_max_vpin": 0.55,
@@ -298,10 +359,13 @@
     "btc_short_shadow_relax_block_on_buy_whale": true,
     "max_gap_bps_short_mean_revert": 75,
     "exposure_scale_short_mean_revert": 0.45,
-    "short_mean_revert_strategies": ["mean_revert", "mean_reversion"]
+    "short_mean_revert_strategies": [
+      "mean_revert",
+      "mean_reversion"
+    ]
   },
   "execution": {
-    "_p338_note": "default_order_type ('LIMIT') removed 2026-08-20 (P338): zero consumers repo-wide, sitting among keys that ARE read (post_only, prefer_limit_orders, enable_maker_reprice) — so it read as configuring order type while controlling nothing. The real order-type decision is the P270 maker-first ladder in exchange/coinbase_sleeve.py (coinbase_maker_first) plus core/execution_service.py's urgency/prefer_limit branch on the dormant Kraken path.",
+    "_p338_note": "default_order_type ('LIMIT') removed 2026-08-20 (P338): zero consumers repo-wide, sitting among keys that ARE read (post_only, prefer_limit_orders, enable_maker_reprice) \u2014 so it read as configuring order type while controlling nothing. The real order-type decision is the P270 maker-first ladder in exchange/coinbase_sleeve.py (coinbase_maker_first) plus core/execution_service.py's urgency/prefer_limit branch on the dormant Kraken path.",
     "post_only": true,
     "market_fallback_enabled": true,
     "prefer_limit_orders": true,
@@ -309,10 +373,15 @@
     "maker_reprice_max_attempts": 2,
     "maker_reprice_wait_seconds": 8.0,
     "maker_reprice_min_fill_ratio": 0.35,
-    "maker_reprice_improve_bps_schedule": [6, 3],
+    "maker_reprice_improve_bps_schedule": [
+      6,
+      3
+    ],
     "fast_market_execution": {
       "enabled": true,
-      "apply_in_system_modes": ["OPPORTUNITY"],
+      "apply_in_system_modes": [
+        "OPPORTUNITY"
+      ],
       "require_aggressive_execution_mode": true,
       "min_short_expected_net_alpha_bps": 10.0,
       "min_short_abs_direction": 0.15
@@ -323,7 +392,7 @@
       "min_asset_fills": 1,
       "require_verified_fill_telemetry": true,
       "max_latest_slippage_bps": 12.0,
-      "max_toxicity_rate": 0.60,
+      "max_toxicity_rate": 0.6,
       "min_side_closed_trades": 1,
       "min_side_total_realized_pnl_usd": -25.0,
       "min_side_avg_realized_pnl_bps": -15.0
@@ -349,9 +418,9 @@
     "shadow_mode": false,
     "cold_start_prior_enabled": true,
     "cold_start_prior_floor": 0.15,
-    "cold_start_prior_max_multiplier": 1.40,
+    "cold_start_prior_max_multiplier": 1.4,
     "min_multiplier": 0.75,
-    "max_multiplier": 1.30
+    "max_multiplier": 1.3
   },
   "allocation": {
     "_description": "AggressiveAllocator stays bounded, but opens after a smaller sample so HIGH_RISK can concentrate sooner once fills exist.",
@@ -360,17 +429,29 @@
     "min_session_fills": 2,
     "strong_threshold": 0.78,
     "mid_threshold": 0.62,
-    "strong_weights": [0.65, 0.25, 0.10],
-    "mid_weights": [0.50, 0.30, 0.20],
-    "base_weights": [0.40, 0.33, 0.27]
+    "strong_weights": [
+      0.65,
+      0.25,
+      0.1
+    ],
+    "mid_weights": [
+      0.5,
+      0.3,
+      0.2
+    ],
+    "base_weights": [
+      0.4,
+      0.33,
+      0.27
+    ]
   },
   "tranche": {
     "_description": "Mirror HIGH_RISK paper/live behavior: keep the heavier tranche curve, but lower only the new-entry volume-collapse guard so quiet SOL/ETH weekend entries can still seed T1 when edge is present.",
     "sizes_cumulative": {
       "TRANCHE_1": 0.35,
       "TRANCHE_2": 0.65,
-      "TRANCHE_3": 0.90,
-      "TRANCHE_4": 1.00
+      "TRANCHE_3": 0.9,
+      "TRANCHE_4": 1.0
     },
     "t2_require_4h_close": true,
     "t3_require_regime_aligned": true,
@@ -381,41 +462,58 @@
   },
   "gambler": {
     "enabled": true,
-    "max_bet_pct_nav": 0.50,
-    "confidence_threshold": 0.70,
-    "allowed_modes": ["OPPORTUNITY"],
-    "_allowed_regimes_note": "P253d 2026-08-10, ARMED by operator instruction ('tackle all items mentioned'). The previous names (STRONG_TREND/IGNITION/EXPANSION, v5-era phase vocabulary) exist in NO live GMM fit, so the gambler was dormant by vocabulary drift. Now mapped to the real trending regimes: MOMENTUM_RALLY (0 occurrences in 4 months of live diags, P217) and STEADY_UPTREND (3.7% of ticks). Bounded arming, twice over: gambler additionally requires OPPORTUNITY mode + confidence >= 0.70 + 4h between bets + 3/week — AND its sizing output expresses as target_exposure, which the +/-1-contract sleeve DISCARDS (P210/Bug#44), so on the current book this changes logging/attribution, not order size. It becomes a real sizing lever only if Kraken revives or the sleeve gains sizing — both are their own recorded decisions. REVERT: restore the old (never-matching) names or set enabled=false.",
-    "allowed_regimes": ["MOMENTUM_RALLY", "STEADY_UPTREND"],
+    "max_bet_pct_nav": 0.5,
+    "confidence_threshold": 0.7,
+    "allowed_modes": [
+      "OPPORTUNITY"
+    ],
+    "_allowed_regimes_note": "P253d 2026-08-10, ARMED by operator instruction ('tackle all items mentioned'). The previous names (STRONG_TREND/IGNITION/EXPANSION, v5-era phase vocabulary) exist in NO live GMM fit, so the gambler was dormant by vocabulary drift. Now mapped to the real trending regimes: MOMENTUM_RALLY (0 occurrences in 4 months of live diags, P217) and STEADY_UPTREND (3.7% of ticks). Bounded arming, twice over: gambler additionally requires OPPORTUNITY mode + confidence >= 0.70 + 4h between bets + 3/week \u2014 AND its sizing output expresses as target_exposure, which the +/-1-contract sleeve DISCARDS (P210/Bug#44), so on the current book this changes logging/attribution, not order size. It becomes a real sizing lever only if Kraken revives or the sleeve gains sizing \u2014 both are their own recorded decisions. REVERT: restore the old (never-matching) names or set enabled=false.",
+    "allowed_regimes": [
+      "MOMENTUM_RALLY",
+      "STEADY_UPTREND"
+    ],
     "min_seconds_between_bets": 14400,
     "max_bets_per_week": 3
   },
   "dms_timeout_seconds": 60,
   "stop_order_max_retries": 3,
-  "stop_order_backoff_ms": [200, 400, 800],
+  "stop_order_backoff_ms": [
+    200,
+    400,
+    800
+  ],
   "stop_order_failure_policy": "ALERT_ONLY",
-  "_p227_dead_keys_removed": "2026-08-08 audit: removed single_exchange_mode (only reader was the orphan core/cloud_config.py, reading a different key), allowed_venues (zero references repo-wide — and it said kraken while the sole order venue is Coinbase), and the logging block (zero consumers; logging is hardcoded at main.py:81-104 to logs/hmats.log, 10MB x 5 rotation — the daily/90-day values here were fiction). None of these keys ever controlled anything; keeping them made the config overstate what it enforces.",
+  "_p227_dead_keys_removed": "2026-08-08 audit: removed single_exchange_mode (only reader was the orphan core/cloud_config.py, reading a different key), allowed_venues (zero references repo-wide \u2014 and it said kraken while the sole order venue is Coinbase), and the logging block (zero consumers; logging is hardcoded at main.py:81-104 to logs/hmats.log, 10MB x 5 rotation \u2014 the daily/90-day values here were fiction). None of these keys ever controlled anything; keeping them made the config overstate what it enforces.",
   "sentiment_gate_config": {
     "enabled": true,
-    "_note": "2026-04-11: SentimentGate ENABLED. Modulates confidence ±10-15% based on sentiment alignment."
+    "_note": "2026-04-11: SentimentGate ENABLED. Modulates confidence \u00b110-15% based on sentiment alignment."
   },
   "smart_beta_config": {
     "enabled": true,
     "mode": "bounded_influence",
-    "_note": "2026-04-12: Phase 3 — bounded_influence. Modulates gate/size/scale-in/short restriction within bounds. Kill switch: set enabled=false.",
+    "_note": "2026-04-12: Phase 3 \u2014 bounded_influence. Modulates gate/size/scale-in/short restriction within bounds. Kill switch: set enabled=false.",
     "trend_enabled": true,
     "volatility_enabled": true,
     "liquidity_enabled": true,
     "alpha_gate_mult_min": 0.85,
-    "alpha_gate_mult_max": 1.20,
-    "size_mult_min": 0.70,
+    "alpha_gate_mult_max": 1.2,
+    "size_mult_min": 0.7,
     "size_mult_max": 1.15,
-    "confidence_mult_min": 0.80,
-    "confidence_mult_max": 1.10,
-    "short_restriction_mult_min": 0.20,
-    "short_restriction_mult_max": 1.00,
+    "confidence_mult_min": 0.8,
+    "confidence_mult_max": 1.1,
+    "short_restriction_mult_min": 0.2,
+    "short_restriction_mult_max": 1.0,
     "allow_scale_in_modulation": true,
     "allow_direction_override": false,
     "allow_veto": false,
     "log_proofs": true
-  }
+  },
+  "etf_seat_mode": "enforce",
+  "etf_derisk_assets": [
+    "BTC"
+  ],
+  "etf_decide_assets": [
+    "ETH"
+  ],
+  "_etf_seat_note": "[P405] ETF-flow seat ARMED 2026-08-24 by operator instruction. BTC=reduce-only de-risk (flatten long on strong ETF outflow, P404 combo Sh +1.49); ETH=directional decide (P400 standalone Sh +0.63, alpha gate still binds). Evidence: 2y backtest, complementary to the certified book (corr -0.12); regime-concentrated, revertible: set etf_seat_mode=off. Timing/leak confirmation accrues in parallel (etfflow_timing_check cron); criterion in docs/research/ETF_ARMING_CRITERION_2026-08.md."
 }

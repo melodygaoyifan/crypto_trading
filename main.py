@@ -1847,6 +1847,13 @@ class ProductionConfig:
     seat_alpha_calibrated: bool = False
     whale_seat_mode: str = "off"
     whale_seat_assets: Optional[List[str]] = None
+    # [P405] ETF-flow seat (the one NEW predictor that clears the fee floor,
+    # P400/P404). "enforce" arms it; default "off" = inert. derisk assets get a
+    # reduce-only flatten-on-outflow (BTC combo, Sh +1.49); decide assets get a
+    # directional long/short seat (ETH standalone, Sh +0.63), gate/caps binding.
+    etf_seat_mode: str = "off"
+    etf_derisk_assets: Optional[List[str]] = None
+    etf_decide_assets: Optional[List[str]] = None
     fusion_conviction_to_sleeve: bool = False
     # [P304] Feed the CascadeExhaustionGovernor a REAL short-window
     # liquidation figure (the change in the rolling 24h total) instead of the
@@ -2304,6 +2311,16 @@ class ProductionConfig:
             whale_seat_assets=(
                 list(data["whale_seat_assets"])
                 if isinstance(data.get("whale_seat_assets"), list) else None),
+            etf_seat_mode=(
+                str(data.get("etf_seat_mode", "off") or "off").lower()
+                if str(data.get("etf_seat_mode", "off") or "off").lower()
+                in ("off", "enforce") else "off"),
+            etf_derisk_assets=(
+                list(data["etf_derisk_assets"])
+                if isinstance(data.get("etf_derisk_assets"), list) else None),
+            etf_decide_assets=(
+                list(data["etf_decide_assets"])
+                if isinstance(data.get("etf_decide_assets"), list) else None),
             fusion_conviction_to_sleeve=bool(
                 data.get("fusion_conviction_to_sleeve", False)),
             cascade_real_liquidation_window=bool(
@@ -2850,6 +2867,28 @@ def sleeve_entry_blocked_resolve(current_contracts, intent_direction, reason):
     if (d > 0) == (cur > 0):
         return SLEEVE_HOLD, f"entry_blocked_maintain:{reason}"
     return 0.0, f"entry_blocked_flip_to_flat:{reason}"
+
+
+def etf_seat_decision(asset, etf_dir, etf_fresh, book_dir,
+                      derisk_assets, decide_assets):
+    """[P405] Pure ETF-seat decision -> (label, new_direction) or None.
+
+    None means NO seat (the incumbent certified book stands). Invariants:
+      * fail-safe: a non-fresh reading (stale/absent/warmup) -> None (P2).
+      * DE-RISK is REDUCE-ONLY: fires only on an OUTFLOW (etf_dir < 0) against a
+        LONG book (book_dir > 0), returning ('etf_derisk', 0.0) = flatten the
+        long. It never flips, never touches a flat/short book — it can only cut
+        risk (P195). A flat/short book, or an inflow, is left untouched.
+      * DECIDE is directional: a fresh non-zero signal returns ('etf_flow',
+        etf_dir) for a decide-asset; the alpha gate still binds downstream.
+    """
+    if not etf_fresh:
+        return None
+    if asset in (derisk_assets or []) and etf_dir < 0 and book_dir > 0:
+        return ("etf_derisk", 0.0)
+    if asset in (decide_assets or []) and abs(etf_dir) > 0:
+        return ("etf_flow", float(etf_dir))
+    return None
 
 
 def sleeve_direction_from_intent(intent, fallback_dir: float):
@@ -11114,6 +11153,63 @@ class HMATSProductionRunner:
                     f"[WHALE-SEAT] {asset}: seat skip on "
                     f"{type(_ws_e).__name__}: {_ws_e} — incumbent signal stands")
 
+        # [P405] ETF-FLOW SEAT (default "off"). The one genuinely NEW predictor
+        # that clears the 0.04 ceiling AND the CDE fee (P400/P402/P404: 2y
+        # backtest, complementary to the certified book corr -0.12). Same
+        # quant-slot injection as the seats above, so the ENTIRE chain (alpha
+        # gate, veto chain, P206 sleeve translation, caps, stops, net-cap) stays
+        # binding. Two EVIDENCE-SCOPED modes:
+        #   * DE-RISK (BTC): reduce-only. On a fresh strong ETF OUTFLOW, flatten
+        #     a LONG book (quant_direction -> 0, the existing regimebook-flat
+        #     path; a reduce is always free, P195). Never flips, never touches a
+        #     flat or short book — it can ONLY cut risk. This is the P404 combo
+        #     (Sharpe +1.49 / maxDD -9.7% vs the book alone).
+        #   * DECIDE (ETH): directional. A fresh ETF signal takes the seat
+        #     long/short (P400 standalone Sh +0.63; SMA200 is ETH's weak link).
+        #     A new entry still faces the alpha gate at 30bps x |dir| (the SAME
+        #     asserted constant every seat uses, P231/P320 — NOT gamed to clear
+        #     the gate), so the gate can and will bind on it.
+        # Fail-safe: seat_direction()=None or not fresh -> NO seat, the
+        # incumbent (certified book) stands (a stale/absent feed must never move
+        # a live position, P2). Runs LAST so it wins where it fires. Arming is a
+        # config flip (P141) governed by docs/research/ETF_ARMING_CRITERION.
+        _etf_mode = str(getattr(self.config, "etf_seat_mode", "off") or "off")
+        if (_etf_mode == "enforce"
+                and getattr(self, "_etf_flow_shadow", None) is not None):
+            try:
+                _etf_derisk = getattr(self.config, "etf_derisk_assets", None) or []
+                _etf_decide = getattr(self.config, "etf_decide_assets", None) or []
+                _sd = self._etf_flow_shadow.seat_direction(asset)
+                if _sd is not None:
+                    _etf_dir = float(_sd[0])
+                    _book_dir = float(market_data.get("quant_direction", 0.0) or 0.0)
+                    _took = etf_seat_decision(
+                        asset, _etf_dir, bool(_sd[1]), _book_dir,
+                        _etf_derisk, _etf_decide)
+                    if _took is not None:
+                        _lbl, _nd = _took
+                        _etf_edge = 30.0 * abs(_nd)
+                        market_data["quant_direction"] = float(_nd)
+                        agent_signals["quant_direction"] = float(_nd)
+                        market_data["quant_confidence"] = 0.9 if _nd else 0.4
+                        agent_signals["quant_confidence"] = 0.9 if _nd else 0.4
+                        market_data["signal_edge_bps"] = _etf_edge
+                        agent_signals["signal_edge_bps"] = _etf_edge
+                        market_data["quant_data_quality"] = 1.0
+                        agent_signals["quant_data_quality"] = 1.0
+                        market_data["primary_strategy"] = _lbl
+                        agent_signals["primary_strategy"] = _lbl
+                        # [P149] sleeve bridge — same as the seats above
+                        self._last_quant_directions[asset] = float(_nd)
+                        logger.info(
+                            f"[ETF-SEAT] {asset}: {_lbl} etf_dir={_etf_dir:+.1f} "
+                            f"book_dir={_book_dir:+.1f} -> dir={_nd:+.1f} "
+                            f"edge={_etf_edge:.0f}bps")
+            except Exception as _etf_e:
+                logger.warning(
+                    f"[ETF-SEAT] {asset}: seat skip on "
+                    f"{type(_etf_e).__name__}: {_etf_e} — incumbent signal stands")
+
         _gmm_probs = market_data.get("_gmm_probs", [])
         _regime_name = market_data.get("regime_state", "UNKNOWN")
         # [P265] `_last_regime` finally gets a WRITER. The live dashboard
@@ -14271,10 +14367,39 @@ class HMATSProductionRunner:
                             f"dir={'LONG' if intent.direction > 0 else 'SHORT'}"
                         )
                 elif _vg_is_new_entry and _vg_ticks < _VC9_MIN_BARS:
-                    logger.debug(
-                        f"[VC-9] {asset}: BitBeast cold-start bypass "
-                        f"(tick {_vg_ticks}/{_VC9_MIN_BARS})"
-                    )
+                    # [P341b] Say it ONCE per asset at INFO, not at DEBUG.
+                    # This bypass is not an occasional warm-up detail: the
+                    # counter is `WarmupTracker._ticks`, an in-memory dict
+                    # incremented once per asset per 4H TICK with no
+                    # persistence anywhere in the tree, so 20 ticks means
+                    # ~3.3 DAYS of uninterrupted uptime. Measured 2026-08-20:
+                    # 0 BitBeast blocks in every retained log (~2.5 days)
+                    # against 439 alpha-gate passes, and a live process at 1
+                    # tick after 51 minutes. So this branch is where the guard
+                    # actually lives, and at DEBUG the fact was invisible —
+                    # "the filter passed" and "the filter never ran" produced
+                    # identical output (the P155/P216 shape).
+                    #
+                    # Deliberately NOT fixed by persisting the counter: that
+                    # would ARM a never-executed decision path on a live
+                    # account, which is a P141 activation and not a bugfix.
+                    # P301's strategies/_warmup_state.py is the precedent and
+                    # is already proven live ("[WARMUP] funding_mean_reversion:
+                    # restored BTC=42..."), so the mechanism exists whenever
+                    # that decision is taken.
+                    _vg_seen = getattr(self, "_vg_coldstart_logged", None)
+                    if _vg_seen is None:
+                        _vg_seen = self._vg_coldstart_logged = set()
+                    if asset not in _vg_seen:
+                        _vg_seen.add(asset)
+                        logger.info(
+                            f"[VC-9] {asset}: BitBeast entry check is INERT "
+                            f"(tick {_vg_ticks}/{_VC9_MIN_BARS}). The counter "
+                            f"is RAM-only, so it needs ~3.3 days of "
+                            f"uninterrupted uptime; every deploy resets it. "
+                            f"Entry quality is NOT being filtered by BitBeast "
+                            f"until then."
+                        )
             except Exception as e:
                 logger.warning(f"[WIRE-VETO] {asset}: check failed: {e}")
                 # fail-open: intent unchanged
