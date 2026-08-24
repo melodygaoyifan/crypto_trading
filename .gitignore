@@ -108,3 +108,8 @@ data/evidence_reports_pulled/
 # [P303] v5.1 strategy warmup state - runtime, per-machine
 data/v5_1_warmup/
 training/scripts/_microcache/
+
+# [P391] operator-local tick/metrics download caches (gigabytes; never commit)
+training/scripts/_metricscache/
+training/whale_filter*/_whalecache/
+training/_whalecache/
