@@ -1,0 +1,143 @@
+{
+  "min_train": 7200,
+  "cost_rt_bps": {
+    "BTC": 27.7,
+    "ETH": 44.0,
+    "SOL": 41.0
+  },
+  "n_bars_total": 13085,
+  "assets": {
+    "BTC": {
+      "horizons": {
+        "4h": {
+          "req_ic": 0.2682,
+          "model_oos_ic": 0.0139,
+          "t": 1.06,
+          "n_oos": 5812,
+          "best_raw": "basket_mom_24h",
+          "best_raw_ic": -0.0307,
+          "raw_ic": {
+            "breadth_sma50": -0.0165,
+            "breadth_sma200": -0.0047,
+            "xs_dispersion": 0.0014,
+            "basket_mom_24h": -0.0307,
+            "basket_mom_1w": -0.004,
+            "rel_strength_1w": 0.0069,
+            "btc_dom_mom": 0.0102,
+            "avg_pair_corr": 0.0066,
+            "basket_ex_target_24h": -0.0303
+          },
+          "clears": false
+        },
+        "16h": {
+          "req_ic": 0.135,
+          "model_oos_ic": 0.016,
+          "t": 1.22,
+          "n_oos": 5809,
+          "best_raw": "basket_ex_target_24h",
+          "best_raw_ic": -0.0431,
+          "raw_ic": {
+            "breadth_sma50": -0.0285,
+            "breadth_sma200": -0.0053,
+            "xs_dispersion": 0.0027,
+            "basket_mom_24h": -0.0423,
+            "basket_mom_1w": -0.0131,
+            "rel_strength_1w": 0.016,
+            "btc_dom_mom": 0.0238,
+            "avg_pair_corr": 0.0162,
+            "basket_ex_target_24h": -0.0431
+          },
+          "clears": false
+        }
+      }
+    },
+    "ETH": {
+      "horizons": {
+        "4h": {
+          "req_ic": 0.324,
+          "model_oos_ic": 0.0154,
+          "t": 1.17,
+          "n_oos": 5812,
+          "best_raw": "basket_mom_24h",
+          "best_raw_ic": -0.0288,
+          "raw_ic": {
+            "breadth_sma50": -0.0095,
+            "breadth_sma200": 0.0003,
+            "xs_dispersion": 0.0096,
+            "basket_mom_24h": -0.0288,
+            "basket_mom_1w": -0.0014,
+            "rel_strength_1w": 0.0065,
+            "btc_dom_mom": 0.0065,
+            "avg_pair_corr": 0.0151,
+            "basket_ex_target_24h": -0.0286
+          },
+          "clears": false
+        },
+        "16h": {
+          "req_ic": 0.1617,
+          "model_oos_ic": -0.0188,
+          "t": -1.43,
+          "n_oos": 5809,
+          "best_raw": "xs_dispersion",
+          "best_raw_ic": 0.0204,
+          "raw_ic": {
+            "breadth_sma50": -0.0135,
+            "breadth_sma200": -0.001,
+            "xs_dispersion": 0.0204,
+            "basket_mom_24h": -0.0203,
+            "basket_mom_1w": -0.0031,
+            "rel_strength_1w": 0.0018,
+            "btc_dom_mom": 0.006,
+            "avg_pair_corr": 0.0187,
+            "basket_ex_target_24h": -0.0197
+          },
+          "clears": false
+        }
+      }
+    },
+    "SOL": {
+      "horizons": {
+        "4h": {
+          "req_ic": 0.1944,
+          "model_oos_ic": 0.0373,
+          "t": 2.84,
+          "n_oos": 5812,
+          "best_raw": "basket_ex_target_24h",
+          "best_raw_ic": -0.0405,
+          "raw_ic": {
+            "breadth_sma50": -0.0084,
+            "breadth_sma200": 0.0059,
+            "xs_dispersion": 0.0144,
+            "basket_mom_24h": -0.0394,
+            "basket_mom_1w": 0.0022,
+            "rel_strength_1w": 0.0114,
+            "btc_dom_mom": 0.0007,
+            "avg_pair_corr": 0.0126,
+            "basket_ex_target_24h": -0.0405
+          },
+          "clears": false
+        },
+        "16h": {
+          "req_ic": 0.0988,
+          "model_oos_ic": 0.0453,
+          "t": 3.45,
+          "n_oos": 5809,
+          "best_raw": "basket_ex_target_24h",
+          "best_raw_ic": -0.0401,
+          "raw_ic": {
+            "breadth_sma50": -0.0106,
+            "breadth_sma200": 0.0082,
+            "xs_dispersion": 0.0307,
+            "basket_mom_24h": -0.038,
+            "basket_mom_1w": 0.0088,
+            "rel_strength_1w": 0.0204,
+            "btc_dom_mom": -0.0001,
+            "avg_pair_corr": 0.0301,
+            "basket_ex_target_24h": -0.0401
+          },
+          "clears": false
+        }
+      }
+    }
+  }
+}
