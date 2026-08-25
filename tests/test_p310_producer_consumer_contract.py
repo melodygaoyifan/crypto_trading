@@ -49,6 +49,7 @@ PRODUCER_MODULES = (
     "defense.trend_rule_shadow",
     "defense.sentiment_variant_shadow",
     "defense.skew_etf_combo_shadow",  # [P407j]
+    "defense.ridge_shadow",  # [P409]
     "defense.strategy_shadow_v5_1",
     "strategies.derivatives_flow_v1",
 )
@@ -165,6 +166,7 @@ class TestNameContract:
         "defense.enhancement_shadows",
         "defense.trend_rule_shadow",
         "defense.sentiment_variant_shadow",
+        "defense.ridge_shadow",
         "defense.strategy_shadow_v5_1",
     )
 

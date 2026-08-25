@@ -6948,6 +6948,20 @@ class HMATSProductionRunner:
             logger.warning(f"  [P284] MlpShadow init failed: "
                            f"{type(_mls_err).__name__}: {_mls_err}")
 
+        # [P409] Held BTC ridge Rung-3 shadow — the trained forecaster made
+        # to fit the flat fee via the operator's hold-longer lever (deadband
+        # on the trailing-z, ~59 flips/yr). BTC-only (ETH/SOL fail even held);
+        # observation-only, deterministic, 30d P166 clock from first deploy.
+        self._ridge_shadow = None
+        try:
+            from defense.ridge_shadow import RidgeShadow
+            self._ridge_shadow = RidgeShadow(data_dir="data")
+            logger.info("  [P409] RidgeShadow: ACTIVE (observation-only; "
+                        "held BTC ridge, hold-longer lever)")
+        except Exception as _rs_err:
+            logger.warning(f"  [P409] RidgeShadow init failed: "
+                           f"{type(_rs_err).__name__}: {_rs_err}")
+
         # =====================================================================
         # [v5.1 Phase 6] ML factor fusion agent shadow harness (SHADOW)
         # MLFactorDispatcher per-asset routes to MLFactorFusionAgent (BTC/ETH/SOL).
@@ -24995,6 +25009,10 @@ class HMATSProductionRunner:
                         except Exception:  # noqa: silent-swallow — fv2 absence records as a named coverage gap in the harness, never a fabricated zero
                             pass
                         self._mlp_shadow.tick(_mls_feats, _mls_pres)
+                        # [P409] held BTC ridge shadow — same single-source
+                        # stash (obs raw + fv2), so no second feature path
+                        if getattr(self, "_ridge_shadow", None) is not None:
+                            self._ridge_shadow.tick(_mls_feats, _mls_pres)
                     except Exception as _mls_e:  # noqa: silent-swallow
                         logger.warning(f"[MLP-SHADOW] tick failed: "
                                        f"{type(_mls_e).__name__} — ledger "

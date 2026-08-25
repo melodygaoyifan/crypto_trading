@@ -339,6 +339,7 @@ def load_shadow_ledgers(
                                 "stablecoinflow", "oidiv", "calbasis",
                                 "xsmom", "eventfilter",
                                 "mlpshadow",  # [P284]
+                                "ridgeshadow",  # [P409] held BTC ridge
                                 # [P289] P288 trend-rule challengers
                                 "donchian", "emaens",
                                 "ma_filter",
@@ -556,6 +557,7 @@ POOLABLE_FAMILIES = frozenset({
 # producer-declared name to appear in exactly one of the three sets.
 PER_ASSET_FAMILIES = {
     "mlpshadow": "a BTC-only EXPORTED model, not one rule across assets",
+    "ridgeshadow": "a BTC-only EXPORTED held ridge (P409); ETH/SOL fail even held",
     "ml_factor": "v5.1 per-asset autoencoder factor (alive: 924/2082)",
     "funding_mean_reversion": "v5.1 per-asset funding rule (alive: 50/2082)",
     "funding_post_etf_regime": "v5.1 per-asset funding rule (alive: 93/2082)",
@@ -1139,7 +1141,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--horizons", default="4,12,24",
                    help="forward-return horizons in 4H bars, comma-separated")
     p.add_argument("--prefixes",
-                   default="microstructure,cascade,funding,ml_factor,derivflow,regimebook,etfflow,stablecoinflow,oidiv,calbasis,xsmom,eventfilter,mlpshadow,donchian,emaens,whale_filter,sentvariant,skewetf,ma_filter",  # [P199,P219,P236,P248,P270,P277,P284,P289,P293d,P407j]
+                   default="microstructure,cascade,funding,ml_factor,derivflow,regimebook,etfflow,stablecoinflow,oidiv,calbasis,xsmom,eventfilter,mlpshadow,donchian,emaens,whale_filter,sentvariant,skewetf,ridgeshadow,ma_filter",  # [P199,P219,P236,P248,P270,P277,P284,P289,P293d,P407j]
                    help="ledger file prefixes")
     p.add_argument("--pool-assets", action="store_true",
                    help="[P299] score one-rule-many-asset families as a "
