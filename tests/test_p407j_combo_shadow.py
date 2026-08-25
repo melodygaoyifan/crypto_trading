@@ -20,7 +20,7 @@ def test_agree_gate_logic():
 def test_writer_emits_three_strategies_confidence_is_abs(tmp_path):
     sh = SkewEtfComboShadow(data_dir=str(tmp_path))
     sh.record_tick("BTC", 1.0, True, -1.0, True)  # disagree
-    rows = [json.loads(l) for l in (tmp_path / "strategy_shadow" / "skewetf_BTC.jsonl").read_text().splitlines()]
+    rows = [json.loads(l) for l in (tmp_path / "strategy_shadow" / "skewetf_BTC.jsonl").read_text(encoding="utf-8").splitlines()]
     assert {r["strategy"] for r in rows} == set(SHADOW_STRATEGY_NAMES)
     for r in rows:  # confidence == |direction| (flat -> 0, never saturated)
         assert r["confidence"] == abs(r["direction"])

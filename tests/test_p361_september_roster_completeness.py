@@ -81,6 +81,7 @@ _NO_READ_BY_DECISION = {
                "not September candidates",
     "ml_factor": "P199 PROMOTE was plausibly in-sample; no scheduled re-read",
     "sentvariant": "P296 settled offline on 3,116 days of history",
+    "skewetf": "P407j forward shadow just started; read via the standard P166 forward gate once ~30d accrued, not a dated September row",
 }
 
 

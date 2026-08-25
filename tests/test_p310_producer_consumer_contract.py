@@ -48,6 +48,7 @@ PRODUCER_MODULES = (
     "defense.enhancement_shadows",
     "defense.trend_rule_shadow",
     "defense.sentiment_variant_shadow",
+    "defense.skew_etf_combo_shadow",  # [P407j]
     "defense.strategy_shadow_v5_1",
     "strategies.derivatives_flow_v1",
 )
