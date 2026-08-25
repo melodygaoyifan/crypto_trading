@@ -113,12 +113,23 @@ class SkewFlowSignal:
             age_days = (now - latest) / 86400.0
         except Exception:
             age_days = 999
-        vals = [float(x["skew_25d"]) for x in rows]
-        w = vals[-_WIN:] if len(vals) >= _WIN else vals
         import statistics
-        mu = statistics.fmean(w[:-1]) if len(w) > 1 else w[-1]
-        sd = statistics.pstdev(w[:-1]) if len(w) > 2 else 0.0
-        z = 0.0 if sd == 0 else (vals[-1] - mu) / sd
+        def _zc(series):
+            w = series[-_WIN:] if len(series) >= _WIN else series
+            if len(w) < 3:
+                return 0.0
+            mu = statistics.fmean(w[:-1])
+            sd = statistics.pstdev(w[:-1])
+            return 0.0 if sd == 0 else (series[-1] - mu) / sd
+        # [P407g] BLEND 25d + 10d skew z-scores. The 10d tail slice (paid-for
+        # Laevitas data, previously unused) makes the signal 6/6 era-stable on
+        # BOTH assets vs 5/6 for 25d alone (measured over 6.6y). Both come from
+        # the same by-tenor row, so this adds no request. Fail-safe: if 10d is
+        # missing/thin, fall back to 25d-only so the live seat never breaks.
+        vals = [float(x["skew_25d"]) for x in rows if x.get("skew_25d") is not None]
+        vals10 = [float(x["skew_10d"]) for x in rows if x.get("skew_10d") is not None]
+        z25 = _zc(vals)
+        z = (z25 + _zc(vals10)) / 2.0 if len(vals10) >= _MIN_OBS else z25
         prev = self._hold.get(asset, 0.0)
         if z < -_BAND:
             direction = 1.0          # extra fear -> contrarian long

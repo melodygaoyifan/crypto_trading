@@ -149,3 +149,31 @@ def test_producer_refuses_absent_data_rather_than_fabricating():
     from training import skew_seat_calibration as prod
     assert prod.main(["--verify", "--data-dir",
                       "no_such_dir_zzz_p407f"]) == 2
+
+
+def _rows_2tenor(v25, v10):
+    now = dt.datetime.now(dt.timezone.utc)
+    out = []
+    for i in range(len(v25)):
+        d = (now - dt.timedelta(days=len(v25) - 1 - i)).isoformat()
+        out.append({"tenor": 30, "skew_25d": v25[i], "skew_10d": v10[i], "date": d})
+    return out
+
+
+def test_feed_blends_the_10d_tenor(monkeypatch):
+    """[P407g] 25d neutral but 10d screams fear -> the BLEND must go LONG,
+    proving the 10d tail slice is actually used (25d-only would hold)."""
+    v25 = [(-1.0) ** i for i in range(30)] + [0.0]     # 25d: no signal now
+    v10 = [(-1.0) ** i for i in range(30)] + [-8.0]    # 10d: extreme fear now
+    s = _sig(monkeypatch, _rows_2tenor(v25, v10))
+    d, fresh = s.seat_direction("BTC")
+    assert fresh is True and d == 1.0
+
+
+def test_feed_falls_back_to_25d_when_10d_absent(monkeypatch):
+    """[P407g] rows without skew_10d -> 25d-only fail-safe; the live seat must
+    never break just because the 10d field is missing."""
+    vals = [(-1.0) ** i for i in range(30)] + [-8.0]   # no skew_10d key at all
+    s = _sig(monkeypatch, _recent_rows(vals))
+    d, fresh = s.seat_direction("BTC")
+    assert fresh is True and d == 1.0

@@ -151,12 +151,14 @@ def regimebook_alpha_bps(asset: str) -> Tuple[float, str]:
 # in main.py) chosen so the validated signal would clear the alpha gate. That is
 # exactly the "a constant chosen to clear the gate" anti-pattern P231 names and
 # this module exists to remove. Replaced with the MEASUREMENT: gross bps per
-# round trip, era-MEDIAN, over 6.6y of Deribit 25d skew (Laevitas deep history)
-# at honest CDE per-contract cost.
+# round trip, era-MEDIAN, over 6.6y of Deribit skew (Laevitas deep history)
+# at honest CDE per-contract cost. [P407g] The signal is the BLEND of the 25d
+# and 10d skew z-scores -- the 10d tail slice (paid-for, previously unused) makes
+# it 6/6 era-positive on BOTH assets vs 5/6 for 25d alone.
 #
-#     asset   per calendar-year era 2021..2026 (gross bps/RT)         MEDIAN
-#     BTC     563, 308, -74, 1902, 486, 2141                          525.0
-#     ETH     857, 966,  20, 3061,   0,  621                          738.8
+#     asset   per calendar-year era 2021..2026 (gross bps/RT, 25d+10d)  MEDIAN
+#     BTC     784, 648, 176, 1848,  39,  711   (all 6 positive)         680.0
+#     ETH    1016,2179, 182, 3607,  80, 1143   (all 6 positive)        1079.8
 #
 # Median for the same reason as regimebook (P321): the robust central estimate,
 # not carried by one dominant era. BTC's earliest era is NEGATIVE (-74, the 2023
@@ -175,15 +177,15 @@ def regimebook_alpha_bps(asset: str) -> Tuple[float, str]:
 SKEW_CONTRA_ALPHA_BY_ERA: Dict[str, Dict[str, float]] = {
     # per CALENDAR-YEAR gross bps/round-trip; reproduced by
     # training/skew_seat_calibration.py --verify (P407f).
-    "BTC": {"2021": 563.5, "2022": 308.2, "2023": -73.6, "2024": 1901.6, "2025": 486.5, "2026": 2140.6},
-    "ETH": {"2021": 856.6, "2022": 965.7, "2023": 20.2, "2024": 3060.7, "2025": 0.5, "2026": 620.9},
+    "BTC": {"2021": 784.3, "2022": 648.4, "2023": 176.0, "2024": 1848.1, "2025": 39.1, "2026": 711.5},
+    "ETH": {"2021": 1016.3, "2022": 2178.8, "2023": 181.9, "2024": 3606.7, "2025": 79.8, "2026": 1143.3},
 }
 SKEW_CONTRA_ALPHA_BPS_PER_ROUND_TRIP: Dict[str, float] = {
-    "BTC": 525.0,   # median(2021..2026)
-    "ETH": 738.8,
+    "BTC": 680.0,   # median(2021..2026), 25d+10d blend (all 6 eras positive)
+    "ETH": 1079.8,
 }
 _SKEW_MEASURED_ON = "2026-08-24"
-_SKEW_MEASURED_BY = "training/skew_seat_calibration.py --verify (6.6y Deribit 25d skew, gross per-RT era-median)"
+_SKEW_MEASURED_BY = "training/skew_seat_calibration.py --verify (6.6y Deribit 25d+10d skew blend, gross per-RT era-median)"
 
 
 def _median(vals) -> float:

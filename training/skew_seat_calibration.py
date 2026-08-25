@@ -15,13 +15,14 @@ REPRODUCIBILITY IS OPERATOR-LOCAL, NOT CI (the P213 discipline). The input is
     is gitignored, like every other market-data artifact, P199).
 The four files live operator-local at training/training_data/laevitas_skew/:
     skew_{btc,eth}_25d.json   (field "30" = 25d skew at the 30d tenor)
+    skew_{btc,eth}_10d.json   (field "30" = 10d skew at the 30d tenor)
     gex_{btc,eth}.json        (field "index_price" = daily spot)
 If they are absent this script REFUSES (exit 2) -- "cannot reproduce" must never
 read as "reproduces" (P159/P213).
 
-THE RULE (identical to the P407 edge_calib.py probe):
-  contrarian z-deadband on the 25d skew (win 30, min 8 obs, band 1.0, hold
-  inside the band), traded on next-day spot return; gross bps per ROUND TRIP =
+THE RULE (P407g blend):
+  contrarian z-deadband on the AVERAGE of the 25d and 10d skew z-scores
+  (win 30, min 8 obs, band 1.0, hold inside the band), traded on next-day spot return; gross bps per ROUND TRIP =
   sum(pos*ret)*1e4 / max(1, flips//2), measured per CALENDAR-YEAR era
   (2021-2026, min 50 overlapping days). The asserted value is the era-MEDIAN
   (P321: robust central estimate, not carried by one dominant era). Gross, not
@@ -77,19 +78,26 @@ def _year(day_epoch: int) -> int:
     return (_dt.date(1970, 1, 1) + _dt.timedelta(days=int(day_epoch))).year
 
 
-def _positions(sig: List[float]) -> List[float]:
-    """Contrarian z-deadband, strictly trailing window, hold inside the band."""
-    pos: List[float] = []
-    prev = 0.0
+def _zseries(sig: List[float]) -> List[float]:
+    """Strictly-trailing z of a daily series (window excludes the current day)."""
+    z: List[float] = []
     for i in range(len(sig)):
         window = sig[max(0, i - _Z_WIN):i]
         if len(window) < _Z_MIN:
-            z = 0.0
+            z.append(0.0)
         else:
             mu = statistics.fmean(window)
             sd = statistics.pstdev(window)
-            z = 0.0 if sd == 0 else (sig[i] - mu) / sd
-        contra = -z
+            z.append(0.0 if sd == 0 else (sig[i] - mu) / sd)
+    return z
+
+
+def _positions_from_z(z: List[float]) -> List[float]:
+    """Contrarian deadband on a z-series, hold inside the band."""
+    pos: List[float] = []
+    prev = 0.0
+    for zi in z:
+        contra = -zi
         p = 1.0 if contra > _BAND else (-1.0 if contra < -_BAND else prev)
         pos.append(p)
         prev = p
@@ -103,11 +111,14 @@ def calibrate(asset: str, data_dir: str = _DEFAULT_DATA_DIR
     if a is None:
         return None
     try:
-        sk = _by_day(_load(data_dir, "skew_" + a + "_25d.json"), "30")
+        sk25 = _by_day(_load(data_dir, "skew_" + a + "_25d.json"), "30")
+        sk10 = _by_day(_load(data_dir, "skew_" + a + "_10d.json"), "30")
         spot = _by_day(_load(data_dir, "gex_" + a + ".json"), "index_price")
     except FileNotFoundError:
         return None
-    days = sorted(set(sk) & set(spot))
+    # [P407g] BLEND the 25d and 10d skew z-scores (the 10d tail slice makes the
+    # signal 6/6 era-stable on both assets vs 5/6 for 25d alone).
+    days = sorted(set(sk25) & set(sk10) & set(spot))
     n = len(days)
     if n < 100:
         return None
@@ -115,7 +126,9 @@ def calibrate(asset: str, data_dir: str = _DEFAULT_DATA_DIR
     ret = [0.0] * n
     for i in range(n - 1):
         ret[i] = sp[i + 1] / sp[i] - 1.0 if sp[i] else 0.0
-    pos = _positions([sk[d] for d in days])
+    z25 = _zseries([sk25[d] for d in days])
+    z10 = _zseries([sk10[d] for d in days])
+    pos = _positions_from_z([(z25[i] + z10[i]) / 2.0 for i in range(n)])
     yrs = [_year(d) for d in days]
 
     out: Dict[str, float] = {}
