@@ -2897,19 +2897,6 @@ def etf_seat_decision(asset, etf_dir, etf_fresh, book_dir,
     return None
 
 
-# [P407c] Skew-seat edge CALIBRATED to the measured per-round-trip edge (the P320
-# seat-alpha pattern) so the validated signal clears the alpha gate instead of being
-# held out by the generic 30bps (calibrated for the weak trend seat). Measured gross
-# edge over 6.6y of Deribit 25d skew at honest CDE cost: era-median 525bps/RT (BTC),
-# 739bps/RT (ETH) -- an order of magnitude above any gate threshold (~33-54bps).
-# Asserted CONSERVATIVELY at 100bps (a >5x haircut vs measured; clears the gate in all
-# regimes; keeps the deadlock-resolver ratio modest). signal_edge_bps feeds ONLY the
-# alpha gate + deadlock resolver, NOT position sizing (vol-parity, P370) -- so this
-# changes WHETHER the validated signal trades, never its size. Fires ~15x/yr at
-# z-extremes; caps/stops/fuse/net-cap still bound it.
-_SKEW_SEAT_EDGE_BPS = {"BTC": 100.0, "ETH": 100.0}
-
-
 def skew_seat_decision(asset, skew_dir, fresh, decide_assets):
     """[P407] Pure skew-seat decision -> (label, direction) or None.
 
@@ -11272,7 +11259,14 @@ class HMATSProductionRunner:
                         asset, float(_ss[0]), bool(_ss[1]), _skew_decide)
                     if _took is not None:
                         _lbl, _nd = _took
-                        _sk_edge = _SKEW_SEAT_EDGE_BPS.get(asset, 30.0) * abs(_nd)
+                        # [P407e] calibrated per-RT edge via the P320 framework
+                        # (measured era-median 524.5/739bps), NOT a hand-picked
+                        # constant. Same interlock/fail-directions as regimebook.
+                        from core.seat_alpha import resolve_seat_edge as _rse
+                        _sk_edge = _rse(asset, "skew_contra", _nd, 30.0,
+                            bool(getattr(self.config, "seat_alpha_calibrated", False)),
+                            bool(getattr(self.config, "coinbase_per_contract_fees", False)),
+                            price=market_data.get("current_price"))
                         market_data["quant_direction"] = float(_nd)
                         agent_signals["quant_direction"] = float(_nd)
                         market_data["quant_confidence"] = 0.9 if _nd else 0.4

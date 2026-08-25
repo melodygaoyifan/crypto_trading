@@ -94,10 +94,33 @@ def test_config_default_off():
     assert c.skew_seat_mode == "off"
 
 
-def test_skew_seat_edge_is_calibrated_not_generic():
-    """[P407c] the seat asserts its MEASURED edge (>=100bps), not the generic 30."""
-    import main
-    e = main._SKEW_SEAT_EDGE_BPS
-    assert e.get("BTC", 0) >= 60 and e.get("ETH", 0) >= 60, e  # clears gate threshold (~33-54)
-    # and it is a conservative haircut vs the measured era-median (525/739), not inflated
-    assert e.get("BTC", 999) <= 300 and e.get("ETH", 999) <= 300, e
+def test_skew_edge_is_measured_era_median_not_hand_picked():
+    """[P407e] the seat asserts the MEASURED era-median via the P320 framework,
+    and that constant must equal the median of its own per-era table (P326: no
+    silent drift), NOT a number hand-picked to clear the gate (the P231
+    anti-pattern the framework exists to remove)."""
+    from core.seat_alpha import (
+        calibrated_seat_alpha, skew_contra_alpha_bps,
+        SKEW_CONTRA_ALPHA_BY_ERA, SKEW_CONTRA_ALPHA_BPS_PER_ROUND_TRIP, _median,
+    )
+    # the asserted constant is the era-median of the table it summarises
+    for a in ("BTC", "ETH"):
+        eras = list(SKEW_CONTRA_ALPHA_BY_ERA[a].values())
+        assert abs(SKEW_CONTRA_ALPHA_BPS_PER_ROUND_TRIP[a] - _median(eras)) < 0.6, a
+    # dispatch resolves skew to the measured value with era-median provenance
+    btc, prov = calibrated_seat_alpha("BTC", "skew_contra", 30.0)
+    assert btc > 400 and "era_median" in prov, (btc, prov)  # clears gate BY MEASUREMENT
+    eth, _ = calibrated_seat_alpha("ETH", "skew_contra", 30.0)
+    assert eth > 600, eth
+    # unknown asset asserts nothing (cannot trade on a non-measurement)
+    assert skew_contra_alpha_bps("DOGE") == (0.0, "no_calibration_for:DOGE")
+
+
+def test_uncalibrated_seats_keep_generic_fallback():
+    """[P407e] whale/etf/mlp are deliberately uncalibrated (whale = noise, P324)
+    and must keep the generic 30 fallback -- calibrating skew must not re-price
+    a seat whose edge was never measured."""
+    from core.seat_alpha import calibrated_seat_alpha
+    for seat in ("whale", "etf_flow", "mlpshadow"):
+        v, prov = calibrated_seat_alpha("BTC", seat, 30.0)
+        assert v == 30.0 and "uncalibrated" in prov, (seat, v, prov)

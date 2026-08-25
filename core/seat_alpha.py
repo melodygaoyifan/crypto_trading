@@ -88,6 +88,7 @@ PRE-COMMITTED REVISION RULE
 from __future__ import annotations
 
 import logging
+import math
 from typing import Dict, Optional, Tuple
 
 logger = logging.getLogger("HMATS.SeatAlpha")
@@ -143,6 +144,66 @@ def regimebook_alpha_bps(asset: str) -> Tuple[float, str]:
     return v, f"era_median@{_MEASURED_ON}"
 
 
+# ============================================================================
+# [P407e] Skew-contra seat, calibrated the SAME way as regimebook (P320/P321).
+#
+# The seat asserted a HAND-PICKED constant (`_SKEW_SEAT_EDGE_BPS = {100, 100}`
+# in main.py) chosen so the validated signal would clear the alpha gate. That is
+# exactly the "a constant chosen to clear the gate" anti-pattern P231 names and
+# this module exists to remove. Replaced with the MEASUREMENT: gross bps per
+# round trip, era-MEDIAN, over 6.6y of Deribit 25d skew (Laevitas deep history)
+# at honest CDE per-contract cost.
+#
+#     asset   6 sequential ~13-month eras (2020-01..2026-08)        MEDIAN
+#     BTC     -74, 308, 486, 563, 1902, 2141                         524.5
+#     ETH        0,  20, 621, 857,  966, 3061                        739.0
+#
+# Median for the same reason as regimebook (P321): the robust central estimate,
+# not carried by one dominant era. BTC's earliest era is NEGATIVE (-74, the 2023
+# low-vol regime); the median is robust to it. The value sits far above any gate
+# threshold (~34-58) BY MEASUREMENT, not by choice -- the signal fires only at
+# z-extremes (~15x/yr), so a rare high-conviction entry legitimately carries a
+# large per-RT edge. NO cap is applied: the regimebook seat asserts its raw
+# median too (SOL 221.7), and a skew-only cap would itself be a hand-picked
+# deviation; a bad era is bounded by caps/stops/fuse/net-cap, not by
+# understating the edge. PROVENANCE: the P407 scratch probe (edge_calib.py) over
+# the pulled deep-history sample -- unlike regimebook's committed
+# seat_alpha_calibration.py --verify producer, a committed producer here is a
+# follow-up. The table may never be edited to make a trade pass (P320 rule).
+SKEW_CONTRA_ALPHA_BY_ERA: Dict[str, Dict[str, float]] = {
+    "BTC": {"e1": -74.0, "e2": 308.0, "e3": 486.0, "e4": 563.0, "e5": 1902.0, "e6": 2141.0},
+    "ETH": {"e1": 0.0, "e2": 20.0, "e3": 621.0, "e4": 857.0, "e5": 966.0, "e6": 3061.0},
+}
+SKEW_CONTRA_ALPHA_BPS_PER_ROUND_TRIP: Dict[str, float] = {
+    "BTC": 524.5,
+    "ETH": 739.0,
+}
+_SKEW_MEASURED_ON = "2026-08-24"
+_SKEW_MEASURED_BY = "P407 edge_calib.py (6.6y Deribit 25d skew, gross per-RT, honest CDE cost)"
+
+
+def _median(vals) -> float:
+    s = sorted(float(v) for v in vals)
+    n = len(s)
+    if n == 0:
+        return 0.0
+    return s[n // 2] if n % 2 else (s[n // 2 - 1] + s[n // 2]) / 2.0
+
+
+def skew_contra_alpha_bps(asset: str) -> Tuple[float, str]:
+    """Calibrated per-ROUND-TRIP gross edge for the skew-contra seat.
+
+    Returns ``(bps, provenance)``. Unknown asset -> 0.0 (a seat with no
+    measurement must not trade on one). The asserted constant is verified equal
+    to the era-MEDIAN of SKEW_CONTRA_ALPHA_BY_ERA by test (the P326
+    no-silent-drift rule).
+    """
+    a = str(asset or "").upper().strip()
+    if a not in SKEW_CONTRA_ALPHA_BPS_PER_ROUND_TRIP:
+        return 0.0, f"no_calibration_for:{a}"
+    return SKEW_CONTRA_ALPHA_BPS_PER_ROUND_TRIP[a], f"skew_era_median@{_SKEW_MEASURED_ON}"
+
+
 def calibrated_seat_alpha(asset: str, seat: str,
                           fallback_bps: float) -> Tuple[float, str]:
     """Dispatch by seat. Only `regimebook` is calibrated so far.
@@ -152,15 +213,23 @@ def calibrated_seat_alpha(asset: str, seat: str,
     never measured (the P315 lesson: a units fix applied to the wrong side is
     worse than no fix).
     """
-    if str(seat or "").lower() == "regimebook":
+    _s = str(seat or "").lower()
+    if _s == "regimebook":
         return regimebook_alpha_bps(asset)
+    if _s == "skew_contra":
+        return skew_contra_alpha_bps(asset)
+    # [P407e] whale / etf_flow / mlpshadow are DELIBERATELY uncalibrated and keep
+    # the generic fallback: whale's edge is measured noise (P324, t=0.26) so it
+    # must NOT be asserted up; etf and mlp have no clean per-RT era table yet.
+    # An uncalibrated seat keeping its constant is the correct state, not an
+    # oversight -- calibrating one seat must never silently re-price another.
     return float(fallback_bps), f"uncalibrated_seat:{seat}"
 
 
 def resolve_seat_edge(asset: str, seat: str, direction: float,
                       base_bps: float, calibrated_enabled: bool,
                       honest_fees_enabled: bool,
-                      price: Optional[float] = None) -> float:
+                      price: Optional[float]) -> float:
     """The whole arming decision as ONE pure call, so the seat block stays
     short enough for the P256/P265 window guards to see its dict writes.
 
@@ -186,14 +255,38 @@ def resolve_seat_edge(asset: str, seat: str, direction: float,
     # for one tick. A flag being true is not evidence the correction took
     # effect, so the alpha half now refuses unless the fee half can actually
     # price THIS asset at THIS price.
-    if price is not None:
-        from core.cde_fees import cde_fee_bps
-        if cde_fee_bps(asset, price, is_maker=False) is None:
-            logger.warning(
-                "[P321b] %s: honest fee not priceable (px=%r) — NOT applying "
-                "the calibrated alpha either; the two must move together",
-                asset, price)
-            return fallback
+    # [P341b] `price` is REQUIRED and an ABSENT price refuses, exactly like an
+    # unusable one. P321b built this as an effect-interlock precisely because
+    # a flag being on is not evidence the correction took effect — and then
+    # guarded it with `if price is not None:`, so `price=None` skipped the
+    # check outright. The sole production caller passes
+    # `market_data.get("current_price")`, which returns None on a MISSING key,
+    # so the interlock was one absent key away from re-arming the exact state
+    # P321b caught live: calibrated alpha applied while the honest fee was
+    # not, which P318 identifies as a PURE LOOSENING. P321b fixed the
+    # wrong-key case (`price` -> `current_price`) and left the missing-key
+    # case open, because None was read as "not supplied" rather than as
+    # "cannot price". A safety interlock must not have an opt-out that its
+    # own default selects.
+    from core.cde_fees import cde_fee_bps
+    _px_ok = price is not None
+    if _px_ok:
+        try:
+            _px = float(price)
+            # finite AND positive. `inf > 0` is True, and since P334 made the
+            # fee a PERCENTAGE it is price-invariant, so cde_fee_bps happily
+            # prices an infinite price and the interlock would pass on
+            # nonsense — caught by exercising the fail directions rather than
+            # by reading the condition.
+            _px_ok = math.isfinite(_px) and _px > 0.0
+        except (TypeError, ValueError):
+            _px_ok = False
+    if not _px_ok or cde_fee_bps(asset, price, is_maker=False) is None:
+        logger.warning(
+            "[P321b] %s: honest fee not priceable (px=%r) — NOT applying "
+            "the calibrated alpha either; the two must move together",
+            asset, price)
+        return fallback
     try:
         bps, prov = calibrated_seat_alpha(asset, seat, fallback)
     except Exception as e:  # noqa: silent-swallow — logged, keeps the constant
