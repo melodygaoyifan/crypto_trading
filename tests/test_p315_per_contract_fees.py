@@ -254,8 +254,8 @@ class TestGateWiring:
             "the fee alone is live again")
         from core.seat_alpha import resolve_seat_edge
         # interlocked: neither half alone changes the asserted edge
-        assert resolve_seat_edge("ETH", "regimebook", 1.0, 30.0, True, False) == 30.0
-        assert resolve_seat_edge("ETH", "regimebook", 1.0, 30.0, False, True) == 30.0
+        assert resolve_seat_edge("ETH", "regimebook", 1.0, 30.0, True, False, 2252.0) == 30.0
+        assert resolve_seat_edge("ETH", "regimebook", 1.0, 30.0, False, True, 2252.0) == 30.0
 
 
 # =============================================================================

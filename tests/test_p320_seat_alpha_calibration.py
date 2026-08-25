@@ -119,10 +119,10 @@ class TestInterlock:
         against the defect it guarded)."""
         from core.seat_alpha import resolve_seat_edge
         assert resolve_seat_edge("ETH", "regimebook", 1.0, 30.0,
-                                 True, True) == pytest.approx(88.1)
+                                 True, True, 2252.0) == pytest.approx(88.1)
         for cal, fee in ((True, False), (False, True), (False, False)):
             assert resolve_seat_edge("ETH", "regimebook", 1.0, 30.0,
-                                     cal, fee) == pytest.approx(30.0), (
+                                     cal, fee, 2252.0) == pytest.approx(30.0), (
                 f"calibrated={cal} honest_fees={fee} changed the edge; either "
                 f"half alone moves the gate the wrong way (P318)")
 
@@ -159,14 +159,14 @@ class TestInterlock:
         the seat is not taking."""
         from core.seat_alpha import resolve_seat_edge
         assert resolve_seat_edge("ETH", "regimebook", 0.0, 30.0,
-                                 True, True) == 0.0
+                                 True, True, 2252.0) == 0.0
 
     def test_the_calibrated_value_is_not_scaled_by_direction(self):
         """It is already a whole-round-trip expectation; scaling by |dir|
         would restore the per-tick shape this replaces."""
         from core.seat_alpha import resolve_seat_edge
-        a = resolve_seat_edge("ETH", "regimebook", 1.0, 30.0, True, True)
-        b = resolve_seat_edge("ETH", "regimebook", 0.5, 30.0, True, True)
+        a = resolve_seat_edge("ETH", "regimebook", 1.0, 30.0, True, True, 2252.0)
+        b = resolve_seat_edge("ETH", "regimebook", 0.5, 30.0, True, True, 2252.0)
         assert a == pytest.approx(b) == pytest.approx(88.1), (
             "the calibrated round-trip edge is being rescaled by |direction|")
 
@@ -211,7 +211,7 @@ class TestTheUnitsFixIsReal:
         module's premise changed and the interlock must be re-derived."""
         from core.seat_alpha import resolve_seat_edge
         assert resolve_seat_edge("BTC", "regimebook", 1.0, 30.0,
-                                 False, False) == pytest.approx(30.0)
+                                 False, False, 69280.0) == pytest.approx(30.0)
 
     def test_calibrated_alpha_is_a_round_trip_quantity(self):
         """Sanity: the asserted numbers are round-trip sized, i.e. materially

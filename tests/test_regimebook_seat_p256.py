@@ -159,7 +159,7 @@ class TestSeatBlockWiring:
         from core.seat_alpha import resolve_seat_edge
         for d in (1.0, -1.0, 0.5):
             assert resolve_seat_edge("BTC", "regimebook", d, 30.0,
-                                     False, False) == pytest.approx(30.0 * abs(d)), (
+                                     False, False, 69280.0) == pytest.approx(30.0 * abs(d)), (
                 "the DEFAULT asserted edge is no longer 30bps x |dir| — a "
                 "looser constant would loosen the alpha gate as a side effect "
                 "of a direction-source swap")
