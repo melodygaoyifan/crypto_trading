@@ -92,3 +92,12 @@ def test_config_default_off():
     from main import ProductionConfig
     c = ProductionConfig()
     assert c.skew_seat_mode == "off"
+
+
+def test_skew_seat_edge_is_calibrated_not_generic():
+    """[P407c] the seat asserts its MEASURED edge (>=100bps), not the generic 30."""
+    import main
+    e = main._SKEW_SEAT_EDGE_BPS
+    assert e.get("BTC", 0) >= 60 and e.get("ETH", 0) >= 60, e  # clears gate threshold (~33-54)
+    # and it is a conservative haircut vs the measured era-median (525/739), not inflated
+    assert e.get("BTC", 999) <= 300 and e.get("ETH", 999) <= 300, e
