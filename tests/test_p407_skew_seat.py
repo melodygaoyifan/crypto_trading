@@ -124,3 +124,28 @@ def test_uncalibrated_seats_keep_generic_fallback():
     for seat in ("whale", "etf_flow", "mlpshadow"):
         v, prov = calibrated_seat_alpha("BTC", seat, 30.0)
         assert v == 30.0 and "uncalibrated" in prov, (seat, v, prov)
+
+
+def test_producer_reproduces_the_shipped_skew_table():
+    """[P407f] the committed producer must recompute the shipped per-era table +
+    median (the P326 no-scratch-probe rule). Operator-local input (P213/P194):
+    skips cleanly in CI where the gitignored Laevitas data is absent -- --verify
+    is the operator's check."""
+    import pytest
+    from training import skew_seat_calibration as prod
+    from core.seat_alpha import (
+        SKEW_CONTRA_ALPHA_BY_ERA, SKEW_CONTRA_ALPHA_BPS_PER_ROUND_TRIP)
+    for a in ("BTC", "ETH"):
+        r = prod.calibrate(a)
+        if r is None:
+            pytest.skip("operator-local Laevitas skew data absent (P213)")
+        for y, v in SKEW_CONTRA_ALPHA_BY_ERA[a].items():
+            assert abs(r[y] - v) < 0.6, (a, y, r[y], v)
+        assert abs(r["__median__"] - SKEW_CONTRA_ALPHA_BPS_PER_ROUND_TRIP[a]) < 0.6, a
+
+
+def test_producer_refuses_absent_data_rather_than_fabricating():
+    """[P407f/P159] absent data -> exit 2 refusal, never a fabricated pass."""
+    from training import skew_seat_calibration as prod
+    assert prod.main(["--verify", "--data-dir",
+                      "no_such_dir_zzz_p407f"]) == 2

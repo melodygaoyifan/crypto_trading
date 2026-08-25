@@ -154,9 +154,9 @@ def regimebook_alpha_bps(asset: str) -> Tuple[float, str]:
 # round trip, era-MEDIAN, over 6.6y of Deribit 25d skew (Laevitas deep history)
 # at honest CDE per-contract cost.
 #
-#     asset   6 sequential ~13-month eras (2020-01..2026-08)        MEDIAN
-#     BTC     -74, 308, 486, 563, 1902, 2141                         524.5
-#     ETH        0,  20, 621, 857,  966, 3061                        739.0
+#     asset   per calendar-year era 2021..2026 (gross bps/RT)         MEDIAN
+#     BTC     563, 308, -74, 1902, 486, 2141                          525.0
+#     ETH     857, 966,  20, 3061,   0,  621                          738.8
 #
 # Median for the same reason as regimebook (P321): the robust central estimate,
 # not carried by one dominant era. BTC's earliest era is NEGATIVE (-74, the 2023
@@ -166,20 +166,24 @@ def regimebook_alpha_bps(asset: str) -> Tuple[float, str]:
 # large per-RT edge. NO cap is applied: the regimebook seat asserts its raw
 # median too (SOL 221.7), and a skew-only cap would itself be a hand-picked
 # deviation; a bad era is bounded by caps/stops/fuse/net-cap, not by
-# understating the edge. PROVENANCE: the P407 scratch probe (edge_calib.py) over
-# the pulled deep-history sample -- unlike regimebook's committed
-# seat_alpha_calibration.py --verify producer, a committed producer here is a
-# follow-up. The table may never be edited to make a trade pass (P320 rule).
+# understating the edge. PROVENANCE: training/skew_seat_calibration.py (P407f),
+# a committed, reproducible producer with --verify (exit 3 on drift) -- the
+# counterpart to regimebook's seat_alpha_calibration.py. Its input (6.6y Deribit
+# 25d skew) is operator-local and gitignored (proprietary Laevitas data;
+# --verify refuses with exit 2 when it is absent, P213). The table may never be
+# edited to make a trade pass (the P320 revision rule).
 SKEW_CONTRA_ALPHA_BY_ERA: Dict[str, Dict[str, float]] = {
-    "BTC": {"e1": -74.0, "e2": 308.0, "e3": 486.0, "e4": 563.0, "e5": 1902.0, "e6": 2141.0},
-    "ETH": {"e1": 0.0, "e2": 20.0, "e3": 621.0, "e4": 857.0, "e5": 966.0, "e6": 3061.0},
+    # per CALENDAR-YEAR gross bps/round-trip; reproduced by
+    # training/skew_seat_calibration.py --verify (P407f).
+    "BTC": {"2021": 563.5, "2022": 308.2, "2023": -73.6, "2024": 1901.6, "2025": 486.5, "2026": 2140.6},
+    "ETH": {"2021": 856.6, "2022": 965.7, "2023": 20.2, "2024": 3060.7, "2025": 0.5, "2026": 620.9},
 }
 SKEW_CONTRA_ALPHA_BPS_PER_ROUND_TRIP: Dict[str, float] = {
-    "BTC": 524.5,
-    "ETH": 739.0,
+    "BTC": 525.0,   # median(2021..2026)
+    "ETH": 738.8,
 }
 _SKEW_MEASURED_ON = "2026-08-24"
-_SKEW_MEASURED_BY = "P407 edge_calib.py (6.6y Deribit 25d skew, gross per-RT, honest CDE cost)"
+_SKEW_MEASURED_BY = "training/skew_seat_calibration.py --verify (6.6y Deribit 25d skew, gross per-RT era-median)"
 
 
 def _median(vals) -> float:
