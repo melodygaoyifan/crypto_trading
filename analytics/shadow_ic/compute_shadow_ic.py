@@ -334,6 +334,7 @@ def load_shadow_ledgers(
     prefixes: Tuple[str, ...] = ("microstructure", "cascade", "funding",
                                 "ml_factor", "derivflow", "regimebook",
                                 "etfflow",  # [P270]
+                                "skewetf",  # [P407j] skew+ETF ensemble shadow
                                 # [P277] enhancement families
                                 "stablecoinflow", "oidiv", "calbasis",
                                 "xsmom", "eventfilter",
@@ -1136,7 +1137,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--horizons", default="4,12,24",
                    help="forward-return horizons in 4H bars, comma-separated")
     p.add_argument("--prefixes",
-                   default="microstructure,cascade,funding,ml_factor,derivflow,regimebook,etfflow,stablecoinflow,oidiv,calbasis,xsmom,eventfilter,mlpshadow,donchian,emaens,whale_filter,sentvariant,ma_filter",  # [P199,P219,P236,P248,P270,P277,P284,P289,P293d]
+                   default="microstructure,cascade,funding,ml_factor,derivflow,regimebook,etfflow,stablecoinflow,oidiv,calbasis,xsmom,eventfilter,mlpshadow,donchian,emaens,whale_filter,sentvariant,ma_filter,skewetf",  # [P199,P219,P236,P248,P270,P277,P284,P289,P293d,P407j]
                    help="ledger file prefixes")
     p.add_argument("--pool-assets", action="store_true",
                    help="[P299] score one-rule-many-asset families as a "

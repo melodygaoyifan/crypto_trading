@@ -176,7 +176,7 @@ class TestScannerCoverage:
 
     @pytest.mark.parametrize("name,keys", [
         ("silent_swallow_baseline.json", {"total_count": 704}),
-        ("silent_failure_baseline.json", {"tryexcept_count": 723, "dictget_count": 44}),  # [P407] +1: skew-seat fail-safe try/except
+        ("silent_failure_baseline.json", {"tryexcept_count": 724, "dictget_count": 44}),  # [P407j] +1: skew+ETF combo-shadow wiring
         ("mypy_baseline.json", {"total_count": 1084, "mypy_version": "2.3.0"}),
     ])
     def test_baselines_were_bumped_with_attribution(self, name, keys):

@@ -6901,6 +6901,8 @@ class HMATSProductionRunner:
         try:
             from defense.skew_flow_signal import SkewFlowSignal
             self._skew_flow_signal = SkewFlowSignal(data_dir="data")
+            from defense.skew_etf_combo_shadow import SkewEtfComboShadow
+            self._skew_etf_combo = SkewEtfComboShadow(data_dir="data")  # [P407j] observation-only
             logger.info("  [P407] SkewFlowSignal: ACTIVE (Deribit 25d skew, "
                         "contrarian; BTC+ETH; live via LAEVITAS_API_KEY)")
         except Exception as _sks_err:
@@ -11286,6 +11288,24 @@ class HMATSProductionRunner:
                 logger.warning(
                     f"[SKEW-SEAT] {asset}: seat skip on "
                     f"{type(_sk_e).__name__}: {_sk_e} -- incumbent signal stands")
+
+        # [P407j] skew+ETF combo shadow (observation-only, P407i). Reads the two
+        # already-live feeds and logs skew-solo / etf-solo / agree-gated to a
+        # ledger so compute_shadow_ic can certify the ensemble FORWARD before any
+        # live combination change (the 1.7y overlap is P348-thin). No live effect.
+        if getattr(self, "_skew_etf_combo", None) is not None and asset in ("BTC", "ETH"):
+            try:
+                _sk = (self._skew_flow_signal.seat_direction(asset)
+                       if getattr(self, "_skew_flow_signal", None) else None)
+                _ef = (self._etf_flow_shadow.seat_direction(asset)
+                       if getattr(self, "_etf_flow_shadow", None) else None)
+                self._skew_etf_combo.record_tick(
+                    asset,
+                    float(_sk[0]) if _sk else 0.0, bool(_sk[1]) if _sk else False,
+                    float(_ef[0]) if _ef else 0.0, bool(_ef[1]) if _ef else False)
+            except Exception as _ce:
+                logger.warning(f"[SKEWETF-SHADOW] {asset}: skip on "
+                               f"{type(_ce).__name__}: {_ce}")
 
         _gmm_probs = market_data.get("_gmm_probs", [])
         _regime_name = market_data.get("regime_state", "UNKNOWN")
