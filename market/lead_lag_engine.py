@@ -46,6 +46,32 @@ logger = logging.getLogger('LeadLagEngine')
 # CONSTANTS
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# [P408] Once-per-streak escalation for connect failures (the P329b rule).
+# The reconnect loop attempts every ~30s, so ">= threshold: logger.error"
+# meant an ERROR - forwarded to Discord - every 30 seconds for the life of
+# a venue outage (observed 2026-08-25: 5 ERRORs in 3 minutes for a 14-min
+# Deribit WS blip that self-healed). A sustained outage is ONE fact: say it
+# once when the streak crosses the threshold, re-say it hourly while it
+# persists, and keep every other attempt at WARNING (local visibility,
+# never forwarded). Pure so both monitors share one implementation (P171:
+# fix the class, not the instance) and the truth table is testable.
+SUSTAINED_REALERT_SEC = 3600.0
+
+
+def connect_failure_severity(failures, threshold, now, last_error_ts):
+    """-> ("error"|"warning", new_last_error_ts).
+
+    ERROR exactly when the streak CROSSES the threshold, then at most once
+    per SUSTAINED_REALERT_SEC while it persists; everything else WARNING.
+    last_error_ts <= 0 means "no sustained ERROR sent this streak yet".
+    """
+    if failures < threshold:
+        return "warning", last_error_ts
+    if last_error_ts <= 0 or (now - last_error_ts) >= SUSTAINED_REALERT_SEC:
+        return "error", now
+    return "warning", last_error_ts
+
+
 class Exchange(Enum):
     """Supported exchanges."""
     BINANCE = auto()
@@ -228,7 +254,14 @@ class BinanceTakerMonitor:
         try:
             self.ws = await websockets.connect(url)
             self.logger.info("Connected to Binance WebSocket")
+            if getattr(self, "_connect_failures", 0) >= 4:
+                # [P408] a recovered SUSTAINED streak is worth one line
+                # at WARNING (P265f: announce recovery); blips stay quiet
+                self.logger.warning(
+                    f"[LEAD_LAG] Binance WS RECOVERED after "
+                    f"{self._connect_failures} failed attempts")
             self._connect_failures = 0
+            self._sustained_error_ts = 0.0
         except Exception as e:
             # [P303] WARNING, not ERROR. ERROR is forwarded to Discord, and a
             # venue-side outage is something the operator can neither act on
@@ -241,8 +274,13 @@ class BinanceTakerMonitor:
                     f"(attempt {self._connect_failures}): "
                     f"{type(e).__name__}: {e} — reconnect loop is armed; "
                     f"until it succeeds the taker-flow inputs go stale")
-            if self._connect_failures >= 4:
-                self.logger.error(_msg + " — SUSTAINED, no longer a blip")
+            # [P408] once-per-streak + hourly re-alert; see the helper
+            _sev, self._sustained_error_ts = connect_failure_severity(
+                self._connect_failures, 4, time.time(),
+                getattr(self, "_sustained_error_ts", 0.0))
+            if _sev == "error":
+                self.logger.error(_msg + " — SUSTAINED, no longer a blip "
+                                  "(next ERROR in ~1h if still down)")
             else:
                 self.logger.warning(_msg)
 
@@ -436,7 +474,14 @@ class DeribitDVOLMonitor:
             await self._subscribe()
 
             self.logger.info("Connected to Deribit WebSocket")
+            if getattr(self, "_connect_failures", 0) >= 8:
+                # [P408] a recovered SUSTAINED streak is worth one line
+                # at WARNING (P265f: announce recovery); blips stay quiet
+                self.logger.warning(
+                    f"[LEAD_LAG] Deribit WS RECOVERED after "
+                    f"{self._connect_failures} failed attempts")
             self._connect_failures = 0
+            self._sustained_error_ts = 0.0
         except Exception as e:
             # [P303] WARNING, not ERROR — see the Binance sibling. DVOL has no
             # live consumer today (`dvol_to_market_data` is deliberately absent
@@ -452,8 +497,13 @@ class DeribitDVOLMonitor:
                     f"{type(e).__name__}: {e} — reconnect loop is armed; until "
                     f"it succeeds DVOL stays 0.0, which leaves the lead-lag "
                     f"confidence modifier at a neutral 1.0 (no live consumer)")
-            if self._connect_failures >= 8:
-                self.logger.error(_msg + " — SUSTAINED, no longer a blip")
+            # [P408] once-per-streak + hourly re-alert; see the helper
+            _sev, self._sustained_error_ts = connect_failure_severity(
+                self._connect_failures, 8, time.time(),
+                getattr(self, "_sustained_error_ts", 0.0))
+            if _sev == "error":
+                self.logger.error(_msg + " — SUSTAINED, no longer a blip "
+                                  "(next ERROR in ~1h if still down)")
             else:
                 self.logger.warning(_msg)
     
