@@ -182,7 +182,27 @@ class EtfFlowShadow:
         # (direction, fresh, ts). Set each record_tick; the seat reads it
         # one-tick-stale (a daily signal on a 4H loop — immaterial), and a
         # non-fresh or aged reading yields NO seat (fail-safe, P2).
-        self._seat_state: dict = {}
+        # [P407k] Persist _seat_state so a RESTART does not blank the ETF seat
+        # for a full cycle. tick() runs at end-of-cycle, so the seat reads this
+        # in-memory state; RAM-only, it was empty on every fresh process (each
+        # deploy) -> etf_fresh=false for cycle 1 and the seat/combo silently
+        # skipped. The 12h age gate in seat_direction() still rejects a restore
+        # older than 3 cycles, so a long downtime cannot seat a stale reading
+        # (P150/P209 pattern; the feed itself is fine -- [ETFFLOW] logs inflow_z).
+        self._seat_state: dict = self._load_seat_state()
+
+    def _load_seat_state(self) -> dict:
+        try:
+            if self._state_path.exists():
+                d = json.loads(self._state_path.read_text(encoding="utf-8"))
+                out = {}
+                for k, v in d.get("seat_state", {}).items():
+                    if isinstance(v, (list, tuple)) and len(v) == 3:
+                        out[k] = (float(v[0]), bool(v[1]), float(v[2]))
+                return out
+        except Exception:  # noqa: silent-swallow — corrupt state -> cold start (empty), logged; never fatal
+            logger.warning("[ETFFLOW] seat_state restore failed — cold start")
+        return {}
 
     # seat freshness: a held deadband position IS a live claim; warmup/no_data/
     # stale/zero_var are NOT (absence must never seat a position, P2).
@@ -215,8 +235,13 @@ class EtfFlowShadow:
     def _save_state(self) -> None:
         try:
             tmp = self._state_path.with_suffix(".json.tmp")
-            tmp.write_text(json.dumps({"last_direction": self._last_direction}),
-                           encoding="utf-8")
+            tmp.write_text(json.dumps({
+                "last_direction": self._last_direction,
+                # [P407k] persist the seat tuple (dir, fresh, ts) as a list so
+                # the ETF seat survives a restart (age-gated on restore).
+                "seat_state": {k: list(v) for k, v in
+                               getattr(self, "_seat_state", {}).items()},
+            }), encoding="utf-8")
             os.replace(tmp, self._state_path)
         except Exception:  # noqa: silent-swallow — a state-write failure must not kill the tick; next tick retries
             pass
@@ -351,6 +376,7 @@ class EtfFlowShadow:
                 self._seat_state = {}
             self._seat_state[asset] = (
                 float(direction), reason in self._SEAT_FRESH_REASONS, time.time())
+            self._save_state()  # [P407k] persist seat_state every tick (restart-safe)
             # raw sign kept as a secondary field for A/B against the old signal
             raw_dir, raw_reason = etf_flow_direction(flow, age)
             # [P404] combination shadow: SMA200 long/flat (the certified overlay,
