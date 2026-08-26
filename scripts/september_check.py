@@ -128,6 +128,18 @@ def refresh_prices() -> int:
                  str(REPO / "training" / "scripts" / "refresh_ohlcv_4h.py")])
 
 
+def _naive_utc(series):
+    """Coerce a timestamp series to tz-NAIVE UTC — the canonical convention the
+    home OHLCV builder (refresh_ohlcv_4h) and the scorer both use. Kraken rows
+    were built tz-AWARE while the merged-in history is naive, so concat/sort
+    raised 'Cannot compare tz-naive and tz-aware timestamps'. Naive-in stays
+    naive (assumed UTC); aware-in is converted to UTC then made naive, so both
+    sides of a merge are always the same kind."""
+    import pandas as pd
+    s = pd.to_datetime(series, utc=True)   # naive->assume-UTC, aware->to-UTC
+    return s.dt.tz_localize(None)          # drop tz -> naive UTC
+
+
 def build_breadth_ohlcv() -> int:
     """Kraken public OHLC -> {ASSET}_4H_ohlcv.parquet for the breadth
     assets. ~720 bars (~120d) — enough for every 30d window this script
@@ -158,13 +170,15 @@ def build_breadth_ohlcv() -> int:
             # returns on exactly the newest records)
             rows = rows[:-1]
             df = pd.DataFrame(
-                [{"timestamp": pd.Timestamp(int(r[0]), unit="s", tz="UTC"),
+                [{"timestamp": pd.Timestamp(int(r[0]), unit="s"),   # naive UTC (P414b)
                   "open": float(r[1]), "high": float(r[2]),
                   "low": float(r[3]), "close": float(r[4]),
                   "volume": float(r[6])} for r in rows])
+            df["timestamp"] = _naive_utc(df["timestamp"])
             out = OHLCV_DIR / f"{asset}_4H_ohlcv.parquet"
             if out.exists():
                 old = pd.read_parquet(out)
+                old["timestamp"] = _naive_utc(old["timestamp"])  # P414b: never mix tz
                 df = (pd.concat([old, df])
                       .drop_duplicates(subset="timestamp", keep="last")
                       .sort_values("timestamp").reset_index(drop=True))
