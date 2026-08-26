@@ -176,9 +176,9 @@ class TestBreadthIsInertWithoutRoutingAndMapping:
         prof = json.loads((REPO / "configs" / "live_high_risk.json")
                           .read_text(encoding="utf-8-sig"))
         live_assets = set(prof.get("assets") or [])
-        assert "XRP" in live_assets, (
-            "[P412] XRP breadth activation regressed — XRP left config.assets")
-        for asset in set(PROBED) - {"XRP"}:
+        for a in ("XRP", "BNB"):
+            assert a in live_assets, f"[P412] {a} breadth activation regressed"
+        for asset in set(PROBED) - {"XRP", "BNB"}:
             assert asset not in live_assets, (
                 f"{asset} is in the live profile's `assets` without its own "
                 f"recorded decision — the sleeve driver would manage it every "
@@ -192,9 +192,9 @@ class TestBreadthIsInertWithoutRoutingAndMapping:
                           .read_text(encoding="utf-8-sig"))
         for key in ("coinbase_target_fraction_by_asset",
                     "coinbase_max_contracts_by_asset"):
-            assert "XRP" in (prof.get(key) or {}), (
-                f"[P412] XRP activation regressed — XRP missing from {key}")
-            for asset in set(PROBED) - {"XRP"}:
+            for a in ("XRP", "BNB"):
+                assert a in (prof.get(key) or {}), f"[P412] {a} regressed from {key}"
+            for asset in set(PROBED) - {"XRP", "BNB"}:
                 assert asset not in (prof.get(key) or {}), (
                     f"{asset} has a {key} entry without its own decision — "
                     f"sizing exists for an asset not yet activated")

@@ -43,7 +43,7 @@ class TestTheDecidedValues:
         # ADA/LTC/DOGE/BNB both fail loudly (P237).
         f = _live()["coinbase_target_fraction_by_asset"]
         assert {a: f[a] for a in DECIDED} == DECIDED
-        assert {a: v for a, v in f.items() if a not in DECIDED} == {"XRP": 0.01}
+        assert {a: v for a, v in f.items() if a not in DECIDED} == {"XRP": 0.01, "BNB": 0.005}  # [P412] XRP + BNB
 
     def test_no_duplicate_key(self):
         """P298: JSON last-key-wins silently ate the first flip."""
@@ -68,14 +68,14 @@ class TestTheDecidedValues:
 
 class TestItIsNotALoosening:
     def test_the_aggregate_budget_is_unchanged(self):
-        """Home stays the 0.445 vol-parity book; [P412] XRP adds 0.01 for a
-        0.455 total — still under the 0.50 P208 net cap (home UNCHANGED, so the
+        """Home stays the 0.445 vol-parity book; [P412] XRP+BNB add 0.015 for a
+        0.46 total (the net-cap headroom limit) — still under the 0.50 P208 net cap (home UNCHANGED, so the
         3-asset book is not loosened; XRP fills net-cap headroom)."""
         f = _live()["coinbase_target_fraction_by_asset"]
         home = sum(v for a, v in f.items() if a in DECIDED)
         assert home == pytest.approx(0.445, abs=1e-9), "home book was re-weighted"
         tot = sum(f.values())
-        assert tot == pytest.approx(0.455, abs=1e-9)
+        assert tot == pytest.approx(0.46, abs=1e-9)   # [P412] home 0.445 + XRP 0.01 + BNB 0.005 = the net-cap headroom limit
         assert tot <= 0.50, "must stay under the P208 net cap"
 
     def test_sol_went_DOWN_and_eth_is_unchanged(self):

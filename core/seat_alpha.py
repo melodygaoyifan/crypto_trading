@@ -119,6 +119,12 @@ REGIMEBOOK_ALPHA_BPS_PER_ROUND_TRIP: Dict[str, float] = {
     # and the median is robust to it exactly as SOL's is (P321). Its ~09-15
     # forward read is the venue-specific exam of that era-fragility.
     "XRP": 75.8,
+    # [P412] BNB (2nd breadth, P197): era-median +38.0bps/RT, MEASURED by the
+    # same producer 2026-08-26. Uniquely among breadth, ALL THREE eras are
+    # POSITIVE (+650.7 / +38.0 / +36.6) -- the most era-STABLE breadth edge
+    # (validation, the most-recent era, is +36.6, unlike XRP/ADA/DOGE whose
+    # most-recent era is negative). Clears its ~17bps friction robustly.
+    "BNB": 38.0,
 }
 
 # Full per-era measurement, kept so a reader can see the dispersion the
@@ -128,12 +134,13 @@ REGIMEBOOK_ALPHA_BY_ERA: Dict[str, Dict[str, float]] = {
     "ETH": {"pre_design": 251.7, "design": 88.1, "validation": 52.1},
     "SOL": {"pre_design": 427.6, "design": 221.7, "validation": -20.8},
     "XRP": {"pre_design": 335.3, "design": 75.8, "validation": -21.9},  # [P412]
+    "BNB": {"pre_design": 650.7, "design": 38.0, "validation": 36.6},   # [P412]
 }
 
 _MEASURED_ON = "2026-08-19"   # BTC/ETH/SOL; XRP measured 2026-08-26 (P412)
 _MEASURED_BY = ("training/funding_legs_lab.py (FEE_MODEL=per_contract, 6y); "
-                "XRP added 2026-08-26 via training/seat_alpha_calibration.py "
-                "--assets XRP on a 6y resampled book (P412)")
+                "XRP+BNB added 2026-08-26 via training/seat_alpha_calibration.py "
+                "on 6y resampled books (P412)")
 
 
 def regimebook_alpha_bps(asset: str) -> Tuple[float, str]:

@@ -274,7 +274,7 @@ class TestLiveFractionsUnchanged:
         # [P412] XRP breadth activated one-first (P197): fraction 0.01 keeps the
         # 0.04 nominal net-cap headroom (below); XRP trades 1ct via the sizing
         # floor regardless. A further widening (ADA/LTC/DOGE/BNB) fails here.
-        assert {a: v for a, v in fr.items() if a not in home} == {"XRP": 0.01}
+        assert {a: v for a, v in fr.items() if a not in home} == {"XRP": 0.01, "BNB": 0.005}  # [P412]
 
     def test_nominal_max_net_stays_under_the_p208_cap(self):
         prof = json.loads(LIVE_PROFILE.read_text(encoding="utf-8-sig"))

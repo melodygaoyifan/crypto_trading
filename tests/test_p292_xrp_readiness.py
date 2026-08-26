@@ -118,8 +118,9 @@ class TestBreadthRemainsInert:
         # each needing its own recorded decision after XRP's cycle.
         live_assets = set(_live_profile().get("assets") or [])
         assert live_assets, "live profile has no `assets` — read it again"
-        assert "XRP" in live_assets, "[P412] XRP activation regressed"
-        for asset in set(BREADTH) - {"XRP"}:
+        for a in ("XRP", "BNB"):
+            assert a in live_assets, f"[P412] {a} activation regressed"
+        for asset in set(BREADTH) - {"XRP", "BNB"}:
             assert asset not in live_assets, (
                 f"{asset} entered config.assets without its own decision — the "
                 f"sleeve driver manages it every tick now. Widening past XRP "
@@ -141,9 +142,9 @@ class TestBreadthRemainsInert:
         prof = _live_profile()
         for key in ("coinbase_target_fraction_by_asset",
                     "coinbase_max_contracts_by_asset"):
-            assert "XRP" in (prof.get(key) or {}), (
-                f"[P412] XRP activation regressed — missing from {key}")
-            for asset in set(BREADTH) - {"XRP"}:
+            for a in ("XRP", "BNB"):
+                assert a in (prof.get(key) or {}), f"[P412] {a} regressed from {key}"
+            for asset in set(BREADTH) - {"XRP", "BNB"}:
                 assert asset not in (prof.get(key) or {}), (
                     f"{asset} has a {key} entry — sizing exists for an asset "
                     f"whose forward read has not happened")
@@ -158,7 +159,7 @@ class TestBreadthRemainsInert:
                      .get("coinbase_assets") or [])
         # [P412] XRP is activated and MAY be routed (its config fractions/caps
         # exist); the remaining four must not be routed without their decision.
-        for asset in set(BREADTH) - {"XRP"}:
+        for asset in set(BREADTH) - {"XRP", "BNB"}:
             assert asset not in routed, (
                 f"{asset} is in coinbase_assets — routing was widened without "
                 f"the config fractions/caps that make it sizable")
@@ -171,10 +172,10 @@ class TestBreadthRemainsInert:
         prof = _live_profile()
         live_assets = set(prof.get("assets") or [])
         fracs = set((prof.get("coinbase_target_fraction_by_asset") or {}))
-        assert "XRP" in live_assets and "XRP" in fracs, (
-            "[P412] XRP must be fully wired (assets AND sizing) — the "
-            "two-things-move discipline is how a widening is done, not skipped")
-        for asset in set(BREADTH) - {"XRP"}:
+        for a in ("XRP", "BNB"):
+            assert a in live_assets and a in fracs, (
+                f"[P412] {a} must be fully wired (assets AND sizing)")
+        for asset in set(BREADTH) - {"XRP", "BNB"}:
             assert not (asset in live_assets and asset in fracs), (
                 f"{asset} is fully wired for trading without its own decision")
 

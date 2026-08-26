@@ -98,6 +98,7 @@ _MEASURED_BY = ("data/fill_quality.jsonl (fills, P290/P315) + "
 #     ETH    PREVIEW 2026-08-20     2,252      225.23   0.300     13.32
 #     SOL    PREVIEW 2026-08-20        84.44   422.20   0.460     10.90
 #     XRP    PREVIEW 2026-08-26         1.417   708.68   0.640      9.03
+#     BNB    PREVIEW 2026-08-26       701.600   701.60   0.610      8.69
 #
 # The discriminator is the only within-asset price move we have: BTC price
 # +7.7%, fee +5.5%. A flat fee predicts +0.0%; a percentage predicts +7.7%.
@@ -116,6 +117,10 @@ CDE_FEE_BPS: Dict[str, Dict[str, float]] = {
     # fill, so can never earn a fill-measured fee). SOL keeps its assumed-worst
     # below because SOL trades regardless (edge >> friction); XRP does not.
     "XRP": {"maker": 9.03, "taker": round(9.03 * _BTC_TAKER_OVER_MAKER, 2)},
+    # [P412] BNB (2nd breadth, P197): maker MEASURED via preview 2026-08-26
+    # ($0.61/$701.60 = 8.69bps). taker derived via the measured fill ratio.
+    # The only breadth asset with all 3 eras positive (seat_alpha, P412).
+    "BNB": {"maker": 8.69, "taker": round(8.69 * _BTC_TAKER_OVER_MAKER, 2)},
     # SOL still has NO FILL. A venue PREVIEW quotes 10.90bps, which is why the
     # assumption below is now known-conservative rather than arbitrary — but a
     # quote is not a fill, so the value stays at the worst measured figure and
@@ -131,7 +136,7 @@ CDE_FEE_ASSUMED = frozenset({"SOL"})
 # honest provenance (a preview is the venue fee schedule; the BTC control
 # confirms previews match fills; what a preview cannot see is realized
 # slippage, which is tracked separately, not part of the fee).
-CDE_FEE_PREVIEW = frozenset({"XRP"})
+CDE_FEE_PREVIEW = frozenset({"XRP", "BNB"})
 
 # The most expensive measured fee in bps, used for anything unknown.
 _WORST_BPS = max(max(v["maker"], v["taker"])
@@ -141,7 +146,7 @@ for _a in CDE_FEE_ASSUMED:
 
 # The venue's own preview quote for SOL, recorded so the assumption above is
 # auditable as conservative rather than merely large. NOT used for pricing.
-CDE_FEE_BPS_VENUE_QUOTE: Dict[str, float] = {"SOL": 10.90, "XRP": 9.03}
+CDE_FEE_BPS_VENUE_QUOTE: Dict[str, float] = {"SOL": 10.90, "XRP": 9.03, "BNB": 8.69}
 
 
 def _contract_sizes() -> Dict[str, float]:

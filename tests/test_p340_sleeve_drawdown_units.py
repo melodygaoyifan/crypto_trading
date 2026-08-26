@@ -155,7 +155,7 @@ class TestTheProbeItself:
         frac = cfg.get("coinbase_target_fraction_by_asset")
         assert {a: frac[a] for a in LIVE_FRACTION} == LIVE_FRACTION
         assert {a: v for a, v in frac.items() if a not in LIVE_FRACTION} == {
-            "XRP": 0.01}
+            "XRP": 0.01, "BNB": 0.005}
 
     def test_cost_constants_are_per_leg_and_nonzero(self):
         for a in ("BTC", "ETH", "SOL"):
