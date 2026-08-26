@@ -36,7 +36,7 @@ _PID = {"BTC": "BIP-20DEC30-CDE", "ETH": "ETP-20DEC30-CDE", "SOL": "SLP-20DEC30-
 _PX = {"BTC": 64000.0, "ETH": 1900.0, "SOL": 72.0}
 
 # the live policy numbers (configs/live_high_risk.json:post_leverage_caps)
-_CAPS = {"BTC": 0.25, "ETH": 0.25, "SOL": 0.20}
+_CAPS = {"BTC": 0.25, "ETH": 0.25, "SOL": 0.20, "XRP": 0.10}  # [P412] XRP breadth
 
 
 class _FakeAdapter:

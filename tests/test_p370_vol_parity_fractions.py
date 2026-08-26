@@ -37,7 +37,13 @@ def _live() -> dict:
 
 class TestTheDecidedValues:
     def test_the_live_profile_carries_the_parity_fractions(self):
-        assert _live()["coinbase_target_fraction_by_asset"] == DECIDED
+        # [P412] XRP breadth activated (one-asset-first, P197). The HOME trio
+        # keeps the vol-parity DECIDED values; XRP is the sole breadth entry.
+        # A silent revert of home OR a silent further widening to
+        # ADA/LTC/DOGE/BNB both fail loudly (P237).
+        f = _live()["coinbase_target_fraction_by_asset"]
+        assert {a: f[a] for a in DECIDED} == DECIDED
+        assert {a: v for a, v in f.items() if a not in DECIDED} == {"XRP": 0.01}
 
     def test_no_duplicate_key(self):
         """P298: JSON last-key-wins silently ate the first flip."""
@@ -62,9 +68,14 @@ class TestTheDecidedValues:
 
 class TestItIsNotALoosening:
     def test_the_aggregate_budget_is_unchanged(self):
-        """Same 0.445 book as flat 0.15 x3 — a re-weighting, not a raise."""
-        tot = sum(_live()["coinbase_target_fraction_by_asset"].values())
-        assert tot == pytest.approx(0.445, abs=1e-9)
+        """Home stays the 0.445 vol-parity book; [P412] XRP adds 0.01 for a
+        0.455 total — still under the 0.50 P208 net cap (home UNCHANGED, so the
+        3-asset book is not loosened; XRP fills net-cap headroom)."""
+        f = _live()["coinbase_target_fraction_by_asset"]
+        home = sum(v for a, v in f.items() if a in DECIDED)
+        assert home == pytest.approx(0.445, abs=1e-9), "home book was re-weighted"
+        tot = sum(f.values())
+        assert tot == pytest.approx(0.455, abs=1e-9)
         assert tot <= 0.50, "must stay under the P208 net cap"
 
     def test_sol_went_DOWN_and_eth_is_unchanged(self):

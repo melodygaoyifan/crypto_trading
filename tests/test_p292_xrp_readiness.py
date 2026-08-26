@@ -113,13 +113,17 @@ class TestBreadthRemainsInert:
 
     def test_lock1_config_assets_excludes_breadth(self):
         # THE primary lock: main.py's sleeve driver loops `config.assets`.
+        # [P412] XRP is the FIRST breadth asset activated (one-first, P197) and
+        # is DELIBERATELY in config.assets; the remaining four stay excluded,
+        # each needing its own recorded decision after XRP's cycle.
         live_assets = set(_live_profile().get("assets") or [])
         assert live_assets, "live profile has no `assets` — read it again"
-        for asset in BREADTH:
+        assert "XRP" in live_assets, "[P412] XRP activation regressed"
+        for asset in set(BREADTH) - {"XRP"}:
             assert asset not in live_assets, (
-                f"{asset} entered config.assets — the sleeve driver manages "
-                f"it every tick now. That is the widening decision itself and "
-                f"needs the ~2026-09-15 read plus a recorded P-entry")
+                f"{asset} entered config.assets without its own decision — the "
+                f"sleeve driver manages it every tick now. Widening past XRP "
+                f"needs watching XRP's first cycle (P197) plus a P-entry")
 
     def test_lock1b_sleeve_only_maps_the_assets_it_was_given(self):
         # Behavioural proof that a SYMBOL_MAP entry alone routes nothing: a
@@ -132,10 +136,14 @@ class TestBreadthRemainsInert:
             assert pid not in s._pid_to_asset
 
     def test_lock2_no_sizing_entries_exist(self):
+        # [P412] XRP is activated and deliberately sized; the remaining four
+        # must have no fraction/cap entry.
         prof = _live_profile()
         for key in ("coinbase_target_fraction_by_asset",
                     "coinbase_max_contracts_by_asset"):
-            for asset in BREADTH:
+            assert "XRP" in (prof.get(key) or {}), (
+                f"[P412] XRP activation regressed — missing from {key}")
+            for asset in set(BREADTH) - {"XRP"}:
                 assert asset not in (prof.get(key) or {}), (
                     f"{asset} has a {key} entry — sizing exists for an asset "
                     f"whose forward read has not happened")
@@ -148,21 +156,27 @@ class TestBreadthRemainsInert:
             pytest.skip("no local routing state (server-side file)")
         routed = set(json.loads(sf.read_text(encoding="utf-8-sig"))
                      .get("coinbase_assets") or [])
-        for asset in BREADTH:
+        # [P412] XRP is activated and MAY be routed (its config fractions/caps
+        # exist); the remaining four must not be routed without their decision.
+        for asset in set(BREADTH) - {"XRP"}:
             assert asset not in routed, (
                 f"{asset} is in coinbase_assets — routing was widened without "
                 f"the config fractions/caps that make it sizable")
 
     def test_the_widening_requires_moving_two_things_not_one(self):
-        # The readiness property, stated as a test: a September PASS must
-        # still require an operator to add BOTH the asset and its sizing.
-        # If either alone were enough, this file's premise is wrong.
+        # The readiness property, stated as a test: a widening must move BOTH
+        # the asset and its sizing together. [P412] XRP's activation did
+        # exactly that (both present) — the discipline followed, not bypassed;
+        # the remaining four must have neither-fully so no half-move slips in.
         prof = _live_profile()
         live_assets = set(prof.get("assets") or [])
         fracs = set((prof.get("coinbase_target_fraction_by_asset") or {}))
-        for asset in BREADTH:
+        assert "XRP" in live_assets and "XRP" in fracs, (
+            "[P412] XRP must be fully wired (assets AND sizing) — the "
+            "two-things-move discipline is how a widening is done, not skipped")
+        for asset in set(BREADTH) - {"XRP"}:
             assert not (asset in live_assets and asset in fracs), (
-                f"{asset} is fully wired for trading")
+                f"{asset} is fully wired for trading without its own decision")
 
 
 class TestSpotSideUntouched:

@@ -169,29 +169,35 @@ class TestBreadthIsInertWithoutRoutingAndMapping:
             assert to_venue_symbol(asset, "coinbase", "perp") == row["pid"]
 
     def test_breadth_cannot_reach_the_sleeve_driver(self):
-        # Lock #1, the one that actually keeps XRP flat today: the driver
-        # iterates config.assets. If a breadth asset appears there without the
-        # recorded September decision, it becomes tradeable.
+        # Lock #1, the one that keeps unactivated breadth flat: the driver
+        # iterates config.assets. [P412] XRP is the FIRST breadth asset
+        # activated (one-first, P197) and IS deliberately in config.assets;
+        # the remaining four must still be absent (each needs its own decision).
         prof = json.loads((REPO / "configs" / "live_high_risk.json")
                           .read_text(encoding="utf-8-sig"))
         live_assets = set(prof.get("assets") or [])
-        for asset in PROBED:
+        assert "XRP" in live_assets, (
+            "[P412] XRP breadth activation regressed — XRP left config.assets")
+        for asset in set(PROBED) - {"XRP"}:
             assert asset not in live_assets, (
-                f"{asset} is in the live profile's `assets` — the sleeve "
-                f"driver would manage it every tick. Widening needs the "
-                f"~2026-09-15 breadth read plus per-asset fractions/caps")
+                f"{asset} is in the live profile's `assets` without its own "
+                f"recorded decision — the sleeve driver would manage it every "
+                f"tick. Widening past XRP needs watching XRP's cycle (P197)")
 
     def test_live_profile_carries_no_breadth_sizing(self):
-        # The third prerequisite. Even with a map entry and routing state, a
-        # breadth asset with no fraction/cap entry cannot be sized.
+        # The third prerequisite. [P412] XRP is activated and DELIBERATELY
+        # sized (fraction 0.01, cap 1); the remaining four breadth assets must
+        # still have no fraction/cap entry so they cannot be sized.
         prof = json.loads((REPO / "configs" / "live_high_risk.json")
                           .read_text(encoding="utf-8-sig"))
         for key in ("coinbase_target_fraction_by_asset",
                     "coinbase_max_contracts_by_asset"):
-            for asset in PROBED:
+            assert "XRP" in (prof.get(key) or {}), (
+                f"[P412] XRP activation regressed — XRP missing from {key}")
+            for asset in set(PROBED) - {"XRP"}:
                 assert asset not in (prof.get(key) or {}), (
-                    f"{asset} has a {key} entry — sizing exists for an asset "
-                    f"whose forward read (~2026-09-15) has not happened")
+                    f"{asset} has a {key} entry without its own decision — "
+                    f"sizing exists for an asset not yet activated")
 
     def test_unknown_product_still_refuses_rather_than_defaulting(self):
         # P265h semantics must survive the table growing: an asset that is

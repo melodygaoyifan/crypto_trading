@@ -267,9 +267,14 @@ class TestLiveFractionsUnchanged:
         either direction still fails here."""
         prof = json.loads(LIVE_PROFILE.read_text(encoding="utf-8-sig"))
         fr = prof["coinbase_target_fraction_by_asset"]
-        assert fr == {"BTC": 0.20, "ETH": 0.15, "SOL": 0.095}, (
+        home = {a: fr[a] for a in ("BTC", "ETH", "SOL")}
+        assert home == {"BTC": 0.20, "ETH": 0.15, "SOL": 0.095}, (
             "P370 decided vol-parity {.20,.15,.095}; a different value is a "
             "new sizing decision needing its own recorded P-entry (P291 ladder)")
+        # [P412] XRP breadth activated one-first (P197): fraction 0.01 keeps the
+        # 0.04 nominal net-cap headroom (below); XRP trades 1ct via the sizing
+        # floor regardless. A further widening (ADA/LTC/DOGE/BNB) fails here.
+        assert {a: v for a, v in fr.items() if a not in home} == {"XRP": 0.01}
 
     def test_nominal_max_net_stays_under_the_p208_cap(self):
         prof = json.loads(LIVE_PROFILE.read_text(encoding="utf-8-sig"))

@@ -250,7 +250,7 @@ class TestPerAssetContractCaps:
         live = json.loads((REPO / "configs" / "live_high_risk.json")
                           .read_text(encoding="utf-8"))
         assert live.get("coinbase_max_contracts_by_asset") == {
-            "BTC": 1, "ETH": 3, "SOL": 1}, (
+            "BTC": 1, "ETH": 3, "SOL": 1, "XRP": 1}, (  # [P412] XRP breadth
             "live per-asset sizes changed — if deliberate, update this pin "
             "+ the sizing note + re-check the net-cap arithmetic in the "
             "same commit")
@@ -261,5 +261,8 @@ class TestPerAssetContractCaps:
         # strategy-threshold backtest: flat 0.15 put 48% of book risk in SOL.
         # Same 0.445 aggregate budget; NOT a loosening (SOL down, ETH same,
         # BTC up but BTC cannot pass the gate). Pinned to the decided value.
+        # [P412] XRP breadth activated (one-asset-first, P197): home
+        # UNCHANGED, XRP 0.01 under its post_leverage_cap 0.10, aggregate 0.455
+        # < 0.50 net cap. A silent revert or further widening both fail.
         assert live.get("coinbase_target_fraction_by_asset") == {
-            "BTC": 0.20, "ETH": 0.15, "SOL": 0.095}
+            "BTC": 0.20, "ETH": 0.15, "SOL": 0.095, "XRP": 0.01}

@@ -145,11 +145,17 @@ class TestTheProbeItself:
 
     def test_live_fractions_match_the_live_profile(self):
         """The probe's answer is only about the live book if its fractions are
-        the live ones."""
+        the live ones. [P412] The probe is HOME-SCOPED (it simulates BTC/ETH/SOL
+        drawdown on 2020-2026 data); XRP breadth (1ct/~$250, activated one-first
+        P197) is outside its scope, so the pin checks the home subset matches
+        and that XRP is the sole breadth addition."""
         import json
         cfg = json.loads((REPO / "configs" / "live_high_risk.json").read_text(
             encoding="utf-8-sig"))
-        assert cfg.get("coinbase_target_fraction_by_asset") == LIVE_FRACTION
+        frac = cfg.get("coinbase_target_fraction_by_asset")
+        assert {a: frac[a] for a in LIVE_FRACTION} == LIVE_FRACTION
+        assert {a: v for a, v in frac.items() if a not in LIVE_FRACTION} == {
+            "XRP": 0.01}
 
     def test_cost_constants_are_per_leg_and_nonzero(self):
         for a in ("BTC", "ETH", "SOL"):
