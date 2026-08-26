@@ -105,7 +105,10 @@ def test_benign_set_is_explicit_and_small():
     class of non-fill from the veto path and from the T3 blocked-tick alarm.
     """
     assert BENIGN_EXEC_SKIP_REASONS == frozenset(
-        {"coinbase_routed_no_kraken_entry", "No active position to close"}
+        {"coinbase_routed_no_kraken_entry", "No active position to close",
+         # [P410] non-home asset in config.assets not Coinbase-routed: inert,
+         # never Kraken-traded (the breadth-perp tradeable-universe guard).
+         "breadth_not_routed_no_kraken_entry"}
     )
 
 

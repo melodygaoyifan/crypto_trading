@@ -1,5 +1,17 @@
 #!/usr/bin/env python3
-"""[P409] Export the held BTC ridge for its Rung-3 live forward shadow.
+"""[P409/P409b WITHDRAWN 2026-08-26] Export the held BTC ridge shadow.
+
+WITHDRAWN: the +46 walk-forward edge (P409) rested on regime_proba_7, a feature
+the training parquet carries but the RUNTIME does NOT emit (BTC's live GMM is
+k=6, so only regime_proba_0..5 exist — the P215 train/serve GMM-vocabulary
+skew). With SERVE-AVAILABLE features only (regime_proba_6/7 excluded), the same
+top-8 recipe collapses to -18% vs buy-hold +9% (1/3 folds). So the held BTC
+ridge does NOT beat buy-and-hold with features the live system can provide. The
+deployed shadow was correctly recording FLAT(cov-1) every tick (refusing on the
+missing feature) — caught by reading the first live artifact (P264/P390b). The
+config was deleted; this script REFUSES unless --force so a weekly cron cannot
+silently re-create a dead shadow. Re-open only if a serve-valid feature set
+clears on its own merits (no feature-count fishing).
 
 WHY THIS EXISTS (operator: "we are building a model that can adapt our venue,
 not the other way ... if the profit can't cover the cost, place larger orders
@@ -59,6 +71,9 @@ OUT_DIR = REPO / "configs" / "ridgeshadow"
 ASSET = "BTC"   # BTC is the sole asset whose held ridge clears the flat fee
                 # walk-forward (P409); ETH/SOL fail and are NOT built.
 N_FEATURES = 8
+# [P409b] BTC runtime GMM is k=6 (P221/P267): regime_proba_6/7 exist in the
+# training parquet but NOT at serve. Excluding them keeps selection serve-valid.
+_SERVE_ABSENT = frozenset({"regime_proba_6", "regime_proba_7"})
 Z_WINDOW = 500
 Z_MIN = 100
 DEADBAND = 1.0
@@ -71,7 +86,8 @@ def _load(asset: str):
     d = pd.read_parquet(DRL_DIR / f"{asset}_4H_full.parquet")
     feats = [c for c in d.columns
              if c not in _NON_FEAT and pd.api.types.is_numeric_dtype(d[c])
-             and not c.startswith("fwd") and not c.startswith("target")]
+             and not c.startswith("fwd") and not c.startswith("target")
+             and c not in _SERVE_ABSENT]
     close = d["close"].to_numpy(float)
     X = d[feats].to_numpy(float)
     return feats, X, close
@@ -95,6 +111,15 @@ def _select_top_features(X, feats, fwd, k):
 
 
 def main() -> int:
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--force", action="store_true",
+                    help="P409b: the candidate is WITHDRAWN (serve-valid set does not clear); required to re-export")
+    if not ap.parse_args().force:
+        print("REFUSED: P409 ridge shadow is WITHDRAWN (see the module docstring). "
+              "Re-export only with --force after a serve-valid set clears on its merits.",
+              file=sys.stderr)
+        return 2
     assert_clean_gmm(ASSET)  # regime_proba_* is a GMM feature -- refuse a
                              # leaked (full-sample) GMM fit (P4/P164/P280)
     feats, X, close = _load(ASSET)

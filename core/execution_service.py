@@ -407,6 +407,8 @@ def resolve_venue_fee_bps(
 BENIGN_EXEC_SKIP_REASONS = frozenset({
     "coinbase_routed_no_kraken_entry",  # P152: sleeve is the sole driver
     "No active position to close",      # nothing to unwind
+    "breadth_not_routed_no_kraken_entry",  # [P410] non-home asset in
+    # config.assets but not Coinbase-routed: inert, never Kraken-traded
 })
 
 
@@ -579,6 +581,29 @@ def rebuild_cooldown_decision(
     return "EXPIRED", kind, 0.0
 
 
+# [P410] The only assets with legacy Kraken business (spot unwind). Any OTHER
+# asset in config.assets is Coinbase-only: it trades on the sleeve when
+# routed, and is INERT (never opens a NEW Kraken entry) when not — so the
+# breadth perps (XRP/ADA/LTC/DOGE/BNB) can join config.assets as the
+# sleeve's tradeable universe without waking the Kraken path (venue_for
+# returns "kraken" for anything not in coinbase_assets — the latent window).
+_COINBASE_HOME_ASSETS = frozenset({"BTC", "ETH", "SOL"})
+
+
+def _should_skip_breadth_kraken_entry(asset: str, has_active_position: bool,
+                                      is_full_exit: bool, routing_enabled: bool,
+                                      is_routed: bool) -> bool:
+    """[P410] True iff a NEW ENTRY on a NON-HOME (breadth) asset should be
+    skipped rather than opening a Kraken order. Pure so the safety property is
+    testable without a runner (P206). Skips ONLY when routing is enabled, the
+    asset is outside the home trio, it is a new entry (not an exit/reduce), and
+    it is not Coinbase-routed. Home assets (BTC/ETH/SOL) are NEVER skipped here
+    — their behaviour is unchanged (P152 owns them)."""
+    return bool(routing_enabled and not has_active_position and not is_full_exit
+                and str(asset).upper() not in _COINBASE_HOME_ASSETS
+                and not is_routed)
+
+
 async def execute_intent_v2(
     ctx,
     asset: str,
@@ -646,6 +671,27 @@ async def execute_intent_v2(
             f"(dir={getattr(intent, 'direction', 0.0):+.2f}; Coinbase sleeve is "
             f"the sole directional driver for this asset)")
         return {"status": "SKIPPED", "reason": "coinbase_routed_no_kraken_entry",
+                "asset": asset}
+
+    # [P410] Symmetric to P152 for NON-HOME (breadth) assets: with routing
+    # enabled, a NEW ENTRY on an asset outside the home trio that is NOT
+    # Coinbase-routed must not fall through to a Kraken order (venue_for would
+    # return "kraken"). Breadth perps live in config.assets as the sleeve's
+    # tradeable universe and stay INERT until routed to Coinbase; only then do
+    # they trade (via the sleeve, P152-skipped here). Exits/reduces of a real
+    # holding still execute (mirrors P152). No-op today: config.assets is the
+    # home trio, all routed, so this never fires. Fail-safe: _coinbase_routed
+    # fail-closes to True on error, so an unreadable routing state is caught by
+    # the P152 skip above, never here.
+    if _should_skip_breadth_kraken_entry(
+            asset, _has_active_position, _is_full_exit_request,
+            bool(getattr(getattr(ctx, "config", None),
+                         "coinbase_routing_enabled", False)),
+            _coinbase_routed(ctx, asset)):
+        logger.info(
+            f"[P410] {asset}: non-home asset not Coinbase-routed -> Kraken "
+            f"ENTRY skipped (breadth stays inert until routed to the sleeve)")
+        return {"status": "SKIPPED", "reason": "breadth_not_routed_no_kraken_entry",
                 "asset": asset}
 
     _execution_direction = float(getattr(intent, "direction", 0.0) or 0.0)
