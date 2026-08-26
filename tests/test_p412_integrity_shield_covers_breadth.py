@@ -82,3 +82,24 @@ def test_main_shield_construction_is_config_derived_not_hardcoded():
         "symbol list leaves any breadth asset uncovered and P0-aborting every tick")
     # the old hardcode must be gone from the primary's construction
     assert "symbols=['SOL/USDT', 'BTC/USD', 'ETH/USD']" not in window
+
+
+def test_timing_engine_does_not_keyerror_on_a_breadth_asset():
+    """[P412] The execution timing engine seeded its spread/depth history with
+    only the home trio; once XRP flowed deep enough to reach STEP 12 (past the
+    integrity shield + a real seat edge), `self._spread_history['XRP']` raised
+    KeyError and crashed XRP's tick every cycle (fail-safe -> sleeve HOLD, but a
+    tradeable asset must not crash its own decision). Fixed with defaultdict."""
+    from execution.timing_engine import ExecutionTimingEngine
+    e = ExecutionTimingEngine()
+    # two calls exercise the history APPEND path (the crashing site)
+    for _ in range(2):
+        score, mode = e.evaluate(
+            asset="XRP", spread_bps=2.9, depth=1.0, vpin=0.58,
+            lead_lag_edge=0.0, lead_lag_confidence=0.0, urgency=0.5,
+            regime_phase="MOMENTUM_RALLY")
+        assert score is not None and mode is not None
+    # a never-seen asset also works (defaultdict, not a hardcoded roster)
+    e.evaluate(asset="ADA", spread_bps=5.0, depth=1.0, vpin=0.5,
+               lead_lag_edge=0.0, lead_lag_confidence=0.0, urgency=0.5,
+               regime_phase="WEAK_CONSOLIDATION")

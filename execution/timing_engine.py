@@ -26,6 +26,7 @@ PROFITABILITY IMPACT:
 import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, Tuple
+from collections import defaultdict
 from datetime import datetime, timezone
 from enum import Enum
 
@@ -162,8 +163,13 @@ class ExecutionTimingCalculator:
     FAIR_THRESHOLD = 0.4
     
     def __init__(self):
-        self._spread_history: Dict[str, list] = {"SOL": [], "BTC": [], "ETH": []}
-        self._depth_history: Dict[str, list] = {"SOL": [], "BTC": [], "ETH": []}
+        # [P412] defaultdict so a breadth asset (XRP) in the tradeable universe
+        # gets an empty history on first write rather than a KeyError — the
+        # reads below already used .get(asset, []); only these writes assumed
+        # the home trio. A crashed tick fail-safes to a sleeve HOLD (P253), but
+        # a tradeable asset must not crash its own decision every tick.
+        self._spread_history: Dict[str, list] = defaultdict(list)
+        self._depth_history: Dict[str, list] = defaultdict(list)
         logger.info("ExecutionTimingCalculator initialized")
     
     def calculate(
