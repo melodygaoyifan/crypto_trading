@@ -90,3 +90,23 @@ class TestConfigParse:
         p = tmp_path / "c.json"
         p.write_text(json.dumps({"etf_seat_mode": "garbage"}), encoding="utf-8")
         assert ProductionConfig.from_file(p).etf_seat_mode == "off"
+
+
+def test_live_config_etf_seat_is_de_risk_only_re_horizoned():
+    """[research 2026-08-26] The ETF seat was re-horizoned from next-bar
+    directional-decide to a slow de-risk/context gate: ETF flow is coincident/
+    lagged and decayed 2024->2026 (matches P400), so it must NOT take a
+    directional bet. This pins the LIVE decided state: both majors are de-risk
+    (reduce-only), and NO asset is a directional decide-asset. A silent
+    re-arming of a directional ETF seat fails here loudly (P237/P141) — the
+    ETF signal's directional value belongs only in the agree-gated combiner
+    (P407j), not a standalone next-bar seat.
+    """
+    import json, os
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    c = json.load(open(os.path.join(root, "configs", "live_high_risk.json"),
+                       encoding="utf-8"))
+    assert c.get("etf_seat_mode") == "enforce"
+    assert c.get("etf_derisk_assets") == ["BTC", "ETH"], "both majors de-risk-only"
+    assert c.get("etf_decide_assets") == [], (
+        "the ETF seat must take NO directional decision (re-horizoned to context)")
