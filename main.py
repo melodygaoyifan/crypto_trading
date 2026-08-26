@@ -5312,8 +5312,18 @@ class HMATSProductionRunner:
         self.integrity_shield = None
         if DEFENSE_AVAILABLE and self.config.mode in [RunMode.PAPER, RunMode.LIVE]:
             try:
+                # [P412] Derive the shield's Kraken pairs from config.assets so
+                # a breadth perp (XRP) added to the tradeable universe is
+                # data-integrity-shielded like the home trio (its signals come
+                # from the same Kraken feed). The home trio still maps to
+                # SOL/USDT,BTC/USD,ETH/USD (P133/P135); XRP -> XRP/USD. Without
+                # this the P0 integrity check aborts XRP's tick every cycle
+                # (get_orderbook(XRP/USD) -> None) — fail-safe (XRP stays inert)
+                # but XRP could never trade even once routed.
+                _shield_symbols = sorted({
+                    self._normalize_kraken_pair(a) for a in self.config.assets})
                 self.integrity_shield = KrakenIntegrityShield(
-                    symbols=['SOL/USDT', 'BTC/USD', 'ETH/USD'],  # [P133] SOL on USDT (USD pair dead)
+                    symbols=_shield_symbols,
                     on_integrity_violation=lambda s, r: logger.warning(f"[INTEGRITY] {s}: {r}"),
                 )
                 logger.info("  KrakenIntegrityShield: ACTIVE (v6.2.3e P0 wiring)")
