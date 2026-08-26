@@ -299,9 +299,12 @@ class TestCostIsDerivedFromCdeFees:
         assert air.TAKER_RT_BPS == pytest.approx(rt_all)
 
     def test_an_unknown_asset_prices_at_the_worst_not_the_floor(self):
+        # [P412] XRP is now a KNOWN asset (priced from a venue preview); ADA is
+        # still unknown (breadth not yet activated) and must price at the worst.
         worst = max(2.0 * v["taker"] for v in CDE_FEE_BPS.values())
-        assert sic.round_trip_cost_bps_for(["XRP"])[0] == pytest.approx(worst)
-        assert air.rt_cost_bps_for(["XRP"])[0] == pytest.approx(worst)
+        assert "ADA" not in CDE_FEE_BPS, "ADA became known — pick another unknown"
+        assert sic.round_trip_cost_bps_for(["ADA"])[0] == pytest.approx(worst)
+        assert air.rt_cost_bps_for(["ADA"])[0] == pytest.approx(worst)
 
     def test_the_six_bps_floor_binds_when_the_table_is_cheaper(self, monkeypatch):
         """The floor is a FLOOR: a calibration lowered below the refuted model

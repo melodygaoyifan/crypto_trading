@@ -74,10 +74,13 @@ _BTC_TAKER_OVER_MAKER = 0.635 / 0.603          # 1.0531, measured
 # carries the producer command, the source data, the staleness horizon and the
 # revision rule. P315 found this model wrong for the life of the system, and
 # nothing recorded when it had last been checked against a fill.
-_MEASURED_ON = "2026-08-20"
+_MEASURED_ON = "2026-08-26"
 _MEASURED_BY = ("data/fill_quality.jsonl (fills, P290/P315) + "
                 "scripts/coinbase_probe_stop_support.py venue previews "
-                "(P334, which refuted the flat-per-contract model)")
+                "(P334, which refuted the flat-per-contract model); "
+                "[P412] XRP added from a read-only venue preview 2026-08-26 "
+                "(commission $0.64 on $708.68 notional -> 9.03bps), with a "
+                "same-run BTC control reproducing the recorded ~9.67bps quote")
 
 
 # [P334] CORRECTED MODEL: per-asset BPS OF NOTIONAL, not flat dollars.
@@ -94,6 +97,7 @@ _MEASURED_BY = ("data/fill_quality.jsonl (fills, P290/P315) + "
 #     ETH    fill  (maker)          1,916      191.65   0.264     13.78
 #     ETH    PREVIEW 2026-08-20     2,252      225.23   0.300     13.32
 #     SOL    PREVIEW 2026-08-20        84.44   422.20   0.460     10.90
+#     XRP    PREVIEW 2026-08-26         1.417   708.68   0.640      9.03
 #
 # The discriminator is the only within-asset price move we have: BTC price
 # +7.7%, fee +5.5%. A flat fee predicts +0.0%; a percentage predicts +7.7%.
@@ -102,6 +106,16 @@ CDE_FEE_BPS: Dict[str, Dict[str, float]] = {
     # highest measured value for each asset/side (P167)
     "BTC": {"maker": 9.38, "taker": 9.87},
     "ETH": {"maker": 13.78, "taker": 13.78 * _BTC_TAKER_OVER_MAKER},
+    # [P412] XRP: maker MEASURED from a read-only venue preview 2026-08-26
+    # ($0.64/$708.68 = 9.03bps; a same-run BTC control reproduced its recorded
+    # ~9.67bps quote, so the preview method is validated). taker DERIVED via the
+    # measured fill ratio (the ETH pattern — real fills show taker>maker). This
+    # PRICES XRP from a preview rather than a fill (provenance measured_venue_
+    # preview, below) to break the chicken-and-egg on a newly-activated asset:
+    # without a priceable fee the P321b interlock perma-gates XRP (it can never
+    # fill, so can never earn a fill-measured fee). SOL keeps its assumed-worst
+    # below because SOL trades regardless (edge >> friction); XRP does not.
+    "XRP": {"maker": 9.03, "taker": round(9.03 * _BTC_TAKER_OVER_MAKER, 2)},
     # SOL still has NO FILL. A venue PREVIEW quotes 10.90bps, which is why the
     # assumption below is now known-conservative rather than arbitrary — but a
     # quote is not a fill, so the value stays at the worst measured figure and
@@ -113,6 +127,12 @@ CDE_FEE_BPS: Dict[str, Dict[str, float]] = {
 # Assets whose fee is ASSUMED rather than measured — surfaced, not hidden.
 CDE_FEE_ASSUMED = frozenset({"SOL"})
 
+# [P412] Assets priced from a validated venue PREVIEW rather than a fill —
+# honest provenance (a preview is the venue fee schedule; the BTC control
+# confirms previews match fills; what a preview cannot see is realized
+# slippage, which is tracked separately, not part of the fee).
+CDE_FEE_PREVIEW = frozenset({"XRP"})
+
 # The most expensive measured fee in bps, used for anything unknown.
 _WORST_BPS = max(max(v["maker"], v["taker"])
                  for a, v in CDE_FEE_BPS.items() if a not in CDE_FEE_ASSUMED)
@@ -121,7 +141,7 @@ for _a in CDE_FEE_ASSUMED:
 
 # The venue's own preview quote for SOL, recorded so the assumption above is
 # auditable as conservative rather than merely large. NOT used for pricing.
-CDE_FEE_BPS_VENUE_QUOTE: Dict[str, float] = {"SOL": 10.90}
+CDE_FEE_BPS_VENUE_QUOTE: Dict[str, float] = {"SOL": 10.90, "XRP": 9.03}
 
 
 def _contract_sizes() -> Dict[str, float]:
@@ -196,5 +216,6 @@ def cde_fee_bps(asset: str, price: float, *, is_maker: bool,
     if sched is None:
         return _WORST_BPS, f"assumed_worst_unknown_asset:{a}"
     prov = ("assumed_no_measured_fill" if a in CDE_FEE_ASSUMED
+            else "measured_venue_preview" if a in CDE_FEE_PREVIEW
             else "measured_fill_quality")
     return sched["maker" if is_maker else "taker"], prov

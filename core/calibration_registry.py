@@ -99,12 +99,13 @@ REGISTRY: Tuple[Calibration, ...] = (
     ),
     Calibration(
         symbol="core.cde_fees.CDE_FEE_BPS",
-        measured_on="2026-08-20",
+        measured_on="2026-08-26",
         producer=("python -X utf8 scripts/coinbase_probe_stop_support.py "
                   "  # venue PREVIEW quotes; fills via "
                   "scripts/fill_quality_review.py"),
         source=("data/fill_quality.jsonl (6 fills) + read-only CDE preview "
-                "quotes 2026-08-20 — the pair is what refuted the "
+                "quotes 2026-08-20 (BTC/ETH/SOL) + XRP preview 2026-08-26 "
+                "(P412, 9.03bps) — the pair is what refuted the "
                 "flat-per-contract model (P334): fills alone spanned only "
                 "0.35% of price and could not tell flat from percentage"),
         staleness_days=90,
