@@ -80,6 +80,19 @@ RSS_SOURCES: Tuple[Tuple[str, str], ...] = (
      "https://news.google.com/rss/search?q=ethereum&hl=en-US&gl=US&ceid=US:en"),
     ("gnews_sol",
      "https://news.google.com/rss/search?q=solana&hl=en-US&gl=US&ceid=US:en"),
+    # [P413] Breadth-asset scoped queries, probed 2026-08-26 BEFORE adding
+    # (the P218/P314 rule). Plain `q=XRP` read 13 inside 4h; plain `q=BNB`
+    # was REJECTABLE (100 items, 1 inside 4h, median ~105 DAYS -- a bare
+    # ticker returns an undated corpus). The `when:1d` operator restricts
+    # results to the last day and flips both above the admission bar:
+    #     gnews_xrp  "XRP OR ripple when:1d"  100 items, 32 inside 4h, median 6.9h
+    #     gnews_bnb  "BNB when:1d"             50 items,  5 inside 4h, median 9.4h
+    # The home-trio queries are deliberately NOT retrofitted with when:1d --
+    # they are working evidence streams (P299: no discontinuity for tidiness).
+    ("gnews_xrp",
+     "https://news.google.com/rss/search?q=XRP%20OR%20ripple%20when%3A1d&hl=en-US&gl=US&ceid=US:en"),
+    ("gnews_bnb",
+     "https://news.google.com/rss/search?q=BNB%20when%3A1d&hl=en-US&gl=US&ceid=US:en"),
     ("bitcoincom", "https://news.bitcoin.com/feed/"),
     ("cryptoslate", "https://cryptoslate.com/feed/"),
     ("ambcrypto", "https://ambcrypto.com/feed/"),
@@ -109,6 +122,8 @@ SOURCE_ASSET_SCOPE: Dict[str, str] = {
     "gnews_btc": "BTC",
     "gnews_eth": "ETH",
     "gnews_sol": "SOL",
+    "gnews_xrp": "XRP",   # [P413]
+    "gnews_bnb": "BNB",   # [P413]
 }
 
 # Word-bounded so "solution"/"sold"/"console" cannot match SOL.
@@ -116,6 +131,11 @@ _ASSET_PATTERNS: Dict[str, re.Pattern] = {
     "BTC": re.compile(r"\b(bitcoin|btc|xbt)\b", re.I),
     "ETH": re.compile(r"\b(ethereum|eth|ether)\b", re.I),
     "SOL": re.compile(r"\b(solana|sol)\b", re.I),
+    # [P413] word-bounded: "Airbnb" cannot match BNB (no boundary before
+    # the substring) and "ripples"/"rippled" cannot match ripple. Deliberately
+    # NO bare "binance" term for BNB -- exchange news is not coin news.
+    "XRP": re.compile(r"\b(xrp|ripple)\b", re.I),
+    "BNB": re.compile(r"\b(bnb)\b", re.I),
 }
 
 DEFAULT_TTL_SEC = 1800.0   # 30 min; RSS is free, but hammering is still rude

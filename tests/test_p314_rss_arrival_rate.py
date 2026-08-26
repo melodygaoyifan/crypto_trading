@@ -67,7 +67,8 @@ class TestSourceSet:
     def test_every_asset_has_a_scoped_source(self):
         """A per-asset query is the only source type that guarantees an asset
         gets in-window items rather than hoping a general feed mentions it."""
-        assert set(SOURCE_ASSET_SCOPE.values()) == {"BTC", "ETH", "SOL"}
+        assert set(SOURCE_ASSET_SCOPE.values()) == {
+            "BTC", "ETH", "SOL", "XRP", "BNB"}  # [P413] breadth joined
         names = {n for n, _ in RSS_SOURCES}
         for scoped in SOURCE_ASSET_SCOPE:
             assert scoped in names, f"{scoped} is scoped but not fetched"
