@@ -78,3 +78,26 @@ def test_load_is_dispatched_off_the_init_thread():
     code_lines = [l for l in src.splitlines() if not l.strip().startswith("#")]
     assert not any("from_pretrained" in l for l in code_lines), (
         "HF call must not block __init__")
+
+
+def test_hf_cache_is_persisted_across_recreates_p415b():
+    """[P415b] The DeBERTa base must download ONCE, not on every deploy: the
+    engine must set HF_HOME onto a mounted, declared volume so the HF cache
+    survives --force-recreate. A silent removal re-introduces the P415 hang."""
+    import yaml
+    from pathlib import Path
+
+    repo = Path(__file__).resolve().parent.parent
+    d = yaml.safe_load((repo / "docker-compose.hetzner.yml").read_text(encoding="utf-8"))
+    eng = d["services"]["hmats-engine"]
+    hf_home = [e for e in eng["environment"] if e.startswith("HF_HOME=")]
+    assert hf_home, "engine must set HF_HOME so the HF cache lands on a volume"
+    cache_path = hf_home[0].split("=", 1)[1]
+    mounted = [v for v in eng["volumes"] if v.split(":")[1:2] == [cache_path]]
+    assert mounted, f"HF_HOME {cache_path} must be a mounted volume"
+    vol_name = mounted[0].split(":")[0]
+    assert vol_name in d["volumes"], f"{vol_name} must be declared in volumes:"
+    # and the Dockerfile must create the dir so the managed volume inherits
+    # the container-user ownership on first mount (writable)
+    df = (repo / "Dockerfile.engine").read_text(encoding="utf-8")
+    assert cache_path in df, f"Dockerfile must mkdir {cache_path} (volume ownership)"

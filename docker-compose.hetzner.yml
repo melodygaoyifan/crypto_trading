@@ -20,10 +20,14 @@ services:
       - HMATS_MODEL_DIR=/opt/hmats/models
       - HMATS_CONFIG_FILE=/opt/hmats/configs/live_high_risk.json
       - HMATS_RUNTIME_MODE=PROD
+      # [P415b] persist the HF cache so the DeBERTa base downloads ONCE,
+      # not on every --force-recreate (the P415 startup-hang root cause).
+      - HF_HOME=/opt/hmats/hfcache
     volumes:
       - hmats-models:/opt/hmats/models:ro
       - hmats-data:/opt/hmats/data
       - hmats-logs:/opt/hmats/logs
+      - hmats-hfcache:/opt/hmats/hfcache
     command: ["--mode", "live", "--config", "configs/live_high_risk.json", "--confirm-live"]
     deploy:
       resources:
@@ -109,3 +113,7 @@ volumes:
   hmats-logs:
     external: true
     name: hmats-logs
+  # [P415b] Managed (not external): compose creates it on first `up`,
+  # it survives --force-recreate, and nothing external needs to sync it.
+  hmats-hfcache:
+    name: hmats-hfcache

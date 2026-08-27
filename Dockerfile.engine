@@ -25,7 +25,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Non-root user
 RUN groupadd --gid 1000 hmats && \
     useradd --uid 1000 --gid hmats --shell /bin/bash --create-home hmats && \
-    mkdir -p /opt/hmats/data /opt/hmats/logs /opt/hmats/models && \
+    mkdir -p /opt/hmats/data /opt/hmats/logs /opt/hmats/models /opt/hmats/hfcache && \
     chown -R hmats:hmats /opt/hmats
 
 # Python deps
