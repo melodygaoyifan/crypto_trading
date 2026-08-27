@@ -128,7 +128,12 @@ def test_ledger_row_shape_and_confidence_rule(harness):
     assert rec["strategy"] == "regimebook" and rec["direction"] == 1.0
     # scorer multiplies direction x confidence (P236): |target|
     assert rec["confidence"] == 1.0
-    rec2 = harness.record_tick("ETH", _mk_closes("peace"), price=1900.0)
+    # [P419] ETH's trend leg is DONCHIAN-100 now; the flat case for ETH is a
+    # channel BREAKDOWN. (The old "peace" SMA-disagreement series is a genuine
+    # 100-bar-high breakout under donchian, so it honestly reads LONG there --
+    # the SMA-disagreement semantics still applies to BTC/SOL, which keep v1.)
+    _breakdown = list(np.linspace(100, 200, 300)) + list(np.linspace(200, 80, 300))
+    rec2 = harness.record_tick("ETH", _breakdown, price=1900.0)
     assert rec2["direction"] == 0.0 and rec2["confidence"] == 0.0, (
         "a flat row must contribute zero to the IC, never a saturated claim"
     )

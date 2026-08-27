@@ -7,7 +7,7 @@ per-ROUND-TRIP friction. This replaces the regimebook seat's flat
 
     asset   pre_design   design   validation    MIN   MEDIAN (asserted)
     BTC            2.3     68.5         24.1    2.3               24.1
-    ETH          251.7     88.1         52.1   52.1               88.1
+    ETH  [P419] donchian book  674.4  291.6  375.5     median  375.5
     SOL          427.6    221.7        -20.8  -20.8              221.7
 
 [P321] The asserted statistic is the era-MEDIAN, changed from the MIN by
@@ -15,7 +15,7 @@ explicit operator decision once the goal was stated as profit rather than
 pure capital preservation. The MIN stops every asset; the MEAN can be carried
 by one dominant era (the P243/P244 era-fragility). The median is the robust
 middle, and the STATISTIC is pinned so a silent switch to either extreme
-fails. On it, BTC stops trading (24.1 vs a ~35bps threshold) while ETH (88.1)
+fails. On it, BTC stops trading (24.1 vs a ~35bps threshold) while ETH (375.5, donchian book [P419])
 and SOL (221.7) clear.
 
 THE INTERLOCK IS THE POINT. Calibrated alpha alone raises ETH's assertion
@@ -103,7 +103,7 @@ class TestFailDirections:
 
     def test_regimebook_dispatches_to_the_calibration(self):
         assert calibrated_seat_alpha("ETH", "regimebook", 30.0)[0] == \
-            pytest.approx(88.1)
+            pytest.approx(375.5)  # [P419]
 
 
 class TestInterlock:
@@ -119,7 +119,7 @@ class TestInterlock:
         against the defect it guarded)."""
         from core.seat_alpha import resolve_seat_edge
         assert resolve_seat_edge("ETH", "regimebook", 1.0, 30.0,
-                                 True, True, 2252.0) == pytest.approx(88.1)
+                                 True, True, 2252.0) == pytest.approx(375.5)  # [P419]
         for cal, fee in ((True, False), (False, True), (False, False)):
             assert resolve_seat_edge("ETH", "regimebook", 1.0, 30.0,
                                      cal, fee, 2252.0) == pytest.approx(30.0), (
@@ -139,7 +139,7 @@ class TestInterlock:
         """
         from core.seat_alpha import resolve_seat_edge
         assert resolve_seat_edge("ETH", "regimebook", 1.0, 30.0, True, True,
-                                 price=1916.5) == pytest.approx(88.1)
+                                 price=1916.5) == pytest.approx(375.5)  # [P419]
         for bad in (0.0, -1.0, float("nan")):
             assert resolve_seat_edge("ETH", "regimebook", 1.0, 30.0, True,
                                      True, price=bad) == pytest.approx(30.0), (
@@ -167,7 +167,7 @@ class TestInterlock:
         from core.seat_alpha import resolve_seat_edge
         a = resolve_seat_edge("ETH", "regimebook", 1.0, 30.0, True, True, 2252.0)
         b = resolve_seat_edge("ETH", "regimebook", 0.5, 30.0, True, True, 2252.0)
-        assert a == pytest.approx(b) == pytest.approx(88.1), (
+        assert a == pytest.approx(b) == pytest.approx(375.5), (  # [P419]
             "the calibrated round-trip edge is being rescaled by |direction|")
 
     def test_the_seat_passes_both_flags_to_the_resolver(self):
@@ -193,7 +193,7 @@ class TestInterlock:
         direction is a live-money change (the P237/P270 pattern).
 
         Live effect of the pair: BTC stops entering (24.1 vs a ~35bps
-        threshold); ETH (88.1) and SOL (221.7) continue on honest economics."""
+        threshold); ETH (375.5, donchian [P419]) and SOL (221.7) continue on honest economics."""
         live = json.loads(
             (REPO / "configs" / "live_high_risk.json").read_text(encoding="utf-8"))
         assert live.get("coinbase_per_contract_fees") is True

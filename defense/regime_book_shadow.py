@@ -62,7 +62,7 @@ SHADOW_STRATEGY_NAMES = frozenset({
 
 BOOKS_VERSION = {
     "BTC": "v1_full",
-    "ETH": "v1_full",           # trend-only IS the full measured ETH book
+    "ETH": "v2_donchian_trend",           # trend-only IS the full measured ETH book
     # [P299] SOL is TREND-ONLY, not degraded. Its behaviour has always been
     # ETH's certified book verbatim — hold in bull (the shared bull block
     # gives SOL 1.0), flat otherwise — and the only thing it lacks is a BEAR
@@ -260,6 +260,40 @@ def banded_features_from_closes(closes, funding_z: Optional[float]):
             c[-1] / sma200 - 1.0, vol20, vol120,
             vol20 / (vol120 + 1e-12),
             0.0 if funding_z is None else float(funding_z)]
+
+
+# [P419] MEASURED book change (operator: "调整一下我们的K线"): ETH's trend leg
+# is DONCHIAN-100, not SMA200. Decided by the pre-committed chassis verdict
+# (training/scripts/donchian_switch_lab_p419.py, honest per-leg CDE costs +
+# carry): ETH donchian net +2.161 vs sma +1.870 over 6.6y, wins 2/3 eras and
+# is 3x the SMA leg in the MOST RECENT era (+0.332 vs +0.111); per-RT era
+# edges 674.4/291.6/375.5 (median 375.5bps >> ~29bps friction). BTC keeps
+# SMA200 (era_wins 1/3); SOL keeps SMA200 (era-fragile 1/3 despite a higher
+# full-window total -- the P243/P244 rule). External net-of-cost survey
+# (P418 research): Donchian/channel breakout is the ONE K-line family with
+# multiple independent net-of-cost passes. The known trade-off travels with
+# the switch: later channel exits -> deeper bear-year drawdowns, accepted by
+# the operator explicitly ("如果一跌我们就抛 永远赚不到钱").
+# REVERT: empty this set + restore ETH's seat_alpha rows.
+DONCHIAN_TREND_ASSETS = frozenset({"ETH"})
+
+
+def donchian_trend_target(closes) -> Optional[tuple]:
+    """[P419] (target, leg) from the canonical Donchian-100 state machine
+    (defense.trend_rule_shadow.donchian_labels -- the SAME math the lab and
+    the forward ledgers use, P172). None when the window is too short: a
+    short history must fall back to the incumbent book, never read as flat
+    (P2 -- absence is not an opinion)."""
+    try:
+        from defense.trend_rule_shadow import DON_WIN, donchian_labels
+        import numpy as _np
+        c = _np.asarray(list(closes), dtype=float)
+        if len(c) < DON_WIN + 2:
+            return None
+        state = float(donchian_labels(c)[-1])
+        return (1.0, "donchian_hold") if state > 0 else (0.0, "donchian_flat")
+    except Exception:  # noqa: silent-swallow -- a broken label must fall back to the incumbent book, logged by the caller's version field
+        return None
 
 
 def book_target(asset: str, regime: str, funding_z: Optional[float]) -> tuple:
@@ -877,6 +911,11 @@ class RegimeBookShadow:
                             asset, _fage)
             target, leg = book_target(asset, regime, fz)
             version = BOOKS_VERSION.get(asset, "unknown")
+            # [P419] donchian trend leg for the measured switch set
+            if asset in DONCHIAN_TREND_ASSETS:
+                _don = donchian_trend_target(closes)
+                if _don is not None:
+                    target, leg = _don
             coverage_note = None
             if asset == "SOL" and regime == "bear":
                 target, leg, version, coverage_note = self._sol_bear_target()

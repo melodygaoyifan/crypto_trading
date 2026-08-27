@@ -80,12 +80,22 @@ def round_trip_edge_bps(gross, pos) -> Optional[float]:
 
 
 def calibrate(asset: str, series: str = "book") -> Dict[str, Optional[float]]:
-    """Per-era edge for `asset`'s `series` ("book" or "trend")."""
+    """Per-era edge for `asset`'s `series` ("book", "trend" or "donchian")."""
     import training.funding_legs_lab as lab
 
     closes = lab.load_closes(asset)
     funding = lab.load_funding_daily(asset)
     pos_df = lab.build_positions(asset, closes, funding)
+    if series == "donchian":
+        # [P419] the canonical Donchian-100 labels (defense.trend_rule_shadow
+        # -- the same math the live leg runs, P172), aligned to the chassis
+        # frame exactly like the lab that produced the shipped ETH rows.
+        import pandas as _pd
+        from defense.trend_rule_shadow import donchian_labels as _dl
+        _don = _dl(closes.to_numpy(dtype=float))
+        pos_df = pos_df.copy()
+        pos_df["donchian"] = _pd.Series(
+            _don, index=closes.index).reindex(pos_df.index)
     out: Dict[str, Optional[float]] = {}
     for era, (lo, hi) in lab.ERAS.items():
         # clause 2: eras index the POSITIONS frame directly
@@ -101,7 +111,8 @@ def calibrate(asset: str, series: str = "book") -> Dict[str, Optional[float]]:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--assets", default="BTC,ETH,SOL")
-    ap.add_argument("--series", default="book", choices=("book", "trend"))
+    ap.add_argument("--series", default="book",
+                    choices=("book", "trend", "donchian"))
     ap.add_argument("--verify", action="store_true",
                     help="compare against core.seat_alpha and exit 3 on drift")
     args = ap.parse_args(argv)
@@ -113,10 +124,16 @@ def main(argv=None) -> int:
               file=sys.stderr)
         return 2
 
+    # [P419] the shipped table is per-asset series-mapped (ETH = donchian);
+    # --verify uses the map, so the flag's --series is only for exploration.
+    try:
+        from core.seat_alpha import REGIMEBOOK_SERIES_BY_ASSET as SERIES_MAP
+    except Exception:
+        SERIES_MAP = {}
     if args.verify and args.series != "book":
-        print("REFUSING: --verify compares the BOOK series, which is what the "
-              "shipped table calibrates. Verifying a different series against "
-              "it would report drift that is really a different question.",
+        print("REFUSING: --verify picks each asset's series from "
+              "core.seat_alpha.REGIMEBOOK_SERIES_BY_ASSET; passing --series "
+              "with --verify would compare a different question.",
               file=sys.stderr)
         return 2
 
@@ -124,8 +141,10 @@ def main(argv=None) -> int:
     print(f"{'asset':<6}{'era':<13}{'measured':>11}{'shipped':>10}   series="
           f"{args.series}")
     for asset in [a.strip().upper() for a in args.assets.split(",") if a.strip()]:
+        _series = (SERIES_MAP.get(asset, "book")
+                   if args.verify else args.series)
         try:
-            cells = calibrate(asset, args.series)
+            cells = calibrate(asset, _series)
         except FileNotFoundError as e:
             print(f"REFUSING: price/funding history missing for {asset} ({e}). "
                   f"This tool is operator-local (P213); 'no data' is not "

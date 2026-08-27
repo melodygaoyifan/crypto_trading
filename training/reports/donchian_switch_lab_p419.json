@@ -1,0 +1,97 @@
+{
+  "assets": {
+    "BTC": {
+      "eras": {
+        "pre_design": {
+          "sma": -0.164,
+          "donchian": -0.369
+        },
+        "design": {
+          "sma": 0.723,
+          "donchian": 0.934
+        },
+        "validation": {
+          "sma": -0.11,
+          "donchian": -0.308
+        }
+      },
+      "turnover": {
+        "sma": 282.0,
+        "donchian": 84.0
+      },
+      "rt_edge_bps": {
+        "pre_design": -313.6636341816524,
+        "design": 643.3961192716283,
+        "validation": -171.31738449429923
+      },
+      "net_total": {
+        "sma": 1.346,
+        "donchian": 1.199
+      },
+      "rt_edge_median": -171.3,
+      "verdict": "SMA_STANDS"
+    },
+    "ETH": {
+      "eras": {
+        "pre_design": {
+          "sma": 0.317,
+          "donchian": 0.26
+        },
+        "design": {
+          "sma": 0.229,
+          "donchian": 0.351
+        },
+        "validation": {
+          "sma": 0.111,
+          "donchian": 0.332
+        }
+      },
+      "turnover": {
+        "sma": 249.0,
+        "donchian": 76.0
+      },
+      "rt_edge_bps": {
+        "pre_design": 674.367808206818,
+        "design": 291.6431728721643,
+        "validation": 375.5387088997731
+      },
+      "net_total": {
+        "sma": 1.87,
+        "donchian": 2.161
+      },
+      "rt_edge_median": 375.5,
+      "verdict": "SWITCH"
+    },
+    "SOL": {
+      "eras": {
+        "pre_design": {
+          "sma": 1.384,
+          "donchian": 1.295
+        },
+        "design": {
+          "sma": 1.135,
+          "donchian": 2.426
+        },
+        "validation": {
+          "sma": -0.055,
+          "donchian": -0.202
+        }
+      },
+      "turnover": {
+        "sma": 275.0,
+        "donchian": 76.0
+      },
+      "rt_edge_bps": {
+        "pre_design": 1565.766840056581,
+        "design": 1643.903793709286,
+        "validation": -138.6799015772448
+      },
+      "net_total": {
+        "sma": 4.017,
+        "donchian": 5.868
+      },
+      "rt_edge_median": 1565.8,
+      "verdict": "SMA_STANDS"
+    }
+  }
+}

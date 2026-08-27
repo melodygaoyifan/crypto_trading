@@ -111,7 +111,12 @@ logger = logging.getLogger("HMATS.SeatAlpha")
 # computable from REGIMEBOOK_ALPHA_BY_ERA below for anyone who wants it back.
 REGIMEBOOK_ALPHA_BPS_PER_ROUND_TRIP: Dict[str, float] = {
     "BTC": 24.1,
-    "ETH": 88.1,
+    # [P419] ETH's trend leg switched to DONCHIAN-100 (measured book change);
+    # the asserted edge is the DEPLOYED rule's own measured median (P320: a
+    # seat asserts the edge of the rule it runs, never an inherited
+    # calibration from a different rule). Producer:
+    # training/seat_alpha_calibration.py --series donchian --assets ETH.
+    "ETH": 375.5,
     "SOL": 221.7,
     # [P412] XRP breadth: era-median +75.8bps/RT, MEASURED by the same producer
     # (training/seat_alpha_calibration.py --assets XRP, 6y book) 2026-08-26. Same
@@ -129,9 +134,18 @@ REGIMEBOOK_ALPHA_BPS_PER_ROUND_TRIP: Dict[str, float] = {
 
 # Full per-era measurement, kept so a reader can see the dispersion the
 # minimum is drawn from rather than having to trust the single number.
+# [P419] Which position SERIES each asset's shipped rows calibrate. The
+# calibrator's --verify reads this so ETH verifies against the DONCHIAN
+# series while the others verify against the book -- one auditable map
+# instead of a comment nobody re-checks.
+REGIMEBOOK_SERIES_BY_ASSET: Dict[str, str] = {
+    "BTC": "book", "ETH": "donchian", "SOL": "book",
+    "XRP": "book", "BNB": "book",
+}
+
 REGIMEBOOK_ALPHA_BY_ERA: Dict[str, Dict[str, float]] = {
     "BTC": {"pre_design": 2.3, "design": 68.5, "validation": 24.1},
-    "ETH": {"pre_design": 251.7, "design": 88.1, "validation": 52.1},
+    "ETH": {"pre_design": 674.4, "design": 291.6, "validation": 375.5},  # [P419] donchian book
     "SOL": {"pre_design": 427.6, "design": 221.7, "validation": -20.8},
     "XRP": {"pre_design": 335.3, "design": 75.8, "validation": -21.9},  # [P412]
     "BNB": {"pre_design": 650.7, "design": 38.0, "validation": 36.6},   # [P412]
