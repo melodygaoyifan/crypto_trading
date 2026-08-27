@@ -222,7 +222,7 @@ class CoinbaseSleeve:
         # only n - filled, never the delta of a position snapshot that
         # LAGS the fill (measured P382 4/4 taker legs, and again 2026-08-27
         # `SELL 1ct MARKET URGENT -> now=2.0ct`).
-        self._maker_last_filled: Dict[str, Optional[float]] = {}
+        self._maker_last_filled: Dict[str, Any] = {}  # [P420] {asset: {filled, cancelled}}
         # [P197] Server-side protective stop. `pct` <= 0 DISABLES the feature
         # entirely — a single knob, so "enabled with a 0% stop" is unexpressible.
         # `protective_stop_assets=None` means every sleeve asset; pass a subset to

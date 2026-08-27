@@ -274,12 +274,13 @@ class SentimentFeed:
                     # get_latest() recomputes the cached tick's staleness
                     # from its ORIGINAL timestamp (one clock, P172)
                     prev = self.get_latest()
-                    logger.warning(
-                        f"[SENTIMENT] {self.source.value} fetch fell back to "
-                        f"mock — serving the previous real tick "
-                        f"({prev.staleness_sec:.0f}s old) instead of a "
-                        f"fabricated neutral (P420)")
-                    return prev
+                    if prev is not None:
+                        logger.warning(
+                            f"[SENTIMENT] {self.source.value} fetch fell back to "
+                            f"mock — serving the previous real tick "
+                            f"({prev.staleness_sec:.0f}s old) instead of a "
+                            f"fabricated neutral (P420)")
+                        return prev
                 logger.warning(
                     f"[SENTIMENT] {self.source.value} fetch fell back to mock "
                     f"and no real tick exists yet — tick is FLAGGED is_mock "

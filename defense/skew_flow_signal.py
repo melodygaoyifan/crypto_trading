@@ -161,11 +161,12 @@ def replay_hold(vals: List[float], vals10: Optional[List[float]] = None,
     The blend rule matches seat_direction: when the 10d series is long enough
     the z is the mean of the 25d and 10d z's, else 25d alone.
     """
-    use10 = bool(vals10) and len(vals10) >= min_obs10 and len(vals10) == len(vals)
+    v10 = list(vals10 or [])
+    use10 = len(v10) >= min_obs10 and len(v10) == len(vals)
     prev = 0.0
     for i in range(1, len(vals)):          # state entering bar i == pos after bar i-1
         z25 = zscore_trailing(vals[:i])
-        z = (z25 + zscore_trailing(vals10[:i])) / 2.0 if use10 else z25
+        z = (z25 + zscore_trailing(v10[:i])) / 2.0 if use10 else z25
         prev = band_direction(z, prev)
     return prev
 
@@ -355,7 +356,7 @@ class SkewFlowSignal:
         use10 = len(vals10) >= _MIN_OBS
         z25 = zscore_trailing(vals)
         z10 = zscore_trailing(vals10) if use10 else None
-        z = (z25 + z10) / 2.0 if use10 else z25
+        z = (z25 + z10) / 2.0 if (use10 and z10 is not None) else z25
         hold_source = "persisted"
         if asset in self._replay_pending:
             # [P420] stale persisted hold: reproduce what a continuous process

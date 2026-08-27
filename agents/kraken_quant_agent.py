@@ -1601,7 +1601,7 @@ class RelativeStrengthStrategy(BaseStrategy):
 
         # [P420] append a price only when ITS bar advanced (see kq_dedup_key)
         if not hasattr(self, "_last_bar_ts"):
-            self._last_bar_ts: Dict[str, float] = {}
+            self._last_bar_ts = {}  # typed at the restore site
         _key = kq_dedup_key(market_data)
         _appended = False
         for asset in ['BTC', 'SOL']:
@@ -1993,7 +1993,7 @@ class KalmanCointegrationStrategy(BaseStrategy):
         # Update price buffers
         # [P420] append a price only when ITS bar advanced (see kq_dedup_key)
         if not hasattr(self, "_last_bar_ts"):
-            self._last_bar_ts: Dict[str, float] = {}
+            self._last_bar_ts = {}  # typed at the restore site
         _key = kq_dedup_key(market_data)
         _appended = False
         for asset in [self.asset_a, self.asset_b]:

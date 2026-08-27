@@ -59,7 +59,7 @@ class SkewEtfComboShadow:
         dirs = combo_directions(skew_dir, skew_fresh, etf_dir, etf_fresh)
         now = time.time()
         iso = datetime.now(timezone.utc).isoformat()
-        diag = {"skew_fresh": bool(skew_fresh), "etf_fresh": bool(etf_fresh),
+        diag: dict = {"skew_fresh": bool(skew_fresh), "etf_fresh": bool(etf_fresh),
                 "skew_dir": float(skew_dir), "etf_dir": float(etf_dir)}
         # [P420] The raw inputs the skew seat decided on (tenor-30 skew_25d,
         # z25, z10, blended z) travel with the row, so the forward ledger can be

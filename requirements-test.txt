@@ -55,3 +55,4 @@ PyWavelets>=1.4.0              # [P203] `import pywt` reached transitively:
 # stamp mismatch. Do NOT fix that by pinning here — that creates a second source of
 # truth, which is what P187 removed. The fix is for test-suite.yml to read the version
 # from the baseline the same way codebase-invariants does.
+ta>=0.11.0                     # [P420] the pipeline's TA library (Dockerfile.engine installs it bare); the end-to-end cache tests drive fetch_and_prepare, whose MISS block returns raw data without it -- CI ran them against 'ta library unavailable'

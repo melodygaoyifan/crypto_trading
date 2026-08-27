@@ -161,7 +161,7 @@ def load_signal_records(log_dir: Path, window_days: int) -> list[dict]:
     cutoff = datetime.now(timezone.utc).timestamp() - window_days * 86400
     out = []
     skipped = 0
-    unpriced = {}  # [P420] asset -> rows dropped for lack of a Kraken pair
+    unpriced: dict = {}  # [P420] asset -> rows dropped for lack of a Kraken pair
     for f in files:
         with open(f, encoding="utf-8") as fh:
             for line in fh:

@@ -323,7 +323,7 @@ class CoinglassFeed:
     # REAL API
     # =========================================================================
     
-    async def _fetch_real(self) -> CoinglassCrowdData:
+    async def _fetch_real(self) -> Optional[CoinglassCrowdData]:  # [P420] None = nothing fetched on a cold cache
         """Fetch real data from Coinglass.
 
         v2 API structure (verified Feb 2026):

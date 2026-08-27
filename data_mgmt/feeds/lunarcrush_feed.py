@@ -279,7 +279,7 @@ class LunarCrushFeed:
     # REAL API
     # =========================================================================
     
-    async def _fetch_real(self) -> LunarCrushAttentionData:
+    async def _fetch_real(self) -> Optional[LunarCrushAttentionData]:  # [P420] None = keep the previous cache
         """Fetch real data from LunarCrush."""
         now = datetime.now(timezone.utc)
         
