@@ -6919,6 +6919,20 @@ class HMATSProductionRunner:
             logger.warning(f"  [P407] SkewFlowSignal init failed: "
                            f"{type(_sks_err).__name__}: {_sks_err}")
 
+        # [WS2] Conviction-sizing forward shadow — sizes UP when trend AND the
+        # live P407 skew agree, de-risks when skew disagrees; observation-only
+        # (its own data/conviction_shadow ledger, judged on PnL not rank-IC).
+        self._conviction_shadow = None
+        try:
+            from defense.conviction_sizing_shadow import ConvictionSizingShadow
+            self._conviction_shadow = ConvictionSizingShadow(
+                self._skew_flow_signal, data_dir="data")
+            logger.info("  [WS2] ConvictionSizingShadow: ACTIVE "
+                        "(observation-only; trend x skew sizing; BTC+ETH)")
+        except Exception as _cvs_err:
+            logger.warning(f"  [WS2] ConvictionSizingShadow init failed: "
+                           f"{type(_cvs_err).__name__}: {_cvs_err}")
+
         # [P414c] Jump-model regime SHADOW (observation-only) — the
         # shadow-first step of the GMM->jump swap. Runs the online filtered
         # jump regime alongside the GMM and logs a live churn comparison;
@@ -24965,6 +24979,16 @@ class HMATSProductionRunner:
                     except Exception as _trs_e:  # noqa: silent-swallow
                         logger.warning(f"[TRENDRULE-SHADOW] tick failed: "
                                        f"{type(_trs_e).__name__} — ledgers "
+                                       f"stale this cycle")
+
+                # [WS2] Conviction-sizing shadow tick — reuses the live skew
+                # signal + its own closes; observation-only PnL ledger.
+                if getattr(self, "_conviction_shadow", None) is not None:
+                    try:
+                        self._conviction_shadow.tick()
+                    except Exception as _cvs_e:  # noqa: silent-swallow
+                        logger.warning(f"[CONVSIZE-SHADOW] tick failed: "
+                                       f"{type(_cvs_e).__name__} — ledgers "
                                        f"stale this cycle")
 
                 # [P414c] Jump-regime shadow tick — feed the per-tick stash
