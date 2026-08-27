@@ -227,6 +227,10 @@ COST_DICT_RE = re.compile(r"^[A-Za-z_]*COST[A-Za-z_]*\s*=\s*\{", re.M)
 # defining a COST_* dict fails this roster until someone adds it HERE with a
 # parity test or a stated per-RT/per-event reason — that is the point.
 COST_DICT_OWNERS = {
+    "training/conviction_sizing_lab.py": {
+        "covered_by": "charges through sizing_overlay_lab.per_bar_net "
+                      "(the P382-corrected per-leg chassis; WS2)",
+        "pins": [r"per_bar_net\(close, "]},
     "training/overlay_backtest_lab.py": {
         "covered_by": "this file (P382 parity + end-to-end)",
         "pins": [r"turnover_cost\(turn, asset\)"]},
