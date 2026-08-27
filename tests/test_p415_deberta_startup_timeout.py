@@ -17,7 +17,7 @@ from agents import sentiment_deberta as sd
 
 def test_a_stalled_load_does_not_block_startup(monkeypatch, tmp_path):
     f = tmp_path / "m.pt"
-    f.write_text("x")
+    f.write_bytes(b"x")
     monkeypatch.setattr(sd.DeBERTaSentimentEngine, "LOAD_TIMEOUT_SEC", 0.3)
 
     def _hang(self, _path, device="auto"):
@@ -33,7 +33,7 @@ def test_a_stalled_load_does_not_block_startup(monkeypatch, tmp_path):
 
 def test_a_fast_load_still_succeeds(monkeypatch, tmp_path):
     f = tmp_path / "m.pt"
-    f.write_text("x")
+    f.write_bytes(b"x")
 
     def _ok(self, _path, device="auto"):
         self.model = object()
@@ -48,7 +48,7 @@ def test_a_late_finishing_load_recovers_the_model(monkeypatch, tmp_path):
     """A download that finishes AFTER the timeout harmlessly recovers the model
     (benign late write) — degraded meanwhile, not broken."""
     f = tmp_path / "m.pt"
-    f.write_text("x")
+    f.write_bytes(b"x")
     monkeypatch.setattr(sd.DeBERTaSentimentEngine, "LOAD_TIMEOUT_SEC", 0.2)
 
     def _slow_ok(self, _path, device="auto"):
