@@ -2537,6 +2537,11 @@ class MarketDataPipeline:
             logger.warning(f"[GMM] {asset}: scaler not loaded, falling back to ADX proxy")
             raw["_gmm_fallback"] = "scaler_missing"
             return None
+        # [P414c] stash the GMM's own (validated) feature vector for the
+        # jump-regime SHADOW — parity, no train/serve skew. `features` is a
+        # checked np.array here (past the shape guard), so no try needed.
+        # Observation-only; read in main.py. Never consumed by a live control.
+        raw["_gmm_raw_features"] = [float(x) for x in features]
         scaled = (features - _scaler_mean) / _scaler_scale
 
         extreme_mask = _np.abs(scaled) > 3.0

@@ -6919,6 +6919,21 @@ class HMATSProductionRunner:
             logger.warning(f"  [P407] SkewFlowSignal init failed: "
                            f"{type(_sks_err).__name__}: {_sks_err}")
 
+        # [P414c] Jump-model regime SHADOW (observation-only) — the
+        # shadow-first step of the GMM->jump swap. Runs the online filtered
+        # jump regime alongside the GMM and logs a live churn comparison;
+        # changes NO control. _jump_feats/_jump_gmm are the per-tick stash
+        # populated in the decide loop and consumed at loop level.
+        self._jump_regime_shadow = None
+        self._jump_feats = {}
+        self._jump_gmm = {}
+        try:
+            from defense.jump_regime_shadow import JumpRegimeShadow
+            self._jump_regime_shadow = JumpRegimeShadow(data_dir="data")
+        except Exception as _jrs_err:
+            logger.warning(f"  [P414c] JumpRegimeShadow init failed: "
+                           f"{type(_jrs_err).__name__}: {_jrs_err}")
+
         # [P277] Enhancement shadow families (stablecoinflow / oidiv twins /
         # calbasis / xsmom / eventfilter) — observation-only, Iron Law 7;
         # their 30d P166 clocks start at the first deploy that runs them.
@@ -13274,6 +13289,13 @@ class HMATSProductionRunner:
                     f"[REGIMEBOOK] {asset}: observe_features failed "
                     f"({type(_rbs_err).__name__}: {_rbs_err}) — the SOL "
                     f"parity stash is starving")
+        # [P414c] stash this asset's GMM features + live regime for the
+        # jump shadow (consumed at loop level; observation-only).
+        if getattr(self, "_jump_regime_shadow", None) is not None:
+            _jf = market_data.get("_gmm_raw_features")
+            if _jf is not None:
+                self._jump_feats[asset] = _jf
+                self._jump_gmm[asset] = market_data.get("regime_state")
         # [P277] per-asset OI stash for the oidiv enhancement shadow (the
         # loop-level tick runs after all assets; market_data is per-asset
         # here). Absent key stays absent — oidiv writes flat on None (P2).
@@ -24944,6 +24966,19 @@ class HMATSProductionRunner:
                         logger.warning(f"[TRENDRULE-SHADOW] tick failed: "
                                        f"{type(_trs_e).__name__} — ledgers "
                                        f"stale this cycle")
+
+                # [P414c] Jump-regime shadow tick — feed the per-tick stash
+                # (GMM features + live regime), then clear it. Observation-only.
+                if getattr(self, "_jump_regime_shadow", None) is not None:
+                    try:
+                        self._jump_regime_shadow.tick(
+                            self._jump_feats, self._jump_gmm)
+                    except Exception as _jrt_e:  # noqa: silent-swallow
+                        logger.warning(f"[JUMP-REGIME] tick failed: "
+                                       f"{type(_jrt_e).__name__}")
+                    finally:
+                        self._jump_feats = {}
+                        self._jump_gmm = {}
 
                 # [P270] ETF-flow shadow tick — same loop-level placement so
                 # no sleeve/heartbeat branch can starve it (P227 lesson).
