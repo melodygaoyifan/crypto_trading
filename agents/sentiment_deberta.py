@@ -13,9 +13,15 @@ Usage:
     # {"direction": 0.8, "confidence": 0.92, "label": "positive"}
 """
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Any
+
+# [P415] Bound HF-hub network calls so a stalled CDN download cannot hang
+# the DeBERTa load (belt-and-suspenders to the hard thread timeout below).
+os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "30")
+os.environ.setdefault("HF_HUB_ETAG_TIMEOUT", "15")
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +34,9 @@ class DeBERTaSentimentEngine:
     LABEL_MAP = {0: "negative", 1: "neutral", 2: "positive"}
     DIRECTION_MAP = {0: -1.0, 1: 0.0, 2: 1.0}  # negative=-1, neutral=0, positive=+1
     MODEL_PATH = Path("models/sentiment_v22_best.pt")
+    LOAD_TIMEOUT_SEC = 60  # [P415] hard cap on the HF-dependent load; on
+    #                        timeout start DEGRADED (F&G heuristic fallback),
+    #                        never block engine startup
 
     def __init__(self, model_path: Optional[str] = None, device: str = "auto"):
         self.model = None
@@ -41,6 +50,29 @@ class DeBERTaSentimentEngine:
             logger.warning(f"[L2_SENTIMENT] Model not found at {_path}")
             return
 
+        # [P415] The DeBERTa base encoder + tokenizer come from HF
+        # (AutoModel/AutoTokenizer.from_pretrained); a stalled HF-CDN download
+        # previously BLOCKED engine startup ~14 min (2026-08-27) with only
+        # venue-resting stops protecting the book. This L2 is low-value and
+        # near-zero-weighted (P228/P296) and must NEVER gate startup: run the
+        # load in a daemon thread with a hard timeout and, on timeout, start
+        # DEGRADED (the sentiment blend already falls back to the F&G
+        # heuristic). A late-finishing download harmlessly recovers the model.
+        import threading
+        _t = threading.Thread(
+            target=self._load_model, args=(_path, device), daemon=True)
+        _t.start()
+        _t.join(self.LOAD_TIMEOUT_SEC)
+        if _t.is_alive():
+            logger.warning(
+                f"[L2_SENTIMENT] load exceeded {self.LOAD_TIMEOUT_SEC}s "
+                f"(HF download stalled?) — starting DEGRADED; sentiment uses "
+                f"the F&G heuristic. Model recovers if the download finishes.")
+
+    def _load_model(self, _path: "Path", device: str = "auto") -> None:
+        """Load the DeBERTa checkpoint + HF base encoder + tokenizer. Runs in a
+        daemon thread (see __init__) so a stalled HF download cannot block
+        startup; any failure or the timeout degrades to the F&G heuristic."""
         try:
             import torch
             from transformers import AutoTokenizer
