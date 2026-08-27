@@ -442,9 +442,11 @@ class TradeAttributor:
         # Grand waterfall
         waterfall = self._aggregate_waterfall(trades)
 
-        # Per-asset
+        # Per-asset — [P420] every asset PRESENT in the trades, not the home
+        # trio: XRP/BNB trades (P412/P412c) were silently absent from the
+        # per-asset waterfall.
         per_asset = {}
-        for asset in ["BTC", "ETH", "SOL"]:
+        for asset in sorted({t.asset for t in trades if t.asset}):
             subset = [t for t in trades if t.asset == asset]
             if subset:
                 per_asset[asset] = self._aggregate_waterfall(subset)
@@ -537,7 +539,7 @@ class TradeAttributor:
         if r["per_asset"]:
             lines.append("")
             lines.append("--- PER ASSET ---")
-            for asset in ["BTC", "ETH", "SOL"]:
+            for asset in sorted(r["per_asset"]):  # [P420] all assets present
                 if asset in r["per_asset"]:
                     a = r["per_asset"][asset]
                     lines.append(

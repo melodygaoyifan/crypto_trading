@@ -407,6 +407,20 @@ class CoinglassFeed:
                 "failed) — keeping the previous cache with honest staleness "
                 "rather than fabricating fresh zeros")
             return self._refreshed_staleness(_prev) or _prev
+        # [P420] The P265 guard covered only the case with a prior cache.
+        # On a FIRST-BOOT total outage (_prev is None) the empty payload fell
+        # through to _compute_metrics and was stored FRESH-STAMPED: an
+        # all-zero CoinglassCrowdData (funding_bias/oi_trend/liq_imbalance
+        # 0.0, staleness 0.0) that every consumer read as a calm market and
+        # that fetch_if_stale then served for poll_interval_sec. Absence is
+        # None (P2). _last_fetch_time is NOT stamped, so the next call
+        # retries instead of waiting out a throttle on nothing.
+        if not _got_anything:
+            logger.warning(
+                "[COINGLASS] fetch produced NO content on a cold cache (all "
+                "endpoints failed, nothing to carry) — returning ABSENT "
+                "rather than fabricating a fresh all-zero snapshot (P420)")
+            return None
 
         # [P265] Re-arm the failure telemetry on recovery. The one-shot
         # latch used to stay set for the process lifetime, so after one bad

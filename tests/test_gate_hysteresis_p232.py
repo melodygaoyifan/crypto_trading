@@ -288,7 +288,11 @@ class TestTripwireActuatorAndChecker:
         blk = MAIN[MAIN.find("[P237] Tripwire ACTUATOR"):]
         blk = blk[:blk.find("get_trend_decision_layer")]
         assert "asset not in _trend_assets" in blk
-        assert "EXCLUDED by trend_assets" in blk
+        # [P420] the log was reworded: XRP/BNB are outside the DEFAULT trio
+        # and were never tripwired, so the line no longer claims the P237
+        # actuator fired ("not in trend_assets (default = home trio ...)");
+        # the SKIP itself -- the actuator's contract -- is what this pins.
+        assert "not in trend_assets" in blk
 
     def _write_report(self, d, day, closed_assets):
         rep = {"generated": f"{day}T06:20:00+00:00", "assets": {}}

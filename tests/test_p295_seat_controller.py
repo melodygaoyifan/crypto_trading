@@ -168,7 +168,9 @@ class TestNeverEditsConfig:
 
     def test_every_winner_has_a_stated_config_edit(self):
         from analytics.seat.seat_controller import SEAT_CONFIG_EDIT
-        for seat in ("trend", "whale", "regimebook", FLAT):
+        # [P420] + the two seats the pre-P420 table did not know existed
+        for seat in ("trend", "whale", "regimebook", "skew_contra",
+                     "etf_flow", FLAT):
             assert seat in SEAT_CONFIG_EDIT and SEAT_CONFIG_EDIT[seat]
 
 
@@ -209,15 +211,32 @@ class TestCli:
         assert "REFUSING" in r.stderr
 
     def test_incumbent_is_read_from_the_live_config(self):
-        """[P382 re-pointed] Seat precedence must mirror what actually holds
-        the DECIDE slot: regimebook > whale > trend. The whale seat still
-        RUNS last, but P298 made it DEFER to a directional book target, so
-        with `regimebook_mode: enforce` (the live profile since 2026-08-18)
-        the book is the incumbent and whale fills its flat ticks."""
+        """[P420 re-pointed, was P382] The live decider is PER ASSET in
+        seat-run order: skew (BTC/ETH, skew_seat_mode enforce) > etf-decide
+        > regimebook > whale > trend. With the live profile the skew seat
+        holds BTC and ETH and the regimebook holds SOL; skew is NOT scoreable
+        from agent_ic_review, so an unscoped run must REFUSE (exit 2) and say
+        why — not prescribe a switch computed from the wrong series (which
+        is what the 2026-08-24 cron did, prescribing the retired
+        `trend_assets: []`)."""
         r = _run("--stats", json.dumps(
             {"whale": {"ic_4h": 0.04, "ic_16h": 0.011,
                        "t_4h": 0.98, "t_16h": 0.14, "n": 605}}))
-        assert r.returncode in (0, 2, 3), r.stderr
+        assert r.returncode == 2, r.stdout + r.stderr
+        assert re.search(r"BTC\s*:\s*skew_contra", r.stdout), r.stdout
+        assert re.search(r"ETH\s*:\s*skew_contra", r.stdout), r.stdout
+        assert re.search(r"SOL\s*:\s*regimebook", r.stdout), r.stdout
+        assert "not scoreable by this instrument" in r.stderr
+        assert "skewetf_*" in r.stderr
+        assert "trend_assets" not in r.stdout + r.stderr
+
+    def test_scoped_to_a_scoreable_asset_the_incumbent_is_the_book(self):
+        """[P420] --assets SOL scopes the read to the one asset whose live
+        decider IS an attribution series, and the incumbent is regimebook."""
+        r = _run("--assets", "SOL", "--stats", json.dumps(
+            {"regimebook": {"ic_4h": 0.04, "ic_16h": 0.011,
+                            "t_4h": 0.98, "t_16h": 0.14, "n": 605}}))
+        assert r.returncode in (0, 3), r.stdout + r.stderr
         assert re.search(r"incumbent\s*:\s*regimebook", r.stdout), r.stdout
 
     def test_caveats_are_surfaced_with_the_winner(self):
@@ -285,6 +304,8 @@ class TestInspectionFindings:
         assert "UNCERTIFIED" in src, "the P262 BTC funding-leg caveat"
         assert "P250" in src, "SOL's deleted model"
         assert "unanimity" in src, "trend's quantization"
+        # [P420] and the two seats the old text did not know about
+        assert "skew_contra" in src and "etf_flow" in src
 
 
 # =============================================================================

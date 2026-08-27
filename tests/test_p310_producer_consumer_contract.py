@@ -89,7 +89,9 @@ class TestNameContract:
         names = producer_names()
         assert len(names) >= 25, f"only {len(names)} names collected"
         for known in ("regimebook", "ma_filtered", "liquidation_squeeze",
-                      "donchian", "etfflow"):
+                      "donchian", "etfflow",
+                      "regimebook_breadth",  # [P420] the breadth family
+                      "skewetf_agree"):      # [P420] the combo shadow
             assert known in names, known
 
     def test_every_consumer_name_is_emitted_by_a_real_producer(self):
@@ -168,7 +170,22 @@ class TestNameContract:
         "defense.sentiment_variant_shadow",
         "defense.ridge_shadow",
         "defense.strategy_shadow_v5_1",
+        "defense.skew_etf_combo_shadow",  # [P420] the skewetf_* writer
     )
+
+    def test_skewetf_is_registered_at_both_scorer_prefix_sites(self):
+        """[P420] P192/P236: a prefix registered at ONE of the two default
+        sites accumulates forever at the other — the loader default and the
+        CLI default must both carry `skewetf`, the live decider's own A/B."""
+        from tests._source_scan import code_only
+        src = code_only(REPO / "analytics" / "shadow_ic" / "compute_shadow_ic.py")
+        i = src.index("prefixes: Tuple[str, ...] = (")
+        loader_block = src[i:src.index("since:", i)]
+        assert '"skewetf"' in loader_block, "skewetf missing from the loader default"
+        j = src.index('p.add_argument("--prefixes"')
+        cli_block = src[j:src.index("help=", j)]
+        assert "skewetf" in cli_block.split("default=")[1], (
+            "skewetf missing from the CLI --prefixes default")
 
     def test_the_detector_actually_finds_the_known_writers(self):
         """Anti-vacuity: if the shape detector matches nothing, the rot check

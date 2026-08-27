@@ -103,14 +103,20 @@ drl:
 			--output $(OUTPUT_DIR)/drl_v55 --tag makefile_$$(date +%Y%m%d_%H%M%S) || exit 1; \
 	done
 
+# [P420] drl-fast is the SMOKE of the drl target and must train the SAME
+# formulation: it lacked --decision-interval 4 (so it smoked the retired
+# every-bar churn design, di=1) and carried the FIXED tag makefile_fast — the
+# exact P200 cache trap the drl target was cured of in P269 (a second run
+# restores the cached fold and reports stale numbers as if it trained).
 drl-fast:
 	@for a in $(DRL_ASSETS); do \
-		echo "=== DRL v7 $$a SMOKE ($(DRL_FAST_TIMESTEPS) steps) ==="; \
+		echo "=== DRL v7 $$a SMOKE ($(DRL_FAST_TIMESTEPS) steps, $(DRL_VENUE)/$(DRL_FEE_SIDE), di=4) ==="; \
 		$(PYTHON) -X utf8 -u train_drl_full.py --asset $$a --folds 1 \
 			--timesteps $(DRL_FAST_TIMESTEPS) --extractor lstm_film_a \
 			--reward-mode classic --no-progress-bar \
+			--decision-interval 4 \
 			--venue $(DRL_VENUE) --fee-side $(DRL_FEE_SIDE) \
-			--output $(OUTPUT_DIR)/drl_v55 --tag makefile_fast || exit 1; \
+			--output $(OUTPUT_DIR)/drl_v55 --tag makefile_fast_$$(date +%Y%m%d_%H%M%S) || exit 1; \
 	done
 
 # Sentiment

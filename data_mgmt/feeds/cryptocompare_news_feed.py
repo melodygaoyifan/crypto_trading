@@ -38,7 +38,13 @@ MIN_FETCH_INTERVAL = 43200.0  # 12 h
 # [P219] Categories requested in a single combined call. Must cover every asset
 # the engine trades, or that asset falls back to an empty list and llm_sentiment
 # drops to the f&g path that main.py:8529 treats as untradeable.
-TRACKED_CATEGORIES = ("BTC", "ETH", "SOL")
+# [P420] XRP and BNB are tradeable since P412/P412c and were never in the
+# roster: an untracked asset missed the cache every call, reserved a quota
+# call of its own (the combined call already fetched everything), and was
+# handed the UNFILTERED corpus. The combined call costs the same whatever
+# the roster holds, so the fan-out now covers all five; an asset OUTSIDE the
+# roster returns [] without touching the quota.
+TRACKED_CATEGORIES = ("BTC", "ETH", "SOL", "XRP", "BNB")
 
 
 @dataclass
@@ -215,6 +221,21 @@ class CCNewsFeed:
             return cached[1]
 
         if self._mock_mode:
+            return []
+
+        # [P420] An asset outside the roster has no cache entry to serve and
+        # the combined request would not filter for it — so before P420 it
+        # spent a quota call per tick and got the unfiltered corpus back.
+        # Refuse here, BEFORE the quota reservation, and say so once.
+        if cache_key not in TRACKED_CATEGORIES:
+            if not hasattr(self, "_untracked_warned"):
+                self._untracked_warned: set = set()
+            if cache_key not in self._untracked_warned:
+                self._untracked_warned.add(cache_key)
+                logger.warning(
+                    f"[CC_NEWS] {cache_key}: not in TRACKED_CATEGORIES "
+                    f"{TRACKED_CATEGORIES} — no headlines served and NO quota "
+                    f"spent (P420); add it to the roster to cover it")
             return []
 
         # [P216] Honour an active 429 backoff. Without this the feed re-hit the

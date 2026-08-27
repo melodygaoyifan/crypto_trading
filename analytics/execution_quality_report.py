@@ -708,7 +708,7 @@ if __name__ == "__main__":
         
         records.append(MockRecord(
             timestamp=datetime.now() - timedelta(hours=np.random.randint(0, 168)),
-            asset=["BTC", "ETH", "SOL"][i % 3],
+            asset=["BTC", "ETH", "SOL"][i % 3],  # [P420] synthetic demo rows only
             side="buy" if i % 2 == 0 else "sell",
             intended_quantity=1.0,
             executed_quantity=0.95 + 0.05 * np.random.random(),

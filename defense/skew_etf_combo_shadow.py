@@ -54,12 +54,33 @@ class SkewEtfComboShadow:
         self._dir = os.path.join(data_dir, "strategy_shadow")
 
     def record_tick(self, asset: str, skew_dir: float, skew_fresh: bool,
-                    etf_dir: float, etf_fresh: bool) -> None:
+                    etf_dir: float, etf_fresh: bool,
+                    skew_diag: dict | None = None) -> None:
         dirs = combo_directions(skew_dir, skew_fresh, etf_dir, etf_fresh)
         now = time.time()
         iso = datetime.now(timezone.utc).isoformat()
         diag = {"skew_fresh": bool(skew_fresh), "etf_fresh": bool(etf_fresh),
                 "skew_dir": float(skew_dir), "etf_dir": float(etf_dir)}
+        # [P420] The raw inputs the skew seat decided on (tenor-30 skew_25d,
+        # z25, z10, blended z) travel with the row, so the forward ledger can be
+        # RE-SCORED against a re-fetched calibration series once one exists --
+        # the live apiv2 series is a close cousin of the validated dashboard
+        # series, not the series itself (skew_flow_signal SERIES CAVEAT). Read
+        # from the signal module's per-process diag when the caller does not
+        # pass one (main.py constructs this shadow without a signal handle);
+        # absent stays absent, never a fabricated zero (P2).
+        if skew_diag is None:
+            try:
+                from defense.skew_flow_signal import last_diag as _ld
+                skew_diag = _ld(asset)
+            except Exception as e:  # noqa: silent-swallow -- diagnostics only; the row still records the directions
+                logger.warning("[SKEWETF-SHADOW] %s: skew diag unavailable (%s)",
+                               asset, type(e).__name__)
+                skew_diag = None
+        if skew_diag:
+            diag["skew"] = {k: skew_diag.get(k) for k in
+                            ("skew_25d", "skew_10d", "z25", "z10", "z",
+                             "n_rows", "hold_source")}
         try:
             os.makedirs(self._dir, exist_ok=True)
             path = os.path.join(self._dir, f"skewetf_{asset}.jsonl")

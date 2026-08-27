@@ -217,6 +217,21 @@ def main() -> int:
         closes = load_closes(asset)
         funding = load_funding_daily(asset)
         posd = build_positions(asset, closes, funding)
+        # [P420] the FULL window includes the validation era; that read drove
+        # the P417 flip and was unledgered. Record it (P332/P382).
+        try:
+            from training.splits import record_window_usage
+            _prior = record_window_usage(
+                "conviction_channel_lab:p417", asset, ERAS["validation"][0],
+                int(posd["i"].iloc[-1]) + 1,
+                "validation:conviction-channel 6.6y verdict incl. the "
+                "validation era (drove the P417 channel-OFF flip)")
+            if _prior:
+                print(f"[WINDOW-LEDGER] {asset}: validation window already read "
+                      f"by {_prior} other experiment(s) — discount (P260)")
+        except Exception as e:  # noqa: silent-swallow — surfaced, never blocks the lab
+            print(f"[WINDOW-LEDGER] WARNING: could not record {asset} "
+                  f"({type(e).__name__}: {e})")
         book = posd["book"]
         cap_at = pd.Series(
             cap_daily.reindex(book.index, method="ffill").to_numpy(),

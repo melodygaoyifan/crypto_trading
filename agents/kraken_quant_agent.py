@@ -69,6 +69,46 @@ KQ_WARMUP_MAX_AGE_SEC = 7 * 24 * 3600.0
 # a large one still drops everything (foreign/corrupt shape).
 KQ_WARMUP_PAIR_TOLERANCE = 5
 
+# [P420] Bar-timestamp dedup for the pair strategies. main.py calls
+# generate_signal() once per ASSET per 4H tick with `_kq_mkt = dict(market_data)`
+# plus the cross-asset cache, so RelativeStrength and Kalman received the
+# SAME pair prices on 3 calls per tick and appended all three (2 of 3 a
+# 4h-stale duplicate) — the P390 warmup clocks counted 3x, the RS/spread
+# buffers held triplets, and the Kalman filter was updated 3x per bar on one
+# observation. The converter now carries `bar_ts` (the pipeline's
+# latest_bar_open_ts_ms, 4H-aligned and therefore identical across the three
+# assets' calls within a tick); a price is appended only when ITS bar ts
+# advanced. Falls back to `timestamp` when no bar ts is carried (legacy
+# callers/tests that feed one call per bar), so those keep appending once
+# per call exactly as before.
+KQ_BAR_TS_KEY = "bar_ts"
+
+
+def kq_dedup_key(market_data: Dict) -> Optional[float]:
+    """The per-call dedup key: bar_ts if carried, else the call timestamp.
+    None when neither is usable (then every call appends — the pre-P420
+    behaviour, never a silent freeze)."""
+    for k in (KQ_BAR_TS_KEY, "timestamp"):
+        v = market_data.get(k)
+        if v is None:
+            continue
+        try:
+            f = float(v)
+        except (TypeError, ValueError):  # noqa: silent-swallow — an unparseable stamp falls to the next key
+            continue
+        if f == f:
+            return f
+    return None
+
+
+def kq_bar_advanced(last_by_asset: Dict[str, float], asset: str,
+                    key: Optional[float]) -> bool:
+    """True when `key` is a NEW bar for `asset` (or no key is usable)."""
+    if key is None:
+        return True
+    prev = last_by_asset.get(asset)
+    return prev is None or key != prev
+
 
 # =============================================================================
 # ENUMS & DATA STRUCTURES
@@ -1510,6 +1550,15 @@ class RelativeStrengthStrategy(BaseStrategy):
             for v in (saved.get("rs") or []):
                 if np.isfinite(v):
                     self.rs_buffer.append(float(v))
+            # [P420] restore the last-appended bar ts per asset so a restart
+            # inside the same bar does not re-append it (the file's own px
+            # already holds that bar).
+            if not hasattr(self, "_last_bar_ts"):
+                self._last_bar_ts: Dict[str, float] = {}
+            for _a in ("BTC", "SOL"):
+                _lb = saved.get(f"last_bar_ts::{_a}") or []
+                if _lb and np.isfinite(_lb[0]):
+                    self._last_bar_ts[_a] = float(_lb[0])
             logger.info("[KQ-WARMUP] %s: restored px=%d rs=%d — the warmup "
                         "clock is now CUMULATIVE across restarts",
                         self.name, len(px_b), len(self.rs_buffer))
@@ -1535,6 +1584,11 @@ class RelativeStrengthStrategy(BaseStrategy):
                 series["px::SOL"] = [float(v) for v in self.price_buffer['SOL']]
             if len(self.rs_buffer):
                 series["rs"] = [float(v) for v in self.rs_buffer]
+            # [P420] the last-appended bar ts per asset rides along, so a
+            # restart inside the same bar does not re-append the bar the
+            # previous process already banked.
+            for _a, _ts in getattr(self, "_last_bar_ts", {}).items():
+                series[f"last_bar_ts::{_a}"] = [float(_ts)]
             if series:
                 _wsave(self._WARMUP_STATE_NAME, series)
         except Exception as e:  # noqa: silent-swallow — logged; persistence only
@@ -1544,10 +1598,19 @@ class RelativeStrengthStrategy(BaseStrategy):
     def update(self, market_data: Dict) -> Optional[Signal]:
         """Calculate relative strength and generate signals."""
         timestamp = market_data.get('timestamp', time.time())
-        
+
+        # [P420] append a price only when ITS bar advanced (see kq_dedup_key)
+        if not hasattr(self, "_last_bar_ts"):
+            self._last_bar_ts: Dict[str, float] = {}
+        _key = kq_dedup_key(market_data)
+        _appended = False
         for asset in ['BTC', 'SOL']:
-            if asset in market_data.get('prices', {}):
+            if asset in market_data.get('prices', {}) and \
+                    kq_bar_advanced(self._last_bar_ts, asset, _key):
                 self.price_buffer[asset].append(market_data['prices'][asset])
+                if _key is not None:
+                    self._last_bar_ts[asset] = _key
+                _appended = True
 
         # [P390] after the appends, so the warmup-gate return below still
         # banks this tick's prices toward the cumulative warmup.
@@ -1555,16 +1618,22 @@ class RelativeStrengthStrategy(BaseStrategy):
 
         if len(self.price_buffer['SOL']) < 50 or len(self.price_buffer['BTC']) < 50:
             return None
-        
+
         sol_prices = np.array(self.price_buffer['SOL'])
         btc_prices = np.array(self.price_buffer['BTC'])
-        
+
         # Calculate returns
         sol_return = (sol_prices[-1] - sol_prices[-20]) / sol_prices[-20]
         btc_return = (btc_prices[-1] - btc_prices[-20]) / btc_prices[-20]
-        
+
         rs = sol_return / (btc_return + 1e-10) if btc_return != 0 else 1.0
-        self.rs_buffer.append(rs)
+        # [P420] the rs buffer is derived state: on a duplicate-bar call
+        # nothing was appended above, so the value is identical to the one
+        # already banked — do not append it again (signal logic below still
+        # runs on the unchanged buffers, so a duplicate call re-emits the
+        # same decision the first call reached, never a different one).
+        if _appended:
+            self.rs_buffer.append(rs)
         # [P390] rs mutated after the first persist; no buffer mutates below.
         self._persist_warmup()
         
@@ -1824,6 +1893,13 @@ class KalmanCointegrationStrategy(BaseStrategy):
             P = np.array([float(v) for v in p_flat],
                          dtype=float).reshape(2, 2)
             self.P = (P + P.T) / 2  # re-symmetrize, as kalman_update does
+            # [P420] last-appended bar ts per asset (see RelativeStrength)
+            if not hasattr(self, "_last_bar_ts"):
+                self._last_bar_ts: Dict[str, float] = {}
+            for _a in (self.asset_a, self.asset_b):
+                _lb = saved.get(f"last_bar_ts::{_a}") or []
+                if _lb and np.isfinite(_lb[0]):
+                    self._last_bar_ts[_a] = float(_lb[0])
             logger.info("[KQ-WARMUP] %s: restored px=%d spread=%d beta=%.4f "
                         "— the warmup clock is now CUMULATIVE across "
                         "restarts", self.name, len(px_a), len(spread),
@@ -1854,6 +1930,9 @@ class KalmanCointegrationStrategy(BaseStrategy):
             }
             if len(self.spread_buffer):
                 series["spread"] = [float(v) for v in self.spread_buffer]
+            # [P420] last-appended bar ts per asset (see kq_dedup_key)
+            for _a, _ts in getattr(self, "_last_bar_ts", {}).items():
+                series[f"last_bar_ts::{_a}"] = [float(_ts)]
             _wsave(self._warmup_state_name, series)
         except Exception as e:  # noqa: silent-swallow — logged; persistence only
             logger.debug("[KQ-WARMUP] %s: persist skipped (%s: %s)",
@@ -1912,9 +1991,18 @@ class KalmanCointegrationStrategy(BaseStrategy):
         timestamp = market_data.get('timestamp', time.time())
         
         # Update price buffers
+        # [P420] append a price only when ITS bar advanced (see kq_dedup_key)
+        if not hasattr(self, "_last_bar_ts"):
+            self._last_bar_ts: Dict[str, float] = {}
+        _key = kq_dedup_key(market_data)
+        _appended = False
         for asset in [self.asset_a, self.asset_b]:
-            if asset in market_data.get('prices', {}):
+            if asset in market_data.get('prices', {}) and \
+                    kq_bar_advanced(self._last_bar_ts, asset, _key):
                 self.price_buffer[asset].append(market_data['prices'][asset])
+                if _key is not None:
+                    self._last_bar_ts[asset] = _key
+                _appended = True
 
         # [P390] after the appends, so the warmup-gate / bad-price returns
         # below still bank this tick's prices toward the cumulative warmup.
@@ -1937,13 +2025,27 @@ class KalmanCointegrationStrategy(BaseStrategy):
             return None
         y = np.log(_pa)
         x = np.log(_pb)
-        
+
         # Kalman update
-        theta, spread, S = self.kalman_update(y, x)
+        # [P420] the filter is a RECURSIVE estimate: one observation per
+        # bar. On a duplicate-bar call (nothing appended above) reuse the
+        # innovation the first call computed instead of updating theta/P a
+        # second and third time on the same (y, x) and appending a duplicate
+        # spread. A first-ever call always updates.
+        _last_k = getattr(self, "_last_kalman", None)
+        if _appended or _last_k is None:
+            theta, spread, S = self.kalman_update(y, x)
+            self._last_kalman = (np.array(theta, dtype=float), float(spread),
+                                 float(S))
+            _fresh_obs = True
+        else:
+            theta, spread, S = _last_k
+            _fresh_obs = False
         beta, alpha = theta
-        
+
         # Store spread
-        self.spread_buffer.append(spread)
+        if _fresh_obs:
+            self.spread_buffer.append(spread)
         # [P390] theta/P/spread mutated after the first persist; no buffer
         # mutates below this line (signal branches only read).
         self._persist_warmup()
@@ -2909,9 +3011,20 @@ _REGIME_MAP = {
 }
 
 # Expected data fields per regime (for coverage scoring)
+# [P420] BEAR listed `liquidations` and `liquidation_intensity`: `_has_field`
+# probes `<name>_<al>` on the FLAT dict, main.py writes
+# `liquidation_volume_<al>` (never `liquidations_*`), and NO producer of
+# `liquidation_intensity*` exists anywhere — so BEAR data_quality was capped
+# at 4/6 = 0.667 by two names nobody writes. `liquidation_volume` is the
+# produced name (the converter maps it INTO the nested `liquidations` the
+# strategies read). `liquidation_intensity` is ABSENT BY DESIGN — the
+# converter emits an empty map for it and the one reader
+# (LiquidationCascadeHunter) treats it as optional — so it is not a required
+# field; requiring it would keep dq below 1.0 forever for a key that cannot
+# arrive (P2: absence must not read as degraded data).
 _EXPECTED_FIELDS = {
-    Regime.BEAR: ["price", "open_interest", "liquidations", "taker_ratio",
-                   "funding_rate", "liquidation_intensity"],
+    Regime.BEAR: ["price", "open_interest", "liquidation_volume", "taker_ratio",
+                   "funding_rate"],
     Regime.BULL: ["price", "funding_rate", "bid_depth", "ask_depth"],
     Regime.SIDEWAYS: ["price", "funding_rate"],
 }
@@ -3167,9 +3280,22 @@ class KrakenQuantAgentV6:
                     out[a] = float(v)
             return out
 
+        # [P420] the bar-open ts the pair strategies dedup on. The pipeline
+        # always writes latest_bar_open_ts_ms; absent => key omitted, and the
+        # strategies fall back to `timestamp`.
+        _bar_ts = flat.get("latest_bar_open_ts_ms")
+        try:
+            _bar_ts = float(_bar_ts) if _bar_ts else None
+        except (TypeError, ValueError):  # noqa: silent-swallow — an unparseable bar ts is omitted, strategies fall back to timestamp
+            _bar_ts = None
+
         return {
             "timestamp": now,
             "prices": prices,
+            # [P420] literal key (the P366 contract reads this dict literal
+            # by AST); None when the flat dict carried no bar ts, and the
+            # strategies then fall back to `timestamp`.
+            "bar_ts": _bar_ts,
             "open_interest": _per_asset("open_interest"),
             "funding_rate": _per_asset("funding_rate"),
             "liquidations": _per_asset("liquidation_volume"),

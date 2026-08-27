@@ -33,6 +33,17 @@ attribute alpha vs beta vs carry (Plan V3 rule): the claim direction is
 the TARGET POSITION (what the book would hold), confidence = |target|
 (P236 followup: the scorer multiplies direction x confidence — a field
 the scorer multiplies by is part of the claim).
+
+[P420] STRATEGY NAMES AND THE POOLED EXAM. The five breadth books
+(BREADTH_ASSETS, book_version v1_breadth_trend_only) run a DIFFERENT rule
+from the home trio (trend-only, no funding legs; BTC runs the full book,
+ETH/SOL trend-only), so their rows are written under `strategy:
+"regimebook_breadth"`, not "regimebook" — the pooled `regimebook` exam
+(compute_shadow_ic POOLABLE_FAMILIES) was pooling eight books running three
+rules as one candidate. LEDGER DISCONTINUITY: breadth rows written before
+this change carry `strategy: "regimebook"`; the scorer's POOL_ASSET_FILTER
+restricts the pooled `regimebook` exam to the home trio so those old rows
+cannot re-contaminate it, and the new family accrues from this deploy.
 """
 from __future__ import annotations
 
@@ -58,7 +69,17 @@ MIN_BARS = MOM_W + 20
 SHADOW_STRATEGY_NAMES = frozenset({
     "regimebook", "regimebook_adj", "regimebook_banded",
     "regimebook_volskip", "regimebook_fgshort",
+    "regimebook_breadth",  # [P420] the five breadth trend-only books
 })
+
+# [P420] The record's `strategy` field per asset: breadth books are a
+# separate family (different rule, never-fitted assets, P271/P262).
+HOME_TRIO = ("BTC", "ETH", "SOL")
+
+
+def strategy_name_for(asset: str) -> str:
+    """[P420] "regimebook_breadth" for BREADTH_ASSETS, "regimebook" otherwise."""
+    return "regimebook_breadth" if asset in BREADTH_ASSETS else "regimebook"
 
 BOOKS_VERSION = {
     "BTC": "v1_full",
@@ -922,7 +943,7 @@ class RegimeBookShadow:
             rec = {
                 "ts": time.time(),
                 "iso": datetime.now(timezone.utc).isoformat(),
-                "strategy": "regimebook",
+                "strategy": strategy_name_for(asset),  # [P420]
                 "asset": asset,
                 "book_version": version,
                 "regime": regime,

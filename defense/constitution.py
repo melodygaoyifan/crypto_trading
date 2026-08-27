@@ -1065,13 +1065,34 @@ class OpportunityTriggerChecker:
 # revision rule) rather than in prose, because three separate incidents came
 # from a measurement whose derivation could not be re-run (P326), whose age was
 # invisible (P315), or whose source could not be questioned (P316).
-_MEASURED_ON = "2026-08-16"
-_MEASURED_BY = "scripts/coinbase_probe_stop_support.py (read-only CDE book probe, P289)"
+_MEASURED_ON = "2026-08-27"   # [P420] breadth XRP/BNB added; home trio re-read as control
+_MEASURED_BY = ("scripts/coinbase_probe_stop_support.py (read-only CDE book probe, P289); "
+                "[P420] XRP/BNB via read-only in-container get_product_book probe "
+                "2026-08-27, 6 samples each, home trio re-read as control")
 
 # [P289] FULL measured CDE spread, rounded UP (P167: a lookup failure or a
 # rounding choice must overcharge, never undercharge). The taker cost is the
 # HALF-spread; these are the full figures the friction model halves.
-CDE_SPREAD_BPS_MEASURED = {"BTC": 2.0, "ETH": 5.5, "SOL": 4.0}
+CDE_SPREAD_BPS_MEASURED = {
+    "BTC": 2.0, "ETH": 5.5, "SOL": 4.0,
+    # [P420] BREADTH, measured 2026-08-27 (read-only in-container
+    # get_product_book, 6 samples each): XRP median 2.81 full-spread bps,
+    # BNB 5.66 median / 7.08 max. Home-trio CONTROL in the same run: BTC 1.26
+    # / ETH 4.0 / SOL 2.89 -- at or below the P289 weekend constants, so the
+    # method reproduces. Rounded UP per the P289 convention (P167: a rounding
+    # choice must overcharge, never undercharge). Until this landed both
+    # breadth assets priced at the 5.0 generic fallback -- BELOW BNB's
+    # measured 7.08 max, i.e. an UNDERcharge on the thinnest book.
+    "XRP": 4.0, "BNB": 8.0,
+}
+
+# [P420] The spread charged to a Coinbase-routed asset with NO measured entry.
+# Was `ASSET_SPREAD_BPS.get(asset_key, 5.0)` -- the CHEAP side. P167: an
+# unmeasured cost is assumed EXPENSIVE. 10.0 is the P301 breadth-exam
+# assumption (a "10bps full spread for the unmeasured breadth books"), and
+# it sits ABOVE every measured CDE entry so an unmeasured asset can never be
+# priced more generously than a measured one. Logged once per asset when used.
+CDE_SPREAD_BPS_UNMEASURED_FALLBACK = 10.0
 
 
 @dataclass
@@ -1096,6 +1117,8 @@ class FrictionComponents:
     # See the provenance comment in __post_init__.
     CDE_SPREAD_BPS: dict = field(default_factory=dict)
     _spread_venue_by_asset: dict = field(default_factory=dict)
+    # [P420] once-per-asset latch for the unmeasured-CDE-spread warning
+    _spread_fallback_warned: set = field(default_factory=set)
     # [T2] Kraken margin fees (dynamic - set when leveraged)
     margin_opening_fee_bps: float = 0.0
     margin_rollover_bps_per_4h: float = 0.0
@@ -1177,8 +1200,22 @@ class FrictionComponents:
         Kraken-era constants; everything else keeps the Kraken table."""
         asset_key = asset.upper().replace("/USD", "").replace("USD", "")
         if self._spread_venue_by_asset.get(asset_key) == "coinbase":
-            self.slippage_bps = self.CDE_SPREAD_BPS.get(
-                asset_key, self.ASSET_SPREAD_BPS.get(asset_key, 5.0))
+            if asset_key in self.CDE_SPREAD_BPS:
+                self.slippage_bps = float(self.CDE_SPREAD_BPS[asset_key])
+            else:
+                # [P420] UNMEASURED on the venue that trades -> the EXPENSIVE
+                # fallback (P167), never the Kraken-era 5.0 generic. Said
+                # once per asset so a breadth widening on an unprobed book
+                # is visible rather than silently priced at a guess.
+                self.slippage_bps = float(CDE_SPREAD_BPS_UNMEASURED_FALLBACK)
+                if asset_key not in self._spread_fallback_warned:
+                    self._spread_fallback_warned.add(asset_key)
+                    logger.warning(
+                        "[P420][SPREAD] %s: no measured CDE spread -- pricing "
+                        "the UNMEASURED fallback %.1fbps (P167: assumed "
+                        "expensive). Probe the book and add it to "
+                        "CDE_SPREAD_BPS_MEASURED.",
+                        asset_key, CDE_SPREAD_BPS_UNMEASURED_FALLBACK)
             # [P291] The SAME venue memory governs the hold term. Recording
             # which asset is being priced right now is what lets
             # _margin_cost_bps refuse a funding reading taken for a

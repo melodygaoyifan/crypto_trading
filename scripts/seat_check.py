@@ -13,32 +13,49 @@ EVIDENCE SOURCES (all pre-existing; this adds no new pipeline):
   * per-agent forward IC   analytics/ic/agent_ic_review.py
   * shadow ledgers         data/strategy_shadow/regimebook_*.jsonl
   * live decider           the `quant` agent series — whoever holds the
-                           DECIDE slot. [P382] Since P298 that is the
-                           REGIMEBOOK (regimebook_mode enforce): the book
-                           target takes the quant slot and whale DEFERS to a
-                           directional book, seating only where the book is
-                           flat. The series is labelled by the live
-                           `primary_strategy` convention (P313): "regimebook"
-                           when regimebook_mode is enforce, else "trend".
+                           DECIDE slot on each tick. [P420] That is now a
+                           MIX of seats (skew on BTC/ETH, regimebook on SOL,
+                           ETF de-risk, whale where the book is flat), so the
+                           series is labelled by the report's
+                           `primary_strategy` census when it carries one and
+                           "quant (mixed seats)" otherwise — never by a
+                           config-derived single name.
 
-STRUCTURAL FACTS ENCODED HERE (inspected 2026-08-18, P294 §inspection;
-seat precedence + SOL corrected 2026-08-22, P382):
-  * regimebook/SOL was read as UNAVAILABLE because P250 DELETED its bear-leg
-    model (the leak artifact). [P299 REVERSED THAT READING]: the missing leg
-    was never certified for SOL, so SOL now runs ETH's certified trend-only
-    book verbatim (`book_version=v1_trend_only`, available=True). The
-    availability check below still reads the ledger's OWN `available` flag —
-    a book that genuinely degrades (feature-coverage gap) still must not be
-    scored as a flat opinion and win by default.
-  * regimebook/BTC currently expresses ONLY its funding legs (funding_short,
-    funding_contrarian_short) — and P262 records those as the UNCERTIFIED
-    slice of that book. Surfaced as a warning on the recommendation.
+SEAT ARCHITECTURE ENCODED HERE [P420 — the pre-P420 text described a seat
+architecture that no longer exists, and the 2026-08-24 cron run prescribed
+the P299-RETIRED `trend_assets: []`]:
+  * live decider PER ASSET, in the order the seats run (last to fire wins):
+        skew_contra (skew_seat_mode enforce, asset in skew_seat_assets)
+      > etf_flow    (etf_seat_mode enforce, asset in etf_decide_assets)
+      > regimebook  (regimebook_mode enforce)
+      > whale       (whale_seat_mode enforce)
+      > trend       (trend_following_mode enforce)
+      > flat
+    read from the live profile by analytics.seat.seat_controller.live_incumbent.
+  * skew_contra and etf_flow are NOT scoreable by this instrument (their
+    series are feeds, not attribution agents). When one of them is the live
+    decider for an asset in scope this tool REFUSES (exit 2) with the reason
+    "decider not scoreable by this instrument — read skewetf_* via
+    compute_shadow_ic" rather than prescribe a switch from the wrong series.
+  * whale is a CANDIDATE only while whale_seat_mode is "enforce" (P417
+    demoted it to a weighted ADVISE member; its series is no longer a seat).
+  * the `regimebook` candidate is the POOLED home-trio book (P297's six-year
+    certification was measured on BTC/ETH/SOL), so its availability check
+    reads those three ledgers by design.
+
+STRUCTURAL FACTS carried forward (P294 §inspection, P382, P299):
+  * regimebook/SOL runs ETH's certified trend-only book (`v1_trend_only`,
+    available=True); P250's deleted bear-leg model was never certified for
+    SOL. The availability check still reads the ledger's OWN `available`
+    flag — a book that genuinely degrades must not score as a flat opinion.
+  * regimebook/BTC currently expresses ONLY its funding legs — P262 records
+    those as the UNCERTIFIED slice of that book. Surfaced as a caveat.
   * trend's signal is a 3-lookback vote quantized to {+-1/3, +-1}, so its
     asserted alpha is either 10bps (blocked by every threshold) or 30bps.
-    It trades only on unanimity. [P295] the weak vote now reads FLAT rather
-    than asserting an opinion the gate must veto.
+    It trades only on unanimity. [P295] the weak vote reads FLAT.
 
-Exit: 0 incumbent holds · 3 SWITCH recommended · 2 refusal (no usable input)
+Exit: 0 incumbent holds · 3 SWITCH recommended · 2 refusal (no usable input,
+      or the live decider is not scoreable here)
 """
 
 from __future__ import annotations
@@ -53,7 +70,8 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
 from analytics.seat.seat_controller import (  # noqa: E402
-    Candidate, decide_seat, render, FLAT)
+    Candidate, decide_seat, render, FLAT,
+    UNSCOREABLE_SEATS, UNSCOREABLE_REASON, live_incumbents)
 
 # [P294] Structural notes attached to a candidate when it wins or is blocked.
 CAVEATS = {
@@ -62,7 +80,9 @@ CAVEATS = {
         "P262 records as the UNCERTIFIED slice; its certified trend/hold leg "
         "is flat in the present regime. SOL's book is the certified "
         "trend-only form (v1_trend_only, P299 — the P250 bear-leg deletion "
-        "removed a leg SOL never certified, not the book)."
+        "removed a leg SOL never certified, not the book). [P420] The "
+        "candidate is the POOLED home-trio book; breadth books are the "
+        "separate `regimebook_breadth` family."
     ),
     "trend": (
         "trend is a 3-lookback vote quantized to {+-1/3, +-1}: it asserts "
@@ -75,9 +95,20 @@ CAVEATS = {
     "whale": (
         "whale clears the gate because it is BINARY (+-1 -> 30bps), not "
         "because it is better evidenced; it is silent on ~46/57/88% of ticks "
-        "(BTC/ETH/SOL) and the incumbent covers those."
+        "(BTC/ETH/SOL) and the incumbent covers those. [P417] demoted from a "
+        "seat to a weighted ADVISE member — it is a candidate here only while "
+        "whale_seat_mode is 'enforce'."
     ),
+    "skew_contra": (
+        "[P420] " + UNSCOREABLE_REASON + ". The label is a historical "
+        "misnomer: the rule rides call-richness (skew_25d = put - call), it is "
+        "not contrarian (defense/skew_flow_signal SIGN CONVENTION)."
+    ),
+    "etf_flow": "[P420] " + UNSCOREABLE_REASON + ".",
 }
+
+# [P420] What the quant series is called when the report carries no census.
+QUANT_MIXED_LABEL = "quant (mixed seats)"
 
 
 def _refuse(msg: str) -> int:
@@ -113,6 +144,28 @@ def _from_ic_report(path: Path) -> dict:
                     except (TypeError, ValueError):
                         continue
     return out
+
+
+def quant_series_label(report_path: Optional[Path]) -> str:
+    """[P420] Label the `quant` series by the report's `primary_strategy`
+    census when it carries one ({name: share}); else say what is true —
+    the series is a MIX of seats. Never a config-derived single name."""
+    if report_path is None:
+        return QUANT_MIXED_LABEL
+    try:
+        data = json.loads(report_path.read_text(encoding="utf-8-sig"))
+    except Exception:  # noqa: silent-swallow — an unreadable report already refused upstream; label only
+        return QUANT_MIXED_LABEL
+    census = data.get("primary_strategy_census") if isinstance(data, dict) else None
+    if isinstance(census, dict) and census:
+        parts = []
+        for k, v in sorted(census.items(), key=lambda kv: -float(kv[1] or 0)):
+            try:
+                parts.append(f"{k} {100.0 * float(v):.0f}%")
+            except (TypeError, ValueError):
+                parts.append(str(k))
+        return "quant (census: " + ", ".join(parts) + ")"
+    return QUANT_MIXED_LABEL
 
 
 def availability_from_ledger(ledger_dir: Path, asset: str) -> Optional[bool]:
@@ -164,8 +217,12 @@ def build_candidates(stats: dict) -> list:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--incumbent", default=None,
-                    help="current seat holder; default = read from the live "
-                         "config profile")
+                    help="current seat holder; default = read PER ASSET from "
+                         "the live config profile (refuses when it differs "
+                         "across --assets or is not scoreable here)")
+    ap.add_argument("--assets", default=None,
+                    help="comma list of assets in scope for the incumbent read "
+                         "(default: the live profile's `assets`)")
     ap.add_argument("--stats", default=None,
                     help="JSON {name: {ic_4h, ic_16h, t_4h, t_16h, n, ...}} — "
                          "bypasses the report readers (operator-local use)")
@@ -175,10 +232,9 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
 
     # --- live config (best-effort) ---------------------------------------
-    # Read once: it decides the incumbent AND how the `quant` series is
-    # labelled. [P382] An unreadable config only REFUSES when the incumbent
-    # has to come from it; with --incumbent given the label falls back to
-    # the historical "trend" and says nothing more than it knows.
+    # Read once: it decides the incumbent(s) AND which candidates exist.
+    # [P382] An unreadable config only REFUSES when the incumbent has to come
+    # from it; with --incumbent given it says nothing more than it knows.
     cfg: dict = {}
     cfg_err: Optional[Exception] = None
     try:
@@ -189,67 +245,86 @@ def main(argv=None) -> int:
     def _enforce(key: str) -> bool:
         return str(cfg.get(key, "off")).lower() == "enforce"
 
-    # --- incumbent -----------------------------------------------------
+    # --- incumbent(s) -----------------------------------------------------
+    # [P420] PER ASSET, by the order the seats run. The old single-label read
+    # ("regimebook > whale > trend") did not know the skew/etf seats existed
+    # and scored the wrong series as the seat holder.
     incumbent = args.incumbent
+    scope = ([a.strip().upper() for a in args.assets.split(",") if a.strip()]
+             if args.assets else
+             [str(a).upper() for a in (cfg.get("assets") or ["BTC", "ETH", "SOL"])])
+    per_asset = live_incumbents(cfg, scope) if not cfg_err else {}
+    if per_asset:
+        print("live decider per asset (from the profile, in seat-run order):")
+        for a in scope:
+            flag = ("  <- NOT scoreable here" if per_asset[a] in UNSCOREABLE_SEATS
+                    else "")
+            print(f"   {a:5s}: {per_asset[a]}{flag}")
     if incumbent is None:
         if cfg_err is not None:
             return _refuse(f"cannot read live config "
                            f"({type(cfg_err).__name__}) and no --incumbent given")
-        # [P382] Precedence: regimebook > whale > trend. The OLD ordering
-        # ("the LAST seat to run wins, so whale outranks regimebook") was
-        # true only until P298: the whale seat still runs last, but P298 made
-        # it DEFER to a directional book target — whale seats only where the
-        # book is FLAT — so with regimebook_mode enforce the BOOK holds the
-        # DECIDE slot and whale is the gap-filler (config note
-        # `_regimebook_mode_note`, "SEAT PRECEDENCE"). Labelling whale as the
-        # incumbent scored the wrong series as the seat holder.
-        if _enforce("regimebook_mode"):
-            incumbent = "regimebook"
-        elif _enforce("whale_seat_mode"):
-            incumbent = "whale"
-        elif _enforce("trend_following_mode"):
-            incumbent = "trend"
-        else:
-            incumbent = FLAT
-    # [P382] The `quant` attribution series IS whoever holds the DECIDE slot.
-    # main.py writes primary_strategy="regimebook" when the book seat is
-    # enforced (P313) and "trend_following" otherwise; mirror that here so the
-    # series is compared under the name of the decider that produced it.
-    quant_label = "regimebook" if _enforce("regimebook_mode") else "trend"
+        unscoreable = sorted(a for a, s in per_asset.items() if s in UNSCOREABLE_SEATS)
+        if unscoreable:
+            return _refuse(
+                f"{UNSCOREABLE_REASON} (assets {unscoreable}: "
+                f"{ {a: per_asset[a] for a in unscoreable} }). Pass --assets "
+                f"to scope this run to the assets whose decider IS an "
+                f"attribution series (e.g. --assets SOL).")
+        distinct = sorted(set(per_asset.values()))
+        if len(distinct) != 1:
+            return _refuse(f"the live decider differs across {scope}: "
+                           f"{per_asset} — one seat verdict cannot cover them; "
+                           f"pass --assets to scope the run")
+        incumbent = distinct[0]
+    elif incumbent in UNSCOREABLE_SEATS:
+        return _refuse(f"--incumbent {incumbent}: {UNSCOREABLE_REASON}")
 
     # --- evidence ------------------------------------------------------
+    report_path: Optional[Path] = None
     if args.stats:
         try:
             stats = json.loads(args.stats)
         except Exception as e:
             return _refuse(f"--stats is not valid JSON ({type(e).__name__})")
     elif args.ic_report:
-        p = Path(args.ic_report)
-        if not p.exists():
-            return _refuse(f"ic report not found: {p}")
-        raw = _from_ic_report(p)
+        report_path = Path(args.ic_report)
+        if not report_path.exists():
+            return _refuse(f"ic report not found: {report_path}")
+        raw = _from_ic_report(report_path)
         if not raw:
-            return _refuse(f"ic report {p} held no agent rows")
+            return _refuse(f"ic report {report_path} held no agent rows")
         stats = {}
         # `quant` IS the seat holder's series — the decider slot, whoever
-        # occupies it. [P382] labelled by the live primary_strategy convention
-        # ("regimebook" under regimebook_mode enforce, else "trend") — the old
-        # hard "trend" label compared the book's own series against itself
-        # under a name that had not held the seat since 2026-08-17.
+        # occupied it on each tick. It is compared under the INCUMBENT's name
+        # (that is what it is evidence about) and labelled honestly below.
+        # [P420] `whale` is a candidate only while its seat is enforced (P417
+        # demoted it to ADVISE); an explicit --incumbent whale means the
+        # quant series IS whale's seat, so the agent series is not a second
+        # candidate under the same name.
+        whale_is_candidate = _enforce("whale_seat_mode") and incumbent != "whale"
         for agent, series in raw.items():
-            if agent not in ("quant", "whale"):
+            if agent == "quant":
+                name = incumbent
+            elif agent == "whale" and whale_is_candidate:
+                name = "whale"
+            else:
                 continue
-            name = quant_label if agent == "quant" else agent
             ic4, t4, n4 = series.get(1, (None, None, 0))
             ic16, t16, n16 = series.get(4, (None, None, 0))
             stats[name] = {"ic_4h": ic4, "ic_16h": ic16, "t_4h": t4,
                            "t_16h": t16, "n": max(n4, n16)}
+        if "whale" in raw and not whale_is_candidate and incumbent != "whale":
+            print("note: `whale` agent series present but whale_seat_mode is "
+                  "not 'enforce' — not a seat candidate (P417).")
     else:
         return _refuse("no evidence source: pass --stats or --ic-report")
 
     cands = build_candidates(stats)
     # [P295] Let the regimebook ledger's OWN `available` flag override any
     # hand-passed value — the producer knows whether it can take a position.
+    # [P420] HOME TRIO BY DESIGN: the `regimebook` candidate is the pooled
+    # BTC/ETH/SOL book; breadth ledgers belong to `regimebook_breadth`.
     _ldir = REPO / "data" / "strategy_shadow"
     for c in cands:
         if c.name != "regimebook":
@@ -264,6 +339,7 @@ def main(argv=None) -> int:
     if not cands:
         return _refuse("no candidates could be built from the evidence")
 
+    print(f"quant series label: {quant_series_label(report_path)}")
     decision = decide_seat(cands, incumbent)
     print(render(decision))
 

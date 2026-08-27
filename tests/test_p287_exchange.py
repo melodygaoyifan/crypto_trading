@@ -270,16 +270,34 @@ class TestSleeveRefusesOnUnreadableBook:
 # ---------------------------------------------------------------------------
 
 class TestUntrackedMakerOrder:
-    def test_untracked_but_verified_clean_crosses_exactly_once(self):
-        # the accepted post-only carried no id AND left the book (filled=
-        # False here means "not our fill"; the venue simply no longer shows
-        # it) -> sweep verifies clean -> the remainder is crossed once
+    def test_untracked_gone_with_unmoved_snapshot_refuses_the_cross(self):
+        # [P420] Re-pointed to the DECIDED value (P237 pattern), not
+        # weakened. The pre-P420 premise was "filled=False here means not
+        # our fill; the venue simply no longer shows it -> cross once" --
+        # that assumed the position snapshot shows a fill INSTANTLY. It
+        # does not (P382 4/4; 2026-08-27 SELL 1ct -> now=2.0ct): an
+        # untracked post-only that LEFT the book with an unmoved snapshot
+        # is exactly the ambiguous case where a cross can double the
+        # position. Under-target for one tick is the safe direction.
         ad = _FakeAdapter(maker_fills=True, maker_no_oid=True)
         s, _ = _exec_sleeve(ad, cur=0.0, maker_first=True, wait=5.0)
+        s.MAKER_FILL_WAIT_SEC = 0.0  # bounded wait, no real sleeping
         res = _run(s.execute_target("SOL", 1))
-        assert res["status"] == "OK"
+        assert res["status"] == "FAILED"
+        assert res["reason"] == "maker_fill_unresolved_no_cross"
         crosses = [p for p in ad.placed if not getattr(p, "post_only", False)]
-        assert len(crosses) == 1
+        assert crosses == [], "crossed beside a possibly-filled untracked order"
+
+    def test_untracked_gone_with_moved_snapshot_is_a_maker_fill(self):
+        # [P420] the companion: the snapshot DID move to target -> the
+        # untracked post-only filled -> OK as maker, and no cross.
+        ad = _FakeAdapter(maker_fills=True, maker_no_oid=True)
+        s, _ = _exec_sleeve(ad, cur=0.0, maker_first=True, wait=5.0,
+                            filled_after_maker=1.0)
+        res = _run(s.execute_target("SOL", 1))
+        assert res["status"] == "OK" and res.get("maker") is True
+        crosses = [p for p in ad.placed if not getattr(p, "post_only", False)]
+        assert crosses == []
 
     def test_untracked_still_resting_refuses_the_cross(self):
         # the untracked order rests (no order_id, so the sweep cannot even

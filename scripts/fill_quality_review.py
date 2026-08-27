@@ -29,7 +29,7 @@ import sys
 # [P290] Local restatement of FrictionComponents.CDE_SPREAD_BPS — this script
 # must stay stdlib (no defense/ import at runtime), so the two copies are
 # pinned equal by tests/test_p290_fill_quality.py (P192 two-file guard).
-CDE_SPREAD_BPS = {"BTC": 2.0, "ETH": 5.5, "SOL": 4.0}
+CDE_SPREAD_BPS = {"BTC": 2.0, "ETH": 5.5, "SOL": 4.0, "XRP": 4.0, "BNB": 8.0}  # [P420] XRP/BNB measured 2026-08-27 (probe), synced with constitution
 
 
 def load(path: str):

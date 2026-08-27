@@ -104,6 +104,16 @@ class CoinbaseSleeve:
     # certainty of NOT holding through the move the watchdog fired on.
     # Non-urgent behaviour is untouched: maker ladder, then the LIMIT cross.
     URGENT_ORDER_TYPE = "MARKET"
+    # [P420] A persisted flip/resize streak older than this is dropped on
+    # restore AND on read: two 4H ticks. "Consecutive" cannot span a gap
+    # that long, whatever restarted or skipped in between.
+    STREAK_MAX_AGE_SEC = 8 * 3600.0
+    # [P420] When the post-only's filled_size is UNREADABLE after it left
+    # the book, execute_target re-reconciles up to TRIES times, SEC apart,
+    # waiting for the (lagging) position snapshot to move before it will
+    # size any cross off that snapshot. Still unmoved -> NO cross.
+    MAKER_FILL_WAIT_TRIES = 3
+    MAKER_FILL_WAIT_SEC = 2.0
 
     def __init__(self, adapter, assets=("BTC", "ETH", "SOL"),
                  max_sleeve_drawdown_pct: float = 0.15,
@@ -175,10 +185,17 @@ class CoinbaseSleeve:
         # ticks before it executes; a single-tick reversal holds the position.
         # <=1 disables. Entries from flat, adds, reduces and flattens are NEVER
         # deferred — only direction flips (same asymmetry as the P195 halt:
-        # exits must stay instant). In-memory streak; a restart resets it,
-        # which only DELAYS a flip — the conservative side.
+        # exits must stay instant).
+        # [P420] The streak is PERSISTED (coinbase_sleeve_state.json) with a
+        # timestamp per entry. "A restart only delays a flip" was true of one
+        # restart; the engine restarted 7 times in 4h on 2026-08-27 and a
+        # RAM-only streak never reached 2/2 — an UNBOUNDED deferral of a
+        # wanted reversal, which is a churn control wearing a stuck-position
+        # bug's clothes. Entries older than STREAK_MAX_AGE_SEC (two 4H ticks)
+        # are dropped on restore and on read: a streak that stale is not
+        # "consecutive". Value shape is (want_sign, streak, ts).
         self._flip_persist_ticks = max(0, int(flip_persist_ticks or 0))
-        self._flip_pending: Dict[str, Any] = {}  # asset -> (want_sign, streak)
+        self._flip_pending: Dict[str, Any] = {}  # asset -> (want_sign, streak, ts)
         # [P416] Same-direction RESIZE persistence. Measured live 2026-08-27:
         # fusion_conviction flapped 1.09<->0.58 within minutes and each swing
         # across a 1-contract boundary was a fee-paying sell-then-buy round
@@ -186,10 +203,26 @@ class CoinbaseSleeve:
         # different size) must now propose the SAME target on this many
         # CONSECUTIVE manage calls before executing. Entries, exits, flattens
         # and flips are NEVER deferred here (P195: exits instant; flips have
-        # their own P198 streak). 0 = off (byte-identical). In-memory streak:
-        # a restart only DELAYS a resize -- the conservative side.
+        # their own P198 streak). 0 = off (byte-identical).
+        # [P420] Persisted like _flip_pending (BTC's resize sat at "1/2" on
+        # three consecutive boot ticks on 2026-08-27 — the same unbounded
+        # deferral). Value shape is (target, streak, ts).
         self._resize_persist_ticks = max(0, int(resize_persist_ticks or 0))
-        self._resize_pending: Dict[str, Any] = {}  # asset -> (target, streak)
+        self._resize_pending: Dict[str, Any] = {}  # asset -> (target, streak, ts)
+        # [P420] Venue positions on products NOT in SYMBOL_MAP. They were
+        # silently `continue`d out of reconcile, so the net-exposure cap was
+        # BLIND to them; they are now counted as UNPRICED (sleeve_exposure
+        # reports priced_ok=False -> the cap fails OPEN, P208) and warned
+        # once per pid. No mapping is ever fabricated. pid -> contracts.
+        self._unmapped_positions: Dict[str, float] = {}
+        self._unmapped_warned: set = set()
+        # [P420] The maker ladder's LAST read of the post-only's filled_size
+        # (contracts, the raw venue unit the ledger records — P195/P219),
+        # per asset; None = unreadable. execute_target's DONE branch crosses
+        # only n - filled, never the delta of a position snapshot that
+        # LAGS the fill (measured P382 4/4 taker legs, and again 2026-08-27
+        # `SELL 1ct MARKET URGENT -> now=2.0ct`).
+        self._maker_last_filled: Dict[str, Optional[float]] = {}
         # [P197] Server-side protective stop. `pct` <= 0 DISABLES the feature
         # entirely — a single knob, so "enabled with a 0% stop" is unexpressible.
         # `protective_stop_assets=None` means every sleeve asset; pass a subset to
@@ -285,6 +318,7 @@ class CoinbaseSleeve:
             resp = self._adapter._client.list_futures_positions()
             raw = _g(resp, "positions") or []
             out: Dict[str, Dict[str, Any]] = {}
+            _unmapped: Dict[str, float] = {}  # [P420] pid -> contracts
             for pos in raw:
                 pid = str(_g(pos, "product_id") or "")
                 asset = self._pid_to_asset.get(pid)
@@ -293,6 +327,31 @@ class CoinbaseSleeve:
                     try:
                         asset = from_venue_symbol(pid, "coinbase", "perp")
                     except KeyError:
+                        # [P420] Was a bare `continue`: a real venue position
+                        # on a product this build cannot name simply
+                        # vanished from the snapshot — and from the net cap.
+                        # Record it UNPRICED (no mapping is fabricated; a
+                        # guessed mapping is the P265h fabricated-unit
+                        # class) and warn once per pid per process so an
+                        # operator sees it; sleeve_exposure turns it into
+                        # priced_ok=False so the cap fails OPEN, not blind.
+                        _um_ct = abs(_f(_g(pos, "number_of_contracts")
+                                        or _g(pos, "net_size")))
+                        if _um_ct > 0:
+                            _unmapped[pid] = _um_ct
+                            _uw = getattr(self, "_unmapped_warned", None)
+                            if _uw is None:
+                                _uw = self._unmapped_warned = set()
+                            if pid not in _uw:
+                                _uw.add(pid)
+                                logger.warning(
+                                    f"[COINBASE_SLEEVE] venue position on "
+                                    f"UNMAPPED product {pid!r} "
+                                    f"({_um_ct:.0f}ct, side="
+                                    f"{str(_g(pos, 'side') or '')!r}) is not "
+                                    f"in SYMBOL_MAP — counted as UNPRICED "
+                                    f"exposure (net cap fails OPEN, P420); "
+                                    f"nothing here can manage or stop it")
                         continue
                 side = str(_g(pos, "side") or "").upper()
                 # [P253] Magnitude and sign are derived SEPARATELY, and an
@@ -347,6 +406,7 @@ class CoinbaseSleeve:
                     "venue": "coinbase",
                 }
             self._last_positions = out
+            self._unmapped_positions = _unmapped  # [P420]
             self._reconcile_ok = True
             # [P378] Announce recovery and RESET, or a long-lived process
             # drifts into a permanent alert state that no longer describes the
@@ -787,12 +847,20 @@ class CoinbaseSleeve:
                 continue
             net += n
             gross += abs(n)
+        # [P420] A venue position on a product SYMBOL_MAP cannot name is
+        # exposure this method cannot price — it must read as UNPRICED
+        # (cap fails OPEN), never as absent (cap blind). getattr-defended:
+        # fixtures build sleeves via object.__new__ (P85).
+        _unmapped = dict(getattr(self, "_unmapped_positions", None) or {})
+        if _unmapped:
+            priced_ok = False
         return {
             "equity_usd": eq, "net_usd": net, "gross_usd": gross,
             "net_pct": (net / eq) if eq > 0 else 0.0,
             "gross_pct": (gross / eq) if eq > 0 else 0.0,
             "priced_ok": priced_ok and eq > 0,
             "equity_age_sec": self.sleeve_equity_age_sec(),  # [P287]
+            "unpriced_unmapped": _unmapped,  # [P420]
         }
 
     def can_trade(self, asset: str, intended_signed_contracts: float) -> tuple:
@@ -1072,6 +1140,10 @@ class CoinbaseSleeve:
                 return
             with open(p, "r", encoding="utf-8") as fh:
                 st = json.load(fh)
+            # [P420] Streaks restore BEFORE the base_version gate: they are
+            # independent of the equity formula, and a version-bumped file
+            # still carries a real half-finished streak.
+            self._restore_streaks(st)
             # [P151] the baseline UNIT changed (buying_power -> net-liq equity).
             # Discard any state written under the old formula so the cap
             # re-anchors to true equity instead of false-halting (a ~$3,561
@@ -1112,6 +1184,98 @@ class CoinbaseSleeve:
         except Exception as e:  # noqa: silent-swallow — bad/old state file; fall back to fresh baseline + log
             logger.warning(f"[COINBASE_SLEEVE] state restore failed: {type(e).__name__}: {e}")
 
+    # ----- [P420] flip/resize streak persistence -------------------------
+
+    def _streaks_payload(self) -> Dict[str, Any]:
+        """Serializable view of both persistence streaks (asset -> dict)."""
+        flips: Dict[str, Any] = {}
+        for a, v in (getattr(self, "_flip_pending", None) or {}).items():
+            try:
+                sign, streak, ts = self._streak_parts(v)
+                flips[a] = {"sign": int(sign), "streak": int(streak),
+                            "ts": float(ts)}
+            except (TypeError, ValueError):  # noqa: silent-swallow — a malformed in-memory entry is simply not persisted; nothing to log per tick
+                continue
+        resizes: Dict[str, Any] = {}
+        for a, v in (getattr(self, "_resize_pending", None) or {}).items():
+            try:
+                tgt, streak, ts = self._streak_parts(v)
+                resizes[a] = {"target": int(tgt), "streak": int(streak),
+                              "ts": float(ts)}
+            except (TypeError, ValueError):  # noqa: silent-swallow — same as above
+                continue
+        return {"flip_pending": flips, "resize_pending": resizes}
+
+    @staticmethod
+    def _streak_parts(v) -> Tuple[Any, int, float]:
+        """(key, streak, ts) from a 3-tuple, or from a legacy 2-tuple
+        (ts = now, so a pre-P420 in-memory entry ages from first sight)."""
+        if isinstance(v, (list, tuple)) and len(v) >= 3:
+            return v[0], int(v[1]), float(v[2])
+        if isinstance(v, (list, tuple)) and len(v) == 2:
+            return v[0], int(v[1]), time.time()
+        raise TypeError(f"streak entry shape {type(v).__name__}")
+
+    def _streak_is_stale(self, v) -> bool:
+        """True when the entry's timestamp is older than STREAK_MAX_AGE_SEC
+        (or unreadable — an entry whose age cannot be established is not
+        evidence of consecutive ticks)."""
+        try:
+            _, _, ts = self._streak_parts(v)
+        except (TypeError, ValueError):  # noqa: silent-swallow — an unreadable entry reads as STALE; the caller logs the drop ("streak ... dropped") at INFO
+            return True
+        return (time.time() - ts) > self.STREAK_MAX_AGE_SEC
+
+    def _restore_streaks(self, st: Dict[str, Any]) -> None:
+        """Restore flip/resize streaks from the state payload, dropping
+        entries older than STREAK_MAX_AGE_SEC. Malformed entries are dropped
+        (cold start for that asset) and the drop is logged once."""
+        now = time.time()
+        for key, attr, field in (("flip_pending", "_flip_pending", "sign"),
+                                 ("resize_pending", "_resize_pending",
+                                  "target")):
+            raw = st.get(key)
+            if not isinstance(raw, dict):
+                continue
+            restored: Dict[str, Any] = {}
+            dropped = []
+            for a, e in raw.items():
+                try:
+                    ts = float(e["ts"])
+                    streak = int(e["streak"])
+                    val = int(e[field])
+                except (TypeError, ValueError, KeyError):  # noqa: silent-swallow — collected into `dropped` and logged in one INFO line below
+                    dropped.append(f"{a}:malformed")
+                    continue
+                if (now - ts) > self.STREAK_MAX_AGE_SEC or streak <= 0:
+                    dropped.append(f"{a}:{(now - ts) / 3600.0:.1f}h")
+                    continue
+                restored[str(a)] = (val, streak, ts)
+            cur = getattr(self, attr, None)
+            if not isinstance(cur, dict):
+                cur = {}
+                setattr(self, attr, cur)
+            cur.update(restored)
+            if restored or dropped:
+                logger.info(
+                    f"[COINBASE_SLEEVE] restored {key}: "
+                    f"{ {a: v[:2] for a, v in restored.items()} }"
+                    + (f" dropped(stale/malformed)={dropped}"
+                       if dropped else "")
+                    + " (P420)")
+
+    def _persist_streaks_if_changed(self, before: Dict[str, Any]) -> None:
+        """Write the state file iff the streak payload moved this call.
+        Called from manage_to_signal on every branch — an advance AND a
+        reset must both reach disk, or a restart resurrects a streak the
+        live process had already broken (a non-consecutive 2/2)."""
+        try:
+            if self._streaks_payload() != before:
+                self._persist_state()
+        except Exception as e:  # noqa: silent-swallow — persistence is best-effort on the order path; _persist_state logs its own failures at ERROR
+            logger.warning(f"[COINBASE_SLEEVE] streak persist skipped: "
+                           f"{type(e).__name__}: {e}")
+
     def _persist_state(self) -> None:
         """Atomically write the baseline + halt. Best-effort; never raises."""
         try:
@@ -1119,8 +1283,14 @@ class CoinbaseSleeve:
             os.makedirs(os.path.dirname(p) or ".", exist_ok=True)
             tmp = p + ".tmp"
             with open(tmp, "w", encoding="utf-8") as fh:
+                # [P420] getattr-defended throughout: streak persistence
+                # now calls this from manage_to_signal, and fixtures/operator
+                # scripts build sleeves via object.__new__ (P85) — a bare
+                # read here would turn every deferred tick into an ERROR
+                # line and skip the write that the streak fix depends on.
                 json.dump({
-                    "sleeve_start_equity": self._sleeve_start_equity,
+                    "sleeve_start_equity": getattr(
+                        self, "_sleeve_start_equity", None),
                     # [P293h] without this a restart forgets the
                     # transfer and re-books it as profit
                     "external_flow_usd": getattr(
@@ -1134,10 +1304,13 @@ class CoinbaseSleeve:
                         self, "_last_equity_for_flow", None),
                     "last_equity_for_flow_ts": getattr(
                         self, "_last_equity_for_flow_ts", None),
-                    "halted": self._halted,
-                    "halt_reason": self._halt_reason,
+                    "halted": bool(getattr(self, "_halted", False)),
+                    "halt_reason": str(getattr(self, "_halt_reason", "")
+                                       or ""),
                     "base_version": self._BASE_VERSION,
                     "saved_ts": time.time(),
+                    # [P420] flip/resize persistence streaks, timestamped
+                    **self._streaks_payload(),
                 }, fh)
             os.replace(tmp, p)
         except Exception as e:  # noqa: silent-swallow — persistence must never break the tick, but it must be LOUD
@@ -1149,7 +1322,8 @@ class CoinbaseSleeve:
             # failure") on load-bearing safety state.
             logger.error(
                 f"[COINBASE_SLEEVE] state persist FAILED "
-                f"({type(e).__name__}: {e}) — halted={self._halted}: if the "
+                f"({type(e).__name__}: {e}) — "
+                f"halted={getattr(self, '_halted', False)}: if the "
                 f"halt is tripped it will NOT survive a restart")
 
     # [P293h] A per-tick equity step larger than this multiple of the current
@@ -1525,13 +1699,41 @@ class CoinbaseSleeve:
         # flattens (target 0), or same-direction targets, so exits stay
         # instant (P195 principle) and the deadband flatten is unaffected.
         cur = self.signed_contracts(asset)
+        # [P420] Snapshot both streaks; whatever this call changes (an
+        # advance OR a reset) is written to disk before returning, so a
+        # restart can neither forget a half-finished streak (the unbounded
+        # deferral) nor resurrect one the live process already broke (a
+        # non-consecutive 2/2). getattr-defended (P85).
+        _streaks_before = self._streaks_payload()
+        _fp = getattr(self, "_flip_pending", None)
+        if _fp is None:
+            _fp = self._flip_pending = {}
         if (self._flip_persist_ticks > 1 and cur != 0 and target != 0
                 and (target > 0) != (cur > 0)):
             want = 1 if target > 0 else -1
-            pend_sign, streak = self._flip_pending.get(asset, (0, 0))
+            _prev = _fp.get(asset)
+            if _prev is not None and self._streak_is_stale(_prev):
+                # [P420] two 4H ticks without an advance is not "consecutive"
+                logger.info(f"[COINBASE_SLEEVE] {asset}: flip streak older "
+                            f"than {self.STREAK_MAX_AGE_SEC / 3600.0:.0f}h "
+                            f"dropped — restarting at 1 (P420)")
+                _prev = None
+            pend_sign, streak, _ = (self._streak_parts(_prev)
+                                    if _prev is not None else (0, 0, 0.0))
             streak = streak + 1 if pend_sign == want else 1
-            self._flip_pending[asset] = (want, streak)
+            _fp[asset] = (want, streak, time.time())
             if streak < self._flip_persist_ticks:
+                # [P420] A flip-deferred tick is NOT a consecutive same-size
+                # proposal: without this pop, resize -> flip-deferred ->
+                # same resize read as streak 2 on non-consecutive ticks.
+                _rp0 = getattr(self, "_resize_pending", None)
+                if isinstance(_rp0, dict):
+                    _rp0.pop(asset, None)
+                self._persist_streaks_if_changed(_streaks_before)
+                # [P420] this return used to skip execute_target's stale-entry
+                # sweep entirely, so an unfilled limit from a previous tick
+                # rested through every deferred tick.
+                await self.sweep_stale_entries(asset)
                 logger.info(
                     f"[COINBASE_SLEEVE] {asset}: FLIP DEFERRED "
                     f"({streak}/{self._flip_persist_ticks} consecutive opposing "
@@ -1539,11 +1741,11 @@ class CoinbaseSleeve:
                 return {"status": "FLIP_DEFERRED", "asset": asset,
                         "streak": streak, "need": self._flip_persist_ticks,
                         "current": cur, "target": target}
-            self._flip_pending.pop(asset, None)
+            _fp.pop(asset, None)
         else:
             # Same-direction, flat, or flatten: any pending flip streak is
             # broken — a flip must be CONSECUTIVE opposing ticks.
-            self._flip_pending.pop(asset, None)
+            _fp.pop(asset, None)
         # [P416] Same-direction resize persistence -- see __init__. Runs AFTER
         # flip-persist (a deferred flip already returned above) and never
         # touches entries (cur==0), flattens (target==0) or flips (sign
@@ -1560,10 +1762,19 @@ class CoinbaseSleeve:
             _rp_pend = self._resize_pending = {}
         if (_rp_ticks > 1 and cur != 0 and target != 0
                 and (target > 0) == (cur > 0) and abs(target) != abs(cur)):
-            pend_t, r_streak = _rp_pend.get(asset, (None, 0))
+            _prev = _rp_pend.get(asset)
+            if _prev is not None and self._streak_is_stale(_prev):
+                logger.info(f"[COINBASE_SLEEVE] {asset}: resize streak older "
+                            f"than {self.STREAK_MAX_AGE_SEC / 3600.0:.0f}h "
+                            f"dropped — restarting at 1 (P420)")
+                _prev = None
+            pend_t, r_streak, _ = (self._streak_parts(_prev)
+                                   if _prev is not None else (None, 0, 0.0))
             r_streak = r_streak + 1 if pend_t == target else 1
-            _rp_pend[asset] = (target, r_streak)
+            _rp_pend[asset] = (target, r_streak, time.time())
             if r_streak < _rp_ticks:
+                self._persist_streaks_if_changed(_streaks_before)
+                await self.sweep_stale_entries(asset)  # [P420] see flip branch
                 logger.info(
                     f"[COINBASE_SLEEVE] {asset}: RESIZE DEFERRED "
                     f"({r_streak}/{_rp_ticks} consecutive "
@@ -1575,6 +1786,8 @@ class CoinbaseSleeve:
             _rp_pend.pop(asset, None)
         else:
             _rp_pend.pop(asset, None)
+        # [P420] a completed or broken streak must reach disk too
+        self._persist_streaks_if_changed(_streaks_before)
         _res = await self.execute_target(asset, target)
         # [P382] Report the target this call actually DROVE TO (post-sizing,
         # post-conviction, post-boundary-damping) so the caller's stop
@@ -1715,6 +1928,34 @@ class CoinbaseSleeve:
         except Exception as e:  # noqa: silent-swallow — logged; see _note_cancel_refusal
             logger.debug("[COINBASE_SLEEVE] cancel-refusal reset skipped "
                          "(%s: %s)", type(e).__name__, e)
+
+    async def sweep_stale_entries(self, asset: str) -> Optional[int]:
+        """[P420] PUBLIC stale-entry sweep for ticks that place NO order.
+
+        The only sweep lived inside execute_target's NOOP/BLOCKED branches, so
+        every path that returned BEFORE execute_target — FLIP_DEFERRED,
+        RESIZE_DEFERRED, and the driver's own HOLD / cooldown / entry-blocked
+        branches in main.py — left an unfilled limit from a previous tick
+        resting indefinitely (the P265 dead-signal-fill class through doors
+        P265 did not cover). Resolves the pid, refuses on a stale reconcile
+        (cancelling against a book we cannot see is not de-risking, it is
+        guessing — P141), never raises. Returns the count cancelled, or None
+        when nothing could be verified (unreadable book, stale snapshot, no
+        adapter). Stops are never touched (see _cancel_stale_entry_orders).
+        """
+        try:
+            if not getattr(self, "_reconcile_ok", False):
+                return None
+            adapter = getattr(self, "_adapter", None)
+            if adapter is None or not self.is_ready():
+                return None
+            pid = adapter.to_venue_symbol(asset, "perp")
+            return await self._cancel_stale_entry_orders(pid, asset)
+        except Exception as e:  # noqa: silent-swallow — logs; a sweep on a no-order tick must never raise into the driver
+            logger.warning(f"[COINBASE_SLEEVE] {asset}: stale-entry sweep "
+                           f"failed ({type(e).__name__}: {e}) — result "
+                           f"UNKNOWN, not clean (P420)")
+            return None
 
     async def _cancel_stale_entry_orders(self, pid: str, asset: str) -> Optional[int]:
         """[P265] Cancel resting NON-STOP orders on ticks that place nothing.
@@ -1954,6 +2195,12 @@ class CoinbaseSleeve:
                     f"[COINBASE_STOP] {asset}: follow-up gave up after "
                     f"{waited:.0f}s — venue shows {cur:+.0f}ct vs intended "
                     f"{intended:+.0f}ct; sizing the stop to the VENUE (P382)")
+                # [P420] The order that never showed is very likely still
+                # RESTING (a flatten limit that did not fill). Sweep it
+                # before sizing a stop to the snapshot, or a stranded entry
+                # limit rests beside a snapshot-sized stop — two plain
+                # orders on a venue with no reduce_only.
+                await self.sweep_stale_entries(asset)
                 return await self.ensure_protective_stop(asset)
             return {"status": "PENDING", "asset": asset, "snapshot": cur,
                     "intended": intended, "waited_sec": waited}
@@ -2311,17 +2558,20 @@ class CoinbaseSleeve:
             # [P2] absence is not zero: we cannot certify the cancelled order
             # was unfilled, and re-posting full size beside an unknown partial
             # would overshoot the target.
+            self._note_maker_filled(asset, None)  # [P420] unknown, not 0
             logger.info(f"[COINBASE-MAKER] {asset}: reprice cancelled {oid} "
                         f"but its fill state is unreadable — handing back so "
-                        f"the caller reconciles and crosses the remainder")
+                        f"the caller waits for the snapshot (P420)")
             return {"used": True, "verdict": "DONE"}
         try:
             _filled = float((_op or {}).get("filled_size") or 0)
         except (TypeError, ValueError, AttributeError):
+            self._note_maker_filled(asset, None)  # [P420]
             logger.info(f"[COINBASE-MAKER] {asset}: reprice could not parse "
                         f"the cancelled order's fill state — handing back")
             return {"used": True, "verdict": "DONE"}
         if _filled > 0:
+            self._note_maker_filled(asset, _filled)  # [P420] partial, known
             try:
                 self._record_fill_quality(
                     asset=asset, order_id=oid, side=side,
@@ -2469,27 +2719,64 @@ class CoinbaseSleeve:
                     str(_g(o, "order_id") or _g(o, "id") or "") == oid
                     for o in (open_orders or []))
                 if not still_open:
-                    logger.info(f"[COINBASE-MAKER] {asset}: post-only left "
-                                f"the book within the window (filled at "
-                                f"0bps maker)")
                     # [P290] "left the book" is resolved to fill-truth by ONE
                     # get_order read; unreadable -> unresolved record, never
                     # a fabricated fill. Fully fail-soft: the ladder's return
                     # value is decided above this and cannot change.
+                    # [P420] That read now ALSO feeds the caller: "left the
+                    # book" was logged as "filled at 0bps maker" and the
+                    # caller sized its cross off a position snapshot that
+                    # LAGS fills — a full maker fill plus a full taker cross
+                    # is a DOUBLE position. The filled_size (contracts, the
+                    # raw unit — P195/P219) is stashed per asset; None =
+                    # unreadable, which the caller treats as "wait, then
+                    # refuse", never as 0.
+                    _op = None
+                    _filled: Optional[float] = None
                     try:
                         _op = await self._adapter.get_order(oid)
+                        _filled = self._parse_filled_contracts(_op)
+                    except Exception as e:  # noqa: silent-swallow — logs; an unreadable fill state is handed to the caller as None (P2), never as a fabricated 0
+                        logger.warning(f"[COINBASE-MAKER] {asset}: get_order "
+                                       f"{oid} raised ({type(e).__name__}) "
+                                       f"— fill state UNREADABLE")
+                        _op, _filled = None, None
+                    self._note_maker_filled(asset, _filled)
+                    _st = str(_g(_op, "status") or "?") if _op else "?"
+                    if _filled is None:
+                        logger.info(f"[COINBASE-MAKER] {asset}: post-only "
+                                    f"left the book within the window but "
+                                    f"its fill state is UNREADABLE "
+                                    f"(status={_st}) — the caller waits for "
+                                    f"the position snapshot before any "
+                                    f"cross (P420)")
+                    elif _filled <= 0:
+                        logger.info(f"[COINBASE-MAKER] {asset}: post-only "
+                                    f"left the book (venue-cancelled/expired, "
+                                    f"filled 0/{intended_contracts}, "
+                                    f"status={_st}) — NOT a fill; the caller "
+                                    f"crosses the full remainder (P420)")
+                    else:
+                        logger.info(f"[COINBASE-MAKER] {asset}: post-only "
+                                    f"filled {_filled:g}/{intended_contracts} "
+                                    f"at 0bps maker (status={_st})")
+                    # (P290 contract kept: an unreadable payload records
+                    # status=unresolved, never a fabricated fill)
+                    try:
                         self._record_fill_quality(
                             asset=asset, order_id=oid, side=side,
-                            contracts=intended_contracts, liquidity="maker",
-                            urgent=False,
+                            contracts=intended_contracts,
+                            liquidity="maker", urgent=False,
                             decision_mid=((best_bid + best_ask) / 2.0
-                                          if best_bid and best_ask else None),
+                                          if best_bid and best_ask
+                                          else None),
                             decision_bid=best_bid or None,
                             decision_ask=best_ask or None,
                             order_payload=_op)
                     except Exception as e:  # noqa: silent-swallow — logs; the observation must never affect the ladder (Iron Law 7)
-                        logger.warning(f"[FILL-QUALITY] {asset}: maker-fill "
-                                       f"record failed ({type(e).__name__})")
+                        logger.warning(f"[FILL-QUALITY] {asset}: "
+                                       f"maker-fill record failed "
+                                       f"({type(e).__name__})")
                     return "DONE"
                 # [P291] Half-way mark: the post is still resting. If the
                 # touch has moved past it we are behind the queue and will
@@ -2517,14 +2804,15 @@ class CoinbaseSleeve:
                             f"crossing the remainder")
                 # [P290] A cancelled post-only can still carry a PARTIAL
                 # maker fill; record it only when the payload shows one.
+                # [P420] ...and hand that partial to the caller: the old
+                # `_pf = 0.0` default collapsed "unreadable" into "filled
+                # 0" (P2), and the caller then crossed the full n beside a
+                # partial maker fill the snapshot had not yet shown.
+                _pf: Optional[float] = None
                 try:
                     _op = await self._adapter.get_order(oid)
-                    _pf = 0.0
-                    try:
-                        _pf = float((_op or {}).get("filled_size") or 0)
-                    except (TypeError, ValueError):
-                        _pf = 0.0
-                    if _pf > 0:
+                    _pf = self._parse_filled_contracts(_op)
+                    if _pf is not None and _pf > 0:
                         self._record_fill_quality(
                             asset=asset, order_id=oid, side=side,
                             contracts=intended_contracts, liquidity="maker",
@@ -2537,6 +2825,8 @@ class CoinbaseSleeve:
                 except Exception as e:  # noqa: silent-swallow — logs; same Iron Law 7 rule as the fill branch
                     logger.warning(f"[FILL-QUALITY] {asset}: partial-maker "
                                    f"record failed ({type(e).__name__})")
+                    _pf = None
+                self._note_maker_filled(asset, _pf, cancelled=True)  # [P420]
                 return "DONE"
             logger.warning(f"[COINBASE-MAKER] {asset}: timeout AND cancel "
                            f"FAILED — order {oid} may be live; refusing to "
@@ -2547,6 +2837,49 @@ class CoinbaseSleeve:
             logger.warning(f"[COINBASE-MAKER] {asset}: attempt error "
                            f"({type(e).__name__}: {e}) — taker fallback")
             return "FALLBACK"
+
+    # ----- [P420] maker fill-truth handoff --------------------------------
+
+    @staticmethod
+    def _parse_filled_contracts(op) -> Optional[float]:
+        """filled_size from a get_order payload, in CONTRACTS (the raw venue
+        unit, P195/P219). None = UNKNOWN: no payload, no filled_size field,
+        unparseable, or the inconsistent shape status=FILLED with
+        filled_size=0 (a fill that reports nothing filled cannot be trusted
+        either way). A genuine 0 is only certified beside a terminal
+        non-fill status (CANCELLED/EXPIRED/FAILED/...)."""
+        if op is None:
+            return None
+        try:
+            raw = op.get("filled_size") if isinstance(op, dict) else _g(
+                op, "filled_size")
+        except Exception:  # noqa: silent-swallow — a payload that cannot even be indexed is UNKNOWN, which the caller handles by waiting (P2)
+            return None
+        if raw is None or raw == "":
+            return None
+        try:
+            filled = float(raw)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(filled) or filled < 0:
+            return None
+        status = str(_g(op, "status") or "").upper()
+        if filled == 0 and status == "FILLED":
+            return None
+        return filled
+
+    def _note_maker_filled(self, asset: str, filled: Optional[float],
+                           cancelled: bool = False) -> None:
+        """Stash the maker ladder's fill-truth for execute_target's DONE
+        branch: {"filled": contracts|None (unreadable), "cancelled": bool}.
+        `cancelled` = the post-only was CONFIRMED cancelled by us (timeout
+        path), so it is gone by our own hand rather than by a fill —
+        different evidence from "left the OPEN book on its own".
+        getattr-defended (P85)."""
+        d = getattr(self, "_maker_last_filled", None)
+        if d is None:
+            d = self._maker_last_filled = {}
+        d[asset] = {"filled": filled, "cancelled": bool(cancelled)}
 
     def _maker_log_once(self, asset: str, msg: str) -> None:
         key = f"maker:{asset}:{msg}"
@@ -2739,6 +3072,23 @@ class CoinbaseSleeve:
                                 "reason": "maker_untracked_no_cross"}
                     _mk = "DONE"
                 if _mk == "DONE":
+                    # [P420] The cross is sized off the maker order's OWN
+                    # filled_size, not off `target - snapshot`. The position
+                    # snapshot LAGS fills (P382 4/4 taker legs read the
+                    # PRE-trade size; 2026-08-27 `SELL 1ct MARKET URGENT ->
+                    # now=2.0ct`), so the old arithmetic saw a full maker
+                    # fill as "nothing filled" and crossed the full n at
+                    # taker: a DOUBLE position, ungated. remainder = n -
+                    # filled, and never more than the snapshot still shows
+                    # outstanding in OUR direction — under-target is the safe
+                    # direction, a double position is not.
+                    _mf = getattr(self, "_maker_last_filled", None) or {}
+                    _mf_rec = _mf.pop(asset, None) or {}
+                    _filled = _mf_rec.get("filled") if isinstance(
+                        _mf_rec, dict) else None
+                    _cancelled = bool(_mf_rec.get("cancelled")) if isinstance(
+                        _mf_rec, dict) else False
+                    _cur_pre = cur  # snapshot taken BEFORE the maker attempt
                     self.reconcile_positions()
                     if not self._reconcile_ok:
                         # cannot see the book after the maker attempt —
@@ -2747,16 +3097,93 @@ class CoinbaseSleeve:
                                 "reason": "post_maker_reconcile_failed"}
                     cur = self.signed_contracts(asset)
                     delta = int(round(target_signed_contracts - cur))
-                    if delta == 0:
+                    if _filled is None:
+                        # Fill-truth UNREADABLE: the only remaining evidence
+                        # is the (lagging) snapshot. Wait a bounded time for
+                        # it to MOVE; size nothing off a snapshot that has
+                        # not. Still unmoved -> refuse the cross; the next
+                        # tick's reconcile sizes it (P420).
+                        _tries = int(getattr(self, "MAKER_FILL_WAIT_TRIES",
+                                             3) or 0)
+                        _wsec = float(getattr(self, "MAKER_FILL_WAIT_SEC",
+                                              2.0) or 0.0)
+                        if _cancelled and n_contracts <= 1:
+                            # A 1-contract order CONFIRMED cancelled by us
+                            # cannot have partially filled, and the cancel
+                            # confirmation rules out a full fill: nothing
+                            # to wait for — the pre-P420 snapshot cross is
+                            # exact here.
+                            _tries = 0
+                        _i = 0
+                        while cur == _cur_pre and _i < _tries:
+                            _i += 1
+                            await asyncio.sleep(_wsec)
+                            self.reconcile_positions()
+                            if not self._reconcile_ok:
+                                return {"status": "SKIPPED_STALE",
+                                        "asset": asset,
+                                        "reason": "post_maker_reconcile_failed"}
+                            cur = self.signed_contracts(asset)
+                            delta = int(round(target_signed_contracts - cur))
+                        _snap_out = (abs(delta) if (delta != 0 and
+                                     (delta > 0) == (side == "BUY")) else 0)
+                        if cur == _cur_pre and not _cancelled:
+                            # It left the OPEN book on its own — the likely
+                            # cause is a FULL fill the snapshot has not yet
+                            # shown. Crossing here is the double position.
+                            logger.warning(
+                                f"[COINBASE_SLEEVE] execute_target {asset}: "
+                                f"post-only left the book, its fill state is "
+                                f"UNREADABLE and the position snapshot has "
+                                f"not moved after {_i} re-reconcile(s) — "
+                                f"REFUSING the cross (a lagging fill plus a "
+                                f"full cross is a double position, P420). "
+                                f"Next tick sizes the remainder.")
+                            return {"status": "FAILED", "asset": asset,
+                                    "side": side,
+                                    "reason": "maker_fill_unresolved_no_cross",
+                                    "position_after": cur}
+                        if cur == _cur_pre and _cancelled:
+                            # CONFIRMED cancelled by us and nothing moved:
+                            # the order is gone by our hand, not by a fill.
+                            # The residual hazard is an unread PARTIAL on a
+                            # multi-contract order (impossible at 1ct); the
+                            # pre-P420 snapshot cross stands, said out loud.
+                            logger.warning(
+                                f"[COINBASE_SLEEVE] execute_target {asset}: "
+                                f"cancelled post-only's fill state is "
+                                f"UNREADABLE; snapshot unmoved after {_i} "
+                                f"re-reconcile(s) — crossing the snapshot's "
+                                f"{_snap_out}ct (cancel confirmed; a partial "
+                                f"on {n_contracts}ct is the residual risk, "
+                                f"P420)")
+                        # the snapshot is the evidence: pre-P420 arithmetic
+                        _cross_n = _snap_out
+                    else:
+                        _remainder = max(0, n_contracts
+                                         - int(round(_filled)))
+                        _snap_out = (abs(delta) if (delta != 0 and
+                                     (delta > 0) == (side == "BUY")) else 0)
+                        _cross_n = min(_remainder, _snap_out)
+                        if _remainder and _cross_n < _remainder:
+                            logger.info(
+                                f"[COINBASE_SLEEVE] execute_target {asset}: "
+                                f"maker filled {_filled:g}/{n_contracts} but "
+                                f"the snapshot shows only {_snap_out}ct "
+                                f"outstanding — crossing {_cross_n}ct "
+                                f"(the smaller; under-target is safe, P420)")
+                    if _cross_n <= 0:
                         logger.info(f"[COINBASE_SLEEVE] execute_target "
                                     f"{asset} {side} filled as MAKER "
-                                    f"-> now={cur}ct")
+                                    f"({'%g' % _filled if _filled is not None else 'snapshot'}"
+                                    f"/{n_contracts}ct) -> now={cur}ct")
                         return {"status": "OK", "asset": asset, "side": side,
                                 "contracts": n_contracts, "maker": True,
+                                "maker_filled": _filled,
                                 "position_after": cur}
                     # partial (or none) filled as maker — cross the remainder
-                    side = "BUY" if delta > 0 else "SELL"
-                    n_contracts = abs(delta)
+                    # in the ORIGINAL direction (side never flips here)
+                    n_contracts = _cross_n
                     base_size = n_contracts * cs
                     maker_note = "partial_maker"
                     # refresh the price for the cross: the maker window may

@@ -533,7 +533,15 @@ class ModelAlphaAgent:
         return None
 
     def _get_model(self, asset: str):
-        return self._models_by_asset.get(asset) or self._model
+        """[P420] Per-asset ONLY. The old `or self._model` fallback handed an
+        asset with no checkpoint of its own the FIRST loaded asset's model
+        (`self._model = next(iter(_models_by_asset.values()))`) — cross-asset
+        model application, the P4/P269 mixed-artifact shape: BTC's sequence
+        model scoring SOL's features as if they were BTC's. An asset without
+        its own model returns None = absence (P2); `generate_intent` then
+        gates with a named reason. Mock mode is unaffected: it registers the
+        mock under EVERY configured asset."""
+        return self._models_by_asset.get(asset)
 
     def _get_obs_builder(self):
         """Lazily construct RuntimeObsBuilder so the agent can consume 126-dim runtime obs."""
@@ -571,7 +579,14 @@ class ModelAlphaAgent:
 
         asset_model = self._get_model(asset)
         if not self._model_loaded or asset not in self.assets or asset_model is None:
-            self._last_gating_reason = "model_not_loaded" if not self._model_loaded else "unknown_asset"
+            if not self._model_loaded:
+                self._last_gating_reason = "model_not_loaded"
+            elif asset not in self.assets:
+                self._last_gating_reason = "unknown_asset"
+            else:
+                # [P420] a configured asset with NO checkpoint of its own —
+                # previously served another asset's model, now absence
+                self._last_gating_reason = "no_model_for_asset"
             return None
 
         # -- v6 freshness gate ------------------------------------------------

@@ -1,4 +1,13 @@
-"""[P407] Skew direction seat: pure decision, feed contrarian mapping, fail-safe."""
+"""[P407] Skew direction seat: pure decision, feed mapping, fail-safe.
+
+[P420] NAMING NOTE, behaviour unchanged: the Laevitas field is
+skew_25d = put_iv - call_iv, so the "fear"/"greed" test names below are the
+historical misnomer the module docstring now corrects — a sharp DROP in the
+series is calls getting rich (upside chase) and the rule goes LONG with it;
+a spike UP is puts getting rich and the rule goes SHORT. Live == validated
+(training/skew_seat_calibration.py walks the same mapping), so the assertions
+stand exactly as written; only the words were wrong.
+"""
 import os, json, time, datetime as dt, importlib.util, pathlib
 import pytest
 

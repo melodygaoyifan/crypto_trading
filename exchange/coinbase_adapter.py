@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time  # [P420]
 import uuid
 from typing import Any, Dict, List, Optional
 
@@ -97,6 +98,7 @@ class CoinbaseAdapter(ExchangeAdapter):
         self._api_secret = api_secret or os.environ.get("COINBASE_API_SECRET")
         self._paper = paper
         self._init_failed: Optional[str] = None
+        self._init_failed_at: Optional[float] = None  # [P420]
         self._contract_size_cache: Dict[str, float] = {}
         self._price_increment_cache: Dict[str, float] = {}
 
@@ -190,15 +192,38 @@ class CoinbaseAdapter(ExchangeAdapter):
 
     # ----- client lifecycle ------------------------------------------------
 
+    # [P420] A failed client init used to LATCH for the process: one
+    # boot-time key-file read failure (a transient volume mount race, a
+    # momentary permission error) left the sleeve unbuildable until the
+    # next restart while the driver logged "sleeve unavailable this tick"
+    # as if it were transient. The latch now expires after this cooldown
+    # and init is re-attempted (logged). A genuinely permanent fault
+    # (no SDK, no credentials) simply fails again every cooldown, which
+    # is honest and cheap.
+    INIT_RETRY_COOLDOWN_SEC = 300.0
+
     def _ensure_client(self) -> bool:
         if self._client is not None:
             return True
         if self._init_failed is not None:
-            return False
+            # getattr-defended: fixtures set _init_failed by hand (P85)
+            _at = getattr(self, "_init_failed_at", None)
+            if _at is None:
+                # a latch with no clock ages from first sight
+                self._init_failed_at = time.time()
+                return False
+            _age = time.time() - float(_at)
+            if _age < self.INIT_RETRY_COOLDOWN_SEC:
+                return False
+            logger.warning(f"[COINBASE] client init RETRY after {_age:.0f}s "
+                           f"(previous failure: {self._init_failed}) — P420")
+            self._init_failed = None
+            self._init_failed_at = None
         try:
             from coinbase.rest import RESTClient  # type: ignore
         except Exception as e:
             self._init_failed = f"sdk_missing:{type(e).__name__}"
+            self._init_failed_at = time.time()  # [P420]
             logger.warning("[COINBASE] coinbase-advanced-py not installed; adapter disabled")
             return False
         kf = self._key_file or (os.environ.get("COINBASE_KEY_FILE"))
@@ -211,11 +236,15 @@ class CoinbaseAdapter(ExchangeAdapter):
                 self._client = RESTClient(api_key=self._api_key, api_secret=self._api_secret)
             else:
                 self._init_failed = "no_credentials"
+                self._init_failed_at = time.time()  # [P420]
                 return False
             return True
         except Exception as e:
             self._init_failed = f"{type(e).__name__}:{e}"
-            logger.warning(f"[COINBASE] client init failed: {self._init_failed}")
+            self._init_failed_at = time.time()  # [P420]
+            logger.warning(f"[COINBASE] client init failed: {self._init_failed} "
+                           f"— will retry after "
+                           f"{self.INIT_RETRY_COOLDOWN_SEC:.0f}s (P420)")
             return False
 
     def is_connected(self) -> bool:

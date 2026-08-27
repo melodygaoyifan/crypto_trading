@@ -169,6 +169,98 @@ def gmm_shape_mismatch(scaler_mean, features) -> bool:
         return False       # length disagreement; the caller's own guards run
 
 
+# [P420] The 4H bar length the intrabar helpers reason about. One constant,
+# read by both the TA-path pace correction and the GMM's completed-bar rule.
+BAR_SEC_4H = 4.0 * 3600.0
+# [P420] Ranking window for vol_percentile — the SAME width training uses
+# (`training/scripts/rebuild_pipeline.GMM_VOL_PCT_WINDOW`, pinned by
+# tests/test_gmm_feature_parity.py). Applied to COMPLETED bars only, so the
+# runtime rank is "the last completed bar within its own trailing window",
+# which is exactly training's `volumes[i]` within `volumes[i-1023:i+1]`.
+GMM_VOL_PCT_WINDOW = 1024
+
+
+def bar_progress_4h(bar_open_ts_ms, now_ts: Optional[float] = None) -> float:
+    """[P420] Fraction of the current 4H bar elapsed, in [0, 1].
+
+    Pure, so the TA cache HIT path can recompute it for free instead of
+    serving the value frozen at cache-priming time (the watchdog primes the
+    bar ~30s in; a HIT at +3h50 must not report progress 0.002). An absent
+    or unparseable bar-open timestamp returns 1.0 — "treat as a complete
+    bar", i.e. NO pace correction — the conservative direction (a fabricated
+    small progress would inflate the pace multiplier, P2).
+    """
+    try:
+        ts_ms = float(bar_open_ts_ms or 0.0)
+    except (TypeError, ValueError):  # noqa: silent-swallow — unparseable ts = no correction
+        return 1.0
+    if ts_ms != ts_ms or ts_ms <= 0.0:   # NaN or absent
+        return 1.0
+    now = float(now_ts) if now_ts is not None else _time.time()
+    elapsed = max(0.0, now - ts_ms / 1000.0)
+    return min(1.0, elapsed / BAR_SEC_4H)
+
+
+def intrabar_volume_keys(raw_vol_ratio: float, bar_open_ts_ms,
+                         now_ts: Optional[float] = None) -> Dict[str, float]:
+    """[P420] The P339 pace correction as ONE pure function.
+
+    Returns {bar_progress_4h, volume_ratio_intrabar_pace,
+    volume_ratio_effective} for a raw (current-bar volume / SMA) ratio.
+    Before P420 this arithmetic lived only inside the TA cache-MISS branch,
+    so on a cache HIT — which the DECISION tick always was — none of the
+    three keys existed and `effective_volume_ratio` fell back to the raw
+    ~30s-into-bar ratio: the P339 correction never ran on the tick that
+    decides. Now the MISS path and the HIT path call the same function.
+    """
+    try:
+        r = float(raw_vol_ratio)
+    except (TypeError, ValueError):  # noqa: silent-swallow — a bad ratio gets no correction
+        r = 1.0
+    if not (r == r) or r < 0.0:
+        r = 1.0
+    prog = bar_progress_4h(bar_open_ts_ms, now_ts)
+    out = {"bar_progress_4h": prog}
+    if 0.0 < prog < 1.0:
+        floor = max(prog, 0.20)
+        pace = min(r / floor, 5.0)
+        out["volume_ratio_intrabar_pace"] = pace
+        out["volume_ratio_effective"] = max(r, pace)
+    else:
+        out["volume_ratio_intrabar_pace"] = r
+        out["volume_ratio_effective"] = r
+    return out
+
+
+def gmm_volume_rank_input(vols, bar_open_ts_ms,
+                          now_ts: Optional[float] = None):
+    """[P420] (window, value) for the GMM `vol_percentile` rank.
+
+    Training (`rebuild_pipeline.compute_gmm_features_for_bar`) ranks a
+    COMPLETED bar's full volume within its trailing 1024-bar window. The
+    runtime frame's last row is the IN-PROGRESS bar — at the +90s decision
+    tick it holds 0.05-2.3% of a full bar's volume — so ranking `vols[-1]`
+    produced a near-constant feature (z ~ -1.7 every tick), a train/serve
+    skew on one of the GMM's nine inputs (P164/P221 class). When the last
+    bar is in progress the rank is taken on the LAST COMPLETED bar within
+    its own trailing window; when it is complete (or the bar-open ts is
+    absent, so completeness cannot be judged) the legacy full-frame rank
+    stands. Price-derived inputs are untouched: a partial bar's close IS the
+    current price.
+    """
+    vols = list(vols)
+    if not vols:
+        return [], 0.0
+    prog = bar_progress_4h(bar_open_ts_ms, now_ts)
+    in_progress = bool(bar_open_ts_ms) and prog < 1.0
+    if in_progress and len(vols) >= 2:
+        completed = vols[:-1]
+    else:
+        completed = vols
+    window = completed[-GMM_VOL_PCT_WINDOW:]
+    return window, float(window[-1])
+
+
 # [P384] The shield-feed payload's upper bound on depth. Kraken's WS V2
 # checksum is defined over the top 10 levels; the REST feed carries the same
 # window so the two paths are comparable if a WS feed ever coexists.
@@ -835,11 +927,39 @@ class MarketDataPipeline:
                        and _ta_cached.get("drl_last_ts", _last_bar_ts) == _drl_last_bar_ts
                        and _ta_cached.get("drl_n", len(ohlcv_bars)) == len(drl_ohlcv_bars))
 
+            # [P420] THE DECISION TICK WAS A CACHE HIT. `run_live` sleeps to
+            # the 4H candle in 30s chunks and runs this whole pipeline on
+            # every chunk for FastRiskTick (P353): the watchdog pass at
+            # boundary+~30s is the cache MISS that primes the new bar, and
+            # the decision fetch at +90s (`for_decision=True`) then HIT and
+            # skipped the entire MISS block. So every `for_decision` side
+            # effect that lives INSIDE that block — the P354 wavelet append,
+            # the P414c `_gmm_raw_features` stash (via the GMM cache below),
+            # the P339 intrabar/structure keys — ran only on RESTART ticks
+            # (server-verified: `[JUMP-REGIME]` lines appear only after each
+            # restart, never at the 4H decision ticks; the wavelet buffer
+            # grew +1 per restart, +0 per decision tick). A decision tick
+            # now forces a MISS for BOTH caches: one extra TA+GMM compute per
+            # asset per 4H is trivial, and it is the tick that decides. The
+            # watchdog passes (for_decision=False) still HIT.
+            _ta_forced_miss = bool(for_decision and _ta_hit)
+            if _ta_forced_miss:
+                _ta_hit = False
+                logger.debug(f"[PREPARE_DATA] {asset}: TA cache HIT forced "
+                             f"to MISS for the decision tick (P420)")
+
             if _ta_hit:
                 df = _ta_cached["df"]
                 drl_df = _ta_cached.get("drl_df", df)
                 indicators = _ta_cached["indicators"]
                 raw.update(_ta_cached["enrichment"])
+                # [P420] bar progress + the pace-corrected ratios are a
+                # function of NOW, not of the bar: recompute them from the
+                # cached raw ratio instead of serving the values frozen at
+                # priming time (+30s into the bar).
+                raw.update(intrabar_volume_keys(
+                    raw.get("volume_ratio", 1.0),
+                    raw.get("latest_bar_open_ts_ms", 0)))
                 logger.debug(f"[PREPARE_DATA] {asset}: TA cache HIT (ts={_last_bar_ts})")
 
             if not _ta_hit:
@@ -867,7 +987,11 @@ class MarketDataPipeline:
                 vol = df["volume"]
 
                 # [WIRE-2] Feed latest OHLC bar to adaptive stop ATR calculator
-                if self._adaptive_stop:
+                # [P420] NOT on a forced miss: the ATR calculator APPENDS a
+                # true range per call, and the watchdog pass that primed this
+                # bar already fed it. A second feed of the same bar would
+                # double-count it in every ATR window.
+                if self._adaptive_stop and not _ta_forced_miss:
                     try:
                         self._adaptive_stop.atr_calculator.update(
                             asset, float(high.iloc[-1]), float(low.iloc[-1]),
@@ -932,31 +1056,10 @@ class MarketDataPipeline:
                 _raw_vol_ratio = _cur_vol / _vol_sma if _vol_sma > 0 else 1.0
                 raw["volume_ratio"] = _raw_vol_ratio
 
-                _bar_progress_4h = 1.0
-                _latest_bar_open_ts_ms = raw.get("latest_bar_open_ts_ms", 0)
-                if _latest_bar_open_ts_ms:
-                    try:
-                        _bar_open_dt = datetime.fromtimestamp(
-                            float(_latest_bar_open_ts_ms) / 1000.0, timezone.utc
-                        )
-                        _elapsed_s = max(
-                            0.0,
-                            (datetime.now(timezone.utc) - _bar_open_dt).total_seconds(),
-                        )
-                        _bar_progress_4h = min(1.0, _elapsed_s / (4.0 * 3600.0))
-                    except Exception:
-                        _bar_progress_4h = 1.0
-                raw["bar_progress_4h"] = _bar_progress_4h
-                if 0.0 < _bar_progress_4h < 1.0:
-                    _progress_floor = max(_bar_progress_4h, 0.20)
-                    _intrabar_pace = _raw_vol_ratio / _progress_floor
-                    raw["volume_ratio_intrabar_pace"] = min(_intrabar_pace, 5.0)
-                    raw["volume_ratio_effective"] = max(
-                        _raw_vol_ratio, raw["volume_ratio_intrabar_pace"]
-                    )
-                else:
-                    raw["volume_ratio_intrabar_pace"] = _raw_vol_ratio
-                    raw["volume_ratio_effective"] = _raw_vol_ratio
+                # [P420] the P339 pace correction, single-sourced with the
+                # cache-HIT path (module-level pure helper).
+                raw.update(intrabar_volume_keys(
+                    _raw_vol_ratio, raw.get("latest_bar_open_ts_ms", 0)))
 
                 # [CRACK-1] Structure break: how far current price has broken prior 20-bar high/low
                 _sb_lookback = min(20, len(high) - 1)  # exclude current bar
@@ -1044,6 +1147,15 @@ class MarketDataPipeline:
                     "rsi_14", "macd_12_26", "bb_width_20", "atr_14", "vol_ratio_s",
                     "rsi_14_denoised", "macd_12_26_denoised", "bb_width_20_denoised",
                     "atr_14_denoised", "vol_ratio_s_denoised",
+                    # [P420] the intrabar/structure keys were computed only on
+                    # a MISS and NOT cached, so a HIT served none of them and
+                    # `effective_volume_ratio` (core/market_data_helpers) fell
+                    # back to the raw ratio. The three intrabar keys are
+                    # re-derived from NOW on a HIT (above); the structure pair
+                    # is bar-static like the rest of the TA.
+                    "bar_progress_4h", "volume_ratio_intrabar_pace",
+                    "volume_ratio_effective", "structure_break_pct",
+                    "structure_level",
                 ]
                 for _ek in _ta_enrich_keys:
                     if _ek in raw:
@@ -1112,7 +1224,12 @@ class MarketDataPipeline:
             _asset_upper = asset.upper() if isinstance(asset, str) else asset
             if _asset_upper in self._gmm_models or self._gmm_model is not None:
                 try:
-                    gmm_result = self._predict_gmm_regime(df, raw, np)
+                    # [P420] the decision tick forces a GMM cache MISS too —
+                    # the TA MISS above re-stores the TA cache with the SAME
+                    # last_ts, so the GMM cache (keyed on that ts) would
+                    # still HIT and skip the `_gmm_raw_features` stash.
+                    gmm_result = self._predict_gmm_regime(
+                        df, raw, np, force_miss=for_decision)
                     if gmm_result is not None:
                         regime_conf, gmm_regime_name = gmm_result
                 except Exception as e:
@@ -2128,6 +2245,15 @@ class MarketDataPipeline:
                     _whale_sell_vol = _wp.sell_volume_usd
                     _whale_net_pressure = _wp.net_pressure
                     _whale_count = _wp.whale_count
+                    # [P420] THIRD copy of the +/-0.3 whale deadband, recorded
+                    # not routed: the single-sourced helper is
+                    # `main.whale_direction_from_pressure` (P293d), and main.py
+                    # imports this module, so importing it here is a cycle.
+                    # This copy feeds only the STRING label `whale_direction`
+                    # (buy/sell/mixed); the float `whale_flow_direction` every
+                    # consumer acts on is produced by the main.py bridge from
+                    # the helper. Moving the helper into a leaf module is the
+                    # durable fix and touches main.py (not this fork's file).
                     if _wp.net_pressure > 0.3:
                         _whale_dir = "buy"
                     elif _wp.net_pressure < -0.3:
@@ -2394,8 +2520,16 @@ class MarketDataPipeline:
             logger.debug("[BUFFER] persist skipped (%s: %s)",
                          type(e).__name__, e)
 
-    def _predict_gmm_regime(self, df, raw: Dict, _np) -> Optional[tuple]:
-        """Predict regime using pretrained 12-feature GMM model (v3)."""
+    def _predict_gmm_regime(self, df, raw: Dict, _np,
+                            force_miss: bool = False) -> Optional[tuple]:
+        """Predict regime using pretrained 12-feature GMM model (v3).
+
+        [P420] `force_miss=True` (the decision tick) bypasses the cache
+        lookup so the feature vector — and the `_gmm_raw_features` stash the
+        jump-regime shadow reads — is rebuilt on the tick that decides; the
+        result is still stored, so the watchdog passes that follow keep
+        hitting. Default False = byte-identical to the pre-P420 behaviour.
+        """
         closes = df["close"].values
         vols = df["volume"].values
         n = len(closes)
@@ -2421,7 +2555,8 @@ class MarketDataPipeline:
         if _ta_c:
             _last_bar_ts = _ta_c.get("last_ts")
         _gmm_cached = (
-            self._ta_cache.get(_gmm_cache_key) if _last_bar_ts is not None else None
+            self._ta_cache.get(_gmm_cache_key)
+            if (_last_bar_ts is not None and not force_miss) else None
         )
         if (_gmm_cached is not None
                 and _gmm_cached["ts"] == _last_bar_ts
@@ -2448,7 +2583,16 @@ class MarketDataPipeline:
 
         vol_1h = float(_np.std(rets[-2:])) if len(rets) >= 2 else 0.02
         vol_24h = float(_np.std(rets[-6:])) if len(rets) >= 6 else 0.02
-        vol_pct = float(_np.searchsorted(_np.sort(vols), vols[-1]) / n * 100) if n > 0 else 50.0
+        # [P420] rank the last COMPLETED bar, not the in-progress one (which
+        # holds 0.05-2.3% of a full bar at the +90s decision tick and read
+        # as a near-constant z ~ -1.7 every tick). Training ranks bar i's
+        # FULL volume within its trailing GMM_VOL_PCT_WINDOW; this is the
+        # same quantity once the partial bar is excluded.
+        _vp_win, _vp_val = gmm_volume_rank_input(
+            vols, raw.get("latest_bar_open_ts_ms", 0))
+        vol_pct = (float(_np.searchsorted(_np.sort(_vp_win), _vp_val)
+                         / len(_vp_win) * 100)
+                   if len(_vp_win) > 0 else 50.0)
 
         if len(rets) >= 30:
             _wv = _np.lib.stride_tricks.sliding_window_view(rets, 6)
@@ -2537,11 +2681,6 @@ class MarketDataPipeline:
             logger.warning(f"[GMM] {asset}: scaler not loaded, falling back to ADX proxy")
             raw["_gmm_fallback"] = "scaler_missing"
             return None
-        # [P414c] stash the GMM's own (validated) feature vector for the
-        # jump-regime SHADOW — parity, no train/serve skew. `features` is a
-        # checked np.array here (past the shape guard), so no try needed.
-        # Observation-only; read in main.py. Never consumed by a live control.
-        raw["_gmm_raw_features"] = [float(x) for x in features]
         scaled = (features - _scaler_mean) / _scaler_scale
 
         extreme_mask = _np.abs(scaled) > 3.0
@@ -2564,6 +2703,15 @@ class MarketDataPipeline:
             raw["_gmm_fallback"] = "distribution_shift"
             return None
 
+        # [P414c] stash the GMM's own (validated) feature vector for the
+        # jump-regime SHADOW — parity, no train/serve skew. `features` is a
+        # checked np.array here (past the shape guard), so no try needed.
+        # Observation-only; read in main.py. Never consumed by a live control.
+        # [P420] moved BELOW the distribution-shift fallback: on that path the
+        # tick's "gmm label" is the ADX proxy, not a GMM switch, and a stash
+        # left behind would let the shadow count a proxy label as a GMM
+        # regime change. No stash => the shadow skips the asset (Iron Law 7).
+        raw["_gmm_raw_features"] = [float(x) for x in features]
         scaled = _np.clip(scaled, -4.0, 4.0)
 
         probs = _model.predict_proba(scaled.reshape(1, -1))[0]
@@ -2606,6 +2754,10 @@ class MarketDataPipeline:
                 "_gmm_regime_name": raw.get("_gmm_regime_name"),
                 "_gmm_probs": raw.get("_gmm_probs"),
                 "_gmm_n_extreme_features": raw.get("_gmm_n_extreme_features"),
+                # [P420] the jump-shadow stash rides the cache too, so a
+                # genuine HIT still carries the vector that produced the
+                # cached label (it was absent on every hit before).
+                "_gmm_raw_features": raw.get("_gmm_raw_features"),
             }
             self._ta_cache[_gmm_cache_key] = {
                 "ts": _last_bar_ts, "n": n,

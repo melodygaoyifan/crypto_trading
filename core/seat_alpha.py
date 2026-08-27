@@ -262,6 +262,26 @@ def calibrated_seat_alpha(asset: str, seat: str,
     return float(fallback_bps), f"uncalibrated_seat:{seat}"
 
 
+def calibration_cap_bps(asset: str, seat: str) -> Optional[float]:  # [P420]
+    """[P420] The MEASURED era-median for (asset, seat), or None when no
+    calibration exists. Used to bound what a REFUSAL may assert: a refusal
+    fallback must never claim MORE edge than the measurement (BTC's
+    regimebook calibration is 24.1 < the generic 30 -- the old fallback
+    asserted 30 x |dir| on BTC, i.e. more than the seat has ever measured).
+    """
+    a = str(asset or "").upper().strip()
+    _s = str(seat or "").lower()
+    table: Dict[str, float]
+    if _s == "regimebook":
+        table = REGIMEBOOK_ALPHA_BPS_PER_ROUND_TRIP
+    elif _s == "skew_contra":
+        table = SKEW_CONTRA_ALPHA_BPS_PER_ROUND_TRIP
+    else:
+        return None
+    v = table.get(a)
+    return float(v) if v is not None else None
+
+
 def resolve_seat_edge(asset: str, seat: str, direction: float,
                       base_bps: float, calibrated_enabled: bool,
                       honest_fees_enabled: bool,
@@ -273,6 +293,16 @@ def resolve_seat_edge(asset: str, seat: str, direction: float,
     always gets `base_bps * |direction|` == 0 — a calibrated round-trip value
     must never be asserted for a position the seat is not taking.
 
+    [P420] REFUSAL MAGNITUDE. When the calibrated path is ARMED but REFUSES
+    (the P321b price interlock, or a calibration exception), the fallback it
+    returns is `min(base_bps, calibrated_median) * |direction|` for any
+    (asset, seat) that HAS a measurement: a refusal must never assert MORE
+    than the measurement (BTC regimebook: 24.1, not 30). Every refusal path
+    still REFUSES the calibrated alpha exactly as before -- only the
+    magnitude of what the refusal asserts changed. The flags-OFF path is
+    untouched (it is the asserted-constant regime by configuration, not a
+    refusal; the P320 anti-rot pin that the default asserts 30.0 stands).
+
     THE INTERLOCK LIVES HERE, and both flags are required:
       * calibrated alpha WITHOUT honest fees raises ETH 22.5 -> 52.1 while the
         fee stays ~3x understated — a pure loosening;
@@ -283,6 +313,11 @@ def resolve_seat_edge(asset: str, seat: str, direction: float,
     fallback = float(base_bps) * abs(float(direction or 0.0))
     if not direction or not (calibrated_enabled and honest_fees_enabled):
         return fallback
+    # [P420] From here every early return is a REFUSAL of an ARMED
+    # calibration; cap what it asserts at the measurement (see docstring).
+    _cap = calibration_cap_bps(asset, seat)
+    if _cap is not None:
+        fallback = min(float(base_bps), _cap) * abs(float(direction or 0.0))
     # [P321b] INTERLOCK ON EFFECT, NOT ON FLAG. Both flags were on and the
     # honest fee still did not apply — it read market_data["price"], a key no
     # producer writes, so it fell back to the modelled 3bps while the

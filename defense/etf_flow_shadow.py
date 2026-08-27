@@ -32,6 +32,14 @@ trades/yr) so the edge clears the CDE fee floor: BTC OOS Sharpe +1.18, ETH
 +1.30, both CIs excluding zero. Raw sign was the weaker, higher-turnover form
 and is kept only as a secondary `raw_sign` field for A/B. The hold-state is
 persisted (P154) so a restart does not reset the deadband to flat.
+[P420] A persisted hold older than HOLD_MAX_AGE_DAYS is NOT restored
+blindly (`deadband_hold` is a SEAT-FRESH reason, so a -1 held N days ago
+could flatten a long BTC/ETH book today through the de-risk path with no
+current signal behind it). It is REPLAYED from the full completed flow
+history the feed already fetches -- deterministic, restart-invariant,
+the hold a continuous process would carry. If the replay cannot run the
+hold starts at 0.0 with reason `restart_transient` (NOT a seat-fresh
+reason), and an absent state file cold-starts flat (P2).
 
 MECHANICS
 ---------
@@ -98,6 +106,9 @@ FETCH_TTL_SEC = 3600.0
 ZSCORE_WINDOW = 30      # trailing completed-flow days for the z-score
 ZSCORE_BAND = 1.0       # |z| must exceed this to flip; else HOLD the position
 ZSCORE_MIN_OBS = 15     # below this, warmup (no claim)
+# [P420] a persisted deadband hold older than this is REPLAYED from the flow
+# history on the next tick rather than restored (see module docstring).
+HOLD_MAX_AGE_DAYS = 1.0
 
 
 def etf_flow_direction(flow_usd: Optional[float],
@@ -158,6 +169,23 @@ def etf_flow_zscore_direction(flow_usd: Optional[float],
         return -1.0, z, "outflow_z"
     # inside the deadband: hold the previous position (0 if never set)
     return float(prev_direction), z, "deadband_hold"
+
+
+def replay_hold(completed_flows, window: int = ZSCORE_WINDOW,
+                band: float = ZSCORE_BAND, min_obs: int = ZSCORE_MIN_OBS) -> float:
+    """[P420] Walk the COMPLETED flow history forward through the z-deadband
+    rule from state 0 and return the hold a continuous process would carry
+    INTO the newest completed day (state after every day except the last).
+    Same arithmetic as etf_flow_zscore_direction (age is not re-checked --
+    history days are complete by construction). Deterministic."""
+    flows = [float(f) for f in (completed_flows or []) if f is not None]
+    prev = 0.0
+    for i in range(1, len(flows)):
+        d, _z, _r = etf_flow_zscore_direction(
+            flows[i - 1], 0.0, flows[max(0, i - 1 - window):i - 1], prev,
+            band=band, min_obs=min_obs)
+        prev = d
+    return prev
 
 
 class EtfFlowShadow:
@@ -224,10 +252,26 @@ class EtfFlowShadow:
         return (float(direction), True)
 
     def _load_state(self) -> dict:
+        # [P420] assets whose persisted hold was too old to restore -> replayed
+        # from the flow history on the next record_tick (see replay_hold).
+        self._replay_pending: set = set()
         try:
             if self._state_path.exists():
                 d = json.loads(self._state_path.read_text(encoding="utf-8"))
-                return {k: float(v) for k, v in d.get("last_direction", {}).items()}
+                hold = {k: float(v) for k, v in d.get("last_direction", {}).items()}
+                saved_at = d.get("saved_at")
+                age_days = ((time.time() - float(saved_at)) / 86400.0
+                            if isinstance(saved_at, (int, float)) else None)
+                if hold and (age_days is None or age_days > HOLD_MAX_AGE_DAYS):
+                    self._replay_pending = set(hold.keys())
+                    logger.warning(
+                        "[ETFFLOW] persisted hold is %s -- will REPLAY from the "
+                        "flow history instead of restoring %s",
+                        ("unstamped" if age_days is None
+                         else f"{age_days:.1f}d old (> {HOLD_MAX_AGE_DAYS:g}d)"),
+                        hold)
+                    return {}
+                return hold
         except Exception:  # noqa: silent-swallow — corrupt state -> cold start (flat), logged; never fatal
             logger.warning("[ETFFLOW] state restore failed — cold start (flat)")
         return {}
@@ -241,6 +285,7 @@ class EtfFlowShadow:
                 # the ETF seat survives a restart (age-gated on restore).
                 "seat_state": {k: list(v) for k, v in
                                getattr(self, "_seat_state", {}).items()},
+                "saved_at": time.time(),  # [P420] age-gates the hold restore
             }), encoding="utf-8")
             os.replace(tmp, self._state_path)
         except Exception:  # noqa: silent-swallow — a state-write failure must not kill the tick; next tick retries
@@ -356,10 +401,41 @@ class EtfFlowShadow:
             trailing = self.trailing_completed_flows(asset, ZSCORE_WINDOW)
             # getattr-defended: a partial restore or object.__new__ construction
             # must not break the tick path (P85). Absent -> cold start (flat).
+            hold_source = "persisted"
+            if asset in getattr(self, "_replay_pending", set()):
+                # [P420] stale persisted hold: reproduce what a continuous
+                # process would carry into this day, from the same history.
+                if not hasattr(self, "_last_direction"):
+                    self._last_direction = {}
+                try:
+                    hist = self.trailing_completed_flows(asset, 10 ** 6)
+                    newest = self.latest_completed_flow(asset)[0]
+                    if hist and newest is not None:
+                        self._last_direction[asset] = replay_hold(hist + [newest])
+                        hold_source = "replayed"
+                        logger.warning("[ETFFLOW] %s: hold REPLAYED from %d "
+                                       "completed days -> %+.0f", asset,
+                                       len(hist) + 1, self._last_direction[asset])
+                    else:
+                        self._last_direction[asset] = 0.0
+                        hold_source = "restart_transient"
+                        logger.warning("[ETFFLOW] %s: no history to replay the "
+                                       "hold -- starting flat", asset)
+                except Exception as e:  # noqa: silent-swallow -- a failed replay starts flat (no seat), logged
+                    self._last_direction[asset] = 0.0
+                    hold_source = "restart_transient"
+                    logger.warning("[ETFFLOW] %s: hold replay failed (%s) -- "
+                                   "starting flat", asset, type(e).__name__)
+                self._replay_pending.discard(asset)
+                self._save_state()
             prev = getattr(self, "_last_direction", {}).get(asset, 0.0)
             # [P402] primary ledger claim = the P400 z-score+deadband signal
             direction, z, reason = etf_flow_zscore_direction(
                 flow, age, trailing, prev)
+            if reason == "deadband_hold" and hold_source == "restart_transient":
+                # [P420] a hold with nothing behind it is NOT a live claim:
+                # not a seat-fresh reason, so it cannot de-risk the book.
+                reason = "restart_transient"
             # HOLD-state update: only a fresh directional claim moves it. A
             # deadband tick already returns prev (so prev is unchanged); a
             # no-data/stale/warmup tick logs FLAT but leaves prev intact, so a
@@ -410,6 +486,7 @@ class EtfFlowShadow:
                 "flow_day": day_iso,
                 "flow_age_days": None if age is None else round(age, 2),
                 "reason": reason,
+                "hold_source": hold_source,  # [P420] persisted|replayed|restart_transient
                 "raw_sign": float(raw_dir),
                 "raw_reason": raw_reason,
                 # [P404] combination-shadow fields (observation-only)

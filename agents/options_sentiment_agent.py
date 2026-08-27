@@ -103,6 +103,14 @@ class OptionsSentimentAgent:
         # History for z-score computation (42 bars = 7 days at 4H)
         self._pcr_history: Dict[str, deque] = defaultdict(lambda: deque(maxlen=42))
         self._max_pain_history: Dict[str, deque] = defaultdict(lambda: deque(maxlen=42))
+        # [P420] the PCR deque was RAM-only: at one sample per 4H tick the
+        # 5-sample z-score floor needed ~20h of uninterrupted uptime, so
+        # every restart (7 today) sent pcr_zscore back to 0.0 for ~20h —
+        # the P301/P316/P371 class in one more location. Restored at
+        # construction through the shared warmup helper (P172), persisted
+        # after every append; a missing/stale/corrupt file is a logged cold
+        # start, exactly today's behaviour.
+        self._restore_pcr_history()
 
         # Cache
         self._last_result: Dict[str, Dict] = {}
@@ -119,6 +127,46 @@ class OptionsSentimentAgent:
             "CG-API-KEY": self._api_key,
             "accept": "application/json",
         }
+
+    # [P420] PCR-history persistence (shared helper: strategies/_warmup_state)
+    _PCR_STATE_NAME = "options_pcr_history"
+    _PCR_MAX_AGE_SEC = 7 * 24 * 3600.0   # the pipeline bound (P301/P371)
+
+    def _restore_pcr_history(self) -> None:
+        try:
+            from strategies._warmup_state import load as _wload
+            saved = _wload(self._PCR_STATE_NAME,
+                           max_age_sec=self._PCR_MAX_AGE_SEC)
+            if not saved:
+                logger.info("[OPTIONS-AGENT] no saved PCR history — cold "
+                            "start (z-score needs 5 samples ~20h)")
+                return
+            n = 0
+            for asset, vals in saved.items():
+                clean = [float(v) for v in vals
+                         if isinstance(v, (int, float)) and v == v and v > 0]
+                if clean:
+                    self._pcr_history[asset] = deque(clean[-42:], maxlen=42)
+                    n += len(self._pcr_history[asset])
+            logger.info("[OPTIONS-AGENT] restored PCR history: %s samples "
+                        "across %s — the z-score warmup is CUMULATIVE across "
+                        "restarts", n, sorted(saved))
+        except Exception as e:  # noqa: silent-swallow — logged; cold start is today's behaviour
+            logger.warning("[OPTIONS-AGENT] PCR history restore failed "
+                           "(%s: %s) — cold start", type(e).__name__, e)
+
+    def _persist_pcr_history(self) -> None:
+        """Never raises: a history that cannot be saved must not break the
+        signal (the helper's own contract, P301)."""
+        try:
+            from strategies._warmup_state import save as _wsave
+            series = {a: [float(v) for v in d]
+                      for a, d in self._pcr_history.items() if len(d)}
+            if series:
+                _wsave(self._PCR_STATE_NAME, series)
+        except Exception as e:  # noqa: silent-swallow — logged; persistence only
+            logger.debug("[OPTIONS-AGENT] PCR history persist skipped "
+                         "(%s: %s)", type(e).__name__, e)
 
     async def generate_signal(self, asset: str, current_price: float = 0.0) -> Dict[str, Any]:
         """
@@ -182,6 +230,7 @@ class OptionsSentimentAgent:
         # Update history for z-score
         if pcr_oi != 1.0:
             self._pcr_history[asset].append(pcr_oi)
+            self._persist_pcr_history()  # [P420]
         if max_pain_price > 0:
             self._max_pain_history[asset].append(max_pain_price)
 
@@ -269,6 +318,7 @@ class OptionsSentimentAgent:
             pvol = 1.0
 
         self._pcr_history[asset].append(pcr)
+        self._persist_pcr_history()  # [P420]
         pcr_z = self._compute_zscore(pcr, self._pcr_history[asset])
 
         # No max-pain source exists; 0.0 means "this leg contributed nothing".

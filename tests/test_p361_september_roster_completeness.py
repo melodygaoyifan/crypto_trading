@@ -71,6 +71,21 @@ def _scorer_prefixes():
     return set(re.findall(r'"([a-z0-9_]+)"', block))
 
 
+def _out_of_tree_ledger_prefixes():
+    """[P420] Accruing streams that live OUTSIDE data/strategy_shadow/ and are
+    therefore invisible to the scorer's prefix list — the WS2 conviction-
+    sizing shadow writes `convsize_{ASSET}.jsonl` to data/conviction_shadow/
+    and is judged by its own PnL reader. Read from the PRODUCER's source, not
+    restated here (P310/P172): the file-prefix it writes is the family name."""
+    src = (REPO / "defense" / "conviction_sizing_shadow.py"
+           ).read_text(encoding="utf-8")
+    return set(re.findall(r'f"([a-z0-9]+)_\{asset\}\.jsonl"', src))
+
+
+def _accruing_streams():
+    return _scorer_prefixes() | _out_of_tree_ledger_prefixes()
+
+
 # Families the scorer reads that deliberately have NO September read date,
 # each with the entry that decided it. An exemption must be a DECISION, not a
 # gap — that distinction is the whole point of the roster.
@@ -81,8 +96,15 @@ _NO_READ_BY_DECISION = {
                "not September candidates",
     "ml_factor": "P199 PROMOTE was plausibly in-sample; no scheduled re-read",
     "sentvariant": "P296 settled offline on 3,116 days of history",
-    "skewetf": "P407j forward shadow just started; read via the standard P166 forward gate once ~30d accrued, not a dated September row",
-    "ridgeshadow": "P409 held-BTC-ridge forward shadow just started; read via the standard P166 forward gate once ~30d accrued, not a dated September row",
+    # [P420] `skewetf` is NO LONGER exempt: it is the LIVE decider's own A/B
+    # (skew solo == the current live override vs agree-gated), so it needs a
+    # dated read like every other candidate — the roster row lives in
+    # scripts/september_check.py CANDIDATES under prefix "skewetf".
+    "ridgeshadow": ("P409b WITHDRAWN: configs/ridgeshadow/BTC.json deleted "
+                    "after the first live artifact showed the +46 rested on "
+                    "the serve-absent regime_proba_7; the harness loads "
+                    "nothing and the ledger is inert, so there is nothing "
+                    "to read"),
 }
 
 
@@ -90,7 +112,7 @@ def test_every_family_the_scorer_reads_has_a_read_date_or_a_reason():
     """[P361] The direction that failed: `whale_filter` accrued for days with
     no read date because nothing checked the roster against the scorer."""
     covered = {prefix for prefix, _d, _a in _candidates().values()}
-    unscheduled = sorted(_scorer_prefixes() - covered - set(_NO_READ_BY_DECISION))
+    unscheduled = sorted(_accruing_streams() - covered - set(_NO_READ_BY_DECISION))
     assert not unscheduled, (
         f"the scorer reads {unscheduled} but nothing schedules a read — an "
         f"accruing ledger nobody looks at is the P199/P230 gap this roster "
@@ -103,7 +125,7 @@ def test_no_exemption_is_a_parking_spot():
     """The other direction (P310): an exemption must name the decision, and
     must still refer to something the scorer actually reads — otherwise the
     list silently becomes a place to hide new gaps."""
-    prefixes = _scorer_prefixes()
+    prefixes = _accruing_streams()
     for name, reason in _NO_READ_BY_DECISION.items():
         assert name in prefixes, (
             f"{name} is exempted but the scorer no longer reads it — delete "
@@ -112,6 +134,22 @@ def test_no_exemption_is_a_parking_spot():
         assert re.search(r"P\d{2,4}", reason), (
             f"{name}: exemption cites no P-entry, so it is an opinion"
         )
+
+
+def test_the_out_of_tree_scan_finds_the_conviction_shadow():
+    """[P420] Anti-vacuity (P174): if the producer scan returns nothing the
+    roster check silently shrinks back to the scorer's prefixes."""
+    assert "convsize" in _out_of_tree_ledger_prefixes()
+
+
+def test_convsize_and_skewetf_have_read_rows():
+    """[P420] The two instances pinned beside the class: convsize (WS2,
+    data/conviction_shadow/) was invisible to the roster scan, and skewetf
+    was parked in the exemption list although it is the live decider's own
+    A/B. Both are accruing now; both need a dated read."""
+    covered = {prefix for prefix, _d, _a in _candidates().values()}
+    assert "convsize" in covered, "convsize (WS2 sizing shadow) has no read row"
+    assert "skewetf" in covered, "skewetf (the live decider's A/B) has no read row"
 
 
 def test_whale_filter_specifically_has_a_read_date():

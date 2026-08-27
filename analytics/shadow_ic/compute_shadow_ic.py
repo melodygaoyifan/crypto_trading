@@ -427,6 +427,10 @@ def load_ohlcv(asset: str) -> Any:
     # The training parquet stays as a fallback so this never hard-fails.
     candidates = [
         OHLCV_DIR / f"{asset}_4H_ohlcv.parquet",
+        # [P420] september_check no longer OVERWRITES the Binance-derived
+        # `_4H_ohlcv.parquet` with Kraken public rows; it writes them here
+        # (~120 days). Breadth assets (XRP/BNB/...) have ONLY this series.
+        OHLCV_DIR / f"{asset}_4H_ohlcv_kraken.parquet",
         OHLCV_DIR / f"{asset}_4H_full.parquet",
         OHLCV_DIR / f"{asset}_4h_full.parquet",
     ]
@@ -532,6 +536,10 @@ POOLABLE_FAMILIES = frozenset({
     # P294 lesson, committed by the author who had just quoted it: the thing
     # that separates two claims is whatever the SCORER groups by.
     "regimebook", "regimebook_adj", "regimebook_volskip",
+    # [P420] the five breadth trend-only books (XRP/ADA/LTC/DOGE/BNB) are ONE
+    # rule across never-fitted assets -> their own pooled exam. They were
+    # written as "regimebook" before P420 (pooling 8 books running 3 rules).
+    "regimebook_breadth",
     # [P307e] the funding-gated-short variant. Pooled deliberately: it is
     # ONE rule applied across three assets, and P293g measured that a
     # per-asset 16h exam needs ~330 days to certify while pooling three
@@ -549,6 +557,37 @@ POOLABLE_FAMILIES = frozenset({
     # NOT here on purpose: `mlpshadow` is a BTC-only exported model, not one
     # rule applied across assets.
 })
+
+# [P420] Which ASSETS a pooled family may draw on. The pooled `regimebook`
+# exam is the HOME TRIO ONLY: the breadth books run a different rule and,
+# before P420, wrote their rows under `strategy: "regimebook"` — so without
+# this filter the old breadth rows would keep contaminating the trio's pooled
+# read. A row whose asset is outside its family's filter is scored PER ASSET
+# (still visible, never silently dropped — P199). Families not listed pool
+# every asset they cover. Deliberately hardcoded to the trio here (not
+# config.assets): the trio IS the pool the P297 six-year certification was
+# measured on.
+_HOME_TRIO = ("BTC", "ETH", "SOL")
+_BREADTH = ("XRP", "ADA", "LTC", "DOGE", "BNB")
+POOL_ASSET_FILTER = {
+    "regimebook": _HOME_TRIO,
+    "regimebook_adj": _HOME_TRIO,
+    "regimebook_volskip": _HOME_TRIO,
+    "regimebook_fgshort": _HOME_TRIO,
+    "regimebook_breadth": _BREADTH,
+}
+
+
+def pool_key_for(strat: str, asset: str, pool_assets: bool) -> str:
+    """[P420] POOLED_KEY when `strat` pools AND `asset` is inside its pool
+    filter (or the family has no filter); else the asset itself."""
+    if not pool_assets or strat not in POOLABLE_FAMILIES:
+        return asset
+    allowed = POOL_ASSET_FILTER.get(strat)
+    if allowed is not None and asset not in allowed:
+        return asset
+    return POOLED_KEY
+
 
 # [P310] Scored PER ASSET on purpose — not poolable, not dead. Named
 # explicitly so that "nobody classified this yet" is distinguishable from
@@ -615,9 +654,7 @@ def compute_per_strategy_ic(
         asset = r.get("asset")
         if not strat or not asset:
             continue
-        key_asset = (POOLED_KEY
-                     if (pool_assets and strat in POOLABLE_FAMILIES)
-                     else asset)
+        key_asset = pool_key_for(strat, str(asset), pool_assets)  # [P420]
         grouped[(strat, key_asset)].append(r)
 
     # Cache OHLCV per asset

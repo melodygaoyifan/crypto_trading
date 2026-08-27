@@ -17,6 +17,21 @@ for asset in ("BTC", "ETH", "SOL"):
     folds = tr._get_fold_splits()
     shs = []
     for i, (train_df, val_df) in enumerate(folds):
+        # [P420] each fold-val window is a validation-era read (P403 spent
+        # three per asset unledgered) — record it.
+        try:
+            from training.splits import record_window_usage
+            _lo, _hi = int(val_df.index.min()), int(val_df.index.max()) + 1
+            _prior = record_window_usage(
+                "ridge_16h_pooled_check:p403", asset, _lo, _hi,
+                f"validation:ridge_16h fold_{i+1} val window via the real env "
+                f"(P403 era-stability read)")
+            if _prior:
+                print(f"[WINDOW-LEDGER] {asset} fold_{i+1}: window already "
+                      f"read by {_prior} other experiment(s) — discount (P260)")
+        except Exception as e:  # noqa: silent-swallow — surfaced, never blocks the check
+            print(f"[WINDOW-LEDGER] WARNING: could not record {asset} "
+                  f"fold_{i+1} ({type(e).__name__}: {e})")
         eval_env = DummyVecEnv([lambda d=val_df: tr._create_env(d, augment_enabled=False)])
         base = tr._evaluate_baselines(eval_env, ridge_ctx={
             "train_df": train_df, "feature_cols": fcols, "decision_interval": 4})

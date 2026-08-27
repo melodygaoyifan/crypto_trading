@@ -238,14 +238,67 @@ def decide_seat(
 # The config edit each winner implies — printed, never applied (P141)
 # =============================================================================
 
+# [P420] Seats the controller CANNOT score from agent_ic_review: their series
+# is not an attribution agent (the skew seat reads a Laevitas feed, the ETF
+# seat a CoinGlass feed). Their forward exam is the skewetf_* ledger via
+# compute_shadow_ic (P407j). When one of these is the LIVE decider for an
+# asset the controller must REFUSE, not prescribe (P199: a verdict computed
+# from a series that is not the decider's is a guess wearing a measurement's
+# name). Labels match main.py's primary_strategy vocabulary (P317/P407c).
+UNSCOREABLE_SEATS = frozenset({"skew_contra", "etf_flow"})
+UNSCOREABLE_REASON = ("decider not scoreable by this instrument — read "
+                      "skewetf_* via compute_shadow_ic")
+
+# [P420] The live decider per asset, from the live profile keys. Precedence
+# is the ORDER THE SEATS RUN in main.py (the last to fire wins where it has
+# an opinion): skew (BTC/ETH) > etf-decide > regimebook > whale > trend.
+# The old controller read "regimebook > whale > trend" and never knew the
+# skew/etf seats existed, so its 2026-08-24 cron run scored the wrong series
+# as the seat holder and prescribed the P299-RETIRED `trend_assets: []`.
+def live_incumbent(cfg: Dict, asset: str) -> str:
+    """Pure: which seat label holds the DECIDE slot for `asset` under `cfg`."""
+    def _enf(key: str) -> bool:
+        return str(cfg.get(key, "off") or "off").lower() == "enforce"
+    a = str(asset).upper()
+    if _enf("skew_seat_mode") and a in [str(x).upper() for x in
+                                        (cfg.get("skew_seat_assets") or [])]:
+        return "skew_contra"
+    if _enf("etf_seat_mode") and a in [str(x).upper() for x in
+                                       (cfg.get("etf_decide_assets") or [])]:
+        return "etf_flow"
+    if _enf("regimebook_mode"):
+        return "regimebook"
+    if _enf("whale_seat_mode"):
+        return "whale"
+    if _enf("trend_following_mode"):
+        return "trend"
+    return FLAT
+
+
+def live_incumbents(cfg: Dict, assets) -> Dict[str, str]:
+    return {str(a).upper(): live_incumbent(cfg, a) for a in assets}
+
+
+# [P420] `trend_assets` was RETIRED by P299 (the tripwire's actuator no longer
+# targets the decider) and must never be prescribed again; FLAT vacates EVERY
+# seat that exists today, including the two the old table did not know about.
 SEAT_CONFIG_EDIT: Dict[str, str] = {
     "trend": ('trend_following_mode: "enforce"  + whale_seat_mode: "off"  '
-              '+ regimebook_mode: "off"'),
+              '+ regimebook_mode: "off"  + skew_seat_mode: "off"  '
+              '+ etf_seat_mode: "off"'),
     "whale": ('whale_seat_mode: "enforce"  (whale wins the seat when it has '
               'an opinion; the incumbent covers its silent ticks)'),
-    "regimebook": ('regimebook_mode: "enforce"  + whale_seat_mode: "off"'),
-    FLAT: ('trend_assets: []  + whale_seat_mode: "off"  + regimebook_mode: '
-           '"off"   — every seat vacated, the book goes flat'),
+    "regimebook": ('regimebook_mode: "enforce"  + whale_seat_mode: "off"  '
+                   '+ skew_seat_mode: "off"  + etf_decide_assets: []'),
+    "skew_contra": ('skew_seat_mode: "enforce"  + skew_seat_assets: [BTC, ETH]'
+                    '   (NOT decided by this instrument — its exam is the '
+                    'skewetf_* ledger via compute_shadow_ic)'),
+    "etf_flow": ('etf_seat_mode: "enforce"  + etf_decide_assets: [<asset>]'
+                 '   (NOT decided by this instrument — its exam is the '
+                 'skewetf_* / etfflow ledgers via compute_shadow_ic)'),
+    FLAT: ('skew_seat_mode: "off"  + etf_seat_mode: "off"  + regimebook_mode: '
+           '"off"  + whale_seat_mode: "off"  + trend_following_mode: "off"   '
+           '— every seat vacated, the book goes flat'),
 }
 
 
@@ -281,4 +334,6 @@ def render(decision: SeatDecision) -> str:
 
 
 __all__ = ["Candidate", "SeatDecision", "decide_seat", "render",
-           "SEAT_CONFIG_EDIT", "SWITCH_MARGIN", "MIN_SWITCH_T", "MIN_N", "FLAT"]
+           "SEAT_CONFIG_EDIT", "SWITCH_MARGIN", "MIN_SWITCH_T", "MIN_N", "FLAT",
+           "UNSCOREABLE_SEATS", "UNSCOREABLE_REASON",  # [P420]
+           "live_incumbent", "live_incumbents"]

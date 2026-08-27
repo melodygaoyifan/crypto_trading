@@ -53,7 +53,13 @@ from pathlib import Path
 HORIZON_BARS = (1, 4)          # 4h, 16h on the 4H clock
 SAFETY_MARGIN = 2.0            # spread/impact absent from the fee number
 MIN_N = 30
-KRAKEN_PAIRS = {"BTC": "XBTUSD", "ETH": "ETHUSD", "SOL": "SOLUSD"}
+# [P420] Was the home trio only, and the record filter below DROPPED every
+# attribution row for any other asset SILENTLY — XRP and BNB have been
+# tradeable since P412/P412c, so their agents were invisible to this review.
+# Pairs for every asset the regime-book harness can price (single source).
+KRAKEN_PAIRS = {"BTC": "XBTUSD", "ETH": "ETHUSD", "SOL": "SOLUSD",
+                "XRP": "XRPUSD", "ADA": "ADAUSD", "LTC": "LTCUSD",
+                "DOGE": "XDGUSD", "BNB": "BNBUSD"}
 
 # [P382] ROUND-TRIP COST. Was the literal 6.0 — "Coinbase 3bps taker x 2
 # legs" — which is the percentage model P315/P334 REFUTED: the CDE fee is
@@ -155,6 +161,7 @@ def load_signal_records(log_dir: Path, window_days: int) -> list[dict]:
     cutoff = datetime.now(timezone.utc).timestamp() - window_days * 86400
     out = []
     skipped = 0
+    unpriced = {}  # [P420] asset -> rows dropped for lack of a Kraken pair
     for f in files:
         with open(f, encoding="utf-8") as fh:
             for line in fh:
@@ -171,8 +178,14 @@ def load_signal_records(log_dir: Path, window_days: int) -> list[dict]:
                 if ts >= cutoff and rec.get("asset") in KRAKEN_PAIRS:
                     rec["_ts"] = ts
                     out.append(rec)
+                elif ts >= cutoff:
+                    unpriced[str(rec.get("asset"))] = (
+                        unpriced.get(str(rec.get("asset")), 0) + 1)  # [P420]
     if skipped:
         print(f"  note: {skipped} unparseable lines skipped", file=sys.stderr)
+    if unpriced:  # [P420] a dropped asset must be SAID, never silent
+        print(f"  note: rows dropped for assets with no Kraken pair: "
+              f"{unpriced}", file=sys.stderr)
     return out
 
 
@@ -488,7 +501,11 @@ def main() -> int:
                 f"{args.window_days}d window — widen --window-days or check "
                 f"the tracker is writing.")
 
-    bars = {a: fetch_closes(a) for a in KRAKEN_PAIRS}
+    # [P420] price only the assets PRESENT in the window (was: every pair,
+    # which after widening KRAKEN_PAIRS would be eight network calls and
+    # eight refusal surfaces for assets that may carry no rows).
+    _present = sorted({str(r.get("asset")) for r in records if r.get("asset")})
+    bars = {a: fetch_closes(a) for a in _present}
 
     # agent -> horizon -> parallel lists of (direction, fwd_return_frac)
     dirs: dict = defaultdict(lambda: defaultdict(list))

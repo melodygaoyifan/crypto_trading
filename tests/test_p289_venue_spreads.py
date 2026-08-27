@@ -80,10 +80,12 @@ class TestVenueMemory:
 
     def test_unknown_asset_on_cde_falls_back_without_undercharging(self):
         f = _fc()
-        f.set_spread_venue("XRP", "coinbase")
-        f.update_for_asset("XRP")
-        # XRP is in neither table: falls to the 5.0 default, same as Kraken.
-        assert f.slippage_bps == 5.0
+        # [P420] XRP is now MEASURED (4.0, probe 2026-08-27); ADA is the
+        # unmeasured case, and the coinbase fallback moved to the EXPENSIVE
+        # side (10.0, the P301 breadth-exam assumption -- P167).
+        f.set_spread_venue("ADA", "coinbase")
+        f.update_for_asset("ADA")
+        assert f.slippage_bps == 10.0
 
 
 class TestHonestInBothDirections:

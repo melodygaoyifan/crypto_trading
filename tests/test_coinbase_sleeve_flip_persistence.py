@@ -21,6 +21,14 @@ import pytest
 from exchange.coinbase_sleeve import CoinbaseSleeve
 
 
+@pytest.fixture(autouse=True)
+def _private_data_dir(tmp_path, monkeypatch):
+    """[P420] deferred ticks now PERSIST the streak to
+    $HMATS_DATA_DIR/coinbase_sleeve_state.json; point it at a private dir
+    so the suite never writes into the repo's data/ (P294 pattern)."""
+    monkeypatch.setenv("HMATS_DATA_DIR", str(tmp_path))
+
+
 class _Recorder:
     def __init__(self):
         self.calls = []

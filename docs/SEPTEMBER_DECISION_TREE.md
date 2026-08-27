@@ -189,7 +189,7 @@ does not). So this read **confirms or disarms**; it no longer arms anything.
 | outcome | action |
 |---|---|
 | raw book PASSES (pooled — `regimebook` is in `POOLABLE_FAMILIES`) | **confirms** the standing `regimebook_mode: "enforce"`. No config change. Record the pass. |
-| raw book FAILS | a **DISARM decision**, not a non-event: the revert is `regimebook_mode: "shadow"` (harness keeps recording, zero live effect) + its own P-entry + operator decision (P141). On disarm the whale seat covers its ticks and trend is the fallback (P299 §tripwire above); the honest system may be mostly FLAT. |
+| raw book FAILS | a **DISARM decision**, not a non-event: the revert is `regimebook_mode: "shadow"` (harness keeps recording, zero live effect) + its own P-entry + operator decision (P141). **[P420 corrected]** What covers the ticks on disarm is NOT the whale seat — it is OFF (`whale_seat_mode: "off"`, P417; whale is a 0.10-weight ADVISE member now). The regimebook decides **SOL, XRP and BNB only**; BTC and ETH direction already comes from the **skew seat** (P407, calibrated P407e/g) with the **ETF seat** de-risking on outflow (P405/P414), both of which stay armed through a regimebook disarm. So a FAIL flattens the regimebook-decided assets to the trend fallback (measured GATE-CLOSED, so effectively FLAT) and leaves BTC/ETH on skew/ETF; the honest system on those three is mostly FLAT. |
 | adjusted book PASSES and beats raw on the ledger | **stays OFF regardless.** P379 measured `regimebook_adj` OVERFIT out-of-sample on all three assets; a 30-day forward read cannot outrank a six-year out-of-sample FAIL (P243/P244 era-fragility). A pass here is recorded as a forward-vs-history disagreement worth a trace, never as an arming. |
 | BTC passes but its funding legs' cells are the failing part | funding legs remain the UNCERTIFIED slice (P262; P297 certified them over six years on the INCREMENT with a CI that includes zero — the criterion that also rejects buy-and-hold). Record per-leg; a leg-level change to the enforced book is its own P-entry. |
 
@@ -207,8 +207,8 @@ Twin ledgers, exact negations — at most one can pass.
 | outcome | action |
 |---|---|
 | volskip PASSES | wire the vol gate into the ETH seat path IF the regimebook seat was enforced; otherwise it remains an overlay property of the shadow book. |
-| etfflow PASSES | new P-entry: candidate for a BTC/ETH entry tilt (daily cadence). Its design-era backtest stays labeled hypothesis (reporting-lag caveat) regardless — only this forward read counts. |
-| breadth books (XRP/ADA/LTC/DOGE/BNB) PASS collectively (majority positive, none catastrophic) | operator widening decision: extend sleeve assets + routing + per-asset caps + stops (P141 activation, one asset first per the P197 rollout pattern). Volumes are thin — check depth before sizing even ±1ct. |
+| etfflow PASSES / FAILS | **[P420 corrected — the old row said "candidate for an entry tilt"; the ETF seat is already ARMED.]** `etf_seat_mode: "enforce"` with `etf_derisk_assets: [BTC, ETH]` and `etf_decide_assets: []` (P405, re-horizoned to de-risk-only by P414): a fresh strong ETF OUTFLOW flattens a held long, it never enters. So PASS = **confirm** the standing de-risk seat (no change; record it); FAIL = a **DISARM decision** (`etf_seat_mode: "off"`, its own P-entry + operator, P141). A directional ETF seat is NOT re-opened by a PASS here — P414 removed it as under-evidenced and the research says ETF flow is coincident context, not next-bar alpha; its directional value lives only in the agree-gated combiner read below (`skewetf`). The `etfflow_timing_check` cron (root, Mondays) must read leak-free before either outcome is acted on. |
+| breadth books PASS / FAIL | **[P420 corrected — the old row prescribed "extend sleeve assets + routing, one asset first"; that already happened.]** XRP and BNB have been ROUTED and TRADING since P412b/c (1ct each, measured preview fees, calibrated seat alpha); ADA and LTC were **REJECTED by measurement** (negative / sub-friction median seat alpha, P412c) and DOGE was **HELD BACK by operator decision** (validation era −93.8 at 2x cost, P412c). So this read is per-asset, and it never re-opens the rejected three: XRP/BNB PASS = confirm (no change); XRP/BNB FAIL = a per-asset **de-routing decision** (`scripts/coinbase_set_assets.sh BTC,ETH,SOL` minus the failing one; P141) with its own P-entry; ADA/LTC/DOGE any result = recorded only — routing them is the P412c decision re-opened, which needs the measured seat alpha to change first, not a forward IC. See the `regimebook_breadth` section below for the ledger this reads. |
 
 ## ~Sep 16 — the trend-rule challengers (P288 lab, P289 ledgers, P291 criteria)
 
@@ -261,34 +261,105 @@ costs nothing because no BTC cell is eligible anyway.
 > drawdown.** No instrument can settle a preference, so the checker names the
 > trade-off and stops.
 
-## The sizing ladder (P291, pre-committed 2026-08-17)
+## The sizing ladder (P291, pre-committed 2026-08-17; arithmetic corrected P420)
 
 > **Governing sentence: size follows certification, never precedes it.**
 
-What happens to `coinbase_target_fraction_by_asset` on each September
-outcome, fixed in advance so it is not improvised on the day. Constraints:
-live fractions **0.15 / 0.15 / 0.15**; `post_leverage_caps` BTC 0.25, ETH
-0.25, SOL 0.20; the P208 sleeve net cap **0.50** (gate is strict `>`, so 0.50
-is *not* blocked but leaves zero headroom); P274 clamps any fraction to
-≤ 0.25 in the ctor. Nominal max net = the sum of fractions when all live
-assets point the same way.
+**[P420] The numbers below replace the 0.15 × 3 = 0.45 that stood here — that
+book has not existed since P370/P412c.** Live `coinbase_target_fraction_by_asset`
+is `{BTC .20, ETH .15, SOL .095, XRP .01, BNB .005}` (vol-parity for the trio,
+P370; tiny breadth fractions, P412/P412c), `post_leverage_caps` BTC/ETH 0.25,
+SOL 0.20, XRP/BNB 0.10, the P208 sleeve net cap **0.50** (strict `>`), P274 ctor
+clamp ≤ 0.25.
 
-**Today: 0.15 × 3 = 0.45 nominal max net** — that already consumes the whole
-prudent budget under the 0.50 cap.
+**The nominal fraction sum is 0.46 — and it is NOT what the book holds.**
+`_sized_contracts` = `max(1, int(fraction × equity / one-contract notional))`:
+it FLOORS at one contract, and one XRP contract (500 XRP ≈ $700) or one BNB
+contract (1 BNB ≈ $700) is **~6.4% of a ~$10.9k sleeve each**, not 1% / 0.5%.
+The P412 "0.455 < 0.46 headroom" claim reasoned in fractions the floor ignores
+and is off by ~12pp on the breadth pair alone. Real arithmetic, all live assets
+the same way (nominal → floored contracts → realized share of equity, at the
+late-August marks — the shares move with price and equity):
+
+| asset | fraction | per-contract notional | contracts (int-floor, min 1) | realized share |
+|---|---|---|---|---|
+| BTC | 0.20 | ~$765 (0.01 BTC) | 2 | ~14% |
+| ETH | 0.15 | ~$241 (0.1 ETH) | 6 | ~13% |
+| SOL | 0.095 | ~$467 (5 SOL) | 2 | ~9% |
+| XRP | 0.01 | ~$705 (500 XRP) | **1 (floor)** | **~6.5%** |
+| BNB | 0.005 | ~$700 (1 BNB) | **1 (floor)** | **~6.4%** |
+| **all long** | 0.46 nominal | | | **~49–50%, at the 0.50 net cap** |
+
+So the fully-sized all-long book sits **at** the net cap with zero headroom; a
+small price move in the rounding direction takes it over, and the P208 gate then
+BLOCKS whichever asset's entry arrives last (never flattens — de-risking is
+always free). That is a scheduled sizing fault, not a signal fault, and it is
+what a fraction step-up would compound. Because the trio's realized shares are
+themselves int-floored (2/6/2ct) the sum depends on price: state it from
+`sleeve_exposure()` at decision time, never from the fraction sum.
 
 | September outcome | pre-committed fractions | arithmetic |
 |---|---|---|
-| nothing certifies | **unchanged** 0.15/0.15/0.15 | 0.45 ≤ 0.50 ✓ |
-| one asset certifies, **all three still live** | **unchanged** | 0.20+0.15+0.15 = **0.50 — exactly at the cap, zero headroom**. Funding a step-up by trimming the two uncertified assets is a *second* decision about assets whose own evidence did not change; it is not pre-approved here. |
-| tripwire removes **one** asset (it goes flat) | the two survivors may step 0.15 → **0.20** | 0.20+0.20 = 0.40 ≤ 0.45 ✓; SOL's own 0.20 cap is exactly binding, BTC/ETH sit under 0.25 |
-| tripwire removes **two** assets | the survivor may step 0.15 → its per-asset cap (BTC/ETH **0.25**, SOL **0.20**) | max net = that fraction ✓, and ≤ the P274 ctor clamp |
-| tripwire fires on all three / everything fails | **unchanged** | a flat book's size is moot; the seat question dominates |
+| nothing certifies | **unchanged** | the all-long book already touches the 0.50 cap (table above); no step-up is available |
+| an asset certifies, **all five still live** | **unchanged** | any step-up on a ~49–50% book breaches the net cap. Funding it by trimming an uncertified asset — or by de-routing a breadth asset whose 1ct floor is the headroom eater — is a *second* decision about assets whose evidence did not change; not pre-approved here. |
+| a breadth asset is de-routed (its book FAILS) | the freed ~6.4% may fund **one** step of 0.05 on a certified trio asset, within its `post_leverage_caps` | e.g. BTC 0.20 → 0.25 (its cap binds), or SOL 0.095 → 0.145 (under its 0.20 cap); re-check `sleeve_exposure()` ≤ 0.45 after the step |
+| the seat controller / tripwire removes **one** trio asset | the freed share may step **one** certified survivor 0.05 (P291: survivors 0.20 at the old 0.45 book; now bounded by `sleeve_exposure()`) | check `sleeve_exposure()` ≤ 0.45 after the step, never the fraction sum |
+| the seat controller / tripwire removes **two** trio assets | the survivor may step to its own `post_leverage_caps` value (P291) | e.g. BTC 0.20 → 0.25; the breadth pair keeps its 1ct floor |
+| all three trio assets certify | **unchanged** | with all five live the book is at the cap (row 2); certification does not create headroom |
+| everything fails | **unchanged** | a flat book's size is moot; the seat question dominates |
 
 Every step-up is its own recorded P-entry (P141) and may never exceed the
 asset's `post_leverage_caps` value or the 0.25 ctor clamp. **A fraction is
 never raised to make something trade** — only after that asset's signal has
 certified, which is the same rule that governs every other lever in this
-document.
+document. And the breadth floor is the constraint to state first: a "tiny"
+fraction on a ~$700 contract is not tiny.
+
+## ~Sep 24 — skewetf: the live skew decider's own A/B (ledger since 2026-08-25, P407j)
+
+**[P420] Unscheduled until now.** `defense/skew_etf_combo_shadow.py` records
+three claims per tick for BTC/ETH: `skewetf_skew` (skew solo = the LIVE
+override), `skewetf_etf` (ETF solo), `skewetf_agree` (skew iff skew == etf ≠ 0
+— the combiner P414 pinned EQUAL-WEIGHT, never learned). P407i measured the
+agree-gate better than skew-override on every 1.7y cut, thin (15–30 trades),
+and deliberately did NOT flip the live precedence on that window. This forward
+read is the certification it was waiting for.
+
+| outcome | action |
+|---|---|
+| `skewetf_agree` PASSES the P166 bar AND beats `skewetf_skew` on the same window (minimum-horizon IC, the P291 comparative rule) | new P-entry: flip the BTC/ETH seat precedence from skew-override to agree-gated (the skew seat still decides, the ETF seat's disagreement now HOLDS instead of being overridden). Size/caps/stops/gate unchanged — a direction-source choice, not a risk addition. Operator decision (P141). |
+| `skewetf_skew` passes and `agree` does not | confirms the standing override; record it. |
+| neither passes | the live skew seat's forward IC is failing its own exam — that is a **DISARM candidate** for `skew_seat_mode` (P141), not a reason to try `agree`. |
+
+## ~Sep 26 — convsize: the WS2 conviction-sizing shadow (ledger since 2026-08-27)
+
+**[P420] Unscheduled until now, and NOT a shadow-IC candidate.** A sizing
+overlay is judged on PnL increment over the 1x base, not rank-IC, so its reader
+is `scripts/conviction_sizing_review.py` (forward net/maxDD of the
+conviction-sized book vs the 1x trend base over the ledger's own closes,
+`data/conviction_shadow/convsize_{BTC,ETH}.jsonl`; exit 2 below 30 rows). The
+channel was turned OFF by P417's pre-committed 6.6y verdict (pure holding beats
+every conviction variant); this ledger is the forward side of that same
+question and can only RE-ARM it.
+
+| outcome | action |
+|---|---|
+| increment > 0 on BOTH assets at ≥ 30 rows AND the P417 lab's verdict does not contradict it on re-run | new P-entry: `fusion_conviction_to_sleeve: true` is a recorded operator arming (P141), with the P416 resize persistence still in force |
+| increment ≤ 0 on either | confirms P417; the channel stays off. No action. |
+| < 30 rows | no verdict (P199/P348) — wait, do not read a thin ledger |
+
+## regimebook_breadth — the breadth books' own family (ledger since the P420 deploy)
+
+**[P420] Unscheduled until now.** Before P420 the breadth books (XRP/ADA/LTC/
+DOGE/BNB, P271) wrote rows under the shared `regimebook` name and their price
+series was a Kraken window `september_check.py` MERGED INTO the calibration
+input (which is how the live XRP/BNB seat-alpha constants drifted a day after
+they shipped). From the P420 deploy the rows carry `strategy:
+"regimebook_breadth"` and the scorer reads `{ASSET}_4H_ohlcv_kraken.parquet` as
+an EXTENSION of the Binance primary (union, primary wins). The 30d clock starts
+at that deploy; `september_check.py --countdown-only` prints it as
+`(clock unstarted)` until the date is filled in. Actions are the per-asset rows
+in the ~Sep 15 breadth table above.
 
 ## What does NOT happen in September
 

@@ -1155,7 +1155,30 @@ class LLMSentimentAgent:
                 return None
             except Exception as e:
                 status_code, non_retryable, reason = self._classify_haiku_error(e)
-                if status_code == 429:
+                # [P420] The dated account cap (P345/P355 QUOTA_EXHAUSTED)
+                # arrives on 400 AND on 429. The classifier already matches
+                # it on the MESSAGE before the status, but this caller tested
+                # `status_code == 429` FIRST — so a cap delivered on 429 got
+                # the 30s transient cooldown and was re-hit every tick for
+                # the whole capped period (P293b/P319 shape). The reason is
+                # authoritative; test it first.
+                if reason.startswith("usage_limit_"):
+                    _cd = None
+                    if "_cooldown=" in reason:
+                        try:
+                            _cd = float(reason.split("_cooldown=", 1)[1])
+                        except (ValueError, TypeError):
+                            _cd = None
+                    self._open_hard_disable(reason=reason, cooldown_sec=_cd)
+                    logger.warning(
+                        f"[LLM_SENTIMENT] Haiku ACCOUNT USAGE LIMIT for {asset} "
+                        f"(HTTP {status_code}, cooldown "
+                        f"{int(_cd) if _cd else 0}s). This is a BILLING "
+                        f"state, not a fault: sentiment falls back to the "
+                        f"headline heuristic and stays tradeable. Not "
+                        f"retried until then."
+                    )
+                elif status_code == 429:
                     # [P24 2026-04-24] 429: short cooldown driven by
                     # Retry-After (parsed in _classify_haiku_error). Fall back
                     # to 30s if header missing. Don't lock for the full
@@ -1174,25 +1197,8 @@ class LLMSentimentAgent:
                         f"[LLM_SENTIMENT] Haiku 429 rate limit for {asset}: "
                         f"cooldown={retry_after:.0f}s"
                     )
-                elif reason.startswith("usage_limit_"):
-                    # [P345] The cooldown now arrives already computed, in
-                    # seconds, from the shared policy — the caller no longer
-                    # re-parses a date out of a reason string (P329c did, which
-                    # is a third place the same rule could drift).
-                    _cd = None
-                    if "_cooldown=" in reason:
-                        try:
-                            _cd = float(reason.split("_cooldown=", 1)[1])
-                        except (ValueError, TypeError):
-                            _cd = None
-                    self._open_hard_disable(reason=reason, cooldown_sec=_cd)
-                    logger.warning(
-                        f"[LLM_SENTIMENT] Haiku ACCOUNT USAGE LIMIT for {asset} "
-                        f"(cooldown {int(_cd) if _cd else 0}s). This is a "
-                        f"BILLING state, not a fault: sentiment falls back to "
-                        f"the headline heuristic and stays tradeable. Not "
-                        f"retried until then."
-                    )
+                # [P420] the `usage_limit_` branch moved ABOVE the 429 test
+                # (see there); P345's cooldown-from-reason contract unchanged.
                 elif non_retryable:
                     self._open_hard_disable(reason=reason)
                     logger.warning(

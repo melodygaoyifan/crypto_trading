@@ -152,10 +152,22 @@ def quantize_mult(mult: np.ndarray, book: np.ndarray, asset: str,
 # ---------------------------------------------------------------------------
 
 def per_bar_net(close: np.ndarray, pos: np.ndarray, cost_rt_bps: float,
-                lo: int, hi: int) -> np.ndarray:
+                lo: int, hi: int, allow_validation: bool = False) -> np.ndarray:
     """Per-bar after-cost return mirroring pnl_after_cost bar-for-bar.
     Its sum is asserted equal to the chassis net at every call site —
-    the mirror exists only because Sharpe needs a series."""
+    the mirror exists only because Sharpe needs a series.
+
+    [P420] Same hard guard as the chassis it mirrors: a read at/after the
+    validation-era start REFUSES unless the caller says `allow_validation=True`
+    — an explicit, greppable opt-in for the labs that deliberately spend the
+    one-shot recent-era read (conviction_sizing_lab, gate_probes_lab), which
+    must ALSO ledger it (training/splits.record_window_usage). The unguarded
+    mirror was the one door through which a validation read could happen
+    without either."""
+    assert hi <= DE or allow_validation, (
+        "validation-era read attempted through per_bar_net — refused; pass "
+        "allow_validation=True AND record_window_usage() if this is the "
+        "deliberate one-shot read (P420)")
     r1 = np.zeros_like(close)
     r1[:-1] = close[1:] / close[:-1] - 1.0
     seg = slice(lo, hi - 1)

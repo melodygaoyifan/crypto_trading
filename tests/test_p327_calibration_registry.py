@@ -63,6 +63,41 @@ class TestDirectionTwo_EveryStampedModuleIsRegistered:
     next author stamps a module, believes they have declared provenance, and
     the check never looks at it."""
 
+    # [P420] A module may carry MORE THAN ONE measured table under prefixed
+    # stamps (`_SKEW_MEASURED_ON` beside `_MEASURED_ON` in core.seat_alpha).
+    # The pre-P420 scanner matched only the bare name, so the skew table —
+    # the constant that decides whether the LIVE BTC/ETH decider clears the
+    # alpha gate — was stamped-but-unregistered and had no staleness clock.
+    STAMP_RE = re.compile(r"^_(?:[A-Z0-9]+_)?MEASURED_ON$")
+
+    @staticmethod
+    def unregistered_stamps(found_pairs, registry=REGISTRY):
+        """Pure: the (module, stamp) pairs with no registry entry — the
+        guard's arithmetic, callable so a synthetic unregistered stamp can
+        prove the guard still bites (P174)."""
+        registered = {(c.module, c.stamp_measured_on) for c in registry}
+        return sorted(p for p in found_pairs if p not in registered)
+
+    def _stamped_pairs(self):
+        """[(module, stamp_name)] for every `_*MEASURED_ON` module-level
+        assignment under SCAN_DIRS."""
+        out = []
+        for d in SCAN_DIRS:
+            for p in sorted((REPO / d).rglob("*.py")):
+                try:
+                    src = io.open(p, encoding="utf-8").read()
+                    tree = ast.parse(src)
+                except (OSError, SyntaxError):
+                    continue
+                rel = p.relative_to(REPO).as_posix()
+                mod = rel[:-3].replace("/", ".")
+                for node in tree.body:
+                    if isinstance(node, ast.Assign):
+                        for t in node.targets:
+                            if isinstance(t, ast.Name) and self.STAMP_RE.match(t.id):
+                                out.append((mod, t.id))
+        return out
+
     def _stamped_modules(self):
         out = []
         for d in SCAN_DIRS:
@@ -105,21 +140,68 @@ class TestDirectionTwo_EveryStampedModuleIsRegistered:
                 f"holds a measurement; register it, or the staleness check "
                 f"never looks at it.")
 
+    def test_the_scan_sees_prefixed_stamps(self):
+        """[P420] Anti-vacuity for the prefixed form: the skew table's stamp
+        must be visible, or the pair guard below passes on the bare name
+        forever (the pre-P420 blind spot)."""
+        pairs = self._stamped_pairs()
+        assert ("core.seat_alpha", "_SKEW_MEASURED_ON") in pairs, pairs
+        assert ("core.seat_alpha", "_MEASURED_ON") in pairs, pairs
+
+    def test_every_stamped_table_has_its_own_registry_entry(self):
+        """[P420] (module, stamp) pairs, not modules: one module can hold two
+        measurements, and registering one must not cover the other."""
+        missing = self.unregistered_stamps(self._stamped_pairs())
+        assert not missing, (
+            f"{missing} carry a `_*MEASURED_ON` stamp but no registry entry "
+            f"names that stamp (Calibration.stamp_measured_on). A stamped "
+            f"table with no entry has no staleness clock.")
+
+    def test_the_pair_guard_catches_a_stamped_but_unregistered_table(self):
+        """[P420] The guard's own falsification, run every time: a synthetic
+        second table in a registered module must be flagged, and the real
+        pairs must not be (P174 — a guard that cannot fail is decoration)."""
+        real = self._stamped_pairs()
+        assert self.unregistered_stamps(real) == []
+        planted = real + [("core.seat_alpha", "_PHANTOM_MEASURED_ON")]
+        assert self.unregistered_stamps(planted) == [
+            ("core.seat_alpha", "_PHANTOM_MEASURED_ON")]
+
     def test_every_registered_module_carries_the_stamps(self):
         for cal in REGISTRY:
             mod = sys.modules.get(cal.module) or __import__(
                 cal.module, fromlist=["x"])
-            for stamp in (STAMP_MEASURED_ON, STAMP_MEASURED_BY):
+            for stamp in (cal.stamp_measured_on, cal.stamp_measured_by):
                 assert hasattr(mod, stamp), f"{cal.module} lacks {stamp}"
 
     def test_the_stamp_date_agrees_with_the_registry(self):
-        """Two places record the date; they must not drift (P172)."""
+        """Two places record the date; they must not drift (P172).
+        [P420] read through the entry's OWN stamp name, so the skew entry is
+        compared against `_SKEW_MEASURED_ON`, not the regimebook stamp."""
         for cal in REGISTRY:
             mod = __import__(cal.module, fromlist=["x"])
-            assert getattr(mod, STAMP_MEASURED_ON) == cal.measured_on, (
-                f"{cal.module}: module stamp "
-                f"{getattr(mod, STAMP_MEASURED_ON)} != registry "
+            assert getattr(mod, cal.stamp_measured_on) == cal.measured_on, (
+                f"{cal.module}.{cal.stamp_measured_on}: module stamp "
+                f"{getattr(mod, cal.stamp_measured_on)} != registry "
                 f"{cal.measured_on}")
+
+    def test_the_skew_table_resolves_to_the_live_value(self):
+        """[P420] The entry that was missing, pinned as an instance beside
+        the class guard (the P361 pattern)."""
+        import core.seat_alpha as m
+        cal = by_symbol("core.seat_alpha.SKEW_CONTRA_ALPHA_BY_ERA")
+        assert cal is not None, "the skew calibration is not registered"
+        assert resolve(cal) is m.SKEW_CONTRA_ALPHA_BY_ERA
+        assert cal.stamp_measured_on == "_SKEW_MEASURED_ON"
+        assert "skew_seat_calibration.py" in cal.producer
+        assert "laevitas_skew" in cal.source
+
+    def test_the_regimebook_source_names_the_breadth_assets(self):
+        """[P420] XRP + BNB were calibrated by the same producer (P412b/c)
+        and the source line must say so, or 'is there better data' is
+        answered for three assets when five are live."""
+        cal = by_symbol("core.seat_alpha.REGIMEBOOK_ALPHA_BY_ERA")
+        assert "XRP" in cal.source and "BNB" in cal.source
 
 
 class TestTheFieldsAreUsable:
@@ -221,8 +303,14 @@ class TestTheSpreadHoistIsBehaviourPreserving:
         assert FrictionComponents().CDE_SPREAD_BPS == CDE_SPREAD_BPS_MEASURED
 
     def test_the_values_are_unchanged_from_P289(self):
+        """[P420 re-pointed] the home-trio figures are the P289 measurement
+        and must not drift; the breadth entries (XRP/BNB, measured
+        2026-08-27) are ADDITIONS, pinned present so the thinnest books are
+        never silently back on the generic fallback."""
         from defense.constitution import CDE_SPREAD_BPS_MEASURED
-        assert CDE_SPREAD_BPS_MEASURED == {"BTC": 2.0, "ETH": 5.5, "SOL": 4.0}
+        for a, v in {"BTC": 2.0, "ETH": 5.5, "SOL": 4.0}.items():
+            assert CDE_SPREAD_BPS_MEASURED[a] == v, a
+        assert "XRP" in CDE_SPREAD_BPS_MEASURED and "BNB" in CDE_SPREAD_BPS_MEASURED
 
     def test_mutating_an_instance_cannot_corrupt_the_measurement(self):
         from defense.constitution import (CDE_SPREAD_BPS_MEASURED,

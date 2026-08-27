@@ -618,8 +618,15 @@ class CryptoPanicFeed:
                 and not getattr(self, "_combined_probe_done", False)
                 and data.recent_news):
             try:
-                _combo = await self._fetch_posts(
-                    session, ",".join(SUPPORTED_CURRENCIES))
+                # [P420] `session` here is the `async with create_session()`
+                # block ABOVE, already CLOSED by the time this runs — so the
+                # probe raised RuntimeError on every healthy fetch, the
+                # one-shot measurement could never complete, and its "will
+                # retry on a later healthy fetch" warning fired forever. The
+                # probe now opens its own session (the guard is unchanged).
+                async with create_session() as _probe_session:
+                    _combo = await self._fetch_posts(
+                        _probe_session, ",".join(SUPPORTED_CURRENCIES))
                 _seen = set()
                 for _it in _combo or []:
                     for _c in (getattr(_it, "currencies", None) or []):

@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -41,6 +42,10 @@ class JumpRegimeShadow:
         self._nseen: Dict[str, int] = {}
         self._last_gmm: Dict[str, str] = {}
         self._state_path = Path(data_dir) / "jumpregime_state.json"
+        # [P420] the P414c cutover needs a LEDGER, not a log line: one row per
+        # asset per decision tick, the same strategy_shadow/ convention the
+        # P166 scorer reads. Observation-only (Iron Law 7).
+        self._ledger_dir = Path(data_dir) / "strategy_shadow"
         cfg_dir = root / "configs" / "jumpregime"
         if cfg_dir.exists():
             for p in cfg_dir.glob("*.json"):
@@ -75,6 +80,23 @@ class JumpRegimeShadow:
                         and len(c) == len(self._models[a]["centroids"]):
                     self._cost[a] = [float(x) for x in c]
                     self._last_label[a] = int(st.get("last_label", -1))
+                    # [P420] the churn counters were RAM-only, so every
+                    # restart (7 today) zeroed the "jump X/N vs gmm Y/N"
+                    # comparison the shadow exists to accumulate. Restored
+                    # beside the cost vector; absent keys (a pre-P420 file)
+                    # restore as 0 = cold counters, never a fabricated
+                    # history.
+                    for _k, _d in (("nseen", self._nseen), ("jsw", self._jsw),
+                                   ("gsw", self._gsw)):
+                        try:
+                            _d[a] = int(st.get(_k, 0) or 0)
+                        except (TypeError, ValueError):  # noqa: silent-swallow — a bad counter restores as 0 (logged below)
+                            _d[a] = 0
+                            logger.warning(f"[JUMP-REGIME] {a}: counter "
+                                           f"{_k!r} unreadable — restored as 0")
+                    _lg = st.get("last_gmm")
+                    if isinstance(_lg, str) and _lg:
+                        self._last_gmm[a] = _lg
             if self._cost:
                 logger.info(f"[JUMP-REGIME] restored filter state "
                             f"{sorted(self._cost)} — warm across the restart")
@@ -90,7 +112,12 @@ class JumpRegimeShadow:
             tmp.write_text(json.dumps({
                 "v": _STATE_VERSION, "saved_ts": time.time(),
                 "assets": {a: {"cost": self._cost.get(a),
-                               "last_label": self._last_label.get(a, -1)}
+                               "last_label": self._last_label.get(a, -1),
+                               # [P420] counters ride the same atomic write
+                               "nseen": self._nseen.get(a, 0),
+                               "jsw": self._jsw.get(a, 0),
+                               "gsw": self._gsw.get(a, 0),
+                               "last_gmm": self._last_gmm.get(a)}
                            for a in self._cost}}), encoding="utf-8")
             tmp.replace(self._state_path)
         except Exception as e:  # noqa: silent-swallow — persist failure must not break the tick
@@ -127,15 +154,44 @@ class JumpRegimeShadow:
         return label, name, switched
 
     # ---------------- tick ----------------
+    def _append_ledger_row(self, asset: str, row: dict) -> None:
+        """[P420] One JSONL row per asset per decision tick — the evidence
+        the P414c cutover can be judged on. Never raises: a ledger that
+        cannot be written must not break the tick (logged, observation-only).
+        """
+        ledger_dir = getattr(self, "_ledger_dir", None)
+        if ledger_dir is None:
+            return
+        try:
+            ledger_dir.mkdir(parents=True, exist_ok=True)
+            with (ledger_dir / f"jumpregime_{asset}.jsonl").open(
+                    "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(row) + "\n")
+        except Exception as e:  # noqa: silent-swallow — logged; ledger write failure must not break the tick
+            logger.warning(f"[JUMP-REGIME] {asset}: ledger append failed "
+                           f"({type(e).__name__}: {e})")
+
     def tick(self, features_by_asset: Dict[str, list],
-             gmm_regime_by_asset: Dict[str, str]) -> list:
+             gmm_regime_by_asset: Dict[str, str],
+             fallback_by_asset: Optional[Dict[str, object]] = None) -> list:
+        """[P420] `fallback_by_asset[asset]` truthy (the pipeline's
+        `market_data['_gmm_fallback']`, e.g. the OOD ADX proxy) SKIPS the
+        asset: its "gmm label" is then the ADX proxy, and counting a proxy
+        label as a GMM switch would corrupt the churn comparison. The
+        pipeline also withholds the feature stash on that path, so the skip
+        holds even when the caller does not pass the map."""
         summary = []
+        now = time.time()
         for asset in self._models:
             try:
                 feats = features_by_asset.get(asset)
                 if not feats:
                     continue
-                _, name, switched = self.step(asset, list(feats))
+                if fallback_by_asset and fallback_by_asset.get(asset):
+                    summary.append(f"{asset}=SKIP(gmm_fallback="
+                                   f"{fallback_by_asset.get(asset)})")
+                    continue
+                label, name, switched = self.step(asset, list(feats))
                 # churn accounting vs the GMM's live regime
                 gmm = gmm_regime_by_asset.get(asset)
                 self._nseen[asset] = self._nseen.get(asset, 0) + 1
@@ -150,6 +206,20 @@ class JumpRegimeShadow:
                 summary.append(f"{asset}={name}"
                                + ("*" if switched else "")
                                + f" (jump {js}/{n} vs gmm {gs}/{n} switches)")
+                self._append_ledger_row(asset, {
+                    "ts": now,
+                    "iso": datetime.fromtimestamp(
+                        now, tz=timezone.utc).isoformat(),
+                    "asset": asset,
+                    "strategy": "jumpregime",
+                    "jump_label": int(label),
+                    "jump_name": name,
+                    "jump_switched": bool(switched),
+                    "gmm_label": gmm,
+                    "jump_switches": js,
+                    "gmm_switches": gs,
+                    "n": n,
+                })
             except Exception as e:  # noqa: silent-swallow — per-asset fail-soft, observation-only
                 summary.append(f"{asset}=ERR({type(e).__name__})")
         if summary:

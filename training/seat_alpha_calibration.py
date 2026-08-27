@@ -46,10 +46,30 @@ edge era-STABLE.)
 Exit codes:  0 = matches the shipped table   2 = refused (no data)
              3 = DRIFT vs the shipped table, or a non-verify report
 Operator-local: needs training/training_data (P213).
+
+[P420] THREE HOLES IN --verify, CLOSED
+  1. It compared per-ERA cells only. The value the LIVE gate reads is the
+     era-MEDIAN (`REGIMEBOOK_ALPHA_BPS_PER_ROUND_TRIP`), and a median can move
+     without the per-cell check naming it as the thing that moved (BTC's
+     validation 24.1 -> 25.5 re-ordered the eras and the median became 25.5).
+     It now compares the computed median to the shipped per-RT constant too.
+  2. An asset ABSENT from the shipped table produced zero comparisons and an
+     OK — a vacuous pass (P174). --verify now REFUSES (exit 2) on an unlisted
+     asset; calibrating a NEW asset is a non-verify run.
+  3. Its input was OVERWRITTEN by scripts/september_check.py (Kraken prints
+     merged into {ASSET}_4H_ohlcv.parquet), which is how the shipped XRP/BNB
+     table drifted the day after it shipped. The report JSON now stamps the
+     input parquets' sha256 + row counts (training/provenance.py) so a mutated
+     input reads as DATA drift and a changed convention as CODE drift.
+  Every run also LEDGERS its validation-era read (training/splits.py) — the
+  per-asset validation edge feeds a live gate constant and was unledgered.
+--assets defaults to the shipped table's keys.
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import sys
 from pathlib import Path
 from typing import Dict, Optional
@@ -62,6 +82,40 @@ if str(REPO) not in sys.path:
 # from the lab that produced the shipped numbers (P172) so this cannot drift
 # from it.
 TOLERANCE_BPS = 0.15
+REPORT_DIR = REPO / "training" / "reports"
+
+
+def input_stamp(asset: str) -> Dict[str, object]:
+    """[P420] sha256 + row count of the two inputs the calibration reads, so a
+    report can tell a mutated input from a changed convention."""
+    import training.funding_legs_lab as lab
+    out: Dict[str, object] = {}
+    for tag, path in (("closes", lab.PRICE_DIR / f"{asset}_4H_ohlcv.parquet"),
+                      ("funding", lab.FUNDING_DIR / f"{asset}_funding_1d.parquet")):
+        if not path.exists():
+            out[tag] = {"path": str(path), "missing": True}
+            continue
+        h = hashlib.sha256(path.read_bytes()).hexdigest()
+        try:
+            import pandas as pd
+            rows = int(len(pd.read_parquet(path)))
+        except Exception as e:  # noqa: silent-swallow — surfaced in the stamp itself
+            rows = f"unreadable: {type(e).__name__}"
+        try:
+            rel = str(path.relative_to(REPO))
+        except ValueError:
+            rel = str(path)
+        out[tag] = {"path": rel, "sha256": h, "rows": rows}
+    return out
+
+
+def median_of(cells: Dict[str, Optional[float]]) -> Optional[float]:
+    vals = sorted(x for x in cells.values() if x is not None)
+    if not vals:
+        return None
+    if len(vals) % 2:
+        return vals[len(vals) // 2]
+    return (vals[len(vals) // 2 - 1] + vals[len(vals) // 2]) / 2.0
 
 
 def round_trip_edge_bps(gross, pos) -> Optional[float]:
@@ -79,13 +133,36 @@ def round_trip_edge_bps(gross, pos) -> Optional[float]:
     return 2.0 * float(gross.sum()) / t * 1e4
 
 
-def calibrate(asset: str, series: str = "book") -> Dict[str, Optional[float]]:
-    """Per-era edge for `asset`'s `series` ("book", "trend" or "donchian")."""
+def calibrate(asset: str, series: str = "book",
+              ledger: bool = True) -> Dict[str, Optional[float]]:
+    """Per-era edge for `asset`'s `series` ("book", "trend" or "donchian").
+
+    [P420] `ledger=True` records the VALIDATION-era read in the window-usage
+    ledger (training/splits.py): this read feeds a live gate constant and
+    every spend of the unread era must be visible (P332/P382). Indices are
+    the bar index `i` of the 4H series (clause 2's positions frame carries it;
+    MIN_BARS warmup rows are absent), the same axis the other ledger rows use."""
     import training.funding_legs_lab as lab
 
     closes = lab.load_closes(asset)
     funding = lab.load_funding_daily(asset)
     pos_df = lab.build_positions(asset, closes, funding)
+    if ledger:
+        try:
+            from training.splits import record_window_usage
+            v_lo = lab.ERAS["validation"][0]
+            v_hi = int(pos_df["i"].iloc[-1]) + 1
+            prior = record_window_usage(
+                f"seat_alpha_calibration:{series}", asset, v_lo, v_hi,
+                f"validation:seat_alpha {series} per-era edge (live gate "
+                f"constant producer, P320/P420)")
+            if prior:
+                print(f"[WINDOW-LEDGER] {asset}: validation window read by "
+                      f"{prior} other experiment(s) before — discount "
+                      f"accordingly (P260).")
+        except Exception as e:  # noqa: silent-swallow — the ledger must never block the producer; surfaced
+            print(f"[WINDOW-LEDGER] WARNING: could not record the {asset} "
+                  f"validation read ({type(e).__name__}: {e})")
     if series == "donchian":
         # [P419] the canonical Donchian-100 labels (defense.trend_rule_shadow
         # -- the same math the live leg runs, P172), aligned to the chassis
@@ -110,15 +187,25 @@ def calibrate(asset: str, series: str = "book") -> Dict[str, Optional[float]]:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--assets", default="BTC,ETH,SOL")
-    ap.add_argument("--series", default="book",
+    ap.add_argument("--assets", default=None,
+                    help="comma list; default = the shipped table's keys "
+                         "(core.seat_alpha.REGIMEBOOK_ALPHA_BPS_PER_ROUND_TRIP)")
+    ap.add_argument("--series", default="book",  # [P419]
                     choices=("book", "trend", "donchian"))
     ap.add_argument("--verify", action="store_true",
                     help="compare against core.seat_alpha and exit 3 on drift")
+    ap.add_argument("--no-ledger", action="store_true",
+                    help="[P420] do not record the validation-era read "
+                         "(tests only)")
+    ap.add_argument("--report", default=None,
+                    help="[P420] report JSON path (default: training/reports/"
+                         "seat_alpha_calibration_<series>[_verify].json)")
     args = ap.parse_args(argv)
 
     try:
         from core.seat_alpha import REGIMEBOOK_ALPHA_BY_ERA as SHIPPED
+        # [P420] the per-RT MEDIAN the live gate reads — compared explicitly
+        from core.seat_alpha import REGIMEBOOK_ALPHA_BPS_PER_ROUND_TRIP as SHIPPED_RT
     except Exception as e:  # noqa: silent-swallow — reported and refused below
         print(f"REFUSING: cannot import the shipped table: {e}",
               file=sys.stderr)
@@ -128,7 +215,7 @@ def main(argv=None) -> int:
     # --verify uses the map, so the flag's --series is only for exploration.
     try:
         from core.seat_alpha import REGIMEBOOK_SERIES_BY_ASSET as SERIES_MAP
-    except Exception:
+    except Exception:  # noqa: silent-swallow — an older core without the map verifies the BOOK series
         SERIES_MAP = {}
     if args.verify and args.series != "book":
         print("REFUSING: --verify picks each asset's series from "
@@ -137,14 +224,29 @@ def main(argv=None) -> int:
               file=sys.stderr)
         return 2
 
+    assets = ([a.strip().upper() for a in args.assets.split(",") if a.strip()]
+              if args.assets else list(SHIPPED_RT))
+    if args.verify:
+        # [P420] an asset the shipped table does not carry yields ZERO
+        # comparisons — an OK there is the P174 vacuous pass. Refuse.
+        unlisted = [a for a in assets if a not in SHIPPED_RT or a not in SHIPPED]
+        if unlisted:
+            print(f"REFUSING: --verify has nothing to compare for {unlisted} — "
+                  f"not in core.seat_alpha's shipped table. Calibrating a NEW "
+                  f"asset is a non-verify run; an OK on zero comparisons is "
+                  f"not a verification (P174/P420).", file=sys.stderr)
+            return 2
+
     drift = []
+    report: Dict[str, object] = {"verify": bool(args.verify),
+                                 "tolerance_bps": TOLERANCE_BPS, "assets": {}}
     print(f"{'asset':<6}{'era':<13}{'measured':>11}{'shipped':>10}   series="
           f"{args.series}")
-    for asset in [a.strip().upper() for a in args.assets.split(",") if a.strip()]:
-        _series = (SERIES_MAP.get(asset, "book")
+    for asset in assets:
+        _series = (SERIES_MAP.get(asset, "book")  # [P419] per-asset series
                    if args.verify else args.series)
         try:
-            cells = calibrate(asset, _series)
+            cells = calibrate(asset, _series, ledger=not args.no_ledger)
         except FileNotFoundError as e:
             print(f"REFUSING: price/funding history missing for {asset} ({e}). "
                   f"This tool is operator-local (P213); 'no data' is not "
@@ -152,32 +254,71 @@ def main(argv=None) -> int:
             return 2
         ship = SHIPPED.get(asset, {})
         for era, v in cells.items():
-            s = ship.get(era)
+            s_ = ship.get(era)
             m = "-" if v is None else f"{v:+.1f}"
-            sv = "-" if s is None else f"{s:+.1f}"
+            sv = "-" if s_ is None else f"{s_:+.1f}"
             flag = ""
-            if args.verify and v is not None and s is not None:
-                if abs(v - s) > TOLERANCE_BPS:
+            if args.verify and v is not None and s_ is not None:
+                if abs(v - s_) > TOLERANCE_BPS:
                     flag = "   <== DRIFT"
-                    drift.append((asset, era, v, s))
+                    drift.append((asset, era, v, s_))
             print(f"{asset:<6}{era:<13}{m:>11}{sv:>10}{flag}")
-        if cells:
-            vals = sorted(x for x in cells.values() if x is not None)
-            if vals:
-                med = vals[len(vals) // 2] if len(vals) % 2 else (
-                    (vals[len(vals) // 2 - 1] + vals[len(vals) // 2]) / 2.0)
-                print(f"{asset:<6}{'MEDIAN':<13}{med:>+11.1f}"
-                      f"{(ship.get('__median__') or ''):>10}")
+        med = median_of(cells)
+        ship_rt = SHIPPED_RT.get(asset)
+        med_flag = ""
+        if args.verify and med is not None and ship_rt is not None:
+            # [P420] the value the LIVE gate reads — compared explicitly, not
+            # inferred from the cells: BTC's validation cell moved 24.1->25.5
+            # and the MEDIAN followed it to 25.5 while the old check only
+            # named the cell.
+            if abs(med - ship_rt) > TOLERANCE_BPS:
+                med_flag = "   <== DRIFT (the value the gate reads)"
+                drift.append((asset, "MEDIAN", med, ship_rt))
+        med_s = "-" if med is None else f"{med:+.1f}"
+        rt_s = "-" if ship_rt is None else f"{ship_rt:+.1f}"
+        print(f"{asset:<6}{'MEDIAN':<13}{med_s:>11}{rt_s:>10}{med_flag}")
+        report["assets"][asset] = {
+            "series": _series, "cells": cells, "median": med,
+            "shipped_cells": ship or None, "shipped_median": ship_rt,
+            "inputs": input_stamp(asset),
+        }
+
+    # [P420] provenance: git + input hashes, written on EVERY run so the
+    # report answers "which data produced this number" (GP0/P200).
+    try:
+        from training.provenance import provenance_stamp
+        import training.funding_legs_lab as lab
+        files = []
+        for a in assets:
+            files += [lab.PRICE_DIR / f"{a}_4H_ohlcv.parquet",
+                      lab.FUNDING_DIR / f"{a}_funding_1d.parquet"]
+        report["provenance"] = provenance_stamp(
+            data_files=files, config={"assets": assets, "series": args.series,
+                                      "verify": bool(args.verify)})
+    except Exception as e:  # noqa: silent-swallow — a stamp failure is written into the report, never hidden
+        report["provenance"] = {"error": f"{type(e).__name__}: {e}"}
+    report["drift"] = [{"asset": a, "cell": c, "measured": v, "shipped": s_}
+                       for a, c, v, s_ in drift]
+    rp = Path(args.report) if args.report else (
+        REPORT_DIR / f"seat_alpha_calibration_{args.series}"
+                     f"{'_verify' if args.verify else ''}.json")
+    try:
+        rp.parent.mkdir(parents=True, exist_ok=True)
+        rp.write_text(json.dumps(report, indent=1, default=str), encoding="utf-8")
+        print(f"report -> {rp}")
+    except OSError as e:
+        print(f"WARNING: could not write the report ({e})", file=sys.stderr)
 
     if args.verify:
         if drift:
             print(f"\nDRIFT vs core.seat_alpha in {len(drift)} cell(s). Either "
                   f"the data moved or the convention did — do NOT edit the "
-                  f"shipped constants to match without deciding which.",
+                  f"shipped constants to match without deciding which. The "
+                  f"report's input sha256/rows say which (P420).",
                   file=sys.stderr)
             return 3
-        print("\nOK — reproduces core.seat_alpha.REGIMEBOOK_ALPHA_BY_ERA "
-              "within %.2fbps on every cell." % TOLERANCE_BPS)
+        print("\nOK — reproduces core.seat_alpha.REGIMEBOOK_ALPHA_BY_ERA and the "
+              "per-RT MEDIAN within %.2fbps on every cell." % TOLERANCE_BPS)
         return 0
     return 3
 

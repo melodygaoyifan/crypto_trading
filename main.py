@@ -2745,7 +2745,11 @@ _SLEEVE_VENUE_NA_VETOES = ("B1_SPOT_SHORT_BLOCK",)
 _SLEEVE_FLATTEN_INTENDED_VETOES = (
     # signal says no position (the sleeve exits on hold BY DESIGN)
     "[BEST_OF_N_HOLD]", "[PRE_ALPHA_HOLD]", "[PRE_STRUCTURE_HOLD]",
-    "[CONFIDENCE_GATE]", "[v3.6.1] Alpha gate:", "FRICTION_EXCEEDS_EDGE",
+    # [P420] "[CONFIDENCE_GATE]" moved to _SLEEVE_ENTRY_QUALITY_VETOES: its
+    # write site says "only block NEW entries" and derived "new entry" from
+    # the empty Kraken book (P338 class, latent -- key absent from the live
+    # profile).
+    "[v3.6.1] Alpha gate:", "FRICTION_EXCEEDS_EDGE",
     # market-risk / safety responses where flat IS the intended posture
     "[P0_SAFETY]", "[P0_SAFETY_EXCEPTION]", "[P0 FORCE FLAT]",
     "[P0 SHORT BLOCK]", "[BLACK_SWAN_SENTINEL]", "[SOTA]", "[SOTA-ACT]",
@@ -2761,7 +2765,11 @@ _SLEEVE_FLATTEN_INTENDED_VETOES = (
     # site — flat IS the intended posture; surfaced by widening the roster
     # guard's corpus to `p0_abort_reason =` assignments.
     "[SOL DEFENSE]",
-    "[AUTO_RECOVERY_LATCH]", "NO_TRADE mode active", "[v3.6.1] NO_TRADE:",
+    # [P420] "[AUTO_RECOVERY_LATCH]" moved to _SLEEVE_ENTRY_QUALITY_VETOES
+    # (FIX-C3 at its write site: "Only latch for NEW ENTRIES, not when
+    # position exists" -- read off the empty Kraken book; latent, key absent
+    # from the live profile).
+    "NO_TRADE mode active", "[v3.6.1] NO_TRADE:",
     # ^ NO_TRADE subtype split (data->HOLD) handled by
     #   _SLEEVE_HOLD_NO_TRADE_TRIGGERS, enum-pinned; market-risk rest flatten
     "[REGIME_POWER_NO_TRADE]", "Deadlock abort:", "[PROD] Tranche deadlock",
@@ -2844,6 +2852,10 @@ _SLEEVE_ENTRY_QUALITY_VETOES = ("[VETO]", "[OP_BUDGET]", "[GAMBLER_GATE]",
                                 # [P382] trade_gate's "no bottom-fishing"
                                 # check (long + price down + volume_ratio <
     "[WEEKEND]",   # [P416] weekend entry gates (alpha min / entry override)
+    # [P420] both entry-only by their own write sites (P1-2C "blocks new
+    # entries only"; FIX-C3 "Only latch for NEW ENTRIES"); the P338/P341
+    # class, two entries later. Keys absent from the live profile (latent).
+    "[CONFIDENCE_GATE]", "[AUTO_RECOVERY_LATCH]",
                                 # 0.20) is an ENTRY-quality veto and position-
                                 # blind; it reached the sleeve as
                                 # "[TRADE_GATE] VOLUME_CONTRACTING" (and via
@@ -3280,6 +3292,244 @@ def sleeve_ma_filter_decision(current_contracts, raw_target, ma_dir):
         current_contracts, raw_target, ma_dir, agent_tag="ma")
 
 
+# [P420] home trio -- the three assets every cross-asset control was designed
+# around (P383's cross_asset_directions stash uses the same literal).
+_P420_HOME_TRIO = ("BTC", "ETH", "SOL")
+
+
+def crack_alignment_strength(directions, home=_P420_HOME_TRIO):  # [P420]
+    """[P420] Cross-asset alignment component for `_compute_crack_weight`.
+
+    P412 widened `_last_quant_directions` to 5 assets; the old loop iterated
+    ALL of them and divided by 3.0, so alignment alone could exceed the 0.50
+    CRACK activation bar (0.40 x 4/3 = 0.533) with zero kinetic / volume
+    confirmation. Filtered to the home trio exactly like the P383
+    `cross_asset_directions` stash, and CLAMPED to 1.0 so the component can
+    never exceed its documented 0.40 weight whatever the roster becomes.
+    Returns 0.0 when fewer than two home-trio assets carry a meaningful
+    direction or they disagree.
+    """
+    signs = []
+    for _a, _d in (directions or {}).items():
+        if _a not in home:
+            continue
+        try:
+            _dv = float(_d or 0.0)
+        except (TypeError, ValueError):  # noqa: silent-swallow -- a non-numeric stash entry is "no direction", not a vote
+            continue
+        if abs(_dv) > 0.1:  # Only count meaningful directions
+            signs.append(1 if _dv > 0 else -1)
+    if len(signs) >= 2 and len(set(signs)) == 1:
+        return min(len(signs) / 3.0, 1.0)  # 2/3 = 0.67, 3/3 = 1.0
+    return 0.0
+
+
+# [P420] The funding |z| proxy that the [P0-FIX] block used to write INTO
+# `dvol_zscore` -- overwriting the schema key the EXTREME_DVOL / VOLATILITY_
+# EXPANSION / PATCH-4 consumers read, so the real Deribit DVOL z (P306) could
+# never reach them. It now has its own key.
+FUNDING_ABS_ZSCORE_KEY = "funding_abs_zscore"
+
+
+def dvol_publish_values(armed, z):  # [P420]
+    """[P420] What the P306 DVOL block publishes into market_data.
+
+    Returns {} unless the flag is armed AND the reading is fresh (a computed
+    z). Publishes BOTH `dvol` (P306) and `dvol_zscore`: the constitution's
+    alias dvol->dvol_zscore only applies when dvol_zscore is ABSENT, and the
+    pipeline stamps dvol_zscore=0.0 on every fetch, so the alias never fired
+    and EXTREME_DVOL (z>=5) / VOLATILITY_EXPANSION never saw the honest
+    trailing-year z. A stale/absent reading publishes NOTHING (absence must
+    never become a value, P2) -- the pipeline's 0.0 then stands, as today.
+    """
+    if not armed or z is None:
+        return {}
+    try:
+        zf = float(z)
+    except (TypeError, ValueError):  # noqa: silent-swallow -- unreadable z = not fresh = publish nothing
+        return {}
+    if not math.isfinite(zf):
+        return {}
+    return {"dvol": zf, "dvol_zscore": zf}
+
+
+def watchdog_stop_followup_target(venue_status, intended, snapshot):  # [P420]
+    """[P420] What the 30s watchdog should hand `request_stop_followup`.
+
+    Mirrors `stop_reconcile_intended_target` (the 4H driver's rule): the
+    intent governs only when the venue ACTED on it (OK / NOOP). A BLOCKED /
+    FAILED / ERROR / SKIPPED_STALE exit left the position exactly where it
+    was -- and `execute_target` had already SWEPT the resting stop before
+    trying -- so a follow-up sized to the INTENDED target (0 for an exit)
+    would cancel/skip the stop on a position that still exists, for up to
+    STOP_FOLLOWUP_MAX_SEC. Pass the pre-trade snapshot instead so the
+    follow-up re-arms the stop on what is actually held.
+    """
+    if venue_status in ("OK", "NOOP"):
+        return float(intended)
+    return float(snapshot)
+
+
+async def sleeve_sweep_stale_entries(sleeve, asset):  # [P420]
+    """[P420] Cancel resting NON-stop orders on a no-order driver branch.
+
+    The HOLD / MA-veto / whale-veto / cooldown branches of the run_live sleeve
+    driver reconcile the protective stop and place no order -- so an entry
+    limit left resting by an earlier tick (the P207 non-fill window) survived
+    every such tick and could fill days later against a dead signal.
+    `CoinbaseSleeve.sweep_stale_entries(asset) -> Optional[int]` is the
+    sleeve-side contract; absent (older sleeve, fixtures) -> skip silently
+    (P85). Never raises into the driver loop; a sweep failure is logged and
+    the tick proceeds (the stop reconcile still runs).
+    """
+    fn = getattr(sleeve, "sweep_stale_entries", None)
+    if not callable(fn):
+        return None
+    import inspect as _inspect
+    try:
+        res = fn(asset)
+        if _inspect.isawaitable(res):
+            res = await res
+        return res
+    except Exception as e:
+        logger.warning(
+            f"[P420][SWEEP] {asset}: sweep_stale_entries failed "
+            f"({type(e).__name__}: {e}) -- resting entry orders NOT swept "
+            f"this tick; the stop reconcile still runs")
+        return None
+
+
+# [P420] Below this a cumulative-flow move is noise (float drift), not a
+# transfer; the sleeve's own detector only records flows far larger.
+FLOW_REANCHOR_MIN_USD = 0.01
+
+
+def flow_reanchor_delta(current_flow, ref):  # [P420]
+    """[P420] Delta by which every equity anchor must shift to net out an
+    external capital flow the sleeve has recorded since `ref`.
+
+    Returns the signed USD delta (0.0 when nothing moved), or None when either
+    input is unusable -- an unusable reference must shift NOTHING, never
+    everything (the P325/P294 rule: a missing reference is not zero).
+    """
+    try:
+        c = float(current_flow)
+        r = float(ref)
+    except (TypeError, ValueError):  # noqa: silent-swallow -- unusable = shift nothing
+        return None
+    if not (math.isfinite(c) and math.isfinite(r)):
+        return None
+    d = c - r
+    if abs(d) <= FLOW_REANCHOR_MIN_USD:
+        return 0.0
+    return d
+
+
+def sleeve_position_held(sleeve, asset, position_state):  # [P420]
+    """[P420] Is ANY position open on the book that trades?
+    True / False / None(unknown) -- the `short_already_held` (P355) shape for
+    the two ENTRY-ONLY gates ([CONFIDENCE_GATE], [AUTO_RECOVERY_LATCH]) that
+    derived "new entry" from `_paper_positions`, the Kraken book, {} since
+    2026-06-13 -- so every routed tick read as a NEW entry. Same contract as
+    P355: the caller must NOT veto on None.
+    """
+    if sleeve is not None:
+        if not getattr(sleeve, "_reconcile_ok", False):
+            return None
+        try:
+            return abs(float(sleeve.signed_contracts(asset) or 0.0)) > 1e-9
+        except Exception:  # noqa: silent-swallow -- unknown; the caller is required to treat None as "do not veto"
+            return None
+    try:
+        return abs(float((position_state or {}).get("current_exposure", 0)
+                         or 0.0)) > 1e-9
+    except (TypeError, ValueError):  # noqa: silent-swallow -- unknown
+        return None
+
+
+def whale_confidence_after_evidence(confidence, whale_count, min_whales,
+                                    direction):  # [P420]
+    """[P420] The P352 evidence gate applied to the CONFIDENCE the fusion
+    layer consumes (whale carries a 0.10 ADVISE weight since P417).
+
+    At n=1 the net-pressure ratio is +/-1.0 by construction, so a single
+    ticket voted at FULL confidence. When the count is KNOWN and below the
+    minimum, confidence is 0.0. UNKNOWN (None, or 0 beside a direction --
+    the count did not arrive) keeps the confidence untouched: absence must
+    never become a value (P2), exactly as the filter keeps its veto ARMED.
+    """
+    try:
+        conf = float(confidence or 0.0)
+    except (TypeError, ValueError):  # noqa: silent-swallow -- unreadable confidence reads as 0
+        return 0.0
+    if not direction or conf <= 0.0:
+        return conf
+    if whale_count is None:
+        return conf
+    try:
+        cnt = int(whale_count)
+        mn = int(min_whales or 0)
+    except (TypeError, ValueError):  # noqa: silent-swallow -- unknown count keeps the confidence (P2)
+        return conf
+    if cnt == 0:
+        return conf            # 0 beside a direction = the count did not arrive
+    return 0.0 if cnt < mn else conf
+
+
+def cde_prefix_map():  # [P420]
+    """[P420] {2-letter CDE product prefix: asset} for `_cde_quote_map`,
+    DERIVED from exchange.symbol_mapping.SYMBOL_MAP (the single source of the
+    routed pids) plus the legacy 'SO' SOL prefix. The old literal was the
+    home trio only, so the calbasis shadow could never quote XRP/BNB after
+    P412 widened the universe."""
+    base = {"SO": "SOL"}
+    try:
+        from exchange.symbol_mapping import SYMBOL_MAP
+        for _asset, _pid in (SYMBOL_MAP.get("coinbase", {}).get("perp", {})
+                             or {}).items():
+            if _pid and len(_pid) >= 2:
+                base[str(_pid)[:2].upper()] = str(_asset).upper()
+    except Exception as e:  # noqa: silent-swallow -- logged; the literal trio is the floor, never an empty map
+        logger.warning(f"[P420] cde_prefix_map: SYMBOL_MAP unreadable "
+                       f"({type(e).__name__}: {e}); using the home trio")
+        base.update({"BI": "BTC", "ET": "ETH", "SL": "SOL"})
+    return base
+
+
+def skew_seat_should_fetch(asset, decide_assets):  # [P420]
+    """[P420] The skew seat consulted `seat_direction(asset)` -- a Laevitas
+    request -- BEFORE filtering on `skew_seat_assets`, so SOL/XRP/BNB issued a
+    fetch inside decide() for a seat they can never take. Fetch only for a
+    decide asset."""
+    return bool(asset) and asset in (decide_assets or [])
+
+
+def trend_exclusion_log_level(asset, trend_assets_explicit,
+                              home=_P420_HOME_TRIO):  # [P420]
+    """[P420] "EXCLUDED by trend_assets (P237 tripwire actuator)" was logged
+    at WARNING for XRP/BNB, which were never tripwired -- the default
+    `trend_assets` is the trio by P237 pin. The tripwire semantics apply only
+    when the key is EXPLICITLY set; an asset outside the default trio on the
+    default roster is just not in it. Returns 'warning' or 'info'."""
+    if trend_assets_explicit or asset in home:
+        return "warning"
+    return "info"
+
+
+def corr_controller_known_prices(ctrl, prices):  # [P420]
+    """[P420] Feed the realtime correlation controller ONLY the assets it was
+    built with. `update_price` warns `Unknown asset: XRP` / `BNB` every tick
+    since P412; the controller (not this file) keys `_price_history` on its
+    config assets. A controller without that attribute gets the dict
+    unchanged (getattr-defended, P85)."""
+    known = getattr(ctrl, "_price_history", None)
+    if not isinstance(known, dict):
+        return dict(prices or {})
+    return {a: p for a, p in (prices or {}).items() if a in known}
+
+
+
+
 def stop_reconcile_intended_target(manage_status, intended_target):
     """[P253] Decide what `intended_target` to pass to ensure_protective_stop
     after this tick's manage_to_signal.
@@ -3653,7 +3903,10 @@ async def sleeve_fast_risk_action(sleeve, asset: str, action_name: str,
             # orphan; a stranded exit gets its stop back).
             _rf = getattr(sleeve, "request_stop_followup", None)
             if callable(_rf):
-                _rf(asset, 0.0)
+                # [P420] intent governs only on OK/NOOP; a refused exit
+                # left `cur` in place (and the stop already swept) -> re-arm
+                # the stop on the SNAPSHOT, not on 0.
+                _rf(asset, watchdog_stop_followup_target(_vs, 0.0, float(cur)))
             # [P366] classify, never assume. "EXITED" used to be returned here
             # unconditionally — see the note above sleeve_exit_status.
             return (sleeve_exit_status(_vs, "EXITED"),
@@ -3668,7 +3921,8 @@ async def sleeve_fast_risk_action(sleeve, asset: str, action_name: str,
             _vs = res.get('status')
             _rf = getattr(sleeve, "request_stop_followup", None)  # [P382]
             if callable(_rf):
-                _rf(asset, float(_tgt))
+                _rf(asset, watchdog_stop_followup_target(  # [P420]
+                    _vs, float(_tgt), float(cur)))
             # [P366] same collapse existed here: a BLOCKED or FAILED reduce
             # reported as "REDUCED" refreshed the depth baseline (P287), which
             # masks the very depth collapse the trigger fired on.
@@ -5999,7 +6253,8 @@ class HMATSProductionRunner:
         # [EA-1] Exit Alpha Tracker -profit retention + exit trigger effectiveness
         self._ea_tracker = None
         self._exit_trigger_tag: Dict[str, str] = {}  # asset ->trigger tag (set by exit triggers, consumed by Branch A/C-flip)
-        # [P0-FIX] Funding rate history for dvol_zscore proxy (Group C OPPORTUNITY)
+        # [P0-FIX] Funding rate history for the funding_abs_zscore proxy (Group C
+        # OPPORTUNITY) -- [P420] no longer written into dvol_zscore
         self._funding_rate_history: Dict[str, list] = {a: [] for a in ["BTC", "ETH", "SOL"]}
         if EA_TRACKER_AVAILABLE:
             try:
@@ -7437,14 +7692,12 @@ class HMATSProductionRunner:
         volume_score = 0.0
 
         # -- Component 1: Cross-Asset Alignment (0.40) --
-        if len(self._last_quant_directions) >= 2:
-            signs = []
-            for _a, _d in self._last_quant_directions.items():
-                if abs(_d) > 0.1:  # Only count meaningful directions
-                    signs.append(1 if _d > 0 else -1)
-            if len(signs) >= 2 and len(set(signs)) == 1:
-                alignment_strength = len(signs) / 3.0  # 2/3 = 0.67, 3/3 = 1.0
-                alignment_score = 0.40 * alignment_strength
+        # [P420] home trio only + clamped (P412 widened the stash to 5 assets
+        # and 4/3 alignment alone cleared the 0.50 activation bar).
+        alignment_strength = crack_alignment_strength(
+            getattr(self, "_last_quant_directions", {}) or {})
+        if alignment_strength > 0.0:
+            alignment_score = 0.40 * alignment_strength
 
         # -- Component 2: Kinetic Momentum (0.30) --
         break_pct = abs(market_data.get('structure_break_pct', 0.0))
@@ -8029,6 +8282,12 @@ class HMATSProductionRunner:
                 # _p0_last_combined_equity is persisted/restored so the held
                 # value survives the restart that creates the hole.
                 _p0_sleeve = getattr(self, "_coinbase_sleeve", None)
+                # [P420] idempotent (delta 0 after the snapshot call); covers
+                # run_paper / any caller that reaches here first. getattr-
+                # defended (P85).
+                _p418_rea = getattr(self, "_reanchor_on_external_flow", None)
+                if callable(_p418_rea):
+                    _p418_rea(_p0_sleeve)
                 # [P287] Read the sleeve equity LIVE, exactly as P253d did
                 # for _update_drawdown_snapshot next door and left THIS
                 # consumer on the cached copy: the heartbeat refreshes
@@ -8684,8 +8943,12 @@ class HMATSProductionRunner:
                 )
 
         # =================================================================
-        # [P0-FIX] Compute dvol_zscore from funding rate history (Group C OPPORTUNITY)
-        # Replaces dead Deribit dependency. Funding rate spike = implied vol expansion.
+        # [P0-FIX] Funding-rate |z| proxy (Group C OPPORTUNITY). Written to
+        # market_data["funding_abs_zscore"] since [P420]: it USED to be written
+        # into "dvol_zscore", overwriting the schema key that EXTREME_DVOL /
+        # VOLATILITY_EXPANSION / PATCH-4 read, so the real Deribit DVOL z
+        # (P306, market_data["dvol"]) never reached those consumers -- the
+        # constitution alias dvol->dvol_zscore only fills an ABSENT key.
         # =================================================================
         _fr_val = market_data.get("funding_rate")
         _fr_asset = asset.replace("/USD", "").upper()
@@ -8701,10 +8964,12 @@ class HMATSProductionRunner:
                 _fr_std = float(np.std(_fr_hist))
                 if _fr_std > 1e-10:
                     _dvol_z = (abs(float(_fr_val)) - _fr_mean) / _fr_std
-                    market_data["dvol_zscore"] = round(float(_dvol_z), 4)
+                    # [P420] explicit literal key (== FUNDING_ABS_ZSCORE_KEY,
+                    # pinned) so the orphan-read scanner can prove the writer
+                    market_data["funding_abs_zscore"] = round(float(_dvol_z), 4)
                     if _dvol_z >= 2.0:
                         logger.info(
-                            f"[P0-FIX] {asset} dvol_zscore={_dvol_z:.2f} "
+                            f"[P0-FIX] {asset} funding_abs_zscore={_dvol_z:.2f} "
                             f"(funding={_fr_val:.6f}, mean={_fr_mean:.6f}, std={_fr_std:.6f})"
                         )
 
@@ -9035,6 +9300,15 @@ class HMATSProductionRunner:
         if self.execution_guard:
             try:
                 self.execution_guard.stale_data.update_timestamp("market_data")
+                # [P420] NOTE: until P420 this read the [P0-FIX] FUNDING |z|
+                # (which overwrote dvol_zscore upstream), so the DVOL override
+                # was driven by a funding proxy wearing DVOL's name. The real
+                # DVOL z is published by the P306 block, which runs LATER in
+                # the tick, so at this point the key is the pipeline's 0.0 and
+                # the override receives no update (stays NORMAL). Feeding it
+                # the honest z is a separate decision: DVOLOverrideController
+                # classifies its regime on LEVEL thresholds (<40 = LOW), the
+                # P306 units class -- not armed here.
                 _dvol = market_data.get("dvol", market_data.get("dvol_zscore", 0.0))
                 if _dvol:
                     self.execution_guard.dvol_override.update(_dvol)
@@ -10263,8 +10537,27 @@ class HMATSProductionRunner:
                             f"[DVOL] {asset}: level={_drb_m.dvol:.2f} "
                             f"z={_dvz_s} ({_dv_span}) extreme>=5.0 "
                             f"({_dv_mode})")
-                        if _dv_armed and _dvz is not None:
+                        # [P420] ALSO publish "dvol_zscore" when fresh: the
+                        # pipeline stamps dvol_zscore=0.0 on every fetch and
+                        # the constitution alias dvol->dvol_zscore only fills
+                        # an ABSENT key, so the z written to "dvol" never
+                        # reached EXTREME_DVOL / VOLATILITY_EXPANSION /
+                        # PATCH-4 -- and the [P0-FIX] funding proxy used to
+                        # overwrite the key anyway. This completes P306's
+                        # recorded intent: EXTREME_DVOL at z>=5 on the honest
+                        # trailing-year z is REACHABLE for the first time. It
+                        # is rare BY CONSTRUCTION (a five-sigma DVOL reading
+                        # against its own trailing year; live z is ~-1.4 BTC /
+                        # -2.0 ETH). Not fresh -> nothing written (absence
+                        # must never become a value, P2); the pipeline's 0.0
+                        # then stands, as today.
+                        _dv_pub = dvol_publish_values(_dv_armed, _dvz)
+                        if _dv_pub:
+                            # explicit literal keys (orphan-read scanner
+                            # provability, P174); the P306 pin reads the
+                            # `float(_dvz)` form -- the Z, never the level
                             market_data["dvol"] = float(_dvz)
+                            market_data["dvol_zscore"] = float(_dvz)  # [P420]
         except Exception as _drb_err:  # noqa: silent-swallow
             logger.debug(f"[P293-OPTIONS] {asset} skipped: {_drb_err}")
 
@@ -10970,10 +11263,16 @@ class HMATSProductionRunner:
                 self._trend_excluded_logged = set()
             if asset not in self._trend_excluded_logged:
                 self._trend_excluded_logged.add(asset)
-                logger.warning(
-                    f"[TREND-LAYER] {asset}: EXCLUDED by trend_assets "
-                    f"(P237 tripwire actuator) — no trend injection; the "
-                    f"asset trades only if Best-of-N clears the gate")
+                # [P420] WARNING only when the tripwire semantics can apply
+                # (explicit key, or a home-trio asset); a breadth asset on the
+                # DEFAULT roster is simply not in it -> INFO.
+                _ta_lvl = trend_exclusion_log_level(
+                    asset, getattr(self.config, "trend_assets", None) is not None)
+                (logger.warning if _ta_lvl == "warning" else logger.info)(
+                    f"[TREND-LAYER] {asset}: not in trend_assets (default = "
+                    f"home trio; P237 tripwire semantics apply only to a key "
+                    f"explicitly set) — no trend injection; the asset trades "
+                    f"only if Best-of-N clears the gate")
         elif getattr(self.config, "trend_following_mode", "off") != "off":
             try:
                 from core.trend_decision_layer import get_trend_decision_layer
@@ -11325,7 +11624,10 @@ class HMATSProductionRunner:
                 and getattr(self, "_skew_flow_signal", None) is not None):
             try:
                 _skew_decide = getattr(self.config, "skew_seat_assets", None) or []
-                _ss = self._skew_flow_signal.seat_direction(asset)
+                # [P420] no Laevitas request inside decide() for an asset
+                # that can never take the seat (SOL/XRP/BNB)
+                _ss = (self._skew_flow_signal.seat_direction(asset)
+                       if skew_seat_should_fetch(asset, _skew_decide) else None)
                 if _ss is not None:
                     _took = skew_seat_decision(
                         asset, float(_ss[0]), bool(_ss[1]), _skew_decide)
@@ -12013,6 +12315,26 @@ class HMATSProductionRunner:
             except (TypeError, ValueError):  # noqa: silent-swallow - None = unknown
                 self._last_whale_counts[asset] = None
         self._last_whale_pressures[asset] = _wh_net
+        # [P420] The P352 evidence gate reaches the CONFIDENCE fusion consumes
+        # (whale carries a 0.10 ADVISE weight since P417): at n=1 the pressure
+        # ratio is +/-1.0 by construction, so one ticket voted at full
+        # confidence. Known count below the minimum -> 0.0 in BOTH dicts
+        # (P170 two-dict trap); unknown keeps the reading (P2).
+        _wh_conf_gated = whale_confidence_after_evidence(
+            agent_signals.get('whale_confidence', 0.0),
+            self._last_whale_counts.get(asset),
+            getattr(self.config, "coinbase_whale_filter_min_whales", 2),
+            _wh_dir)
+        if _wh_conf_gated != float(agent_signals.get('whale_confidence', 0.0) or 0.0):
+            logger.info(
+                f"[P420][WHALE] {asset}: confidence "
+                f"{agent_signals.get('whale_confidence', 0.0):.2f} -> 0.00 "
+                f"(whale_count={self._last_whale_counts.get(asset)} < "
+                f"min {getattr(self.config, 'coinbase_whale_filter_min_whales', 2)}; "
+                f"one ticket must not vote at full confidence)")
+        agent_signals['whale_confidence'] = _wh_conf_gated
+        market_data['whale_confidence'] = _wh_conf_gated
+        self._last_whale_confidences[asset] = float(_wh_conf_gated)
 
         # [v3.3-B18] OnChain Sentiment Fusion -per-asset on-chain + sentiment alpha
         if self._onchain_fusion:
@@ -13835,9 +14157,18 @@ class HMATSProductionRunner:
                     # but must NOT block downstream exit paths (gambler, regime,
                     # exit_alpha) for existing positions — those guard on
                     # `not intent.veto_active` and would be silently skipped.
-                    _has_position = bool(
-                        self._paper_positions.get(asset, {}).get("exposure", 0)
-                    )
+                    # [P420] read the SLEEVE book (the Kraken read below was
+                    # structurally False for a routed asset); UNKNOWN (None)
+                    # is treated as "do not latch" (P355).
+                    _ar_held = sleeve_position_held(
+                        getattr(self, "_coinbase_sleeve", None), asset,
+                        position_state)
+                    if _ar_held is None:
+                        logger.warning(
+                            f"[AUTO_RECOVERY] {asset}: cannot tell whether a "
+                            f"position is held (sleeve unreadable) — latch "
+                            f"NOT applied this tick (P355/P420)")
+                    _has_position = _ar_held is not False
                     if _has_position:
                         logger.info(
                             f"[AUTO_RECOVERY] {asset}: Latch SKIPPED — "
@@ -14284,11 +14615,22 @@ class HMATSProductionRunner:
             # Soft gate: only block NEW entries (tranche_action=ENTER)
             # Never blocks FLATTEN, HOLD, or existing position management
             if not _cg_result.passed:
+                # [P420] "new entry" read the KRAKEN book ({} since
+                # 2026-06-13) -> every routed tick was a "new entry". Read the
+                # book that trades; UNKNOWN (None) does not veto (P355).
+                _cg_held = sleeve_position_held(
+                    getattr(self, "_coinbase_sleeve", None), asset,
+                    position_state)
+                if _cg_held is None:
+                    logger.warning(
+                        f"[P1-2C] {asset}: cannot tell whether a position is "
+                        f"held (sleeve unreadable) — confidence gate NOT "
+                        f"applied this tick (P355/P420)")
                 _is_new_entry = (
                     getattr(intent, 'tranche_action', '') == 'ENTER'
                     or (intent.is_actionable and not intent.veto_active
                         and abs(intent.target_exposure) > 0
-                        and not self._paper_positions.get(asset))
+                        and _cg_held is False)
                 )
                 if _is_new_entry:
                     intent.veto_active = True
@@ -19793,6 +20135,11 @@ class HMATSProductionRunner:
                 # -$3,776 kill switch.
                 "p0_last_combined_equity": getattr(
                     self, "_p0_last_combined_equity", None),
+                # [P420] The sleeve's cumulative external flow LAST NETTED out
+                # of the anchors above. Persisted WITH them: restoring the
+                # anchors without it would re-apply the last transfer on the
+                # first tick (the P325 half-a-reference lesson).
+                "p0_flow_ref": getattr(self, "_p0_flow_ref", None),
                 # [P253] SOTARiskController peak/halt/kill-switch state. Was
                 # RAM-only: every restart re-anchored the peak and CLEARED an
                 # active kill switch (the only 35% one in the system).
@@ -21684,6 +22031,15 @@ class HMATSProductionRunner:
             # window between process start and the first sleeve reconcile.
             self._p0_last_combined_equity = restore_p0_combined_equity(
                 data, getattr(self, "_p0_last_combined_equity", None))
+            # [P420] flow reference for the anchor re-anchoring. ABSENT
+            # (pre-P420 state file) stays None -> seeded from the sleeve's
+            # current cumulative on the first tick with NO shift.
+            try:
+                _pfr = data.get("p0_flow_ref")
+                self._p0_flow_ref = (float(_pfr) if _pfr is not None
+                                     and math.isfinite(float(_pfr)) else None)
+            except (TypeError, ValueError):  # noqa: silent-swallow -- malformed ref = absent = seed on first tick, never a shift
+                self._p0_flow_ref = None
             if self._p0_last_combined_equity is not None:
                 logger.info(
                     f"[P261] Restored last combined equity "
@@ -22007,6 +22363,77 @@ class HMATSProductionRunner:
             )
             return False
 
+    def _reanchor_on_external_flow(self, sleeve=None) -> float:
+        """[P420] Net an external capital flow out of EVERY equity anchor.
+
+        P294/P325 netted deposits/withdrawals out of the sleeve halt and the
+        existence fuse; the P0/SOTA feed, `_dp_today` and
+        `_update_drawdown_snapshot` were left on the raw difference, so a
+        withdrawal read as a phantom drawdown (and a deposit as a phantom
+        gain) against `_peak_equity`, `_daily_pnl_anchor`,
+        `_p0_last_combined_equity` and the SOTA controller's `peak_equity`.
+        The sleeve already detects flows (`_external_flow_usd`, cumulative,
+        persisted); this shifts each anchor by the flow since the last one
+        seen (`_p0_flow_ref`, persisted in the `_save_paper_positions`
+        payload). Deposit -> anchors UP (no phantom gain); withdrawal ->
+        anchors DOWN (no phantom drawdown). Never shifts on an unreadable
+        sleeve; an absent ref (first boot after this landed) SEEDS from the
+        sleeve's current cumulative with NO shift. Returns the delta applied.
+        """
+        try:
+            _sl = sleeve if sleeve is not None else getattr(
+                self, "_coinbase_sleeve", None)
+            if _sl is None:
+                return 0.0
+            if not getattr(_sl, "_reconcile_ok", False):
+                return 0.0                      # never shift on an unreadable sleeve
+            _cur = getattr(_sl, "_external_flow_usd", None)
+            if _cur is None:
+                return 0.0
+            _ref = getattr(self, "_p0_flow_ref", None)
+            if _ref is None:
+                self._p0_flow_ref = float(_cur)   # migration: seed, no shift
+                logger.info(f"[P420][FLOW-REANCHOR] flow reference seeded at "
+                            f"${float(_cur):+,.2f} (no anchor shift)")
+                return 0.0
+            _d = flow_reanchor_delta(_cur, _ref)
+            if not _d:
+                return 0.0
+            _shifted = []
+            if getattr(self, "_peak_equity", None) is not None:
+                self._peak_equity = float(self._peak_equity) + _d
+                _shifted.append("peak_equity")
+            if getattr(self, "_daily_pnl_anchor", None) is not None:
+                self._daily_pnl_anchor = float(self._daily_pnl_anchor) + _d
+                _shifted.append("daily_pnl_anchor")
+            if getattr(self, "_p0_last_combined_equity", None) is not None:
+                self._p0_last_combined_equity = (
+                    float(self._p0_last_combined_equity) + _d)
+                _shifted.append("p0_last_combined_equity")
+            # SOTARiskController.peak_equity is a plain attribute (its
+            # from_dict only ever RAISES it); a documented direct write is the
+            # only way to move it DOWN for a withdrawal. The file is not
+            # edited (fork ownership); the attribute contract is pinned by
+            # test.
+            _rc = getattr(getattr(self, "p0_integrator", None),
+                          "risk_controller", None)
+            _rc_peak = getattr(_rc, "peak_equity", None)
+            if _rc is not None and _rc_peak is not None and float(_rc_peak) > 0:
+                _rc.peak_equity = max(0.0, float(_rc_peak) + _d)
+                _shifted.append("sota.peak_equity")
+            self._p0_flow_ref = float(_cur)
+            logger.warning(
+                f"[P420][FLOW-REANCHOR] external capital flow of ${_d:+,.2f} "
+                f"({'DEPOSIT' if _d > 0 else 'WITHDRAWAL'}) netted out of "
+                f"{', '.join(_shifted) or 'no anchors (none set yet)'} -- "
+                f"a transfer is not PnL and must not read as a gain or a "
+                f"drawdown; cumulative flow ref now ${float(_cur):+,.2f}")
+            return float(_d)
+        except Exception as e:
+            logger.warning(f"[P420][FLOW-REANCHOR] skipped on "
+                           f"{type(e).__name__}: {e} -- anchors unchanged")
+            return 0.0
+
     def _update_drawdown_snapshot(self) -> Tuple[float, float]:
         """Refresh `_current_drawdown_pct` from account equity. Returns (equity, dd).
 
@@ -22065,6 +22492,12 @@ class HMATSProductionRunner:
         # that moves. A halt on that equity could never fire — which is worse
         # than no halt, because it looks like protection.
         _sleeve = getattr(self, "_coinbase_sleeve", None)
+        # [P420] net any external flow out of the anchors BEFORE the peak /
+        # drawdown arithmetic below (a withdrawal must not read as a drawdown).
+        # getattr-defended (P85): fixtures bind this method onto bare fakes.
+        _p418_rea = getattr(self, "_reanchor_on_external_flow", None)
+        if callable(_p418_rea):
+            _p418_rea(_sleeve)
         # [P253d] Read the sleeve equity LIVE at snapshot time. The old
         # cached `_last_equity_usd` read was refreshed only later in the
         # same tick (heartbeat block), so the DD halt was always judged
@@ -22609,7 +23042,9 @@ class HMATSProductionRunner:
                         }
                         if len(_corr_prices) >= 2:
                             self.strategic_coordinator._correlation_controller.update_prices_batch(
-                                _corr_prices
+                                corr_controller_known_prices(  # [P420]
+                                    self.strategic_coordinator._correlation_controller,
+                                    _corr_prices)
                             )
                             # T24b: Store portfolio for correlation sizing in pre_decision_check
                             self.strategic_coordinator._corr_portfolio = {
@@ -22985,7 +23420,9 @@ class HMATSProductionRunner:
                         )
                         if _frt_corr_ctrl and len(_frt_corr_prices) >= 2:
                             try:
-                                _frt_corr_ctrl.update_prices_batch(_frt_corr_prices)
+                                _frt_corr_ctrl.update_prices_batch(
+                                    corr_controller_known_prices(  # [P420]
+                                        _frt_corr_ctrl, _frt_corr_prices))
                                 _frt_state = _frt_corr_ctrl.assess_state()
                                 _frt_state_str = _frt_state.value if hasattr(_frt_state, 'value') else str(_frt_state)
                                 if _frt_state_str in ("spiking", "crisis"):
@@ -23083,7 +23520,9 @@ class HMATSProductionRunner:
                     and len(_bt_prices) >= 2):
                 try:
                     self.strategic_coordinator._correlation_controller.update_prices_batch(
-                        _bt_prices
+                        corr_controller_known_prices(  # [P420]
+                            self.strategic_coordinator._correlation_controller,
+                            _bt_prices)
                     )
                     self.strategic_coordinator._corr_portfolio = {
                         a: abs(self._paper_positions.get(a, {}).get("exposure", 0.0))
@@ -23108,7 +23547,7 @@ class HMATSProductionRunner:
             rows = (prods.get("products") if isinstance(prods, dict)
                     else getattr(prods, "products", None)) or []
             now = datetime.now(timezone.utc)
-            base_map = {"BI": "BTC", "ET": "ETH", "SO": "SOL", "SL": "SOL"}
+            base_map = cde_prefix_map()  # [P420] derived from SYMBOL_MAP (+XRP/BNB)
             out: dict = {}
             for p in rows:
                 pid = (p.get("product_id") if isinstance(p, dict)
@@ -23649,7 +24088,9 @@ class HMATSProductionRunner:
                         and len(_live_prices) >= 2):
                     try:
                         self.strategic_coordinator._correlation_controller.update_prices_batch(
-                            _live_prices
+                            corr_controller_known_prices(  # [P420]
+                                self.strategic_coordinator._correlation_controller,
+                                _live_prices)
                         )
                         self.strategic_coordinator._corr_portfolio = {
                             a: abs(self._paper_positions.get(a, {}).get("exposure", 0.0))
@@ -24053,6 +24494,14 @@ class HMATSProductionRunner:
                                 # (the "real test"), and surface PnL + DD +
                                 # halt in the heartbeat stream.
                                 _cb_pnl = self._coinbase_sleeve.log_pnl_point()
+                                # [P420] log_pnl_point is where the sleeve
+                                # DETECTS a flow; re-anchor immediately so the
+                                # next loop's drawdown/halt check is clean
+                                # (getattr-defended, P85)
+                                _p418_rea = getattr(
+                                    self, "_reanchor_on_external_flow", None)
+                                if callable(_p418_rea):
+                                    _p418_rea(self._coinbase_sleeve)
                                 _cb_risk = _cb_snap.get("risk") or {}
                                 logger.info(
                                     f"[COINBASE-PNL] equity=${_cb_pnl.get('equity_usd', 0):,.2f} "
@@ -24418,6 +24867,12 @@ class HMATSProductionRunner:
                                                     f"[COINBASE-MANAGE] {_m_a}: HOLD "
                                                     f"({_m_why}) pos="
                                                     f"{_sl.signed_contracts(_m_a)}ct")
+                                                # [P420] a HOLD tick places no
+                                                # order -> sweep any resting
+                                                # ENTRY limit (P207 non-fill
+                                                # window) before the stop
+                                                # reconcile
+                                                await sleeve_sweep_stale_entries(_sl, _m_a)
                                                 _st_res = await _sl.ensure_protective_stop(_m_a)
                                                 _cb_stop_summary[_m_a] = _st_res.get("status")
                                                 continue
@@ -24483,6 +24938,7 @@ class HMATSProductionRunner:
                                                     1.0 if _maf_pos > 0 else
                                                     (-1.0 if _maf_pos < 0
                                                      else 0.0))
+                                                await sleeve_sweep_stale_entries(_sl, _m_a)  # [P420]
                                                 _st_res = await _sl.ensure_protective_stop(
                                                     _m_a, intended_target=0)
                                                 _cb_stop_summary[_m_a] = _st_res.get("status")
@@ -24621,6 +25077,7 @@ class HMATSProductionRunner:
                                                     1.0 if _wf_pos > 0 else
                                                     (-1.0 if _wf_pos < 0
                                                      else 0.0))
+                                                await sleeve_sweep_stale_entries(_sl, _m_a)  # [P420]
                                                 _st_res = await _sl.ensure_protective_stop(
                                                     _m_a, intended_target=0)
                                                 _cb_stop_summary[_m_a] = _st_res.get("status")
@@ -24702,6 +25159,7 @@ class HMATSProductionRunner:
                                                     f"suppressed {_cd_age}/{_cd_n} ticks "
                                                     f"after flatten (dir={_m_dir:+.2f}) — "
                                                     f"P168 semantics, exits never deferred")
+                                                await sleeve_sweep_stale_entries(_sl, _m_a)  # [P420]
                                                 _st_res = await _sl.ensure_protective_stop(
                                                     _m_a, intended_target=0)
                                                 _cb_stop_summary[_m_a] = _st_res.get("status")

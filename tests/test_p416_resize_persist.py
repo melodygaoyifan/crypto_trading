@@ -11,6 +11,8 @@ their own P198 streak; entries, exits and flattens are NEVER deferred (P195).
 from __future__ import annotations
 
 import asyncio
+
+import pytest
 import sys
 from pathlib import Path
 
@@ -18,6 +20,14 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
 from exchange.coinbase_sleeve import CoinbaseSleeve  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _private_data_dir(tmp_path, monkeypatch):
+    """[P420] deferred ticks now PERSIST the streak to
+    $HMATS_DATA_DIR/coinbase_sleeve_state.json; point it at a private dir
+    so the suite never writes into the repo's data/ (P294 pattern)."""
+    monkeypatch.setenv("HMATS_DATA_DIR", str(tmp_path))
 
 
 def _sleeve(resize_ticks=2, cur=2):

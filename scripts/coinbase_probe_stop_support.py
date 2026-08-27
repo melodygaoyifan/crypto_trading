@@ -76,14 +76,28 @@ import os
 import sys
 from decimal import Decimal, ROUND_DOWN
 
-ASSETS = ("BTC", "ETH", "SOL")
+# [P420] The roster is DERIVED from the fee table (every asset core.cde_fees
+# can price) and the venue symbol map, never restated: the trio literal here
+# meant the probe would never preview a stop on XRP/BNB, which have been
+# routed and trading since P412b/c. Fallback to the trio (logged) only if the
+# imports fail, so a broken import degrades rather than fabricates.
+def _roster():
+    products = {"BTC": "BIP-20DEC30-CDE", "ETH": "ETP-20DEC30-CDE",
+                "SOL": "SLP-20DEC30-CDE"}
+    try:
+        from core.cde_fees import CDE_FEE_BPS
+        from exchange.symbol_mapping import SYMBOL_MAP
+        pids = SYMBOL_MAP.get("coinbase", {}).get("perp", {})
+        derived = {a: pids[a] for a in CDE_FEE_BPS if a in pids}
+        if derived:
+            products = derived
+    except Exception as e:  # noqa: silent-swallow — logged; trio fallback is the degraded state
+        print(f"WARNING: could not derive the asset roster ({type(e).__name__}: "
+              f"{e}) — falling back to the trio; XRP/BNB will NOT be probed (P420)")
+    return tuple(products), products
 
-# The contracts the sleeve actually trades (CLAUDE.md runtime table).
-EXPECTED_PRODUCTS = {
-    "BTC": "BIP-20DEC30-CDE",
-    "ETH": "ETP-20DEC30-CDE",
-    "SOL": "SLP-20DEC30-CDE",
-}
+
+ASSETS, EXPECTED_PRODUCTS = _roster()
 
 # Order configurations we care about, in the SDK's naming.
 STOP_CONFIG_KEYS = (

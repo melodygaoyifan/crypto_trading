@@ -578,6 +578,287 @@
    "end": 13034,
    "purpose": "validation:regimebook_adj_p379",
    "note": "BACKFILL recorded by P382 (2026-08-22): the P379 one-shot read of the validation era by training/scripts/regimebook_adj_validation_read.py (report training/reports/regimebook_adj_validation_p379.json, verdict OVERFIT) was not ledgered at the time \u2014 P379 called it 'a deliberate one-shot lockbox spend, like P259b', but P259b IS in this ledger. ts is the backfill time, not the read time (2026-08-22, same day). That script still lacks a record_window_usage() call."
+  },
+  {
+   "ts": "2026-08-24T08:51:33.063568+00:00",
+   "experiment": "ds_pipeline:p281_honest",
+   "asset": "BTC",
+   "start": 9100,
+   "end": 13095,
+   "purpose": "validation"
+  },
+  {
+   "ts": "2026-08-24T09:04:45.213570+00:00",
+   "experiment": "ds_pipeline:p281_honest",
+   "asset": "ETH",
+   "start": 9100,
+   "end": 13095,
+   "purpose": "validation"
+  },
+  {
+   "ts": "2026-08-27T11:51:13.960321+00:00",
+   "experiment": "conviction_channel_lab:p417",
+   "asset": "BTC",
+   "start": 9100,
+   "end": 13296,
+   "purpose": "validation:conviction-channel 6.6y verdict incl. the validation era (drove the P417 channel-OFF flip)",
+   "note": "BACKFILL recorded by P420 (2026-08-27): ts is the backfill time, not the read time. Read 2026-08-27 by training/scripts/conviction_channel_lab.py (report conviction_channel_lab_p417.json); the full-window A/B/C/D comparison included the validation era and its verdict TURN_CHANNEL_OFF flipped fusion_conviction_to_sleeve. The lab now records this itself."
+  },
+  {
+   "ts": "2026-08-27T11:51:13.960321+00:00",
+   "experiment": "conviction_channel_lab:p417",
+   "asset": "ETH",
+   "start": 9100,
+   "end": 13296,
+   "purpose": "validation:conviction-channel 6.6y verdict incl. the validation era (drove the P417 channel-OFF flip)",
+   "note": "BACKFILL recorded by P420 (2026-08-27): ts is the backfill time, not the read time. Read 2026-08-27 by training/scripts/conviction_channel_lab.py (report conviction_channel_lab_p417.json); the full-window A/B/C/D comparison included the validation era and its verdict TURN_CHANNEL_OFF flipped fusion_conviction_to_sleeve. The lab now records this itself."
+  },
+  {
+   "ts": "2026-08-27T11:51:13.960321+00:00",
+   "experiment": "conviction_channel_lab:p417",
+   "asset": "SOL",
+   "start": 9100,
+   "end": 13235,
+   "purpose": "validation:conviction-channel 6.6y verdict incl. the validation era (drove the P417 channel-OFF flip)",
+   "note": "BACKFILL recorded by P420 (2026-08-27): ts is the backfill time, not the read time. Read 2026-08-27 by training/scripts/conviction_channel_lab.py (report conviction_channel_lab_p417.json); the full-window A/B/C/D comparison included the validation era and its verdict TURN_CHANNEL_OFF flipped fusion_conviction_to_sleeve. The lab now records this itself."
+  },
+  {
+   "ts": "2026-08-27T11:51:13.960321+00:00",
+   "experiment": "conviction_sizing_lab:ws2",
+   "asset": "BTC",
+   "start": 9100,
+   "end": 13095,
+   "purpose": "validation:ws2 conviction-agreement sizing one-shot recent-era read (P259b)",
+   "note": "BACKFILL recorded by P420 (2026-08-27): ts is the backfill time, not the read time. Read 2026-08-27 by training/conviction_sizing_lab.py (WS2, effbef6): the validation* era row per cap. The lab now records this itself."
+  },
+  {
+   "ts": "2026-08-27T11:51:13.960321+00:00",
+   "experiment": "conviction_sizing_lab:ws2",
+   "asset": "ETH",
+   "start": 9100,
+   "end": 13095,
+   "purpose": "validation:ws2 conviction-agreement sizing one-shot recent-era read (P259b)",
+   "note": "BACKFILL recorded by P420 (2026-08-27): ts is the backfill time, not the read time. Read 2026-08-27 by training/conviction_sizing_lab.py (WS2, effbef6): the validation* era row per cap. The lab now records this itself."
+  },
+  {
+   "ts": "2026-08-27T11:51:13.960321+00:00",
+   "experiment": "gate_probes_lab:ab",
+   "asset": "BTC",
+   "start": 9100,
+   "end": 13095,
+   "purpose": "validation:A/B gate probes one-shot recent-era read (P259b)",
+   "note": "BACKFILL recorded by P420 (2026-08-27): ts is the backfill time, not the read time. Read 2026-08-27 by training/gate_probes_lab.py (A1/A2/A3/A4/B2/B4, ce52cdb): every probe printed a validation* row. The lab now records this once per asset per run."
+  },
+  {
+   "ts": "2026-08-27T11:51:13.960321+00:00",
+   "experiment": "gate_probes_lab:ab",
+   "asset": "ETH",
+   "start": 9100,
+   "end": 13095,
+   "purpose": "validation:A/B gate probes one-shot recent-era read (P259b)",
+   "note": "BACKFILL recorded by P420 (2026-08-27): ts is the backfill time, not the read time. Read 2026-08-27 by training/gate_probes_lab.py (A1/A2/A3/A4/B2/B4, ce52cdb): every probe printed a validation* row. The lab now records this once per asset per run."
+  },
+  {
+   "ts": "2026-08-27T11:51:13.960321+00:00",
+   "experiment": "gate_probes_lab:ab",
+   "asset": "SOL",
+   "start": 9100,
+   "end": 13034,
+   "purpose": "validation:A/B gate probes one-shot recent-era read (P259b)",
+   "note": "BACKFILL recorded by P420 (2026-08-27): ts is the backfill time, not the read time. Read 2026-08-27 by training/gate_probes_lab.py (A1/A2/A3/A4/B2/B4, ce52cdb): every probe printed a validation* row. The lab now records this once per asset per run."
+  },
+  {
+   "ts": "2026-08-27T11:51:13.960321+00:00",
+   "experiment": "seat_alpha_calibration:book",
+   "asset": "BTC",
+   "start": 9100,
+   "end": 13296,
+   "purpose": "validation:seat_alpha book per-era edge (live gate constant producer, P320/P420)",
+   "note": "BACKFILL recorded by P420 (2026-08-27): ts is the backfill time, not the read time. Read 2026-08-19 by training/seat_alpha_calibration.py: P320 producer run + P326 --verify (f0f5a01) + P412b/c --verify re-reads. Every later --verify re-reads the same window; the producer now records each run itself."
+  },
+  {
+   "ts": "2026-08-27T11:51:13.960321+00:00",
+   "experiment": "seat_alpha_calibration:book",
+   "asset": "ETH",
+   "start": 9100,
+   "end": 13296,
+   "purpose": "validation:seat_alpha book per-era edge (live gate constant producer, P320/P420)",
+   "note": "BACKFILL recorded by P420 (2026-08-27): ts is the backfill time, not the read time. Read 2026-08-19 by training/seat_alpha_calibration.py: P320 producer run + P326 --verify + P412b/c --verify re-reads; P419 re-measured the donchian series on the same window. Every later --verify re-reads the same window; the producer now records each run itself."
+  },
+  {
+   "ts": "2026-08-27T11:51:13.960321+00:00",
+   "experiment": "seat_alpha_calibration:book",
+   "asset": "SOL",
+   "start": 9100,
+   "end": 13235,
+   "purpose": "validation:seat_alpha book per-era edge (live gate constant producer, P320/P420)",
+   "note": "BACKFILL recorded by P420 (2026-08-27): ts is the backfill time, not the read time. Read 2026-08-19 by training/seat_alpha_calibration.py: P320 producer run + P326 --verify + P412b/c --verify re-reads. Every later --verify re-reads the same window; the producer now records each run itself."
+  },
+  {
+   "ts": "2026-08-27T11:51:13.960321+00:00",
+   "experiment": "seat_alpha_calibration:book",
+   "asset": "XRP",
+   "start": 9100,
+   "end": 13146,
+   "purpose": "validation:seat_alpha book per-era edge (live gate constant producer, P320/P420)",
+   "note": "BACKFILL recorded by P420 (2026-08-27): ts is the backfill time, not the read time. Read 2026-08-26 by training/seat_alpha_calibration.py: P412b: calibrated on the 6y raw-resampled book -> live gate constant 75.8; --verify re-read same day. Every later --verify re-reads the same window; the producer now records each run itself."
+  },
+  {
+   "ts": "2026-08-27T11:51:13.960321+00:00",
+   "experiment": "seat_alpha_calibration:book",
+   "asset": "BNB",
+   "start": 9100,
+   "end": 13146,
+   "purpose": "validation:seat_alpha book per-era edge (live gate constant producer, P320/P420)",
+   "note": "BACKFILL recorded by P420 (2026-08-27): ts is the backfill time, not the read time. Read 2026-08-26 by training/seat_alpha_calibration.py: P412c: calibrated -> live gate constant 38.0; --verify re-read same day. Every later --verify re-reads the same window; the producer now records each run itself."
+  },
+  {
+   "ts": "2026-08-27T11:51:13.960321+00:00",
+   "experiment": "seat_alpha_calibration:book",
+   "asset": "ADA",
+   "start": 9100,
+   "end": 13301,
+   "purpose": "validation:seat_alpha book per-era edge (live gate constant producer, P320/P420)",
+   "note": "BACKFILL recorded by P420 (2026-08-27): ts is the backfill time, not the read time. Read 2026-08-26 by training/seat_alpha_calibration.py: P412c: calibrated and REJECTED (median -23.5); transient fee reverted, not in the shipped table. Every later --verify re-reads the same window; the producer now records each run itself."
+  },
+  {
+   "ts": "2026-08-27T11:51:13.960321+00:00",
+   "experiment": "seat_alpha_calibration:book",
+   "asset": "LTC",
+   "start": 9100,
+   "end": 13301,
+   "purpose": "validation:seat_alpha book per-era edge (live gate constant producer, P320/P420)",
+   "note": "BACKFILL recorded by P420 (2026-08-27): ts is the backfill time, not the read time. Read 2026-08-26 by training/seat_alpha_calibration.py: P412c: calibrated and REJECTED (sub-friction median). Every later --verify re-reads the same window; the producer now records each run itself."
+  },
+  {
+   "ts": "2026-08-27T11:51:13.960321+00:00",
+   "experiment": "seat_alpha_calibration:book",
+   "asset": "DOGE",
+   "start": 9100,
+   "end": 13301,
+   "purpose": "validation:seat_alpha book per-era edge (live gate constant producer, P320/P420)",
+   "note": "BACKFILL recorded by P420 (2026-08-27): ts is the backfill time, not the read time. Read 2026-08-26 by training/seat_alpha_calibration.py: P412c: calibrated (median +149.4, validation -93.8) and HELD BACK by operator decision. Every later --verify re-reads the same window; the producer now records each run itself."
+  },
+  {
+   "ts": "2026-08-27T11:51:13.960321+00:00",
+   "experiment": "ridge_16h_pooled_check:p403",
+   "asset": "BTC",
+   "start": 11131,
+   "end": 13095,
+   "purpose": "validation:ridge_16h fold_1 val window via the real env (P403 era-stability read)",
+   "note": "BACKFILL recorded by P420 (2026-08-27): ts is the backfill time, not the read time. Read 2026-08-24 by training/scripts/ridge_16h_pooled_check.py (e739b12): three fold-val windows per asset through FullDRLTrainer._evaluate_baselines; verdict every asset sign-flips across eras (P403). The script now records each fold itself."
+  },
+  {
+   "ts": "2026-08-27T11:51:13.960321+00:00",
+   "experiment": "ridge_16h_pooled_check:p403",
+   "asset": "BTC",
+   "start": 9167,
+   "end": 11131,
+   "purpose": "validation:ridge_16h fold_2 val window via the real env (P403 era-stability read)",
+   "note": "BACKFILL recorded by P420 (2026-08-27): ts is the backfill time, not the read time. Read 2026-08-24 by training/scripts/ridge_16h_pooled_check.py (e739b12): three fold-val windows per asset through FullDRLTrainer._evaluate_baselines; verdict every asset sign-flips across eras (P403). The script now records each fold itself."
+  },
+  {
+   "ts": "2026-08-27T11:51:13.960321+00:00",
+   "experiment": "ridge_16h_pooled_check:p403",
+   "asset": "BTC",
+   "start": 7203,
+   "end": 9167,
+   "purpose": "validation:ridge_16h fold_3 val window via the real env (P403 era-stability read)",
+   "note": "BACKFILL recorded by P420 (2026-08-27): ts is the backfill time, not the read time. Read 2026-08-24 by training/scripts/ridge_16h_pooled_check.py (e739b12): three fold-val windows per asset through FullDRLTrainer._evaluate_baselines; verdict every asset sign-flips across eras (P403). The script now records each fold itself."
+  },
+  {
+   "ts": "2026-08-27T11:51:13.960321+00:00",
+   "experiment": "ridge_16h_pooled_check:p403",
+   "asset": "ETH",
+   "start": 11131,
+   "end": 13095,
+   "purpose": "validation:ridge_16h fold_1 val window via the real env (P403 era-stability read)",
+   "note": "BACKFILL recorded by P420 (2026-08-27): ts is the backfill time, not the read time. Read 2026-08-24 by training/scripts/ridge_16h_pooled_check.py (e739b12): three fold-val windows per asset through FullDRLTrainer._evaluate_baselines; verdict every asset sign-flips across eras (P403). The script now records each fold itself."
+  },
+  {
+   "ts": "2026-08-27T11:51:13.960321+00:00",
+   "experiment": "ridge_16h_pooled_check:p403",
+   "asset": "ETH",
+   "start": 9167,
+   "end": 11131,
+   "purpose": "validation:ridge_16h fold_2 val window via the real env (P403 era-stability read)",
+   "note": "BACKFILL recorded by P420 (2026-08-27): ts is the backfill time, not the read time. Read 2026-08-24 by training/scripts/ridge_16h_pooled_check.py (e739b12): three fold-val windows per asset through FullDRLTrainer._evaluate_baselines; verdict every asset sign-flips across eras (P403). The script now records each fold itself."
+  },
+  {
+   "ts": "2026-08-27T11:51:13.960321+00:00",
+   "experiment": "ridge_16h_pooled_check:p403",
+   "asset": "ETH",
+   "start": 7203,
+   "end": 9167,
+   "purpose": "validation:ridge_16h fold_3 val window via the real env (P403 era-stability read)",
+   "note": "BACKFILL recorded by P420 (2026-08-27): ts is the backfill time, not the read time. Read 2026-08-24 by training/scripts/ridge_16h_pooled_check.py (e739b12): three fold-val windows per asset through FullDRLTrainer._evaluate_baselines; verdict every asset sign-flips across eras (P403). The script now records each fold itself."
+  },
+  {
+   "ts": "2026-08-27T11:51:13.960321+00:00",
+   "experiment": "ridge_16h_pooled_check:p403",
+   "asset": "SOL",
+   "start": 11079,
+   "end": 13034,
+   "purpose": "validation:ridge_16h fold_1 val window via the real env (P403 era-stability read)",
+   "note": "BACKFILL recorded by P420 (2026-08-27): ts is the backfill time, not the read time. Read 2026-08-24 by training/scripts/ridge_16h_pooled_check.py (e739b12): three fold-val windows per asset through FullDRLTrainer._evaluate_baselines; verdict every asset sign-flips across eras (P403). The script now records each fold itself."
+  },
+  {
+   "ts": "2026-08-27T11:51:13.960321+00:00",
+   "experiment": "ridge_16h_pooled_check:p403",
+   "asset": "SOL",
+   "start": 9124,
+   "end": 11079,
+   "purpose": "validation:ridge_16h fold_2 val window via the real env (P403 era-stability read)",
+   "note": "BACKFILL recorded by P420 (2026-08-27): ts is the backfill time, not the read time. Read 2026-08-24 by training/scripts/ridge_16h_pooled_check.py (e739b12): three fold-val windows per asset through FullDRLTrainer._evaluate_baselines; verdict every asset sign-flips across eras (P403). The script now records each fold itself."
+  },
+  {
+   "ts": "2026-08-27T11:51:13.960321+00:00",
+   "experiment": "ridge_16h_pooled_check:p403",
+   "asset": "SOL",
+   "start": 7169,
+   "end": 9124,
+   "purpose": "validation:ridge_16h fold_3 val window via the real env (P403 era-stability read)",
+   "note": "BACKFILL recorded by P420 (2026-08-27): ts is the backfill time, not the read time. Read 2026-08-24 by training/scripts/ridge_16h_pooled_check.py (e739b12): three fold-val windows per asset through FullDRLTrainer._evaluate_baselines; verdict every asset sign-flips across eras (P403). The script now records each fold itself."
+  },
+  {
+   "ts": "2026-08-27T12:06:51.498775+00:00",
+   "experiment": "seat_alpha_calibration:book",
+   "asset": "BTC",
+   "start": 9100,
+   "end": 13296,
+   "purpose": "validation:seat_alpha book per-era edge (live gate constant producer, P320/P420)"
+  },
+  {
+   "ts": "2026-08-27T12:06:53.145596+00:00",
+   "experiment": "seat_alpha_calibration:donchian",
+   "asset": "ETH",
+   "start": 9100,
+   "end": 13296,
+   "purpose": "validation:seat_alpha donchian per-era edge (live gate constant producer, P320/P420)"
+  },
+  {
+   "ts": "2026-08-27T12:06:54.780817+00:00",
+   "experiment": "seat_alpha_calibration:book",
+   "asset": "SOL",
+   "start": 9100,
+   "end": 13235,
+   "purpose": "validation:seat_alpha book per-era edge (live gate constant producer, P320/P420)"
+  },
+  {
+   "ts": "2026-08-27T12:06:56.421487+00:00",
+   "experiment": "seat_alpha_calibration:book",
+   "asset": "XRP",
+   "start": 9100,
+   "end": 13146,
+   "purpose": "validation:seat_alpha book per-era edge (live gate constant producer, P320/P420)"
+  },
+  {
+   "ts": "2026-08-27T12:06:58.050580+00:00",
+   "experiment": "seat_alpha_calibration:book",
+   "asset": "BNB",
+   "start": 9100,
+   "end": 13146,
+   "purpose": "validation:seat_alpha book per-era edge (live gate constant producer, P320/P420)"
   }
  ]
 }

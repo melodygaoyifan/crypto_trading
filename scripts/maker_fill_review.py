@@ -111,10 +111,51 @@ def read_lines(log_file: str | None) -> list:
 # maker FILL RATE and the realized SLIPPAGE it captures — is recorded directly
 # in data/fill_quality.jsonl (P290). This mode reports it.
 # ---------------------------------------------------------------------------
-CONTRACT_SIZE = {"BTC": 0.01, "ETH": 0.1, "SOL": 5.0}
-# certified era-median edge, bps per round trip (core/seat_alpha.py, P320/P321)
-EDGE_RT_BPS = {"BTC": 24.1, "ETH": 88.1, "SOL": 221.7}
+# [P420] Derived, never restated: the trio literals here silently EXCLUDED
+# XRP/BNB fills (routed since P412b/c) from the very fee-revision rule they
+# must feed — the P315 rule lowers an ASSUMED/PREVIEW fee only on >=20 filled
+# legs, and XRP/BNB carry PREVIEW fees (core.cde_fees.CDE_FEE_PREVIEW).
+def _roster():
+    """(contract sizes, certified per-RT edges, assets whose fee is not yet
+    fill-measured) from the single sources, with the old literals as a
+    logged fallback so an import error degrades rather than fabricates."""
+    sizes = {"BTC": 0.01, "ETH": 0.1, "SOL": 5.0}
+    edges = {"BTC": 24.1, "ETH": 88.1, "SOL": 221.7}
+    unfilled = {"SOL"}
+    try:
+        from core.cde_fees import _contract_sizes, CDE_FEE_ASSUMED, CDE_FEE_PREVIEW
+        derived = _contract_sizes()
+        if derived:
+            sizes = dict(derived)
+        unfilled = set(CDE_FEE_ASSUMED) | set(CDE_FEE_PREVIEW)
+    except Exception as e:  # noqa: silent-swallow — logged; the trio fallback is the degraded state
+        print(f"  WARNING: core.cde_fees unavailable ({type(e).__name__}: {e}) — "
+              f"contract sizes fall back to the trio literals (XRP/BNB fills "
+              f"will be SKIPPED, P420)")
+    try:
+        from core.seat_alpha import REGIMEBOOK_ALPHA_BPS_PER_ROUND_TRIP
+        edges = dict(REGIMEBOOK_ALPHA_BPS_PER_ROUND_TRIP)
+    except Exception as e:  # noqa: silent-swallow — logged; the trio fallback is the degraded state
+        print(f"  WARNING: core.seat_alpha unavailable ({type(e).__name__}: {e}) — "
+              f"certified edges fall back to the trio literals (P420)")
+    return sizes, edges, unfilled
+
+
+CONTRACT_SIZE, EDGE_RT_BPS, FEE_NOT_FILL_MEASURED = _roster()
 SOL_REPRICE_FLOOR = 20   # P315 revision rule: LOWER a fee only on >=20 fills
+REPRICE_FLOOR = SOL_REPRICE_FLOOR   # [P420] applies to every assumed/preview fee
+
+
+def report_assets(rows):
+    """[P420] Every asset the fee table knows OR the ledger carries, in a
+    stable order — a fill for an asset the roster forgot must still be seen."""
+    seen = [r.get("asset") for r in rows if r.get("asset")]
+    order = list(CONTRACT_SIZE) + sorted({a for a in seen if a not in CONTRACT_SIZE})
+    out = []
+    for a in order:
+        if a not in out:
+            out.append(a)
+    return out
 
 
 def read_ledger(ledger_file):
@@ -185,22 +226,30 @@ def ledger_report(rows):
         if slip.get(k):
             v = slip[k]
             print(f"    {k:12s} {sum(v)/len(v):+7.2f}  n={len(v)}")
+    assets = report_assets(cde)
+    unsized = sorted({r.get("asset") for r in cde
+                      if r.get("asset") and r.get("asset") not in CONTRACT_SIZE})
+    if unsized:
+        print(f"  WARNING: fills for {unsized} carry no contract size in the "
+              f"roster — their fee bps cannot be computed (P420)")
     print("  realized FEE bps/leg by asset (mean/n) vs modelled:")
-    for a in ("BTC", "ETH", "SOL"):
+    for a in assets:
         if fee.get(a):
             v = fee[a]
             print(f"    {a}: {sum(v)/len(v):5.2f}  n={len(v)}")
-    # SOL re-pricing progress (P315: lower the assumed 14.51 only at >=20 fills)
-    n_sol = len(fee.get("SOL", []))
-    if n_sol:
-        note = ("ELIGIBLE to re-price down" if n_sol >= SOL_REPRICE_FLOOR
-                else f"{n_sol}/{SOL_REPRICE_FLOOR} fills toward re-pricing")
-        print(f"  SOL fee is ASSUMED (14.51bps); {note} (P315 revision rule)")
+    # [P420] re-pricing progress for EVERY assumed/preview fee, not SOL only
+    # (P315: lower an assumed/preview fee only at >=20 filled legs).
+    for a in sorted(FEE_NOT_FILL_MEASURED):
+        n_a = len(fee.get(a, []))
+        note = ("ELIGIBLE to re-price down" if n_a >= REPRICE_FLOOR
+                else f"{n_a}/{REPRICE_FLOOR} fills toward re-pricing")
+        print(f"  {a} fee is NOT fill-measured (assumed/preview); {note} "
+              f"(P315 revision rule)")
 
     # realized RT cost per asset (fee + slippage, maker-weighted at observed f)
     # vs certified edge — the honest 'does it clear' read.
     print("  realized RT cost (fee+slip) vs certified edge, per asset:")
-    for a in ("BTC", "ETH", "SOL"):
+    for a in assets:
         if not fee.get(a):
             continue
         leg_fee = sum(fee[a]) / len(fee[a])

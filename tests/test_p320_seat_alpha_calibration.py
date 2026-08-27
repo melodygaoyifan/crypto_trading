@@ -44,7 +44,10 @@ from core.seat_alpha import (  # noqa: E402
 
 class TestTheCalibrationIsTheEraMedian:
 
-    @pytest.mark.parametrize("asset", ["BTC", "ETH", "SOL"])
+    # [P420] parametrized over the SHIPPED table, not a hand list: XRP/BNB
+    # joined the table in P412 and this pin silently did not cover them (an
+    # asset can enter the live gate without ever meeting the statistic pin).
+    @pytest.mark.parametrize("asset", sorted(REGIMEBOOK_ALPHA_BPS_PER_ROUND_TRIP))
     def test_asserted_value_is_the_era_median(self, asset):
         """[P321] The STATISTIC is part of the decision. The MIN stops every
         asset (BTC 2.3, SOL -20.8); the MEAN can be carried by one dominant
@@ -55,6 +58,12 @@ class TestTheCalibrationIsTheEraMedian:
         eras = REGIMEBOOK_ALPHA_BY_ERA[asset]
         assert REGIMEBOOK_ALPHA_BPS_PER_ROUND_TRIP[asset] == \
             pytest.approx(statistics.median(eras.values()))
+
+    def test_every_gate_asset_has_an_era_table(self):
+        """[P420] the per-RT table and the per-era table must carry the same
+        assets — a per-RT entry with no eras cannot be verified by the
+        producer at all."""
+        assert set(REGIMEBOOK_ALPHA_BPS_PER_ROUND_TRIP) == set(REGIMEBOOK_ALPHA_BY_ERA)
 
     def test_a_negative_calibration_would_pass_through_unclamped(self):
         """[P321] No asset's MEDIAN is negative now (SOL's validation era is,

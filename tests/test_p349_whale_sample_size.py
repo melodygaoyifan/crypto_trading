@@ -128,6 +128,14 @@ class TestObservationOnly:
             line = src[start:end if end != -1 else len(src)]
             if "hasattr(" in line:
                 continue
+            # [P420] a comparison INSIDE a log f-string is reporting, not
+            # deciding. The P352 evidence floor now also zeroes whale's
+            # fusion CONFIDENCE (whale_confidence_after_evidence, a pure
+            # function fed the stash with no operator on that line) -- the
+            # decided extension of the sleeve-filter gate to the P417 weight;
+            # what this pin still forbids is a DIRECTION decided on the count.
+            if line.lstrip().startswith(('f"', "f'")) or "logger." in line:
+                continue
             if re.search(self._CMP, line):
                 out.append(line.strip())
         return out

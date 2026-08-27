@@ -183,7 +183,11 @@ class _FakeAdapter:
 
 
 def _sleeve(adapter, tmp_path, monkeypatch, cur=0.0, wait=20.0,
-            reprice=True, filled_after=None):
+            reprice=True, filled_after=None, lag_reconciles=0):
+    """[P420] `lag_reconciles`: the fill becomes visible in the position
+    snapshot only after that many reconcile calls -- the venue's
+    list_futures_positions LAGS fills (P382 4/4), and a fixture that shows
+    the fill instantly cannot exercise the double-fill class."""
     monkeypatch.setenv("HMATS_DATA_DIR", str(tmp_path))
     s = object.__new__(CoinbaseSleeve)
     s._adapter = adapter
@@ -200,12 +204,17 @@ def _sleeve(adapter, tmp_path, monkeypatch, cur=0.0, wait=20.0,
     s.signed_contracts = lambda asset: state["cur"]  # type: ignore[assignment]
     s.is_ready = lambda: True  # type: ignore[assignment]
 
+    state["reconciles"] = 0
+
     def _reconcile():
         if filled_after is not None and adapter.placed:
-            state["cur"] = filled_after
+            state["reconciles"] += 1
+            if state["reconciles"] > lag_reconciles:
+                state["cur"] = filled_after
         return {}
     s.reconcile_positions = _reconcile  # type: ignore[assignment]
     s.can_trade = lambda a, d: (True, "ok")  # type: ignore[assignment]
+    s.MAKER_FILL_WAIT_SEC = 0.0  # [P420] bounded wait under the fake clock
     return s, state
 
 
@@ -458,3 +467,62 @@ class TestBudgetUrgencyAndFlagOff:
         assert _attempt(s, ad) == "DONE"                 # NOT "FALLBACK"
         assert len(ad.post_only_placements()) == 1
         assert ad.cancelled == ["oid-1"]
+
+
+# ---------------------------------------------------------------------------
+# [P420] the snapshot LAGS the fill: the cross is sized off filled_size
+# ---------------------------------------------------------------------------
+
+class TestLaggedFillVisibility:
+    """[P420] Pre-P420 the DONE branch recomputed delta = target - snapshot
+    and crossed it at taker. With a lagging snapshot a FULL maker fill read
+    as "nothing filled" and the cross doubled the position."""
+
+    def _crosses(self, ad):
+        return [p for p in ad.placed if not getattr(p, "post_only", False)]
+
+    def test_full_fill_with_lagged_snapshot_places_no_cross(self, tmp_path,
+                                                            monkeypatch):
+        _install_clock(monkeypatch)
+        ad = _FakeAdapter(books=[(99.9, 100.1)], fill_after_polls=0,
+                          get_order_payload={"status": "FILLED",
+                                             "filled_size": "1",
+                                             "average_filled_price": "99.9"})
+        # the fill never becomes visible inside this call
+        s, _ = _sleeve(ad, tmp_path, monkeypatch, wait=20.0,
+                       filled_after=1.0, lag_reconciles=99)
+        res = asyncio.run(s.execute_target("SOL", 1))
+        assert res["status"] == "OK" and res.get("maker") is True
+        assert self._crosses(ad) == [], (
+            "a full maker fill was crossed again at taker -- the double "
+            "position (P420)")
+
+    def test_partial_fill_with_lagged_snapshot_crosses_only_the_remainder(
+            self, tmp_path, monkeypatch):
+        _install_clock(monkeypatch)
+        ad = _FakeAdapter(books=[(99.9, 100.1)], fill_after_polls=0,
+                          get_order_payload={"status": "CANCELLED",
+                                             "filled_size": "1",
+                                             "average_filled_price": "99.9"})
+        s, _ = _sleeve(ad, tmp_path, monkeypatch, wait=20.0,
+                       filled_after=None)
+        res = asyncio.run(s.execute_target("SOL", 3))
+        assert res["status"] == "OK"
+        crosses = self._crosses(ad)
+        assert len(crosses) == 1
+        # 3 wanted, 1 filled as maker -> exactly 2 crossed (base_size = 2 * cs)
+        assert crosses[0].size == pytest.approx(2 * ad._cs)
+
+    def test_instant_snapshot_still_works_exactly_as_before(self, tmp_path,
+                                                            monkeypatch):
+        # the pre-P420 fixture premise, kept as the regression: fill visible
+        # at the first reconcile -> OK maker, no cross
+        _install_clock(monkeypatch)
+        ad = _FakeAdapter(books=[(99.9, 100.1)], fill_after_polls=0,
+                          get_order_payload={"status": "FILLED",
+                                             "filled_size": "1",
+                                             "average_filled_price": "99.9"})
+        s, _ = _sleeve(ad, tmp_path, monkeypatch, wait=20.0, filled_after=1.0)
+        res = asyncio.run(s.execute_target("SOL", 1))
+        assert res["status"] == "OK" and res.get("maker") is True
+        assert self._crosses(ad) == []

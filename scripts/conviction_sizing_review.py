@@ -16,8 +16,35 @@ import sys
 from pathlib import Path
 
 ASSETS = ("BTC", "ETH")
-COST = {"BTC": 27.7, "ETH": 44.0}   # honest CDE round-trip bps (P382/P385)
 MIN_ROWS = 30                        # below this, no verdict (thin)
+
+# [P374] measured per-RT market impact, the one term no registry carries; the
+# fee and spread terms below are DERIVED from their single sources so a fee
+# revision (P315 rule) propagates here without a hand edit.
+IMPACT_BPS = {"BTC": 6.38, "ETH": 9.72}
+
+
+def _derive_cost():
+    """[P420] honest CDE round-trip bps = 2 x taker fee (core.cde_fees) +
+    full spread (defense.constitution CDE_SPREAD_BPS_MEASURED) + measured
+    impact (P374). The old hand-copied {27.7, 44.0} is what this reproduces
+    (within 0.5bps — the P374 decomposition used the measured 1.58/5.26bps
+    spreads where the registry carries the conservative 2.0/5.5); the parity
+    with training/conviction_sizing_lab.COST_BPS is pinned by test so the
+    forward reader and the lab it forward-tests cannot silently diverge."""
+    try:
+        from core.cde_fees import CDE_FEE_BPS
+        from defense.constitution import CDE_SPREAD_BPS_MEASURED
+        return {a: round(2.0 * CDE_FEE_BPS[a]["taker"]
+                         + CDE_SPREAD_BPS_MEASURED[a] + IMPACT_BPS[a], 1)
+                for a in ASSETS}
+    except Exception as e:  # noqa: silent-swallow — logged; the recorded P374 figures are the degraded state
+        print(f"WARNING: could not derive the CDE cost ({type(e).__name__}: {e}) "
+              f"— using the recorded P374 figures 27.7/44.0 (P420)")
+        return {"BTC": 27.7, "ETH": 44.0}
+
+
+COST = _derive_cost()
 
 
 def _maxdd(cum):

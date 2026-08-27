@@ -50,7 +50,8 @@ def _close(a):
 
 
 def _ev(close, pos, cost, lo, hi):
-    s = per_bar_net(close, pos, cost, lo, hi)
+    # [P420] validation* is a deliberate one-shot read; _report ledgers it
+    s = per_bar_net(close, pos, cost, lo, hi, allow_validation=True)
     return float(np.sum(s)), maxdd(s)
 
 
@@ -76,8 +77,26 @@ def _daily_field_to_bars(rows_by_day, ts, n):
     return out
 
 
-def _report(title, close, base, variant, cost, n, note=""):
+_LEDGERED: set = set()
+
+
+def _report(title, close, base, variant, cost, n, note="", asset=None):
     eras = ERAS + [("validation*", DE, n)]
+    # [P420] every probe reads the validation era; ledger it ONCE per asset
+    # per run (not once per probe — one spend of the same window, many looks).
+    if asset and asset not in _LEDGERED:
+        _LEDGERED.add(asset)
+        try:
+            from training.splits import record_window_usage
+            prior = record_window_usage("gate_probes_lab:ab", asset, DE, int(n),
+                                        "validation:A/B gate probes one-shot "
+                                        "recent-era read (P259b)")
+            if prior:
+                print(f"[WINDOW-LEDGER] {asset}: validation window already read "
+                      f"by {prior} other experiment(s) — discount (P260)")
+        except Exception as e:  # noqa: silent-swallow — surfaced, never blocks the lab
+            print(f"[WINDOW-LEDGER] WARNING: could not record gate_probes_lab/"
+                  f"{asset} ({type(e).__name__}: {e})")
     print(f"\n[{title}] {note}")
     print(f"  {'era':12s} {'base net/DD':>16s} {'variant net/DD':>16s} {'Δnet':>8s}")
     wins = 0
@@ -115,7 +134,7 @@ def probe_A1():
         gate = base.copy()
         gate[(base > 1.0) & (z > 1.0)] = 1.0
         _report(f"A1 {a} skew-term de-risk gate", close, base, gate, COST_BPS[a], n,
-                "does gating WS2 on front-vs-back skew help?")
+                "does gating WS2 on front-vs-back skew help?", asset=a)
 
 
 # ---- A2: VRP (Deribit DVOL - realized vol) as a de-risk gate on WS2 ----
@@ -144,7 +163,7 @@ def probe_A2():
         gate[(base > 1.0) & (vz < -1.0)] = 1.0
         cov = float(np.mean(~np.isnan(vz)))
         _report(f"A2 {a} VRP de-risk gate (cov {cov:.0%})", close, base, gate,
-                COST_BPS[a], n, "de-risk WS2 when VRP compressed (stress)?")
+                COST_BPS[a], n, "de-risk WS2 when VRP compressed (stress)?", asset=a)
 
 
 # ---- A3: dealer gamma (GEX) sign as a size gate ----
@@ -161,7 +180,7 @@ def probe_A3():
         gate = base.copy()
         gate[(base > 1.0) & (gexb < 0)] = 1.0
         _report(f"A3 {a} GEX de-risk gate", close, base, gate, COST_BPS[a], n,
-                "cap size-up when dealer gamma is negative (unstable)?")
+                "cap size-up when dealer gamma is negative (unstable)?", asset=a)
 
 
 # ---- A4: skew MOMENTUM vs skew LEVEL as the conviction signal ----
@@ -180,7 +199,7 @@ def probe_A4():
         dmom[1:] = np.sign(np.diff(np.nan_to_num(raw))) * -1.0  # falling skew(more fear)->long
         mom_pos = trend * conviction_mult(trend, dmom, 2.0)
         _report(f"A4 {a} skew-MOMENTUM vs LEVEL", close, base, mom_pos, COST_BPS[a], n,
-                "does momentum-of-skew size better than level-of-skew?")
+                "does momentum-of-skew size better than level-of-skew?", asset=a)
 
 
 # ---- B2: WS2 for SOL via trend + REGIME agreement ----
@@ -206,7 +225,7 @@ def probe_B2():
     print(f"\n[B2 SOL trend+regime] bull regime ids={sorted(bull_ids)} "
           f"names={[names[i] for i in sorted(bull_ids)] if names else '(none)'}")
     _report("B2 SOL trend+regime conviction", close, base, conv, COST_BPS.get("SOL", 41.0), n,
-            "size up when trend long AND GMM regime bullish?")
+            "size up when trend long AND GMM regime bullish?", asset="SOL")
 
 
 # ---- B4: a WIDE crash-stop on the WS2 book ----
@@ -231,7 +250,7 @@ def probe_B4():
                 if not active:
                     stopped[i] = 0.0
             _report(f"B4 {a} wide crash-stop {int(STOP*100)}%", close, base, stopped,
-                    COST_BPS[a], n, "does a wide stop cut drawdown without gutting return?")
+                    COST_BPS[a], n, "does a wide stop cut drawdown without gutting return?", asset=a)
 
 
 def main():

@@ -102,7 +102,7 @@ COPY --chown=hmats:hmats data/exit_drl_validation ./data/exit_drl_validation
 #
 # Gate: tests/test_ops_docs_reference_real_commands.py asserts every script
 # named in a documented `docker exec` command appears here.
-COPY --chown=hmats:hmats scripts/why_no_trade.py scripts/kq_strategy_diagnostic.py scripts/agent_audit_16.py scripts/trend_regime_review.py scripts/fill_quality_review.py scripts/seat_check.py scripts/calibration_check.py scripts/september_check.py ./scripts/
+COPY --chown=hmats:hmats scripts/why_no_trade.py scripts/kq_strategy_diagnostic.py scripts/agent_audit_16.py scripts/trend_regime_review.py scripts/fill_quality_review.py scripts/seat_check.py scripts/calibration_check.py scripts/september_check.py scripts/conviction_sizing_review.py ./scripts/
 
 VOLUME ["/opt/hmats/models", "/opt/hmats/data", "/opt/hmats/logs"]
 

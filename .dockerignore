@@ -48,6 +48,7 @@ scripts/
 # regimebook ledgers, so it must run in-container (P213). Stdlib-only,
 # read-only, places no orders.
 !scripts/seat_check.py
+!scripts/conviction_sizing_review.py
 pytorch_build/
 deploy/
 data/diagnostics/

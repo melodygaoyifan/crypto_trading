@@ -8,6 +8,10 @@ ETF_pos) ~ -0.15 both assets). On BTC the de-risk stack (long only when SMA200
 trends AND ETF is not signaling outflow) gives OOS Sharpe +1.49 / maxDD -9.7%
 vs SMA200-alone +0.37 / -22.1% -- 4x Sharpe, half the drawdown. ETH: SMA200 is
 the weak link, so ETF is better standalone there (asset-specific).
+[P420] THOSE NUMBERS WERE LAG-2: `_stats` filled ret[:-1] and then used
+ret[1:], so pos[t] earned the t+1 -> t+2 move. Fixed to lag-1 (ret[1:], the
+etf_flow_probe convention); the corrected read is recorded in the P420 entry
+and must be quoted beside the P404 figures, never instead of them.
 CAVEATS: same recent-ETF-era window as P400 (regime-concentrated); n~300 OOS
 (wide CI); the de-risk form was chosen after seeing 2 combos (the a-priori
 sensible one). This strengthens the ARMING case; the live timing check
@@ -59,7 +63,13 @@ def _deadband(sig, band):
 
 
 def _stats(px, pos, pl, mid):
-    ret = np.zeros(len(px)); ret[:-1] = px[1:] / np.where(px[:-1] == 0, np.nan, px[:-1]) - 1
+    # [P420] ret[t] = the t-1 -> t return, so pos[t] * ret[t+1] earns the
+    # t -> t+1 move: LAG-1, the alignment the docstring claims and the one
+    # etf_flow_probe._hold uses. The pre-P420 line filled ret[:-1] (ret[t] =
+    # the t -> t+1 move) and then multiplied by ret[t+1] -- pos[t] earned the
+    # t+1 -> t+2 move, i.e. a lag-2 book: the P404 numbers were measured one
+    # day late. Pinned by tests/test_p418_ops_labs_and_docs.py.
+    ret = np.zeros(len(px)); ret[1:] = px[1:] / np.where(px[:-1] == 0, np.nan, px[:-1]) - 1
     ret = np.nan_to_num(ret); dp = np.abs(np.diff(pos, prepend=0.0))
     pnl = np.zeros(len(px)); pnl[:-1] = pos[:-1] * ret[1:]; pnl = pnl - dp * (pl / 2.0)
     p = pnl[mid:]; p = p[np.isfinite(p)]

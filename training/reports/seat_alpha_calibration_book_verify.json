@@ -1,0 +1,189 @@
+{
+ "verify": true,
+ "tolerance_bps": 0.15,
+ "assets": {
+  "BTC": {
+   "series": "book",
+   "cells": {
+    "pre_design": 2.346053787916187,
+    "design": 68.51032592968376,
+    "validation": 25.541324210708037
+   },
+   "median": 25.541324210708037,
+   "shipped_cells": {
+    "pre_design": 2.3,
+    "design": 68.5,
+    "validation": 24.1
+   },
+   "shipped_median": 24.1,
+   "inputs": {
+    "closes": {
+     "path": "training\\training_data\\drl_training\\BTC_4H_ohlcv.parquet",
+     "sha256": "d20b51490f9b7ea0bfeaa5399cd24d23e2bfb0794f9459b30216556383f3b9b0",
+     "rows": 13296
+    },
+    "funding": {
+     "path": "training\\training_data\\coinglass_history\\BTC_funding_1d.parquet",
+     "sha256": "3796f6e08bec371ad624206656355371bb69c7724dd2f6975b09dadb2fe37eac",
+     "rows": 2191
+    }
+   }
+  },
+  "ETH": {
+   "series": "donchian",
+   "cells": {
+    "pre_design": 674.367808206818,
+    "design": 291.6431728721643,
+    "validation": 375.5387088997731
+   },
+   "median": 375.5387088997731,
+   "shipped_cells": {
+    "pre_design": 674.4,
+    "design": 291.6,
+    "validation": 375.5
+   },
+   "shipped_median": 375.5,
+   "inputs": {
+    "closes": {
+     "path": "training\\training_data\\drl_training\\ETH_4H_ohlcv.parquet",
+     "sha256": "5a4d504c941bf82163d3f1dd0d344ed6f500d67117c97f824567e4697f938ec1",
+     "rows": 13296
+    },
+    "funding": {
+     "path": "training\\training_data\\coinglass_history\\ETH_funding_1d.parquet",
+     "sha256": "fb16f6d2329aa50e65eda6a513a6cc656666c4e0aa54af233beee0f0140b2127",
+     "rows": 2191
+    }
+   }
+  },
+  "SOL": {
+   "series": "book",
+   "cells": {
+    "pre_design": 427.6363098661364,
+    "design": 221.67963118122867,
+    "validation": 18.752697588911275
+   },
+   "median": 221.67963118122867,
+   "shipped_cells": {
+    "pre_design": 427.6,
+    "design": 221.7,
+    "validation": -20.8
+   },
+   "shipped_median": 221.7,
+   "inputs": {
+    "closes": {
+     "path": "training\\training_data\\drl_training\\SOL_4H_ohlcv.parquet",
+     "sha256": "f601ad6032a4535a511ce420b95253052c8165821f6639f9157216e1e7cf1987",
+     "rows": 13235
+    },
+    "funding": {
+     "path": "training\\training_data\\coinglass_history\\SOL_funding_1d.parquet",
+     "sha256": "2e9c3ac67841600faa28c7a1993b9b419bfd8025146fff44f91664103c4e0751",
+     "rows": 2148
+    }
+   }
+  },
+  "XRP": {
+   "series": "book",
+   "cells": {
+    "pre_design": 335.2603569869966,
+    "design": 75.84754874572339,
+    "validation": -21.869370207761882
+   },
+   "median": 75.84754874572339,
+   "shipped_cells": {
+    "pre_design": 335.3,
+    "design": 75.8,
+    "validation": -21.9
+   },
+   "shipped_median": 75.8,
+   "inputs": {
+    "closes": {
+     "path": "training\\training_data\\drl_training\\XRP_4H_ohlcv.parquet",
+     "sha256": "507d0c88d87268381218350794816ee0857fdbd376be381aaf1c021d2d42971f",
+     "rows": 13146
+    },
+    "funding": {
+     "path": "training\\training_data\\coinglass_history\\XRP_funding_1d.parquet",
+     "sha256": "25f53b033fedd4053cbb63908d392b725d630baf17161485b627aa11946a2d2e",
+     "rows": 2191
+    }
+   }
+  },
+  "BNB": {
+   "series": "book",
+   "cells": {
+    "pre_design": 650.6606063820099,
+    "design": 37.984204832227164,
+    "validation": 36.63482500557892
+   },
+   "median": 37.984204832227164,
+   "shipped_cells": {
+    "pre_design": 650.7,
+    "design": 38.0,
+    "validation": 36.6
+   },
+   "shipped_median": 38.0,
+   "inputs": {
+    "closes": {
+     "path": "training\\training_data\\drl_training\\BNB_4H_ohlcv.parquet",
+     "sha256": "4f44c15a8d6384a52d26ae6f0073d032a5e889bc2518064c85f91f079d6ea271",
+     "rows": 13146
+    },
+    "funding": {
+     "path": "training\\training_data\\coinglass_history\\BNB_funding_1d.parquet",
+     "sha256": "c469fe4a9fbca1c3be217843956d2e71cc253a61170b8aeec885e7540d131924",
+     "rows": 2191
+    }
+   }
+  }
+ },
+ "provenance": {
+  "git_commit": "b443a23",
+  "git_dirty": true,
+  "data_hashes": {
+   "BTC_4H_ohlcv.parquet": "d20b51490f9b7ea0",
+   "BTC_funding_1d.parquet": "3796f6e08bec371a",
+   "ETH_4H_ohlcv.parquet": "5a4d504c941bf821",
+   "ETH_funding_1d.parquet": "fb16f6d2329aa50e",
+   "SOL_4H_ohlcv.parquet": "f601ad6032a4535a",
+   "SOL_funding_1d.parquet": "2e9c3ac67841600f",
+   "XRP_4H_ohlcv.parquet": "507d0c88d8726838",
+   "XRP_funding_1d.parquet": "25f53b033fedd405",
+   "BNB_4H_ohlcv.parquet": "4f44c15a8d6384a5",
+   "BNB_funding_1d.parquet": "c469fe4a9fbca1c3"
+  },
+  "config": {
+   "assets": [
+    "BTC",
+    "ETH",
+    "SOL",
+    "XRP",
+    "BNB"
+   ],
+   "series": "book",
+   "verify": true
+  },
+  "stamped_at": "2026-08-27T12:06:58.108328+00:00"
+ },
+ "drift": [
+  {
+   "asset": "BTC",
+   "cell": "validation",
+   "measured": 25.541324210708037,
+   "shipped": 24.1
+  },
+  {
+   "asset": "BTC",
+   "cell": "MEDIAN",
+   "measured": 25.541324210708037,
+   "shipped": 24.1
+  },
+  {
+   "asset": "SOL",
+   "cell": "validation",
+   "measured": 18.752697588911275,
+   "shipped": -20.8
+  }
+ ]
+}

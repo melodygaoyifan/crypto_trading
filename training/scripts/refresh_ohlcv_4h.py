@@ -50,6 +50,25 @@ USAGE
 -----
     python -X utf8 training/fetch_binance_full.py        # refresh raw 60m first
     python -X utf8 training/scripts/refresh_ohlcv_4h.py  # then rebuild 4H OHLCV
+
+[P420] BREADTH ASSETS + THE CALIBRATION-INPUT CONVENTION
+--------------------------------------------------------
+`--assets XRP,BNB` (any subset of the fetch_binance_full universe; an unknown
+asset REFUSES, exit 2 — a fetcher that accepts any string writes a file for an
+asset that does not exist and reports success, P291). The default stays the
+home trio. This is the ONLY writer of `{ASSET}_4H_ohlcv.parquet`; the breadth
+Kraken window that scripts/september_check.py fetches goes to a SEPARATE
+`{ASSET}_4H_ohlcv_kraken.parquet` (the scorer unions them, primary wins).
+Before P420 september_check merged Kraken prints INTO this file and the
+seat-alpha producer (training/seat_alpha_calibration.py, the source of the
+LIVE XRP/BNB gate constants) drifted from its own shipped table.
+
+`--no-daily-extension` builds the raw-archive resample only (through the last
+monthly archive). That is the exact input the shipped XRP/BNB seat-alpha table
+was measured on (P412b/c, raw through 2026-07-31); the daily extension appends
+completed August bars, which legitimately MOVES the open-ended validation cell.
+The calibration report stamps the input's sha256 + row count so either build
+is attributable (P420).
 """
 from __future__ import annotations
 
@@ -63,11 +82,47 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 RAW_DIR = REPO / "training" / "training_data" / "raw"
 OUT_DIR = REPO / "training" / "training_data" / "drl_training"
-ASSETS = ("BTC", "ETH", "SOL")
+ASSETS = ("BTC", "ETH", "SOL")          # the DEFAULT roster (home trio)
 COLS = ["open", "high", "low", "close", "volume"]
 
 # [P266] Same symbol map + archive host as fetch_binance_full.py.
-SYMBOLS = {"BTC": "BTCUSDT", "ETH": "ETHUSDT", "SOL": "SOLUSDT"}
+# [P420] Extended to the P262/P281 breadth assets so their PRIMARY series can
+# be rebuilt from raw/{ASSET}_60m.parquet with the SAME resample convention;
+# pinned equal to fetch_binance_full.SYMBOLS by test (two maps of one universe
+# drift — P172).
+SYMBOLS = {"BTC": "BTCUSDT", "ETH": "ETHUSDT", "SOL": "SOLUSDT",
+           "XRP": "XRPUSDT", "ADA": "ADAUSDT", "LTC": "LTCUSDT",
+           "DOGE": "DOGEUSDT", "BNB": "BNBUSDT"}
+PRIMARY_SUFFIX = "_4H_ohlcv.parquet"
+
+
+def primary_ohlcv_path(asset: str) -> Path:
+    """[P420] The one file this script owns for `asset` (the calibration input)."""
+    return OUT_DIR / f"{asset}{PRIMARY_SUFFIX}"
+
+
+def parse_assets(spec) -> list:
+    """[P420] Comma list -> upper-cased roster; REFUSES an unknown asset with a
+    ValueError naming the universe (never silently builds nothing / something
+    else)."""
+    if not spec:
+        return list(ASSETS)
+    out = []
+    for a in str(spec).split(","):
+        a = a.strip().upper()
+        if not a:
+            continue
+        if a not in SYMBOLS:
+            raise ValueError(
+                f"unknown asset {a!r}; known: {sorted(SYMBOLS)} (P291: a "
+                f"fetcher must refuse, not fabricate)")
+        if a not in out:
+            out.append(a)
+    if not out:
+        raise ValueError("--assets resolved to an empty roster")
+    return out
+
+
 DAILY_BASE = "https://data.binance.vision/data/spot/daily/klines"
 # A gap this large means the monthly fetcher was skipped for 2+ months —
 # use it instead of hammering ~60+ daily zips.
@@ -168,7 +223,7 @@ def extend_with_daily(asset: str, raw):
     return merged, note
 
 
-def build(asset: str):
+def build(asset: str, daily_extension: bool = True):
     import pandas as pd
 
     src = RAW_DIR / f"{asset}_60m.parquet"
@@ -186,7 +241,11 @@ def build(asset: str):
     # [P266] Extend past the monthly-archive boundary via DAILY archives
     # (T+1, completed days only). In-memory only — the raw parquet is
     # deliberately untouched.
-    raw, _ext_note = extend_with_daily(asset, raw)
+    if daily_extension:
+        raw, _ext_note = extend_with_daily(asset, raw)
+    else:
+        # [P420] raw-archive only: the seat-alpha calibration input convention
+        _ext_note = "SKIPPED (--no-daily-extension; raw archive only)"
     print(f"  {asset}: daily extension: {_ext_note}")
 
     # origin='start_day' pins bins to 00/04/08/12/16/20 UTC, which is the
@@ -199,7 +258,7 @@ def build(asset: str):
              .dropna(subset=["close"])
              .reset_index())
 
-    out = OUT_DIR / f"{asset}_4H_ohlcv.parquet"
+    out = primary_ohlcv_path(asset)
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     df.to_parquet(out, index=False)
     print(f"  {asset}: {len(df):6} bars  {df.timestamp.min()} -> {df.timestamp.max()}"
@@ -207,11 +266,26 @@ def build(asset: str):
     return df
 
 
-def main() -> int:
+def main(argv=None) -> int:
+    import argparse
+    ap = argparse.ArgumentParser(description="[P199/P420] rebuild {ASSET}_4H_ohlcv.parquet")
+    ap.add_argument("--assets", default=None,
+                    help="comma list (default: BTC,ETH,SOL); unknown -> refuse")
+    ap.add_argument("--no-daily-extension", action="store_true",
+                    help="raw monthly archive only — the seat-alpha calibration "
+                         "input convention (P420)")
+    args = ap.parse_args(argv)
+    try:
+        assets = parse_assets(args.assets)
+    except ValueError as e:
+        print(f"REFUSING: {e}")
+        return 2
     print("=" * 78)
     print("[P199] Rebuilding 4H OHLCV for analytics (training parquets untouched)")
+    print(f"       assets={assets} daily_extension={not args.no_daily_extension}")
     print("=" * 78)
-    built = {a: build(a) for a in ASSETS}
+    built = {a: build(a, daily_extension=not args.no_daily_extension)
+             for a in assets}
     ok = [a for a, d in built.items() if d is not None]
     if not ok:
         print("\nNothing built. Run training/fetch_binance_full.py first.")

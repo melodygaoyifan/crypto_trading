@@ -33,6 +33,8 @@ PROJ = Path(__file__).resolve().parents[2]
 if str(PROJ) not in sys.path:
     sys.path.insert(0, str(PROJ))
 
+# [P420] HOME TRIO BY DESIGN: TQC checkpoints exist only for BTC/ETH/SOL
+# (BEST_FOLDS below); breadth assets have no DRL model to drift.
 ASSETS = ["BTC", "ETH", "SOL"]
 
 # Must match drl/ensemble.py BEST_FOLDS + drl/runtime_obs_builder.py BEST_FOLDS

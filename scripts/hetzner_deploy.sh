@@ -168,6 +168,33 @@ echo "  Local scanners: PASS"
 echo "[1/5] Pulling latest code..."
 ssh "${SERVER}" "su - ${REMOTE_USER} -c 'cd ${APP_DIR} && git pull origin main'" 2>&1
 
+# [P420] The CI gate above adjudicated DEPLOY_SHA at ls-remote time, but the
+# server builds whatever ITS pull produced. A push landing between the
+# ls-remote and the pull deploys an UNVERIFIED commit while every line above
+# says GREEN: observed 2026-08-27 10:32 UTC, when the container ran the P417
+# PARENT for 15 minutes because a push landed inside that window. So the
+# server's HEAD must equal the sha the gate checked, and the server's tree
+# must be clean (a dirty app dir builds edits that are in no commit — the
+# `docker cp`/hand-edit class the SERVER_CRONS doc forbids). Either mismatch
+# REFUSES, loudly, before any image is built.
+REMOTE_HEAD="$(ssh "${SERVER}" "su - ${REMOTE_USER} -c 'cd ${APP_DIR} && git rev-parse HEAD'" 2>/dev/null | tr -d '[:space:]')"
+REMOTE_DIRTY="$(ssh "${SERVER}" "su - ${REMOTE_USER} -c 'cd ${APP_DIR} && git status --porcelain'" 2>/dev/null)"
+if [ "${REMOTE_HEAD}" != "${DEPLOY_SHA}" ]; then
+    echo "ERROR: server HEAD (${REMOTE_HEAD:0:9}) != the CI-verified sha (${DEPLOY_SHA:0:9})."
+    echo "  A push landed between the ls-remote and the server's pull, or the"
+    echo "  pull failed. The commit on the server has NOT been through the CI"
+    echo "  gate above. Re-run the deploy so the gate checks what will build (P420)."
+    exit 1
+fi
+if [ -n "${REMOTE_DIRTY}" ]; then
+    echo "ERROR: the server app dir has uncommitted changes:"
+    echo "${REMOTE_DIRTY}" | sed 's/^/    /'
+    echo "  The image would bake edits that exist in no commit. Clean the tree"
+    echo "  on the server (nothing is ever edited or docker-cp'd there, P420)."
+    exit 1
+fi
+echo "  Server HEAD == ${DEPLOY_SHA:0:9}, tree clean."
+
 # --- Step 2: Verify .env exists ---
 echo "[2/5] Checking .env..."
 ssh "${SERVER}" "test -f ${APP_DIR}/.env || { echo 'ERROR: .env not found. Copy env/.env.template to .env and fill in keys.'; exit 1; }"

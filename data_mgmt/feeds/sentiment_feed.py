@@ -120,7 +120,15 @@ class SentimentTick:
     # 元数据
     source: str = "unknown"
     tokens_covered: List[str] = field(default_factory=list)
-    
+    # [P420] True when the tick's content is the neutral FABRICATION from
+    # `_fetch_mock` (fear_greed 50, zero sentiments) rather than a reading.
+    # Before P420 a failed alternative.me fetch fell to the mock and the tick
+    # went out with source=self.source.value ("alternative_me") and F&G=50,
+    # which every consumer scored as a real neutral reading. Consumers
+    # (main.py's sentiment bridge) should treat is_mock=True as ABSENCE;
+    # `source` is "mock" on such a tick, never the configured source's name.
+    is_mock: bool = False
+
     def is_stale(self, max_staleness_sec: float = 300) -> bool:
         """检查数据是否过期"""
         return self.staleness_sec > max_staleness_sec
@@ -248,11 +256,42 @@ class SentimentFeed:
             
             # 转换为标准格式
             tick = self._parse_raw_data(raw_data)
-            
-            # 计算 staleness ([P40 2026-04-24] strip tz to keep comparable)
+
             from data_mgmt.feeds._http import strip_tz
+            # [P420] The source fell back to the neutral mock (fetch failed
+            # or returned nothing). A fabricated F&G=50 must not be scored
+            # as a reading: serve the previous REAL tick with its ORIGINAL
+            # timestamp (so staleness_sec shows its true age) when one
+            # exists, and never let the mock enter the sentiment history or
+            # the cache. With no prior real tick the mock goes out FLAGGED
+            # (is_mock=True, source="mock", confidence 0.0).
+            _mock_fallback = (tick.is_mock
+                              and self.source != SentimentDataSource.MOCK)
+            if _mock_fallback:
+                self._fetch_errors += 1
+                prev = self._last_tick
+                if prev is not None and not prev.is_mock:
+                    # get_latest() recomputes the cached tick's staleness
+                    # from its ORIGINAL timestamp (one clock, P172)
+                    prev = self.get_latest()
+                    logger.warning(
+                        f"[SENTIMENT] {self.source.value} fetch fell back to "
+                        f"mock — serving the previous real tick "
+                        f"({prev.staleness_sec:.0f}s old) instead of a "
+                        f"fabricated neutral (P420)")
+                    return prev
+                logger.warning(
+                    f"[SENTIMENT] {self.source.value} fetch fell back to mock "
+                    f"and no real tick exists yet — tick is FLAGGED is_mock "
+                    f"(source='mock', confidence 0); consumers must treat "
+                    f"it as absent (P420)")
+
+            # 计算 staleness ([P40 2026-04-24] strip tz to keep comparable)
             tick.staleness_sec = (datetime.now() - strip_tz(tick.timestamp)).total_seconds()
-            
+            if _mock_fallback:
+                # [P420] flagged mock: never enters the history or the cache
+                return tick
+
             # 更新历史并计算趋势
             self._update_sentiment_history(tick.overall_sentiment)
             tick.sentiment_trend = self._compute_trend()
@@ -455,6 +494,10 @@ class SentimentFeed:
             "news_sentiments": news_sentiments,
             "funding_rates": funding_rates,
             "confidence": 0.0,  # Zero confidence: downstream should ignore mock data
+            # [P420] self-describing: the parser stamps is_mock/source from
+            # these, so a fallback can never wear the real source's name
+            "_mock": True,
+            "_source": "mock",
         }
     
     def _parse_raw_data(self, raw: Dict[str, Any]) -> SentimentTick:
@@ -522,8 +565,11 @@ class SentimentFeed:
             overall_sentiment=overall_sentiment,
             extreme_fear=fear_greed.value < self._extreme_fear_threshold if fear_greed else False,
             extreme_greed=fear_greed.value > self._extreme_greed_threshold if fear_greed else False,
-            source=self.source.value,
+            # [P420] a fabricated payload names itself "mock"; a real one
+            # keeps the configured source's name
+            source=("mock" if raw.get("_mock") else self.source.value),
             tokens_covered=self.tokens,
+            is_mock=bool(raw.get("_mock", False)),
         )
     
     def _compute_overall_sentiment(

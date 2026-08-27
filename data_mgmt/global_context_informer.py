@@ -167,6 +167,11 @@ class ETFFlowData:
     flow_7d_ma: float  # 7-day moving average
     flow_streak: int  # Consecutive days same direction (+/-)
     timestamp: float
+    # [P420] the COMPLETED UTC day the flow describes (CoinGlass aggregate
+    # path). The streak tracker counts a day exactly once by this key;
+    # None = unknown day (per-ticker/mock paths), which keeps the legacy
+    # advance-per-call behaviour.
+    flow_day: Optional[str] = None
 
 
 @dataclass
@@ -612,14 +617,101 @@ class ETFFlowTracker:
         asset = 'BTC' if ticker in SPOT_ETF_TICKERS.get('BTC', []) else 'ETH'
         return self._calculate_streak_for_asset(asset, flow)
 
-    def _calculate_streak_for_asset(self, asset: str, flow: float) -> int:
+    # [P420] streak persistence -------------------------------------------
+    _STREAK_STATE_VERSION = "etf_streak_v1"
+
+    def _streak_state_path(self) -> str:
+        return os.path.join(os.environ.get("HMATS_DATA_DIR", "data"),
+                            "etf_streak_state.json")
+
+    def _restore_streak_state(self) -> None:
+        """Lazy, once, and ONLY from the day-keyed path: the legacy
+        per-call entry point never touches disk, so callers that construct a
+        tracker without a data dir (tests, the per-ticker path) see exactly
+        the pre-P420 behaviour. A missing/corrupt/version-mismatched file
+        restores nothing (cold streak, logged) — never a fabricated one."""
+        if getattr(self, "_streak_restored", False):
+            return
+        self._streak_restored = True
+        self._streak_last_day: Dict[str, str] = {}
+        p = self._streak_state_path()
+        try:
+            if not os.path.exists(p):
+                return
+            with open(p, encoding="utf-8") as fh:
+                pay = json.load(fh)
+            if pay.get("version") != self._STREAK_STATE_VERSION:
+                logger.info("[P420][GCI] streak state version mismatch — "
+                            "cold streaks")
+                return
+            for a, st in (pay.get("assets") or {}).items():
+                if a not in self._streak_tracker:
+                    continue
+                self._streak_tracker[a] = int(st.get("streak", 0) or 0)
+                d = st.get("last_day")
+                if isinstance(d, str) and d:
+                    self._streak_last_day[a] = d
+            logger.info("[P420][GCI] restored ETF flow streaks %s",
+                        {a: (self._streak_tracker[a],
+                             self._streak_last_day.get(a))
+                         for a in self._streak_last_day})
+        except Exception as e:  # noqa: silent-swallow — logged; a bad file = cold streak
+            logger.warning("[P420][GCI] streak state unreadable (%s: %s) — "
+                           "cold streaks", type(e).__name__, e)
+
+    def _persist_streak_state(self) -> None:
+        """Atomic write (os.replace). Never raises: persistence failure must
+        not break the macro update."""
+        import tempfile
+        p = self._streak_state_path()
+        try:
+            d = os.path.dirname(p) or "."
+            os.makedirs(d, exist_ok=True)
+            fd, tmp = tempfile.mkstemp(dir=d, suffix=".tmp")
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                    json.dump({
+                        "version": self._STREAK_STATE_VERSION,
+                        "saved_ts": time.time(),
+                        "assets": {
+                            a: {"streak": int(self._streak_tracker.get(a, 0)),
+                                "last_day": self._streak_last_day.get(a)}
+                            for a in self._streak_tracker},
+                    }, fh)
+                os.replace(tmp, p)
+            finally:
+                if os.path.exists(tmp):
+                    try:
+                        os.remove(tmp)
+                    except OSError:  # noqa: silent-swallow — tmp cleanup only
+                        pass
+        except Exception as e:  # noqa: silent-swallow — logged; persistence only
+            logger.warning("[P420][GCI] streak persist failed (%s: %s) — the "
+                           "next restart re-counts from a cold streak",
+                           type(e).__name__, e)
+
+    def _calculate_streak_for_asset(self, asset: str, flow: float,
+                                    day_iso: Optional[str] = None) -> int:
         """[P293b] Streak keyed by ASSET, not by ticker.
 
         Same state and same rules as _calculate_streak — extracted so the
         CoinGlass aggregate path cannot be mis-bucketed by the ticker
         heuristic above (P172: one implementation, two entry points).
+
+        [P420] `day_iso` = the COMPLETED UTC day the flow describes. The
+        streak is "N consecutive DAYS", but this ran once per HOURLY GCI
+        update with no day gate and RAM-only state — so one outflow day
+        advanced the streak ~24 times, and every restart re-counted the
+        same day. With a day key the streak advances exactly once per new
+        day and the last counted day is persisted; a repeat of the same
+        day (or a restart inside it) returns the standing streak untouched.
+        `day_iso=None` keeps the legacy advance-per-call behaviour.
         """
         with self._lock:
+            if day_iso is not None:
+                self._restore_streak_state()
+                if self._streak_last_day.get(asset) == day_iso:
+                    return self._streak_tracker.get(asset, 0)
             current_streak = self._streak_tracker.get(asset, 0)
             
             if flow > 0:
@@ -632,7 +724,10 @@ class ETFFlowTracker:
                     self._streak_tracker[asset] = current_streak - 1
                 else:
                     self._streak_tracker[asset] = -1
-            
+
+            if day_iso is not None:
+                self._streak_last_day[asset] = day_iso
+                self._persist_streak_state()
             return self._streak_tracker[asset]
     
     def _fetch_aggregate_flow_coinglass(self, asset: str) -> Optional[ETFFlowData]:
@@ -682,6 +777,7 @@ class ETFFlowTracker:
                 flow_7d_ma=0.0,   # not computed here; the tracker owns streaks
                 flow_streak=0,
                 timestamp=time.time(),
+                flow_day=str(day_iso) if day_iso else None,  # [P420]
             )
         except Exception as e:
             logger.warning(
@@ -706,7 +802,10 @@ class ETFFlowTracker:
                     None, self._fetch_aggregate_flow_coinglass, _asset)
                 if _agg is not None:
                     _bucket.append(_agg)
-                    self._calculate_streak_for_asset(_asset, _agg.daily_flow)
+                    # [P420] day-keyed: counts each completed day once
+                    self._calculate_streak_for_asset(
+                        _asset, _agg.daily_flow,
+                        day_iso=getattr(_agg, "flow_day", None))
             logger.info(
                 "[P293b][GCI] ETF flows via CoinGlass aggregate: "
                 "BTC=%s ETH=%s",

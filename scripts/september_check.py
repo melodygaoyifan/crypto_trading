@@ -17,10 +17,12 @@ WHAT IT DOES (operator machine, needs ssh hmats + the training venv)
 --------------------------------------------------------------------
  1. pulls the shadow ledgers + evidence reports from the server volume
  2. refreshes the local 4H OHLCV series (monthly archives + daily extension)
- 3. builds Kraken-sourced OHLCV parquets for the P271 breadth assets — the
-    scorer otherwise reports `ohlcv_missing` for them, which reads exactly
-    like "no signal" (the P199/P264 trap: a ledger is only working when the
-    tool that judges it can read today's rows end-to-end)
+ 3. builds Kraken-sourced OHLCV EXTENSION parquets ({ASSET}_4H_ohlcv_kraken)
+    for the P271 breadth assets — the scorer otherwise reports
+    `ohlcv_missing` for them, which reads exactly like "no signal" (the
+    P199/P264 trap: a ledger is only working when the tool that judges it can
+    read today's rows end-to-end). [P420] It never writes the PRIMARY
+    {ASSET}_4H_ohlcv.parquet — that is the seat-alpha calibration input.
  4. runs compute_shadow_ic over ALL candidate prefixes
  5. runs the P237 tripwire checker on the pulled reports
  6. prints a per-candidate countdown to its 30d P166 read date
@@ -50,6 +52,29 @@ sys.path.insert(0, str(REPO))
 LEDGER_DIR = REPO / "data" / "strategy_shadow_pulled"
 REPORTS_DIR = REPO / "data" / "evidence_reports_pulled"
 OHLCV_DIR = REPO / "training" / "training_data" / "drl_training"
+
+# [P420] TWO-FILE CONVENTION for the breadth price series, pinned by test:
+#   {ASSET}_4H_ohlcv.parquet         PRIMARY — Binance-sourced, built ONLY by
+#                                     training/scripts/refresh_ohlcv_4h.py from
+#                                     raw/{ASSET}_60m.parquet. It is the INPUT of
+#                                     training/seat_alpha_calibration.py, i.e. the
+#                                     producer behind the LIVE XRP/BNB gate
+#                                     constants (core.seat_alpha).
+#   {ASSET}_4H_ohlcv_kraken.parquet  EXTENSION — the ~120d Kraken window this
+#                                     script fetches; the scorer reads it as a
+#                                     UNION with the primary (primary wins).
+# Before P420 this script MERGED its Kraken rows INTO the primary (keep="last"),
+# so ~560 Binance bars per asset were overwritten with Kraken prints and the
+# seat-alpha producer drifted from its own shipped table (BNB validation
+# +36.6 -> +51.1, XRP -21.9 -> -14.8) the first time it ran after the P412c
+# commit. A reader of live evidence must NEVER write the calibration input.
+PRIMARY_OHLCV_SUFFIX = "_4H_ohlcv.parquet"
+KRAKEN_OHLCV_SUFFIX = "_4H_ohlcv_kraken.parquet"
+
+
+def kraken_ohlcv_path(asset: str) -> Path:
+    """The EXTENSION file this script owns — never the primary (P420)."""
+    return OHLCV_DIR / f"{asset}{KRAKEN_OHLCV_SUFFIX}"
 
 # candidate -> (ledger prefix, first-live date, what a PASS flips)
 # [P287] This roster must cover EVERY accruing candidate the scorer reads —
@@ -92,6 +117,20 @@ CANDIDATES = {
     # miss recorded). First-live at the next deploy after 2026-08-16.
     "donchian":       ("donchian",       "2026-08-17", "challenger seat/widening -> own P-entry (P288 PARTIAL)"),
     "emaens":         ("emaens",         "2026-08-17", "challenger seat/widening -> own P-entry (P288 PARTIAL)"),
+    # [P420] three streams were accruing with NO read date (the P361 gap,
+    # again): the LIVE skew decider's own A/B (P407j), the WS2 conviction
+    # shadow (its reader is scripts/conviction_sizing_review.py, PnL-based —
+    # the shadow-IC scorer does not judge a sizing overlay), and the breadth
+    # regime books, which since this fix carry strategy "regimebook_breadth"
+    # (fork-4 contract) and read the scorer's kraken-extension series.
+    "skewetf":        ("skewetf",        "2026-08-25",
+                       "agree-gate vs skew-override on BTC/ETH (P407i/j) -> own P-entry"),
+    "convsize":       ("convsize",       "2026-08-27",
+                       "re-arm fusion_conviction_to_sleeve ONLY vs P417 (reader: conviction_sizing_review.py)"),
+    # ledger-since = the deploy date of P420 (the rows are written under the
+    # new strategy name from that deploy on); set it when the deploy lands.
+    "regimebook_breadth": ("regimebook",  "TBD-at-deploy",
+                       "breadth book verdict per asset; XRP/BNB already routed, ADA/LTC/DOGE stay out (P412c)"),
 }
 
 KRAKEN_PAIRS_BREADTH = {"XRP": "XRPUSD", "ADA": "ADAUSD", "LTC": "LTCUSD",
@@ -141,11 +180,18 @@ def _naive_utc(series):
 
 
 def build_breadth_ohlcv() -> int:
-    """Kraken public OHLC -> {ASSET}_4H_ohlcv.parquet for the breadth
+    """Kraken public OHLC -> {ASSET}_4H_ohlcv_kraken.parquet for the breadth
     assets. ~720 bars (~120d) — enough for every 30d window this script
-    scores. Merges with any existing file so history GROWS past Kraken's
-    own window (the P266 CoinGlass lesson: a bounded-depth API feeding an
-    overwriting fetcher caps history forever)."""
+    scores. Merges with any existing KRAKEN file so history GROWS past
+    Kraken's own window (the P266 CoinGlass lesson: a bounded-depth API
+    feeding an overwriting fetcher caps history forever).
+
+    [P420] Writes the EXTENSION file only. The PRIMARY {ASSET}_4H_ohlcv.parquet
+    is the seat-alpha calibration input (core.seat_alpha via
+    training/seat_alpha_calibration.py --verify) and is built exclusively by
+    refresh_ohlcv_4h.py from the Binance raw archive; merging Kraken prints
+    into it is how the live XRP/BNB gate constants drifted from their own
+    producer. The scorer unions the two (primary wins)."""
     n_failed = 0
     try:
         import pandas as pd
@@ -175,7 +221,7 @@ def build_breadth_ohlcv() -> int:
                   "low": float(r[3]), "close": float(r[4]),
                   "volume": float(r[6])} for r in rows])
             df["timestamp"] = _naive_utc(df["timestamp"])
-            out = OHLCV_DIR / f"{asset}_4H_ohlcv.parquet"
+            out = kraken_ohlcv_path(asset)   # [P420] never the primary
             if out.exists():
                 old = pd.read_parquet(out)
                 old["timestamp"] = _naive_utc(old["timestamp"])  # P414b: never mix tz
@@ -264,7 +310,15 @@ def countdown(return_due: bool = False, today_override=None):
     print(f"  {'candidate':<16} {'ledger since':<13} {'30d read date':<14} "
           f"{'days left':<10} on PASS")
     for name, (prefix, since, action) in CANDIDATES.items():
-        d0 = datetime.strptime(since, "%Y-%m-%d").date()
+        try:
+            d0 = datetime.strptime(since, "%Y-%m-%d").date()
+        except ValueError:
+            # [P420] a candidate whose clock has not started (ledger-since is
+            # set at deploy) is listed, never silently dropped — an unstarted
+            # clock is not a clock that cannot fire (P199).
+            print(f"  {name:<16} {since:<13} {'(clock unstarted)':<14} "
+                  f"{'-':<10} {action}")
+            continue
         read = d0.toordinal() + 30
         left = read - today.toordinal()
         read_s = datetime.fromordinal(read).date().isoformat()
@@ -272,9 +326,14 @@ def countdown(return_due: bool = False, today_override=None):
               f"{max(0, left):<10} {action}")
         if left <= 0:
             due.append((name, read_s, action))
+    # [P420] the P237 prescription (remove an asset from trend_assets) was
+    # RETIRED by P299 — tripwire_check.py exits 0/2 only and prints
+    # "do NOT edit trend_assets"; the streak is evidence for the seat
+    # controller's comparison (scripts/seat_check.py). The old line here still
+    # told the operator to do the retired thing.
     print(f"  {'trend tripwire':<16} {'weekly crons':<13} {'2026-09-01':<14} "
           f"{max(0, datetime(2026, 9, 1).date().toordinal() - today.toordinal()):<10} "
-          f"per-asset trend_assets removal (P237)")
+          f"DETECTION ONLY: streak feeds seat_check; NO trend_assets edit (P299)")
     if due:
         print("")
         print("!" * 74)

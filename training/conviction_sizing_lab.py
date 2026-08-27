@@ -88,8 +88,25 @@ def conviction_mult(trend_long, skew, cap, derisk=DERISK):
     return m
 
 
+def _ledger_validation_read(experiment, asset, start, end, purpose):
+    """[P420] Record a validation-era read; never let the ledger break the lab
+    (a failure is printed, the run continues)."""
+    try:
+        from training.splits import record_window_usage
+        prior = record_window_usage(experiment, asset, int(start), int(end),
+                                    purpose)
+        if prior:
+            print(f"[WINDOW-LEDGER] {asset}: validation window already read by "
+                  f"{prior} other experiment(s) — discount accordingly (P260)")
+    except Exception as e:  # noqa: silent-swallow — surfaced, never blocks the lab
+        print(f"[WINDOW-LEDGER] WARNING: could not record {experiment}/{asset} "
+              f"({type(e).__name__}: {e})")
+
+
 def evaluate_pos(close, pos, cost, lo, hi):
-    s = per_bar_net(close, pos, cost, lo, hi)
+    # [P420] the validation* era is a deliberate one-shot read (P259b) —
+    # opted in explicitly; main() ledgers it per asset.
+    s = per_bar_net(close, pos, cost, lo, hi, allow_validation=True)
     return {"net": float(np.sum(s)), "maxdd": maxdd(s),
             "flips": int(np.abs(np.diff(pos[lo:hi])).sum()),
             "avg_expo": float(np.mean(np.abs(pos[lo:hi])))}
@@ -101,6 +118,10 @@ def main():
         d = pd.read_parquet(f"training/training_data/drl_training/{a}_4H_full.parquet")
         close = d["close"].to_numpy(float)
         n = len(close)
+        # [P420] ledger the validation-era spend (was unledgered; P332/P382)
+        _ledger_validation_read("conviction_sizing_lab:ws2", a, DE, n,
+                                "validation:ws2 conviction-agreement sizing "
+                                "one-shot recent-era read (P259b)")
         sma = _sma(close, 200)
         trend = np.where(np.isnan(sma), 0.0, (close > sma).astype(float))
         skew = align_skew_to_bars(d["timestamp"], skew_pos_by_day(a))[:n]

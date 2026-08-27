@@ -293,6 +293,7 @@ class LunarCrushFeed:
             "Accept": "application/json",
         }
         
+        self._last_status_by_symbol: Dict[str, Optional[int]] = {}
         async with create_session() as session:
             for symbol in SUPPORTED_SYMBOLS:
                 try:
@@ -301,13 +302,32 @@ class LunarCrushFeed:
                         data.metrics[symbol] = metrics
                 except Exception as e:
                     logger.warning(f"[LUNARCRUSH] {symbol}: {e}")
-        
+
+        # [P420] A fetch in which NO symbol returned metrics (every request a
+        # non-200 or exception) used to fall through to
+        # _compute_attention_metrics on an EMPTY metrics map and store the
+        # result fresh-stamped: attention_pressure 0.5 / crowding 0.0 for
+        # every symbol = NEUTRAL, indistinguishable from a measured calm
+        # (P2/P216 shape), and fetch_if_stale then served it for
+        # poll_interval_sec. Keep the previous cache (its own timestamp, so
+        # cache_age_sec reports honest staleness), log the statuses, and do
+        # NOT stamp _last_fetch_time on a failed fetch.
+        if not data.metrics:
+            _st = {k: v for k, v in
+                   getattr(self, "_last_status_by_symbol", {}).items()}
+            logger.warning(
+                f"[LUNARCRUSH] fetch returned metrics for NO symbol "
+                f"(statuses={_st or 'n/a'}) — keeping the previous cache "
+                f"({'present' if self._last_data is not None else 'ABSENT'}) "
+                f"rather than stamping fresh NEUTRAL metrics (P420)")
+            return self._last_data
+
         # Compute derived metrics
         self._compute_attention_metrics(data)
-        
+
         self._last_data = data
         self._last_fetch_time = now
-        
+
         return data
     
     async def _fetch_coin_metrics(
@@ -321,7 +341,12 @@ class LunarCrushFeed:
         
         try:
             async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                # [P420] record the status so a fetch-wide failure can be
+                # reported with its cause instead of as silent NEUTRAL
+                if hasattr(self, "_last_status_by_symbol"):
+                    self._last_status_by_symbol[symbol] = resp.status
                 if resp.status != 200:
+                    logger.warning(f"[LUNARCRUSH] {symbol}: HTTP {resp.status}")
                     return None
 
                 result = await resp.json()

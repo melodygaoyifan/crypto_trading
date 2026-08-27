@@ -61,6 +61,14 @@ class Calibration:
     staleness_days: int    # a decision; see staleness_reason
     staleness_reason: str
     revision_rule: str
+    # [P420] The module-level stamp names this entry is paired with. A module
+    # may carry MORE THAN ONE measured table (core.seat_alpha holds both the
+    # regimebook and the skew tables, stamped `_MEASURED_ON` and
+    # `_SKEW_MEASURED_ON`); the guard matches every `_*MEASURED_ON` name and
+    # each must be registered under its own entry — the pre-P420 scanner saw
+    # only the bare name, so the skew table was stamped-but-unregistered.
+    stamp_measured_on: str = STAMP_MEASURED_ON
+    stamp_measured_by: str = STAMP_MEASURED_BY
 
     @property
     def module(self) -> str:
@@ -85,7 +93,9 @@ REGISTRY: Tuple[Calibration, ...] = (
         producer=("python -X utf8 training/seat_alpha_calibration.py "
                   "--verify"),
         source=("training/training_data 4H closes + daily funding, 6y, "
-                "honest per-contract fees (funding_legs_lab)"),
+                "honest per-contract fees (funding_legs_lab); BTC/ETH/SOL "
+                "2026-08-19, XRP + BNB 2026-08-26 (P412b/P412c, same "
+                "producer, their own 6y _4H_ohlcv.parquet)"),
         staleness_days=180,
         staleness_reason=(
             "Derived from six years of history, so a month of new bars moves "
@@ -96,6 +106,36 @@ REGISTRY: Tuple[Calibration, ...] = (
             "Re-run the producer; it exits 3 on drift. Do NOT edit the "
             "constants to match a new number without deciding whether the "
             "DATA moved or the CONVENTION did (P326)."),
+    ),
+    Calibration(
+        # [P420] The skew seat's calibrated per-RT edge (P407e/P407f). Was
+        # stamped in core.seat_alpha as `_SKEW_MEASURED_ON` and registered
+        # NOWHERE — the registry guard matched only the bare stamp name, so
+        # the constant that decides whether the LIVE BTC/ETH decider clears
+        # the alpha gate had no staleness clock.
+        symbol="core.seat_alpha.SKEW_CONTRA_ALPHA_BY_ERA",
+        measured_on="2026-08-24",
+        producer=("python -X utf8 training/skew_seat_calibration.py "
+                  "--verify"),
+        source=("training/training_data/laevitas_skew/skew_{btc,eth}_{25d,10d}"
+                ".json + gex_{btc,eth}.json (6.6y Deribit 25d+10d skew and "
+                "daily spot via the logged-in Laevitas DASHBOARD backend, "
+                "P407) — operator-local, gitignored, not the apiv2 by-tenor "
+                "series the seat reads live (P420 series caveat)"),
+        staleness_days=180,
+        staleness_reason=(
+            "Six calendar-year eras; new data lands entirely in the open 2026 "
+            "era the gate leans on. And the live series is a close cousin of "
+            "this one (decisions agree ~46/59), so the archive the seat banks "
+            "(data/laevitas_apiv2_skew_*.jsonl) should re-run the producer on "
+            "the RUNTIME series once it is ~6 months deep."),
+        revision_rule=(
+            "Re-derive ONLY from the producer (exit 3 on drift, exit 2 when "
+            "the operator-local data is absent). Never edited to make a trade "
+            "pass (the P320 rule); a runtime-series recalibration is a new "
+            "P-entry, not a refresh."),
+        stamp_measured_on="_SKEW_MEASURED_ON",
+        stamp_measured_by="_SKEW_MEASURED_BY",
     ),
     Calibration(
         symbol="core.cde_fees.CDE_FEE_BPS",
@@ -121,11 +161,13 @@ REGISTRY: Tuple[Calibration, ...] = (
     ),
     Calibration(
         symbol="defense.constitution.CDE_SPREAD_BPS_MEASURED",
-        measured_on="2026-08-16",
+        measured_on="2026-08-27",   # [P420] breadth XRP/BNB added, trio re-read as control
         producer=("python -X utf8 scripts/coinbase_probe_stop_support.py "
                   "  # read-only CDE order-book probe (P289)"),
-        source=("live CDE order-book snapshots, 6 samples/contract, taken on "
-                "a WEEKEND book (deliberately the worst case)"),
+        source=("live CDE order-book snapshots, 6 samples/contract: home trio "
+                "on a WEEKEND book 2026-08-16 (deliberately the worst case); "
+                "[P420] XRP + BNB via a read-only in-container get_product_book "
+                "probe 2026-08-27 with the trio re-read as a control"),
         staleness_days=90,
         staleness_reason=(
             "Spreads track volume and listing depth, which drift on a scale "

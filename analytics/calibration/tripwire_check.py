@@ -56,6 +56,9 @@ from pathlib import Path
 
 TRIPWIRE_DATE = date(2026, 9, 1)
 REPORTS_REQUIRED = 4
+# [P420] HOME TRIO BY DESIGN: the tripwire's subject is the TREND seat's
+# per-asset slope reports, and trend injection only ever ran on the home trio
+# (`trend_assets`, retired by P299). Breadth assets have no trend seat.
 ASSETS = ("BTC", "ETH", "SOL")
 
 
