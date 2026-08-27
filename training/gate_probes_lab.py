@@ -7,6 +7,7 @@ EXHAUSTED, so A1/A3/A4 are expected mostly noise — they earn only as GATES tha
 improve the WS2 book's drawdown/Sharpe, never as new alpha.
 
   A1  skew TERM-STRUCTURE (short vs long tenor) as a de-risk gate on WS2
+  A2  VRP (Deribit DVOL - realized vol) as a de-risk gate on WS2
   A3  dealer GAMMA (GEX) sign as a size gate on WS2
   A4  skew-MOMENTUM vs skew-LEVEL as the conviction signal
   B2  WS2 for SOL: trend + REGIME agreement (SOL has no options skew)
@@ -29,6 +30,18 @@ from training.skew_seat_calibration import _load, _by_day, _zseries, _ASSETS
 
 ERAS = [("pre_design", PRE[0], PRE[1]), ("design", DS, DE)]  # validation added per-call
 DATA = "training/training_data/laevitas_skew"
+DVOL_DIR = "training/training_data/dvol"
+BPY = np.sqrt(6 * 365)   # 4H bars per year (for annualizing realized vol)
+
+
+def _dvol_by_day(ccy):
+    """Deribit DVOL (implied-vol index) daily close -> {day_epoch: dvol}, or {}
+    if the operator-local pull is absent (CI-safe, like the laevitas data)."""
+    try:
+        rows = json.load(open(f"{DVOL_DIR}/dvol_{ccy.lower()}.json", encoding="utf-8"))
+    except Exception:
+        return {}
+    return {int(r["date"]) // 86400000: float(r["dvol"]) for r in rows}
 
 
 def _close(a):
@@ -103,6 +116,35 @@ def probe_A1():
         gate[(base > 1.0) & (z > 1.0)] = 1.0
         _report(f"A1 {a} skew-term de-risk gate", close, base, gate, COST_BPS[a], n,
                 "does gating WS2 on front-vs-back skew help?")
+
+
+# ---- A2: VRP (Deribit DVOL - realized vol) as a de-risk gate on WS2 ----
+def probe_A2():
+    for a in ("BTC", "ETH"):
+        by_day = _dvol_by_day(a)
+        if not by_day:
+            print(f"\n[A2 {a} VRP gate] SKIPPED — no operator-local DVOL "
+                  f"({DVOL_DIR}/dvol_{a.lower()}.json). Pull Deribit DVOL first.")
+            continue
+        close, ts, _ = _close(a)
+        n = len(close)
+        trend = _trend(close)
+        skew = _skew(a, ts, n)
+        base = trend * conviction_mult(trend, skew, 2.0)
+        # realized vol: trailing 180 bars (30d) of 4H returns, annualized
+        ret = np.zeros(n)
+        ret[1:] = np.diff(close) / close[:-1]
+        rv = pd.Series(ret).rolling(180).std().to_numpy() * BPY
+        dvol = _daily_field_to_bars(by_day, ts, n) / 100.0   # DVOL % -> fraction
+        vrp = dvol - rv                                       # + = IV rich (calm); low/neg = stress
+        vz = ((pd.Series(vrp) - pd.Series(vrp).rolling(180, min_periods=60).mean())
+              / pd.Series(vrp).rolling(180, min_periods=60).std()).to_numpy()
+        # GATE (pre-committed contrarian-stress direction): compressed VRP -> de-risk to 1x
+        gate = base.copy()
+        gate[(base > 1.0) & (vz < -1.0)] = 1.0
+        cov = float(np.mean(~np.isnan(vz)))
+        _report(f"A2 {a} VRP de-risk gate (cov {cov:.0%})", close, base, gate,
+                COST_BPS[a], n, "de-risk WS2 when VRP compressed (stress)?")
 
 
 # ---- A3: dealer gamma (GEX) sign as a size gate ----
@@ -196,7 +238,7 @@ def main():
     print("=" * 70)
     print("A/B GATE PROBES — Rung-0, honest CDE fees, per era (validation = 1-shot)")
     print("=" * 70)
-    probe_A1(); probe_A3(); probe_A4(); probe_B2(); probe_B4()
+    probe_A1(); probe_A2(); probe_A3(); probe_A4(); probe_B2(); probe_B4()
     print("\nNOTE: a GATE earns only if it cuts drawdown/raises Sharpe without "
           "gutting return; a variant that just lowers return is dead (expected "
           "for most — the direction search is exhausted).")
