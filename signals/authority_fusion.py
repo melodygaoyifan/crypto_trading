@@ -356,6 +356,12 @@ MAX_ADVISE_INFLUENCE = 0.20  # [FIX-M6] Was 0.15. Raised to ±20% after sentimen
 
 ADVISE_WEIGHTS_BY_REGIME = {
     # ========================================================================
+    # [P417] AMENDMENT (operator, 2026-08-27): "whale" joins the weighted
+    # set at 0.10 by explicit instruction ("whale should be an information
+    # source, a member of the decision, not fully off") -- demoted from the
+    # DIRECTION SEAT (the P416 churn engine) to an ADVISE input reaching
+    # sizing through the conviction channel. Not a P166 promotion; recorded
+    # as an operator arming.
     # [P228] DECISION (operator, 2026-08-08): the 6 agents named here are the
     # ONLY ADVISE agents fusion consumes — the other 12 in the matrix (drl-as-
     # ADVISE, squeeze, cvd, risk_appetite, microstructure, model_alpha,
@@ -387,6 +393,7 @@ ADVISE_WEIGHTS_BY_REGIME = {
         "llm_sentiment": 0.10,
         "sentiment": 0.10,
         "flow": 0.20,
+        "whale": 0.10,   # [P417] operator-instructed 2026-08-27
     },
     "PANIC_SELLOFF": {
         "short_bias": 0.35,
@@ -395,6 +402,7 @@ ADVISE_WEIGHTS_BY_REGIME = {
         "llm_sentiment": 0.05,
         "sentiment": 0.10,
         "flow": 0.15,
+        "whale": 0.10,   # [P417] operator-instructed 2026-08-27
     },
     "MOMENTUM_RALLY": {
         "short_bias": 0.15,
@@ -403,6 +411,7 @@ ADVISE_WEIGHTS_BY_REGIME = {
         "llm_sentiment": 0.15,
         "sentiment": 0.10,
         "flow": 0.25,
+        "whale": 0.10,   # [P417] operator-instructed 2026-08-27
     },
     "VOLATILE_CHOP": {
         "short_bias": 0.15,
@@ -411,6 +420,7 @@ ADVISE_WEIGHTS_BY_REGIME = {
         "llm_sentiment": 0.10,
         "sentiment": 0.05,
         "flow": 0.40,
+        "whale": 0.10,   # [P417] operator-instructed 2026-08-27
     },
     "EXTREME_VOLATILITY": {
         "short_bias": 0.20,
@@ -419,6 +429,7 @@ ADVISE_WEIGHTS_BY_REGIME = {
         "llm_sentiment": 0.05,
         "sentiment": 0.10,
         "flow": 0.30,
+        "whale": 0.10,   # [P417] operator-instructed 2026-08-27
     },
 }
 
@@ -922,7 +933,8 @@ class AuthorityFusionEngine:
             # boost's whole life. Behavior-neutral on live orders (the
             # boosted exposure is discarded at integration_v36.py:1524 /
             # Bug #44) — this fixes the roster's honesty, not the strategy.
-            _advise_names = ["short_bias", "funding_rate", "onchain",
+            _advise_names = ["whale",   # [P417]
+                             "short_bias", "funding_rate", "onchain",
                              "llm_sentiment", "sentiment", "flow"]
             _c_dirs = []
             _c_confs = []

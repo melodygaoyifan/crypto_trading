@@ -40,7 +40,9 @@ class TestGroupAEnabled:
         # disarmed one below — by operator instruction, on the no-trade
         # decomposition. They are still pinned, just to the other value.
         "macro_gci_live",
-        "fusion_conviction_to_sleeve",
+        # [P417] fusion_conviction_to_sleeve left this roster: turned OFF by
+        # the conviction_channel_lab historical verdict; its decided-value
+        # pin (False) lives in test_p293d_whale_options.py.
     ])
     def test_flag_is_on_with_its_evidence_note(self, flag):
         d = _live()

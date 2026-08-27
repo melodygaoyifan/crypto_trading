@@ -1,0 +1,100 @@
+{
+  "caveats": [
+    "dxy_breakout reconstructed as DTWEXBGS z30>1.5 (live uses is_breakout_up) -- labeled PROXY",
+    "etf_outflow caution not reconstructible pre-2024 -> contributes nothing (P2)",
+    "fast flap is SYNTHETIC (iid, alpha-free by construction), bounds the FEE side only; 10 seeds",
+    "additive per-bar net sums, not compounded"
+  ],
+  "assets": {
+    "BTC": {
+      "A_net": 1.9000355922696746,
+      "D_net": 1.7128083241954781,
+      "A_cost": 0.8902530000000001,
+      "D_cost": 0.879383,
+      "B_net_mean": 1.1985265293042138,
+      "B_net_range": [
+        1.0869137344424307,
+        1.3705054845285396
+      ],
+      "C_net_mean": 1.721066491466495,
+      "C_net_range": [
+        1.605782088474065,
+        1.855345186396404
+      ],
+      "B_cost_mean": 1.3161396,
+      "C_cost_mean": 0.8725349
+    },
+    "ETH": {
+      "A_net": 1.8695368792728164,
+      "D_net": 1.708504346992017,
+      "A_cost": 0.42980579601990043,
+      "D_cost": 0.4275042924267551,
+      "B_net_mean": 1.3472403317710695,
+      "B_net_range": [
+        1.153575261894862,
+        1.4608694014881345
+      ],
+      "C_net_mean": 1.8078716736542186,
+      "C_net_range": [
+        1.7508185171111814,
+        1.865487549698864
+      ],
+      "B_cost_mean": 0.8198243486733,
+      "C_cost_mean": 0.44068040049751245
+    },
+    "SOL": {
+      "A_net": 4.016987271741728,
+      "D_net": 3.7432806394472764,
+      "A_cost": 0.4540601160862354,
+      "D_cost": 0.4491067330016584,
+      "B_net_mean": 2.8992948601207282,
+      "B_net_range": [
+        2.6563759969900036,
+        3.2289251699236217
+      ],
+      "C_net_mean": 3.353780019501815,
+      "C_net_range": [
+        3.189199622623576,
+        3.4818874680193557
+      ],
+      "B_cost_mean": 0.8620537694859036,
+      "C_cost_mean": 0.47090161857379764
+    }
+  },
+  "summary": {
+    "A_total": 7.786559743284219,
+    "B_total_mean": 5.44506172119601,
+    "B_total_range": [
+      5.15206974727225,
+      5.836696075740388
+    ],
+    "C_total_mean": 6.8827181846225285,
+    "C_total_range": [
+      6.558064726036294,
+      7.0378027706577875
+    ],
+    "D_total": 7.164593310634771,
+    "eras_A": {
+      "pre_design": 4.835007670330987,
+      "design": 1.37574893919113,
+      "validation": 0.9419963681577316
+    },
+    "eras_D": {
+      "pre_design": 4.361852618250106,
+      "design": 1.4702583963381999,
+      "validation": 0.8323844103753404
+    },
+    "eras_C_mean": {
+      "pre_design": 4.108849153102497,
+      "design": 1.438511129854181,
+      "validation": 0.8159872001884967
+    },
+    "eras_B_mean": {
+      "pre_design": 3.572243839618184,
+      "design": 0.9283004051468989,
+      "validation": 0.44651170831308934
+    },
+    "verdict": "TURN_CHANNEL_OFF",
+    "D_alternative_wins": false
+  }
+}

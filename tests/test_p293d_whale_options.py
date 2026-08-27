@@ -459,7 +459,10 @@ class TestConfigTrio:
         # this test was never the value, it was that nobody changes it
         # quietly.
         ("coinbase_whale_filter_enforce", False),
-        ("fusion_conviction_to_sleeve", True),
+        # [P417] conviction sizing turned OFF by the pre-committed historical
+        # verdict (conviction_channel_lab_p417: A +7.15 > C +6.88, seeds
+        # settled, 1/3 eras) -- pure direction holding wins at honest costs.
+        ("fusion_conviction_to_sleeve", False),
     ])
     def test_flags_sit_at_their_decided_value(self, flag, decided):
         """Each of these is an operator decision with its own P-entry."""
@@ -483,7 +486,10 @@ class TestConfigTrio:
         if not prof.exists():
             pytest.skip("live profile not present")
         data = json.loads(prof.read_text(encoding="utf-8-sig"))
-        assert data.get("whale_seat_mode") == "enforce"
+        assert data.get("whale_seat_mode") == "off", (
+            "P417 decided value: whale is an ADVISE input (weight 0.10), "
+            "not a direction seat -- re-arming the seat is an operator "
+            "decision reversing P417")
         assert set(data.get("whale_seat_assets") or []) == {"BTC", "ETH", "SOL"}
 
     def test_silent_whale_does_not_take_the_seat(self):
@@ -509,3 +515,24 @@ class TestConfigTrio:
         )
         # and the seat write must come AFTER that guard
         assert blk.index("elif abs(whale_direction_from_pressure") <             blk.index('market_data["quant_direction"] = float(_ws_dir)')
+
+
+class TestP417WhaleAsAdviseMember:
+    """[P417] Operator 2026-08-27: whale is an INFORMATION SOURCE / decision
+    member -- an ADVISE weight into the conviction channel -- NOT a direction
+    seat (the P416 audit measured the seat as the largest churn engine on a
+    noise-grade signal)."""
+
+    def test_whale_carries_an_advise_weight_in_every_regime_row(self):
+        import signals.authority_fusion as af
+        for regime, row in af.ADVISE_WEIGHTS_BY_REGIME.items():
+            assert row.get("whale", 0.0) > 0.0, (
+                f"{regime}: whale weight removed -- P417 operator arming")
+
+    def test_whale_is_in_the_consensus_roster(self):
+        import inspect
+        import signals.authority_fusion as af
+        src = inspect.getsource(af.AuthorityFusionEngine)
+        assert '"whale",   # [P417]' in src, (
+            "a weighted ADVISE agent absent from _advise_names is the P232 "
+            "drift class")
