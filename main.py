@@ -1878,6 +1878,7 @@ class ProductionConfig:
     # getattr defaults so wiring them changes no current behaviour.
     trend_regime_gate: str = "shadow"
     coinbase_flip_persist_ticks: int = 2
+    coinbase_resize_persist_ticks: int = 0  # [P416] 0=off
     # [P270] Maker-first sleeve execution: post-only at the touch (CDE maker
     # = 0bps vs taker 3bps; post_only enforcement probed live 2026-08-15),
     # intra-call poll -> cancel -> cross remainder. Default OFF; absent from
@@ -2337,6 +2338,8 @@ class ProductionConfig:
                 data.get("trend_regime_gate", "shadow") or "shadow"),
             coinbase_flip_persist_ticks=int(
                 data.get("coinbase_flip_persist_ticks", 2) or 0),
+            coinbase_resize_persist_ticks=int(
+                data.get("coinbase_resize_persist_ticks", 0) or 0),
             # [P270] declared + parsed together (the P201 rule)
             coinbase_maker_first=bool(
                 data.get("coinbase_maker_first", False)),
@@ -2763,7 +2766,13 @@ _SLEEVE_FLATTEN_INTENDED_VETOES = (
     #   _SLEEVE_HOLD_NO_TRADE_TRIGGERS, enum-pinned; market-risk rest flatten
     "[REGIME_POWER_NO_TRADE]", "Deadlock abort:", "[PROD] Tranche deadlock",
     "[PROD] HARD VETO:", "[PROD] SOFT VETO", "[VETO]", "[TRADE_GATE]",
-    "[WEEKEND]", "[V10S] Weekend gross cap:", "[V6 SHORT FILTER]",
+    "[V10S] Weekend gross cap:", "[V6 SHORT FILTER]",
+    # [P416] "[WEEKEND]" moved to _SLEEVE_ENTRY_QUALITY_VETOES: its write
+    # sites are entry gates (should_override_entry + the AP-5 weekend alpha
+    # min), and classifying an entry-quality bar as FLATTEN produced a
+    # scheduled weekly round trip -- a held, still-valid trend position was
+    # market-flattened on weekend ticks and re-entered Monday (~20-29bps RT
+    # for zero trend information). The P338/P341 class, one entry later.
     "[VC-5] Notional",
     # [P338] "[GAMBLER_GATE]" and "[OP_BUDGET]" moved to _SLEEVE_HOLD_VETOES
     # with "[VETO]" — see the entry-quality block there.
@@ -2834,6 +2843,7 @@ _SLEEVE_ENTRY_QUALITY_VETOES = ("[VETO]", "[OP_BUDGET]", "[GAMBLER_GATE]",
                                 "[FLIP_GATE]", "[REBUILD_COOLDOWN]",
                                 # [P382] trade_gate's "no bottom-fishing"
                                 # check (long + price down + volume_ratio <
+    "[WEEKEND]",   # [P416] weekend entry gates (alpha min / entry override)
                                 # 0.20) is an ENTRY-quality veto and position-
                                 # blind; it reached the sleeve as
                                 # "[TRADE_GATE] VOLUME_CONTRACTING" (and via
@@ -23218,6 +23228,9 @@ class HMATSProductionRunner:
                 # [P198] sleeve-side flip persistence
                 flip_persist_ticks=int(getattr(
                     self.config, "coinbase_flip_persist_ticks", 2) or 0),
+                # [P416] same-direction resize persistence (conviction flap)
+                resize_persist_ticks=int(getattr(
+                    self.config, "coinbase_resize_persist_ticks", 0) or 0),
                 # [P291] one-reprice maker ladder (inside the SAME wait budget)
                 maker_reprice=bool(getattr(
                     self.config, "coinbase_maker_reprice", False)),

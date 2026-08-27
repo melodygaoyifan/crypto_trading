@@ -73,16 +73,34 @@ class TestVetoHandling:
         assert d == 0.0
         assert why.startswith("veto_flat:")
 
-    def test_a_veto_that_did_NOT_zero_direction_still_flattens(self):
+    def test_a_veto_that_did_NOT_zero_direction_still_opens_nothing(self):
         """Landmine 1, from a real emitted record:
         direction=-0.3327 target_exposure=0.2495 veto_active=True
         ([WEEKEND] alpha 10bps < min 20bps). Passing `direction` through would
-        OPEN a short the gate just refused."""
+        OPEN a short the gate just refused.
+
+        [P416] classification moved: "[WEEKEND]" is an ENTRY-QUALITY veto
+        (its write sites are entry gates), so from FLAT it still blocks the
+        entry (0.0 -- the original landmine holds) but a HELD position now
+        survives the weekend bar instead of paying a scheduled weekly
+        round trip."""
+        import main as _main
         d, why = translate(_intent(
             direction=-0.3327, target_exposure=0.2495, veto_active=True,
             veto_reason="[WEEKEND] [AP-5] Weekend alpha 10bps < min 20bps"), 0.0)
-        assert d == 0.0, "opened a position the gate vetoed"
-        assert why.startswith("veto_flat:")
+        assert d is _main.SLEEVE_ENTRY_BLOCKED, (
+            "WEEKEND must classify entry-quality (P416)")
+        assert why.startswith("entry_quality_veto:")
+        # FLAT book: the refusal IS the effect -- nothing opens (landmine 1)
+        rd, rwhy = _main.sleeve_entry_blocked_resolve(0.0, -0.3327, why)
+        assert rd is _main.SLEEVE_HOLD and "entry_blocked_flat" in rwhy
+        # HELD book, signal still agrees: the position SURVIVES the weekend
+        # bar -- the pre-P416 flatten here was a scheduled weekly round trip
+        hd, hwhy = _main.sleeve_entry_blocked_resolve(2.0, +0.5, why)
+        assert hd is _main.SLEEVE_HOLD and "entry_blocked_maintain" in hwhy
+        # HELD book, signal FLIPPED: demoted to flatten (closing leg is free)
+        fd, fwhy = _main.sleeve_entry_blocked_resolve(2.0, -0.3327, why)
+        assert fd == 0.0 and "entry_blocked_flip_to_flat" in fwhy
 
     def test_anti_churn_veto_means_HOLD_not_flatten(self):
         """Landmine 2 — the one that would liquidate on every stable tick.

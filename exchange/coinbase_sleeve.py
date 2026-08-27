@@ -111,6 +111,7 @@ class CoinbaseSleeve:
                  protective_stop_pct: float = 0.0,
                  protective_stop_assets=None,
                  flip_persist_ticks: int = 0,
+                 resize_persist_ticks: int = 0,
                  max_net_exposure: Optional[float] = None,
                  max_asset_exposure: Optional[Dict[str, float]] = None,
                  maker_first: bool = False,
@@ -178,6 +179,17 @@ class CoinbaseSleeve:
         # which only DELAYS a flip — the conservative side.
         self._flip_persist_ticks = max(0, int(flip_persist_ticks or 0))
         self._flip_pending: Dict[str, Any] = {}  # asset -> (want_sign, streak)
+        # [P416] Same-direction RESIZE persistence. Measured live 2026-08-27:
+        # fusion_conviction flapped 1.09<->0.58 within minutes and each swing
+        # across a 1-contract boundary was a fee-paying sell-then-buy round
+        # trip with ZERO trend change (SOL 2->1->2ct). A resize (same sign,
+        # different size) must now propose the SAME target on this many
+        # CONSECUTIVE manage calls before executing. Entries, exits, flattens
+        # and flips are NEVER deferred here (P195: exits instant; flips have
+        # their own P198 streak). 0 = off (byte-identical). In-memory streak:
+        # a restart only DELAYS a resize -- the conservative side.
+        self._resize_persist_ticks = max(0, int(resize_persist_ticks or 0))
+        self._resize_pending: Dict[str, Any] = {}  # asset -> (target, streak)
         # [P197] Server-side protective stop. `pct` <= 0 DISABLES the feature
         # entirely — a single knob, so "enabled with a 0% stop" is unexpressible.
         # `protective_stop_assets=None` means every sleeve asset; pass a subset to
@@ -1532,6 +1544,37 @@ class CoinbaseSleeve:
             # Same-direction, flat, or flatten: any pending flip streak is
             # broken — a flip must be CONSECUTIVE opposing ticks.
             self._flip_pending.pop(asset, None)
+        # [P416] Same-direction resize persistence -- see __init__. Runs AFTER
+        # flip-persist (a deferred flip already returned above) and never
+        # touches entries (cur==0), flattens (target==0) or flips (sign
+        # differs). The deferred dict reports target=CURRENT position so the
+        # stop reconcile sizes to the book actually held (and the status is
+        # outside stop_reconcile_intended_target OK/NOOP set, so the
+        # snapshot governs there regardless).
+        # getattr-defended (P85): fixtures and operator scripts build sleeves
+        # via object.__new__; a missing attr must read as OFF, never raise
+        # into the only live order path.
+        _rp_ticks = int(getattr(self, "_resize_persist_ticks", 0) or 0)
+        _rp_pend = getattr(self, "_resize_pending", None)
+        if _rp_pend is None:
+            _rp_pend = self._resize_pending = {}
+        if (_rp_ticks > 1 and cur != 0 and target != 0
+                and (target > 0) == (cur > 0) and abs(target) != abs(cur)):
+            pend_t, r_streak = _rp_pend.get(asset, (None, 0))
+            r_streak = r_streak + 1 if pend_t == target else 1
+            _rp_pend[asset] = (target, r_streak)
+            if r_streak < _rp_ticks:
+                logger.info(
+                    f"[COINBASE_SLEEVE] {asset}: RESIZE DEFERRED "
+                    f"({r_streak}/{_rp_ticks} consecutive "
+                    f"ticks proposing {target:+d}ct vs cur={cur:+.0f}ct) "
+                    f"-- holding (conviction/equity flap is not a trend change)")
+                return {"status": "RESIZE_DEFERRED", "asset": asset,
+                        "streak": r_streak, "need": _rp_ticks,
+                        "current": cur, "target": int(cur)}
+            _rp_pend.pop(asset, None)
+        else:
+            _rp_pend.pop(asset, None)
         _res = await self.execute_target(asset, target)
         # [P382] Report the target this call actually DROVE TO (post-sizing,
         # post-conviction, post-boundary-damping) so the caller's stop
@@ -2706,7 +2749,7 @@ class CoinbaseSleeve:
                     delta = int(round(target_signed_contracts - cur))
                     if delta == 0:
                         logger.info(f"[COINBASE_SLEEVE] execute_target "
-                                    f"{asset} {side} filled as MAKER (0bps) "
+                                    f"{asset} {side} filled as MAKER "
                                     f"-> now={cur}ct")
                         return {"status": "OK", "asset": asset, "side": side,
                                 "contracts": n_contracts, "maker": True,
