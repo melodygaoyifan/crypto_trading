@@ -458,3 +458,81 @@ class TestHygiene:
             "keys that ARE read -- it reads as configuring order type")
         assert any(k.startswith("_p338") for k in cfg["execution"]), (
             "the removal lost its provenance note")
+
+
+# ---------------------------------------------------------------------------
+# [P341b] The two items P338/P341 recorded as open, closed
+# ---------------------------------------------------------------------------
+
+class TestP341bResidualsClosed:
+    """P341 left two things recorded rather than fixed. One was a real
+    (narrow) live risk with a one-line fix; the other is an observability
+    gap whose code fix would be a P141 activation, so only the observability
+    half is closed."""
+
+    @pytest.mark.parametrize("px", [None, 0.0, -1.0, float("nan"),
+                                    float("inf"), float("-inf"), "abc"])
+    def test_an_unusable_price_refuses_the_calibrated_alpha(self, px):
+        """P321b built the interlock because a flag being ON is not evidence
+        the correction took EFFECT -- then guarded it with `if price is not
+        None`, so the default selected the opt-out. The sole production caller
+        passes market_data.get("current_price"), which is None on a MISSING
+        key, so the interlock was one absent key from re-arming exactly the
+        state P321b caught live: calibrated alpha applied while the honest fee
+        was not, which P318 identifies as a PURE LOOSENING."""
+        from core.seat_alpha import resolve_seat_edge
+        assert resolve_seat_edge("ETH", "regimebook", 1.0, 30.0,
+                                 True, True, px) == pytest.approx(30.0), (
+            f"price={px!r} still let the calibrated alpha through -- every "
+            f"unusable price must resolve toward NOT trading")
+
+    def test_a_usable_price_still_applies_it(self):
+        """The other direction: the hardening must not disarm the feature."""
+        from core.seat_alpha import (resolve_seat_edge,
+                                     REGIMEBOOK_ALPHA_BPS_PER_ROUND_TRIP)
+        # [P420b] pinned to the TABLE, not a literal: the calibration is
+        # re-shipped by measurement (P419 donchian, P420b extended data) and
+        # a literal here would go red on every honest re-ship (P237).
+        assert resolve_seat_edge("ETH", "regimebook", 1.0, 30.0,
+                                 True, True, 2252.0) == pytest.approx(
+            REGIMEBOOK_ALPHA_BPS_PER_ROUND_TRIP["ETH"])
+
+    def test_price_is_required_not_defaulted(self):
+        """A safety interlock must not have an opt-out its own default
+        selects. Required means every caller states the price it assumes."""
+        import inspect
+        from core.seat_alpha import resolve_seat_edge
+        sig = inspect.signature(resolve_seat_edge)
+        assert sig.parameters["price"].default is inspect.Parameter.empty, (
+            "price regained a default -- omitting it silently skips the "
+            "P321b effect-interlock again")
+
+    def test_bitbeast_inertness_is_observable_not_debug(self):
+        """0 blocks in every retained log against 439 alpha-gate passes, and
+        the counter needs ~3.3 days of uptime. At DEBUG, "the filter passed"
+        and "the filter never ran" were the same output."""
+        from tests._source_scan import code_only
+        src = code_only(REPO / "main.py", strip_docstrings=True)
+        i = src.index("BitBeast entry check is INERT")
+        blk = src[max(0, i - 700):i]
+        assert "logger.info(" in blk, (
+            "the cold-start bypass went back to DEBUG -- a guard that cannot "
+            "run must say so where the operator reads")
+        assert "_vg_coldstart_logged" in src, (
+            "the notice lost its per-asset latch and will become wallpaper "
+            "(P202); a global latch would let the first asset consume the "
+            "one report for all of them (P193)")
+
+    def test_the_warmup_counter_is_still_ram_only(self):
+        """Pins the premise of that message. If WarmupTracker ever gains
+        persistence, BitBeast ARMS for the first time ever -- a live
+        behaviour change that must be argued for (P141), not inherited."""
+        from tests._source_scan import code_only
+        src = code_only(REPO / "core" / "warmup_tracker.py",
+                        strip_docstrings=True)
+        for marker in ("to_dict", "from_dict", "json", "open("):
+            assert marker not in src, (
+                f"WarmupTracker gained {marker!r} -- if the tick counter now "
+                f"survives a restart, BitBeast's entry filter becomes live "
+                f"for the first time. Re-read P341's measurement before "
+                f"letting that ship.")

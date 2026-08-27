@@ -110,13 +110,13 @@ logger = logging.getLogger("HMATS.SeatAlpha")
 # risk-preference choice, not a measurement upgrade. The minimum remains
 # computable from REGIMEBOOK_ALPHA_BY_ERA below for anyone who wants it back.
 REGIMEBOOK_ALPHA_BPS_PER_ROUND_TRIP: Dict[str, float] = {
-    "BTC": 24.1,
+    "BTC": 26.0,   # [P420b] re-shipped on data through 2026-08-26 (was 24.1)
     # [P419] ETH's trend leg switched to DONCHIAN-100 (measured book change);
     # the asserted edge is the DEPLOYED rule's own measured median (P320: a
     # seat asserts the edge of the rule it runs, never an inherited
     # calibration from a different rule). Producer:
     # training/seat_alpha_calibration.py --series donchian --assets ETH.
-    "ETH": 375.5,
+    "ETH": 400.4,  # [P420b] re-shipped on data through 2026-08-26 (was 375.5)
     "SOL": 221.7,
     # [P412] XRP breadth: era-median +75.8bps/RT, MEASURED by the same producer
     # (training/seat_alpha_calibration.py --assets XRP, 6y book) 2026-08-26. Same
@@ -129,7 +129,7 @@ REGIMEBOOK_ALPHA_BPS_PER_ROUND_TRIP: Dict[str, float] = {
     # POSITIVE (+650.7 / +38.0 / +36.6) -- the most era-STABLE breadth edge
     # (validation, the most-recent era, is +36.6, unlike XRP/ADA/DOGE whose
     # most-recent era is negative). Clears its ~17bps friction robustly.
-    "BNB": 38.0,
+    "BNB": 54.8,   # [P420b] re-shipped on data through 2026-08-26 (was 38.0)
 }
 
 # Full per-era measurement, kept so a reader can see the dispersion the
@@ -144,17 +144,21 @@ REGIMEBOOK_SERIES_BY_ASSET: Dict[str, str] = {
 }
 
 REGIMEBOOK_ALPHA_BY_ERA: Dict[str, Dict[str, float]] = {
-    "BTC": {"pre_design": 2.3, "design": 68.5, "validation": 24.1},
-    "ETH": {"pre_design": 674.4, "design": 291.6, "validation": 375.5},  # [P419] donchian book
-    "SOL": {"pre_design": 427.6, "design": 221.7, "validation": -20.8},
-    "XRP": {"pre_design": 335.3, "design": 75.8, "validation": -21.9},  # [P412]
-    "BNB": {"pre_design": 650.7, "design": 38.0, "validation": 36.6},   # [P412]
+    "BTC": {"pre_design": 2.3, "design": 68.5, "validation": 26.0},    # [P420b]
+    "ETH": {"pre_design": 674.4, "design": 291.6, "validation": 400.4},  # [P419] donchian book; [P420b] re-shipped
+    "SOL": {"pre_design": 427.6, "design": 221.7, "validation": 39.7},   # [P420b] validation era turned POSITIVE on the extended data
+    "XRP": {"pre_design": 335.3, "design": 75.8, "validation": -6.8},   # [P412]; [P420b]
+    "BNB": {"pre_design": 650.7, "design": 38.0, "validation": 54.8},   # [P412]; [P420b]
 }
 
-_MEASURED_ON = "2026-08-19"   # BTC/ETH/SOL; XRP measured 2026-08-26 (P412)
-_MEASURED_BY = ("training/funding_legs_lab.py (FEE_MODEL=per_contract, 6y); "
-                "XRP+BNB added 2026-08-26 via training/seat_alpha_calibration.py "
-                "on 6y resampled books (P412)")
+_MEASURED_ON = "2026-08-27"   # [P420b] all five re-shipped on ONE convention: primaries extended to 2026-08-26 20:00 UTC
+_MEASURED_BY = ("training/seat_alpha_calibration.py (funding_legs_lab chassis, "
+                "FEE_MODEL=per_contract, 6y); [P420b] 2026-08-27 re-ship: every "
+                "asset's _4H_ohlcv.parquet extended via refresh_ohlcv_4h.py to the "
+                "SAME end date (2026-08-26 20:00 UTC, daily-archive extension) so the "
+                "open-ended validation era is measured on one convention; ETH on the "
+                "donchian series (P419). Operator-authorized re-ship (P412b class: the "
+                "validation cell moves with data growth).")
 
 
 def regimebook_alpha_bps(asset: str) -> Tuple[float, str]:

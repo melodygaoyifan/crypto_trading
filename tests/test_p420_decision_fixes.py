@@ -300,11 +300,11 @@ class TestSeatAlphaRefusalCap:
         from core.seat_alpha import resolve_seat_edge
         # price=None -> the P321b interlock REFUSES (still refuses: != 24.1
         # would only be true if the calibrated path had applied... it IS
-        # 24.1 either way for BTC, so pin the refusal via a bad price too)
+        # 26.0 [P420b] either way for BTC, so pin the refusal via a bad price too)
         assert resolve_seat_edge("BTC", "regimebook", 1.0, 30.0, True, True,
-                                 None) == pytest.approx(24.1)
+                                 None) == pytest.approx(26.0)
         assert resolve_seat_edge("BTC", "regimebook", 1.0, 30.0, True, True,
-                                 float("nan")) == pytest.approx(24.1)
+                                 float("nan")) == pytest.approx(26.0)
 
     def test_eth_refusal_keeps_30_because_its_measurement_is_larger(self):
         from core.seat_alpha import resolve_seat_edge
@@ -319,7 +319,7 @@ class TestSeatAlphaRefusalCap:
     def test_the_cap_scales_with_direction_and_flat_asserts_nothing(self):
         from core.seat_alpha import resolve_seat_edge
         assert resolve_seat_edge("BTC", "regimebook", 0.5, 30.0, True, True,
-                                 None) == pytest.approx(12.05)
+                                 None) == pytest.approx(13.0)  # [P420b] 26.0 x 0.5
         assert resolve_seat_edge("BTC", "regimebook", 0.0, 30.0, True, True,
                                  None) == 0.0
 
@@ -336,7 +336,7 @@ class TestSeatAlphaRefusalCap:
 
     def test_calibration_cap_lookup(self):
         from core.seat_alpha import calibration_cap_bps
-        assert calibration_cap_bps("BTC", "regimebook") == pytest.approx(24.1)
+        assert calibration_cap_bps("BTC", "regimebook") == pytest.approx(26.0)
         assert calibration_cap_bps("BTC", "skew_contra") == pytest.approx(680.0)
         assert calibration_cap_bps("BTC", "whale") is None
         assert calibration_cap_bps("DOGE", "regimebook") is None

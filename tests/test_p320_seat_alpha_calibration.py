@@ -6,9 +6,9 @@ per-ROUND-TRIP friction. This replaces the regimebook seat's flat
 `30.0 * |dir|` with its MEASURED gross bps per round trip.
 
     asset   pre_design   design   validation    MIN   MEDIAN (asserted)
-    BTC            2.3     68.5         24.1    2.3               24.1
-    ETH  [P419] donchian book  674.4  291.6  375.5     median  375.5
-    SOL          427.6    221.7        -20.8  -20.8              221.7
+    BTC            2.3     68.5         26.0    2.3               26.0   [P420b]
+    ETH  [P419] donchian book  674.4  291.6  400.4     median  400.4   [P420b]
+    SOL          427.6    221.7         39.7   39.7              221.7   [P420b]
 
 [P321] The asserted statistic is the era-MEDIAN, changed from the MIN by
 explicit operator decision once the goal was stated as profit rather than
@@ -80,7 +80,9 @@ class TestTheCalibrationIsTheEraMedian:
             sa.REGIMEBOOK_ALPHA_BPS_PER_ROUND_TRIP.clear()
             sa.REGIMEBOOK_ALPHA_BPS_PER_ROUND_TRIP.update(saved)
         # SOL's own worst era is still negative and still visible in the table
-        assert REGIMEBOOK_ALPHA_BY_ERA["SOL"]["validation"] < 0
+        # [P420b] the negative-era example moved SOL -> XRP: SOL's validation
+        # era turned +39.7 on the 2026-08-26 data; XRP's (-6.8) is still negative
+        assert REGIMEBOOK_ALPHA_BY_ERA["XRP"]["validation"] < 0
 
     def test_btc_cannot_clear_its_own_friction(self):
         """The finding, pinned: BTC's worst era (2.3bps) is an order of
@@ -91,10 +93,16 @@ class TestTheCalibrationIsTheEraMedian:
         assert regimebook_alpha_bps("BTC")[0] < friction
 
     def test_eth_is_the_only_seat_positive_in_every_era(self):
-        for era, v in REGIMEBOOK_ALPHA_BY_ERA["ETH"].items():
-            assert v > 0, era
+        """[P420b] Name kept so the P320 intent stays greppable; the DECIDED
+        state moved: on the data through 2026-08-26 every asset but XRP is
+        positive in every era (BTC's worst era is +2.3 -- positive but far
+        below its ~28bps fee floor, which is why it still cannot trade), and
+        XRP is the only asset whose most-recent era is negative."""
+        all_pos = {a for a, eras in REGIMEBOOK_ALPHA_BY_ERA.items()
+                   if min(eras.values()) > 0}
+        assert all_pos == {"BTC", "ETH", "SOL", "BNB"}, all_pos
         assert min(REGIMEBOOK_ALPHA_BY_ERA["BTC"].values()) < 10
-        assert min(REGIMEBOOK_ALPHA_BY_ERA["SOL"].values()) < 0
+        assert min(REGIMEBOOK_ALPHA_BY_ERA["XRP"].values()) < 0
 
 
 class TestFailDirections:
@@ -112,7 +120,7 @@ class TestFailDirections:
 
     def test_regimebook_dispatches_to_the_calibration(self):
         assert calibrated_seat_alpha("ETH", "regimebook", 30.0)[0] == \
-            pytest.approx(375.5)  # [P419]
+            pytest.approx(400.4)  # [P419]
 
 
 class TestInterlock:
@@ -128,7 +136,7 @@ class TestInterlock:
         against the defect it guarded)."""
         from core.seat_alpha import resolve_seat_edge
         assert resolve_seat_edge("ETH", "regimebook", 1.0, 30.0,
-                                 True, True, 2252.0) == pytest.approx(375.5)  # [P419]
+                                 True, True, 2252.0) == pytest.approx(400.4)  # [P419]
         for cal, fee in ((True, False), (False, True), (False, False)):
             assert resolve_seat_edge("ETH", "regimebook", 1.0, 30.0,
                                      cal, fee, 2252.0) == pytest.approx(30.0), (
@@ -148,7 +156,7 @@ class TestInterlock:
         """
         from core.seat_alpha import resolve_seat_edge
         assert resolve_seat_edge("ETH", "regimebook", 1.0, 30.0, True, True,
-                                 price=1916.5) == pytest.approx(375.5)  # [P419]
+                                 price=1916.5) == pytest.approx(400.4)  # [P419]
         for bad in (0.0, -1.0, float("nan")):
             assert resolve_seat_edge("ETH", "regimebook", 1.0, 30.0, True,
                                      True, price=bad) == pytest.approx(30.0), (
@@ -176,7 +184,7 @@ class TestInterlock:
         from core.seat_alpha import resolve_seat_edge
         a = resolve_seat_edge("ETH", "regimebook", 1.0, 30.0, True, True, 2252.0)
         b = resolve_seat_edge("ETH", "regimebook", 0.5, 30.0, True, True, 2252.0)
-        assert a == pytest.approx(b) == pytest.approx(375.5), (  # [P419]
+        assert a == pytest.approx(b) == pytest.approx(400.4), (  # [P419]
             "the calibrated round-trip edge is being rescaled by |direction|")
 
     def test_the_seat_passes_both_flags_to_the_resolver(self):

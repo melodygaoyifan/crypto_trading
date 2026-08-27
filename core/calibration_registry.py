@@ -89,13 +89,13 @@ class Calibration:
 REGISTRY: Tuple[Calibration, ...] = (
     Calibration(
         symbol="core.seat_alpha.REGIMEBOOK_ALPHA_BY_ERA",
-        measured_on="2026-08-19",
+        measured_on="2026-08-27",  # [P420b] re-ship on uniform end date
         producer=("python -X utf8 training/seat_alpha_calibration.py "
                   "--verify"),
         source=("training/training_data 4H closes + daily funding, 6y, "
                 "honest per-contract fees (funding_legs_lab); BTC/ETH/SOL "
-                "2026-08-19, XRP + BNB 2026-08-26 (P412b/P412c, same "
-                "producer, their own 6y _4H_ohlcv.parquet)"),
+                "+ XRP + BNB re-shipped together 2026-08-27 [P420b] on primaries "
+                "extended to 2026-08-26 20:00 UTC (P412b/P412c producer, ETH donchian P419)"),
         staleness_days=180,
         staleness_reason=(
             "Derived from six years of history, so a month of new bars moves "

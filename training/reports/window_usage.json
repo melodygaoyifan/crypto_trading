@@ -859,6 +859,86 @@
    "start": 9100,
    "end": 13146,
    "purpose": "validation:seat_alpha book per-era edge (live gate constant producer, P320/P420)"
+  },
+  {
+   "ts": "2026-08-27T13:26:08.727775+00:00",
+   "experiment": "seat_alpha_calibration:book",
+   "asset": "BTC",
+   "start": 9100,
+   "end": 13302,
+   "purpose": "validation:seat_alpha book per-era edge (live gate constant producer, P320/P420)"
+  },
+  {
+   "ts": "2026-08-27T13:26:10.355022+00:00",
+   "experiment": "seat_alpha_calibration:book",
+   "asset": "SOL",
+   "start": 9100,
+   "end": 13241,
+   "purpose": "validation:seat_alpha book per-era edge (live gate constant producer, P320/P420)"
+  },
+  {
+   "ts": "2026-08-27T13:26:12.012065+00:00",
+   "experiment": "seat_alpha_calibration:book",
+   "asset": "XRP",
+   "start": 9100,
+   "end": 13302,
+   "purpose": "validation:seat_alpha book per-era edge (live gate constant producer, P320/P420)"
+  },
+  {
+   "ts": "2026-08-27T13:26:13.702529+00:00",
+   "experiment": "seat_alpha_calibration:book",
+   "asset": "BNB",
+   "start": 9100,
+   "end": 13302,
+   "purpose": "validation:seat_alpha book per-era edge (live gate constant producer, P320/P420)"
+  },
+  {
+   "ts": "2026-08-27T13:26:18.132222+00:00",
+   "experiment": "seat_alpha_calibration:donchian",
+   "asset": "ETH",
+   "start": 9100,
+   "end": 13302,
+   "purpose": "validation:seat_alpha donchian per-era edge (live gate constant producer, P320/P420)"
+  },
+  {
+   "ts": "2026-08-27T13:27:44.100133+00:00",
+   "experiment": "seat_alpha_calibration:book",
+   "asset": "BTC",
+   "start": 9100,
+   "end": 13302,
+   "purpose": "validation:seat_alpha book per-era edge (live gate constant producer, P320/P420)"
+  },
+  {
+   "ts": "2026-08-27T13:27:45.693649+00:00",
+   "experiment": "seat_alpha_calibration:book",
+   "asset": "SOL",
+   "start": 9100,
+   "end": 13241,
+   "purpose": "validation:seat_alpha book per-era edge (live gate constant producer, P320/P420)"
+  },
+  {
+   "ts": "2026-08-27T13:27:47.339505+00:00",
+   "experiment": "seat_alpha_calibration:book",
+   "asset": "XRP",
+   "start": 9100,
+   "end": 13302,
+   "purpose": "validation:seat_alpha book per-era edge (live gate constant producer, P320/P420)"
+  },
+  {
+   "ts": "2026-08-27T13:27:49.032434+00:00",
+   "experiment": "seat_alpha_calibration:book",
+   "asset": "BNB",
+   "start": 9100,
+   "end": 13302,
+   "purpose": "validation:seat_alpha book per-era edge (live gate constant producer, P320/P420)"
+  },
+  {
+   "ts": "2026-08-27T13:28:44.258842+00:00",
+   "experiment": "seat_alpha_calibration:donchian",
+   "asset": "ETH",
+   "start": 9100,
+   "end": 13302,
+   "purpose": "validation:seat_alpha donchian per-era edge (live gate constant producer, P320/P420)"
   }
  ]
 }

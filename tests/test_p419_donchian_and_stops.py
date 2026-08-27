@@ -90,8 +90,8 @@ class TestSeatAlphaEthDonchian:
         from core.seat_alpha import (REGIMEBOOK_ALPHA_BY_ERA,
                                      REGIMEBOOK_ALPHA_BPS_PER_ROUND_TRIP)
         assert REGIMEBOOK_ALPHA_BY_ERA["ETH"] == {
-            "pre_design": 674.4, "design": 291.6, "validation": 375.5}
-        assert REGIMEBOOK_ALPHA_BPS_PER_ROUND_TRIP["ETH"] == 375.5
+            "pre_design": 674.4, "design": 291.6, "validation": 400.4}  # [P420b] re-shipped on the extended data
+        assert REGIMEBOOK_ALPHA_BPS_PER_ROUND_TRIP["ETH"] == 400.4  # [P420b]
 
     def test_series_map_names_eth_donchian(self):
         from core.seat_alpha import REGIMEBOOK_SERIES_BY_ASSET
@@ -105,7 +105,7 @@ class TestSeatAlphaEthDonchian:
         from core.seat_alpha import resolve_seat_edge
         v = resolve_seat_edge("ETH", "regimebook", 1.0, 30.0,
                               True, True, 2252.0)
-        assert v == 375.5
+        assert v == 400.4  # [P420b]
 
     def test_calibrator_verify_uses_the_series_map(self):
         src = (REPO / "training" / "seat_alpha_calibration.py").read_text(
