@@ -372,6 +372,12 @@ class TradeIntentV36:
     # by design). Recorded for observability; deliberately does NOT feed
     # is_actionable or any health counter, because a no-op path is not a block.
     execution_skip_reason: str = ""
+    # [P418] "keep the CURRENT position" marker. The three engine HOLD paths
+    # (BEST_OF_N_HOLD / BLACK_SWAN_SENTINEL / PRE_ALPHA_HOLD) encode hold as
+    # target_exposure = current KRAKEN exposure, which is 0 for routed assets
+    # -- the sleeve translator's zero-target branch read that as LIQUIDATE
+    # (documented HOLD, executed flatten, invisible to every veto roster).
+    hold_current_position: bool = False
     
     # Mode
     system_mode: str = "NORMAL"
@@ -1019,6 +1025,7 @@ class HMATSv36Engine:
             intent.veto_reason = (
                 f"[BEST_OF_N_HOLD] {_regime} no strategy has edge"
             )
+            intent.hold_current_position = True  # [P418]
             self._last_alpha_result = AlphaGatingResult(
                 passes_threshold=True,
                 estimated_alpha_bps=0.0,
@@ -1051,6 +1058,7 @@ class HMATSv36Engine:
             intent.net_alpha_threshold_bps = 0.0
             intent.veto_active = False
             intent.veto_reason = f"[BLACK_SWAN_SENTINEL] BSS=0 crisis detected in {_regime}"
+            intent.hold_current_position = True  # [P418]
             self._last_alpha_result = AlphaGatingResult(
                 passes_threshold=True,
                 estimated_alpha_bps=0.0,
@@ -1107,6 +1115,7 @@ class HMATSv36Engine:
             f"[PRE_ALPHA_HOLD] {_regime} weak long volume_breakout "
             f"({abs(_quant_dir):.2f} < {_max_dir:.2f})"
         )
+        intent.hold_current_position = True  # [P418]
         self._last_alpha_result = AlphaGatingResult(
             passes_threshold=True,
             estimated_alpha_bps=0.0,
@@ -1368,7 +1377,16 @@ class HMATSv36Engine:
         # Skip flash crash hard veto when holding an existing position -
         # position management (HOLD, partial close, stop-loss) must NOT be frozen.
         # Flash crash only blocks NEW entries, not exits/holds on existing positions.
-        _current_exposure = abs(market_data.get("current_exposure", 0.0))
+        # [P418] The carve-out's own comment says "Flash crash only blocks
+        # NEW entries, not exits/holds on existing positions" -- but
+        # current_exposure is the KRAKEN book, {} since 2026-06-13, so for a
+        # routed asset the skip NEVER fired and a +/-5% 4h bar (either
+        # direction -- a rally too) market-flattened a held sleeve position.
+        # The P338 Kraken-shaped-state class; the sleeve book arrives via the
+        # P232 feed. Restores the DESIGNED semantics, does not change them.
+        _current_exposure = max(
+            abs(market_data.get("current_exposure", 0.0)),
+            abs(float(market_data.get("sleeve_position_contracts", 0.0) or 0.0)))
         _flash_active = market_data.get("flash_crash_active", False)
         _skip_flash_for_existing = _flash_active and _current_exposure > 0.001
 

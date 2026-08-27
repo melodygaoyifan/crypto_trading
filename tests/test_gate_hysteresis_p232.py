@@ -154,8 +154,12 @@ class TestReentryCooldown:
         blk = MAIN[MAIN.find("[P232] Re-entry cooldown"):]
         # [P287] widened from 2200: the block's comment grew (restart-
         # direction correction); the pin is on the block's CONTENT, not a
-        # character budget.
-        blk = blk[:4000]
+        # character budget. [P418] widened again 4000 -> 6000: the inter-tick
+        # stop-out detection (which ARMS this very cooldown on a venue
+        # stop-fill) now sits inside the block. A character budget is a
+        # fragile guard shape (P320/P354) -- it is kept only because the
+        # anchor text has no unique closing marker.
+        blk = blk[:6000]
         assert "_cd_pre == 0" in blk, (
             "the cooldown must require a FLAT book — anything else can "
             "defer an exit (P195 violation)"

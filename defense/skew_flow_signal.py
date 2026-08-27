@@ -21,7 +21,7 @@ Contrarian: skew much BELOW its trailing mean (extra fear) -> LONG (+1);
 skew much ABOVE (calls rich / greed) -> SHORT (-1); inside the deadband -> hold.
 """
 import os, json, time, logging, urllib.request, urllib.parse
-from typing import Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -94,11 +94,28 @@ class SkewFlowSignal:
         the caller skips the seat and the incumbent stands.
         """
         now = time.time()
+        if getattr(self, "_last_good", None) is None:
+            self._last_good: Dict[str, Dict[str, float]] = {}
+        lg_map: Dict[str, Dict[str, float]] = self._last_good
         c = self._cache.get(asset)
         if c and (now - c["ts"]) < _CACHE_TTL:
             return (c["dir"], c["fresh"])
         rows = self._fetch_trailing(asset)
         if not rows or len(rows) < _MIN_OBS:
+            # [P418] A transient FETCH failure is not data staleness. Handing
+            # the seat to a different decider for one tick is a direction
+            # change with no signal change (a potential fee round trip); if
+            # the last GOOD computation is younger than the staleness bound,
+            # carry the held direction instead (the P287 family-carry rule).
+            lg = lg_map.get(asset)
+            if lg and (now - lg["ts"]) / 86400.0 <= _STALE_DAYS:
+                logger.warning(
+                    f"[SKEW] {asset}: fetch failed -- carrying held direction "
+                    f"{lg['dir']:+.0f} (last good "
+                    f"{(now - lg['ts'])/3600.0:.1f}h old)")
+                self._cache[asset] = {"ts": now, "dir": lg["dir"],
+                                      "fresh": True, "z": lg.get("z", 0.0)}
+                return (lg["dir"], True)
             self._cache[asset] = {"ts": now, "dir": 0.0, "fresh": False, "z": 0.0}
             return (0.0, False)
         # staleness: latest skew must be recent
@@ -142,6 +159,8 @@ class SkewFlowSignal:
             self._hold[asset] = direction
             self._save()
         self._cache[asset] = {"ts": now, "dir": direction, "fresh": fresh, "z": z}
+        if fresh:
+            lg_map[asset] = {"ts": now, "dir": direction, "z": z}  # [P418]
         if not fresh:
             logger.warning(f"[SKEW] {asset}: stale (latest {age_days:.1f}d old) -> seat skipped")
         return (direction, fresh)

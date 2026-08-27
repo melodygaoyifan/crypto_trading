@@ -108,6 +108,15 @@ class FastRiskTick:
             else float(vol_spike_mult))
         self.price_trigger_enabled = 0.0 < self.price_move_threshold < 1.0
         self.vol_trigger_enabled = self.vol_spike_mult > 0.0
+        # [P418] volatility_30m had NO producer anywhere in the repo, so the
+        # operator-armed vol-spike REDUCE_50 (P370 kept it ON at 4x) was
+        # structurally INERT: baseline_volatility was never > 0. The watchdog
+        # now measures its own 30-minute realized vol from the ~34s
+        # evaluation prices (both the current reading and the 4H-anchor
+        # baseline come from the SAME estimator, so the ratio's units
+        # cancel). An external producer, if one ever appears, takes
+        # precedence at both sites.
+        self._px_hist: Dict[str, Any] = {}
         self._anchor_set_at: Dict[str, float] = {}  # [P156] anchor freshness
         self._anchor_stale_log_at: Dict[str, float] = {}
         self._last_4h_prices: Dict[str, float] = {}
@@ -136,6 +145,23 @@ class FastRiskTick:
             f"[FastRiskTick] Initialized (shadow={shadow_mode}, "
             f"price_trigger={'ON @' + format(self.price_move_threshold, '.0%') if self.price_trigger_enabled else 'RETIRED'}, "
             f"vol_trigger={'ON @' + format(self.vol_spike_mult, '.1f') + 'x' if self.vol_trigger_enabled else 'RETIRED'})")
+
+    def _realized_vol_30m(self, asset: str) -> float:
+        """[P418] std of consecutive returns over the last 30 minutes of
+        evaluation prices (~34s cadence). 0.0 below 15 samples -- absence is
+        never a trigger (P367)."""
+        try:
+            hist = self._px_hist.get(asset) or []
+            now = time.time()
+            pts = [px for (ts, px) in hist if (now - ts) <= 1800.0 and px > 0]
+            if len(pts) < 15:
+                return 0.0
+            rets = [(pts[i] / pts[i - 1]) - 1.0 for i in range(1, len(pts))]
+            mu = sum(rets) / len(rets)
+            var = sum((r - mu) ** 2 for r in rets) / max(1, len(rets) - 1)
+            return float(var ** 0.5)
+        except Exception:  # noqa: silent-swallow -- a broken estimator must read as "no vol reading", never crash the 30s watchdog
+            return 0.0
 
     def set_4h_anchor(self, asset: str, price: float,
                       volatility: float = 0.0, depth: float = 0.0):
@@ -168,7 +194,22 @@ class FastRiskTick:
         self._anchor_stale_log_at.pop(asset, None)
         if volatility > 0:
             self._baseline_volatility[asset] = volatility
-        if depth > 0:
+        else:
+            # [P418] no external producer exists -- use the internal 30m
+            # realized vol so the operator-armed 4x spike trigger is real
+            _iv = self._realized_vol_30m(asset)
+            if _iv > 0:
+                if self._baseline_volatility.get(asset, 0.0) <= 0.0:
+                    logger.info(f"[P418] {asset}: vol-spike baseline armed "
+                                f"for the first time ({_iv:.5f}/30m)")
+                self._baseline_volatility[asset] = _iv
+        # [P418] The pipeline's orderbook-fetch-failure fallback writes exactly
+        # 500_000.0 as a static floor; anchoring the depth BASELINE on that
+        # fabricated value makes a normal ~$150k book read as a 70% collapse
+        # for three consecutive checks -> a false REDUCE_50. Keep the
+        # previous baseline instead (a real book at exactly $500,000.00 is
+        # measure-zero and skipping one update is benign).
+        if depth > 0 and depth != 500_000.0:
             self._baseline_depth[asset] = depth
         self._depth_drop_streak[asset] = 0
         # [P110] 4H rebalance clears any failed-exit backoff so the next
@@ -370,6 +411,11 @@ class FastRiskTick:
                         if (_ref_ok and _ref_fresh) else 0.0)
         if _ref_ok:
             self._last_eval_price[asset] = (float(current_price), now)
+            # [P418] 30m realized-vol buffer (~55 samples at ~34s cadence)
+            _ph = self._px_hist.setdefault(asset, [])
+            _ph.append((now, float(current_price)))
+            if len(_ph) > 60:
+                del _ph[: len(_ph) - 60]
 
         # Shadow counters — both are measured on every VALID evaluation so
         # the arming decision rests on forward evidence rather than on one
@@ -451,7 +497,8 @@ class FastRiskTick:
             reason = f"price_move={price_move_pct:.1%}"
 
         # Trigger 2: Volatility spike > 2x baseline
-        current_vol = market_data.get('volatility_30m', 0.0)
+        current_vol = (market_data.get('volatility_30m', 0.0)
+                       or self._realized_vol_30m(asset))  # [P418]
         baseline_vol = self._baseline_volatility.get(asset, 0.0)
         # [P370] per-instance multiplier (live 4x) and a retire switch.
         if (self.vol_trigger_enabled and baseline_vol > 0

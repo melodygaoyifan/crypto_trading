@@ -2953,6 +2953,13 @@ def sleeve_direction_from_intent(intent, fallback_dir: float):
     if intent is None:
         return SLEEVE_HOLD, "no_intent_this_tick"
 
+    # [P418] The engine's explicit keep-current-position paths stamp this
+    # declared marker; honor it before ANY exposure arithmetic -- their
+    # target_exposure is the Kraken book (0 for routed assets), which the
+    # zero-target branch below would read as LIQUIDATE.
+    if bool(getattr(intent, "hold_current_position", False)):
+        return SLEEVE_HOLD, "hold_current_position"
+
     _dir = float(getattr(intent, "direction", 0.0) or 0.0)
     _exp = float(getattr(intent, "target_exposure", 0.0) or 0.0)
     _reason = str(getattr(intent, "veto_reason", "") or "")
@@ -24653,6 +24660,29 @@ class HMATSProductionRunner:
                                         _cd_pre = int(_sl.signed_contracts(_m_a) or 0)
                                         if not hasattr(self, "_sleeve_flatten_tick"):
                                             self._sleeve_flatten_tick: Dict[str, int] = {}
+                                        # [P418] Inter-tick stop-out
+                                        # detection: a venue stop that
+                                        # FILLED between ticks leaves
+                                        # pre==0 with no flatten record
+                                        # -> cooldown never armed ->
+                                        # immediate re-entry = a fee
+                                        # round trip on an unchanged
+                                        # signal.
+                                        if not hasattr(self, "_sleeve_prev_ct"):
+                                            self._sleeve_prev_ct: Dict[str, int] = {}
+                                        _cd_prev_end = self._sleeve_prev_ct.get(_m_a)
+                                        _cd_last0 = self._sleeve_flatten_tick.get(_m_a)
+                                        if (_cd_prev_end and _cd_pre == 0
+                                                and (_cd_last0 is None
+                                                     or (self._live_round_count
+                                                         - _cd_last0) > _cd_n)):
+                                            self._sleeve_flatten_tick[_m_a] = (
+                                                self._live_round_count)
+                                            logger.warning(
+                                                f"[P418] {_m_a}: went flat BETWEEN "
+                                                f"ticks ({_cd_prev_end}ct -> 0; venue "
+                                                f"stop-out or external flatten) -- "
+                                                f"re-entry cooldown armed")
                                         if (_cd_n > 0 and _cd_pre == 0
                                                 and abs(_m_dir) >= 0.15):
                                             _cd_last = self._sleeve_flatten_tick.get(_m_a)
@@ -24755,6 +24785,11 @@ class HMATSProductionRunner:
                                                 f"[COINBASE-COOLDOWN] flatten "
                                                 f"record failed for {_m_a}: "
                                                 f"{type(_cd_err).__name__}")
+                                        try:
+                                            self._sleeve_prev_ct[_m_a] = int(
+                                                _sl.signed_contracts(_m_a) or 0)
+                                        except Exception:  # noqa: silent-swallow -- bookkeeping; a missed update only skips one stop-out detection
+                                            pass
                                         _m_summary[_m_a] = (
                                             f"{_m_st}(dir={_m_dir:+.2f},"
                                             f"{_sl.signed_contracts(_m_a)}ct)"
