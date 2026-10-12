@@ -22,7 +22,13 @@ pytest-asyncio>=0.23.0         # async test functions (sentiment, onchain agents
 hypothesis>=6.90.0             # P117 property tests + P119 fuzz harness
 httpx>=0.27.0                  # tests/test_smart_beta.py, analytics/llm_explainer.py
 mypy>=1.5.0                    # tools/lint_mypy_baseline.py scanner
-pyarrow>=14.0.0                # df.to_parquet in tests/test_pre6_backtest_and_shadow_ic.py
+pyarrow>=14.0.0,<24            # df.to_parquet in tests/test_pre6_backtest_and_shadow_ic.py
+                               # [P421b] <24: CI's unpinned resolve picked pyarrow 26.0.0, which
+                               # requires numpy>=2.0 against this repo's numpy<2.0.0 pin — every
+                               # parquet test died at import ("Unable to find a usable engine")
+                               # for ANY push that day. 23.0.0 is the locally-verified ceiling
+                               # with numpy 1.26.4. Raising this cap is coupled to the numpy pin
+                               # in requirements.txt — move them together or CI reds again (P188/P227 class).
                                # (pandas' parquet engine is an optional dep and
                                # is not pulled in by requirements.txt)
 PyWavelets>=1.4.0              # [P203] `import pywt` reached transitively:
