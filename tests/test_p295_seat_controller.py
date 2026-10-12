@@ -211,23 +211,20 @@ class TestCli:
         assert "REFUSING" in r.stderr
 
     def test_incumbent_is_read_from_the_live_config(self):
-        """[P420 re-pointed, was P382] The live decider is PER ASSET in
-        seat-run order: skew (BTC/ETH, skew_seat_mode enforce) > etf-decide
-        > regimebook > whale > trend. With the live profile the skew seat
-        holds BTC and ETH and the regimebook holds SOL; skew is NOT scoreable
-        from agent_ic_review, so an unscoped run must REFUSE (exit 2) and say
-        why — not prescribe a switch computed from the wrong series (which
-        is what the 2026-08-24 cron did, prescribing the retired
-        `trend_assets: []`)."""
+        """[P421 re-pointed, was P420/P382] The live decider is PER ASSET in
+        seat-run order: skew > etf-decide > regimebook > whale > trend.
+        Since 2026-10-12 the skew seat is PARKED (skew_seat_mode off — feed
+        dead 09-10, the skewetf read negative), so EVERY asset's live decider
+        falls through to the regimebook and an unscoped run is scoreable: it
+        proceeds to a verdict instead of the skew refusal, and it still never
+        prescribes the retired `trend_assets` actuator. A silent re-arm of the
+        skew seat flips this back to the refusal and fails this pin (P237)."""
         r = _run("--stats", json.dumps(
             {"whale": {"ic_4h": 0.04, "ic_16h": 0.011,
                        "t_4h": 0.98, "t_16h": 0.14, "n": 605}}))
-        assert r.returncode == 2, r.stdout + r.stderr
-        assert re.search(r"BTC\s*:\s*skew_contra", r.stdout), r.stdout
-        assert re.search(r"ETH\s*:\s*skew_contra", r.stdout), r.stdout
-        assert re.search(r"SOL\s*:\s*regimebook", r.stdout), r.stdout
-        assert "not scoreable by this instrument" in r.stderr
-        assert "skewetf_*" in r.stderr
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert re.search(r"incumbent\s*:\s*regimebook", r.stdout), r.stdout
+        assert "skew_contra" not in r.stdout, r.stdout
         assert "trend_assets" not in r.stdout + r.stderr
 
     def test_scoped_to_a_scoreable_asset_the_incumbent_is_the_book(self):

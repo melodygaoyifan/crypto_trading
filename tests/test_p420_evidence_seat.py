@@ -85,8 +85,13 @@ class TestIncumbentPrecedence:
         assert live_incumbent(cfg, "XRP") == FLAT
 
     def test_reads_the_live_profile_as_it_stands(self):
+        """[P421 re-pointed, was P420] skew_seat_mode is OFF since 2026-10-12
+        (the apiv2 feed died 2026-09-10 and the ~09-24 skewetf read found all
+        three arms negative — the seat is PARKED, operator-instructed), so the
+        BTC/ETH seats fall through to the regimebook incumbent. A revert of the
+        park, or a silent re-arm, fails this pin either way (P237)."""
         m = live_incumbents(LIVE_CFG, ["BTC", "ETH", "SOL"])
-        assert m == {"BTC": "skew_contra", "ETH": "skew_contra", "SOL": "regimebook"}
+        assert m == {"BTC": "regimebook", "ETH": "regimebook", "SOL": "regimebook"}
 
     def test_asset_membership_is_case_insensitive_and_absent_lists_are_empty(self):
         cfg = {"skew_seat_mode": "enforce", "regimebook_mode": "enforce"}
@@ -110,8 +115,13 @@ class TestCli:
         return p
 
     def test_unscored_decider_refuses_with_the_named_reason(self, tmp_path):
+        """[P421] The property under test (an unscoreable decider is a REFUSAL,
+        never a prescription) must not depend on the live profile's current
+        choice — the live profile parked the skew seat on 2026-10-12, so this
+        test now enforces skew EXPLICITLY to keep the refusal branch pinned."""
         r = _run("--ic-report", str(self._report(tmp_path)),
-                 "--config", str(self._cfg(tmp_path)))
+                 "--config", str(self._cfg(tmp_path, skew_seat_mode="enforce",
+                                           skew_seat_assets=["BTC", "ETH"])))
         assert r.returncode == 2, r.stdout + r.stderr
         assert "decider not scoreable by this instrument" in r.stderr
         assert "read skewetf_* via compute_shadow_ic" in r.stderr

@@ -227,6 +227,14 @@ COST_DICT_RE = re.compile(r"^[A-Za-z_]*COST[A-Za-z_]*\s*=\s*\{", re.M)
 # defining a COST_* dict fails this roster until someone adds it HERE with a
 # parity test or a stated per-RT/per-event reason — that is the point.
 COST_DICT_OWNERS = {
+    "training/scripts/skew_runtime_series_probe.py": {
+        "covered_by": "no leg charge anywhere: the probe reports gross bps "
+                      "PER ROUND TRIP (sum(pos*ret)*1e4 / round_trips, the "
+                      "P407f producer convention) and subtracts CDE_RT_COST "
+                      "once from that per-RT figure as a COMPARISON "
+                      "(net/RT = gross/RT - cost); no |dpos| accumulation "
+                      "exists for the per-leg trap to bite (P421)",
+        "pins": [r"net_rt = per_rt - cost"]},
     "training/conviction_sizing_lab.py": {
         "covered_by": "charges through sizing_overlay_lab.per_bar_net "
                       "(the P382-corrected per-leg chassis; WS2)",
