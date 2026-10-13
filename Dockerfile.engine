@@ -30,12 +30,22 @@ RUN groupadd --gid 1000 hmats && \
 
 # Python deps
 COPY --chown=hmats:hmats requirements-runtime.txt ./
-RUN pip install --no-cache-dir -r requirements-runtime.txt \
+# [P426] Every pip line below runs under ONE numpy constraint, read out of
+# requirements-runtime.txt (single source, P172). Without it the unpinned
+# installs re-resolve numpy: on 2026-10-12 contourpy 1.4.0 (via matplotlib)
+# required numpy>=2.0 and dragged the live engine to numpy 2.5.4 against a
+# <2.0 pin CI tests under -- every shadow TQC predict then raised for 1.5 days.
+# The final python line makes a violated pin a BUILD failure, not a log line.
+RUN grep -iE '^numpy' requirements-runtime.txt > /tmp/pip-constraints.txt \
+    && test -s /tmp/pip-constraints.txt \
+    && export PIP_CONSTRAINT=/tmp/pip-constraints.txt \
+    && pip install --no-cache-dir -r requirements-runtime.txt \
     && pip install --no-cache-dir ccxt filterpy ta \
     && pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu \
     && pip install --no-cache-dir sb3-contrib stable-baselines3 joblib scikit-learn \
     && pip install --no-cache-dir transformers \
-    && pip install --no-cache-dir tiktoken sentencepiece protobuf
+    && pip install --no-cache-dir tiktoken sentencepiece protobuf \
+    && python -c "import numpy as n; v=n.__version__; assert int(v.split('.')[0]) < 2, 'numpy pin violated: '+v; print('[P426] numpy', v)"
 
 # Application code
 COPY --chown=hmats:hmats main.py ./

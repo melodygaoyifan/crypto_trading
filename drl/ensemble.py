@@ -29,6 +29,23 @@ from typing import Dict, List, Optional
 
 import numpy as np
 
+
+def action_to_scalar(action) -> float:
+    """[P426] First element of a policy action as a clipped python float.
+
+    SB3 ``predict`` on a (1, obs) batch returns shape (1, 1), so ``action[0]``
+    is a 1-d array of size 1. ``float()`` of that was deprecated in numpy 1.25
+    and RAISES from numpy 2.4 ("only 0-dimensional arrays can be converted to
+    Python scalars") -- which silently killed every shadow TQC predict for
+    1.5 days when the image drifted to numpy 2.5. Flatten first so the
+    conversion is version-independent; an empty action is a refusal (raise),
+    never a fabricated 0.0 (P2).
+    """
+    flat = np.asarray(action, dtype=np.float64).reshape(-1)
+    if flat.size == 0:
+        raise ValueError("empty policy action")
+    return float(np.clip(flat[0], -1.0, 1.0))
+
 logger = logging.getLogger("TQC_Inference")
 
 # Frame stacking config (must match training)
@@ -304,7 +321,7 @@ class TQCInference:
                     stacked = np.concatenate(padded).reshape(1, -1)  # (1, 1008)
 
                 action, _ = self._tqc_model.predict(stacked, deterministic=True)
-                tqc_action = float(np.clip(action[0], -1.0, 1.0))
+                tqc_action = action_to_scalar(action)  # [P426]
             except Exception as e:
                 logger.warning(f"TQC predict failed: {e}")
 
