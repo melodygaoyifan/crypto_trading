@@ -17,3 +17,9 @@
 # [P423] standing-decision alarm (exit 3 = OVERDUE; never edits config) + realized attribution by decider
 52 6 * * 1 docker exec hmats-engine python -X utf8 scripts/decision_check.py >> /home/hmats/evidence_cron.log 2>&1
 32 6 * * 1 docker exec hmats-engine python -X utf8 analytics/sleeve_attribution/decider_attribution.py >> /home/hmats/evidence_cron.log 2>&1
+# [P424] the calbasis 2026-11-10 pre-committed re-read, MECHANIZED: a pooled 110d calbasis report
+# priced on Kraken public OHLC (P423 --allow-kraken-ohlcv; the parquets are not in the image), then
+# the gate itself. Exit 0 = not due / keep accruing, 2 = refusal, 3 = a criterion fired (owed a
+# human decision via pending_decisions.json). 110d spans the ledger (start 2026-08-16) through early
+# December inside Kraken's 720-bar window; a shorter window would REFUSE (P421 mitigation c).
+54 6 * * 1 docker exec hmats-engine sh -c 'python -X utf8 analytics/shadow_ic/compute_shadow_ic.py --ledger-dir /opt/hmats/data/strategy_shadow --window-days 110 --prefixes calbasis --pool-assets --allow-kraken-ohlcv --output /opt/hmats/data/evidence_reports/shadow_ic_calbasis_$(date -u +\%Y\%m\%d).json && python -X utf8 scripts/calbasis_check.py --report /opt/hmats/data/evidence_reports/shadow_ic_calbasis_$(date -u +\%Y\%m\%d).json' >> /home/hmats/evidence_cron.log 2>&1

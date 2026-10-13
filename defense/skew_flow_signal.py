@@ -172,10 +172,18 @@ def replay_hold(vals: List[float], vals10: Optional[List[float]] = None,
 
 
 class SkewFlowSignal:
-    def __init__(self, data_dir: str = "data"):
+    def __init__(self, data_dir: str = "data", feed: str = "api"):
         self._data_dir = data_dir
         self._state_path = os.path.join(data_dir, "skew_seat_state.json")
         self._key = os.environ.get("LAEVITAS_API_KEY", "").strip()
+        # [P424] feed = "api" (Laevitas apiv2 live fetch, the P407 original) or
+        # "bank" (read the per-asset runtime archive the P421c Deribit-direct
+        # replica cron appends into daily -- the same row shape the API
+        # returned, validated to 2.7e-6 vs the vendor). The vendor key died
+        # 2026-09-10 and is not renewed; "bank" is how the seat is re-armed at
+        # $0. An unknown value reads as "api" (= the parked/fetch-fail path,
+        # never a silent third behaviour).
+        self._feed = "bank" if str(feed or "api").strip().lower() == "bank" else "api"
         self._cache = {}   # asset -> {"ts": epoch, "dir": float, "fresh": bool, "z": float}
         self._hold = {}    # asset -> last directional position (deadband hold)
         # [P420] assets whose persisted hold is too old to trust: replayed from
@@ -271,8 +279,45 @@ class SkewFlowSignal:
                            f"-- runtime series not banked this tick")
             return -1
 
+    def _read_bank_trailing(self, asset: str):
+        """[P424] The archive-fed twin of _fetch_trailing: the last _FETCH_DAYS
+        of tenor-30 rows from `laevitas_apiv2_skew_{ASSET}.jsonl`, sorted by
+        date, or None. Rows are exactly what _fetch_trailing returns (date,
+        tenor, skew_25d, skew_10d, ...), so everything downstream -- the z
+        window, the staleness bound, the hold -- is byte-identical. Nothing is
+        fabricated: a missing/unreadable archive is None (seat skipped), a row
+        without skew_25d is dropped, and a stale archive (the replica cron
+        dead) fails the same _STALE_DAYS bound a stale API feed does."""
+        path = self._archive_path(asset)
+        if not os.path.exists(path):
+            logger.warning(f"[SKEW] {asset}: bank feed -- archive missing ({path})")
+            return None
+        cutoff = time.strftime("%Y-%m-%d", time.gmtime(time.time() - _FETCH_DAYS * 86400))
+        rows = []
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        r = json.loads(line)
+                    except Exception:  # noqa: silent-swallow -- a corrupt archive line is skipped (the writer rewrites atomically)
+                        continue
+                    if (isinstance(r, dict) and r.get("date") and r.get("skew_25d") is not None
+                            and int(r.get("tenor") or _TENOR) == _TENOR
+                            and str(r["date"]) >= cutoff):
+                        rows.append(r)
+        except Exception as e:
+            logger.warning(f"[SKEW] {asset}: bank feed read failed ({type(e).__name__}: {e})")
+            return None
+        rows.sort(key=lambda x: str(x["date"]))
+        return rows or None
+
     def _fetch_trailing(self, asset: str):
         """Return sorted list of daily 30d skew_25d for the last ~70 days, or None."""
+        if self._feed == "bank":
+            return self._read_bank_trailing(asset)
         if not self._key:
             return None
         end = time.strftime("%Y-%m-%d", time.gmtime())
@@ -314,8 +359,8 @@ class SkewFlowSignal:
         if c and (now - c["ts"]) < _CACHE_TTL:
             return (c["dir"], c["fresh"])
         rows = self._fetch_trailing(asset)
-        if rows:
-            self.bank_rows(asset, rows)  # [P420] runtime archive; fail-soft
+        if rows and self._feed != "bank":
+            self.bank_rows(asset, rows)  # [P420] runtime archive; fail-soft ([P424] bank feed reads it, never rewrites it)
         if not rows or len(rows) < _MIN_OBS:
             # [P418] A transient FETCH failure is not data staleness. Handing
             # the seat to a different decider for one tick is a direction
@@ -391,6 +436,7 @@ class SkewFlowSignal:
             "hold_source": hold_source,
             "fresh": bool(fresh),
             "direction": float(direction),
+            "feed": self._feed,  # [P424]
         }
         if fresh:
             lg_map[asset] = {"ts": now, "dir": direction, "z": z}  # [P418]

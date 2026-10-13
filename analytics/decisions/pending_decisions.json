@@ -5,7 +5,11 @@
     "opened": "2026-10-13",
     "deadline": "2026-10-27",
     "owner": "operator",
-    "status": "pending",
+    "status": "decided",
+    "decided_on": "2026-10-13",
+    "decided_by": "agent, by operator delegation 2026-10-13 ('from the profitability perspective, make all judgment on my behalf')",
+    "decision": "A: KEEP ENFORCE. The failing forward exam is one era (Aug-Oct chop, the regime a trend/hold book is DESIGNED to sit out) against three certified eras + a virgin era + 5/5 never-fitted-asset transfer (P262); its realized cost over the window is small and measured (sleeve P&L -$45 since 09-13, -$19 since 08-27, on ~$11k; +$149 since 08-07). B as prescribed does NOT produce a flat book: with every seat off the quant slot falls to Best-of-N, an unvalidated decider under the never-validated [SENT-SWITCH] weight modulation (P299/P293i) -- a loosening wearing a de-risk's name. C's premise is FALSE on the per-asset numbers: SOL is the WORST of the three at h4 (-0.18/-0.37/-0.47 vs BTC -0.10/-0.33/-0.43, ETH -0.105/-0.32/-0.49; report shadow_ic_20261012_030709), and the book has no per-asset enforce switch anyway. Pre-committed re-read recorded as home_trio_reread (due 2026-12-01).",
+    "config_change": "none (regimebook_mode / trend_following_mode stay enforce)",
     "evidence": [
       "P421: regimebook family pooled forward IC -0.134/-0.336/-0.456 (|t| 2.6-3.8), uniform per asset and per variant; P237 tripwire FIRED 3/3",
       "P421e: seat controller on the regimebook's own pooled ledger: incumbent -0.1261 -> FLAT wins, SWITCH recommended (printed, never applied)",
@@ -26,7 +30,11 @@
     "opened": "2026-10-12",
     "deadline": "2026-11-10",
     "owner": "operator",
-    "status": "pending",
+    "status": "decided",
+    "decided_on": "2026-10-13",
+    "decided_by": "agent, by operator delegation 2026-10-13 ('from the profitability perspective, make all judgment on my behalf')",
+    "decision": "A: RE-ARM BTC ONLY, fed from the replica archive (skew_seat_feed=bank). Basis: the P421b runtime-series probe on the series the seat actually reads -- BTC gross/RT +227 full / +43 (2025) / +366 (2026) vs cost 19.7, alive-class in both sub-eras; ETH 2025 = -188.6 kill-class -> stays parked. The 65d skewetf forward read was negative but its skew arm was stale ~31 of 47 days (feed dead 09-10), so it does not outrank the true-data probe. Thin (~8-9 RTs) and bounded by the gate/caps/stop/halt/fuse; revert = skew_seat_mode off.",
+    "config_change": "configs/live_high_risk.json: skew_seat_mode enforce, skew_seat_assets [BTC], skew_seat_feed bank; defense/skew_flow_signal.py bank feed; scripts/ops/seat_check_weekly.sh scoped --assets ETH,SOL",
     "evidence": [
       "P421b runtime-series probe: BTC gross/RT +227 full, +43 (2025), +366 (2026) vs cost 19.7 -> alive-class both sub-eras; ETH 2025 = -188.6 KILL-class, 2026 +850 -> era-fragile",
       "P421c: scripts/deribit_skew_replica.py validated to 2.7e-6 vs the vendor; daily 06:05 UTC cron appends into the runtime banks (BTC 422+ rows)",
@@ -46,6 +54,7 @@
     "deadline": "2026-11-10",
     "owner": "operator",
     "status": "pending",
+    "decision_rule": "MECHANIZED 2026-10-13 (P424): the Monday 06:54 in-container cron produces a pooled 110d calbasis report (Kraken-priced) and runs scripts/calbasis_check.py on it; exit 3 = a criterion fired -> decide here; exit 0 before 2026-11-10 = not due. Act on the exit code; do not reinterpret the criterion (P332).",
     "evidence": [
       "P421: calbasis pooled IC +0.200/+0.265/+0.307 (t 3.70/2.79/2.23), clears cost at h12/h24, blocked ONLY by h4 edge 53.4 < 58.1",
       "P421c: the criterion is an executable gate (exit 3 = met -> lab-ladder P-entry; h12/h24 significant + h4 sub-bar -> slow-expression variant ledger)"
@@ -59,7 +68,11 @@
     "opened": "2026-08-26",
     "deadline": "2026-11-10",
     "owner": "operator",
-    "status": "pending",
+    "status": "decided",
+    "decided_on": "2026-10-13",
+    "decided_by": "agent, by operator delegation 2026-10-13 ('from the profitability perspective, make all judgment on my behalf')",
+    "decision": "B: KEEP SHADOW, DECLINE THE CAMPAIGN. The churn win is real (+59-66% fewer switches online) but DIFFUSE: the live decider (regimebook/skew) does not read the GMM, so the P215 atomic cutover (tables + parquets + DRL obs regime_proba) is risk with no measured order-level payoff. Re-open only if a decider ever becomes regime-dependent.",
+    "config_change": "none",
     "evidence": [
       "P414c: online/filtered churn cut +59% to +66% vs GMM on BTC/ETH/SOL, 7/8 names control-compatible; shadow ledger jumpregime_{ASSET}.jsonl accruing since the P420 decision-tick fix",
       "The payoff is diffuse (the decider is GMM-independent); the cutover is a P215 atomic campaign incl. the DRL obs regime_proba handling"
@@ -74,6 +87,7 @@
     "deadline": "2026-11-10",
     "owner": "operator",
     "status": "pending",
+    "decision_rule": "JUDGED 2026-10-13 (P424): stay in shadow (free, keeps the WOULD-BLOCK evidence accruing; the only other mode is enforce). At the 2026-11-10 re-run of training/scripts/blocker_counterfactual_p422.py: EARNS (negative signed forward return on the WOULD-BLOCK ticks, |t|>=2 at both h12 and h24, on the asset it blocks most) -> restore enforce; anything else -> remains shadow and this entry closes.",
     "evidence": [
       "P422: shadow by operator decision; blocker counterfactual NOISE-to-costing (SOL n=86 +69/+197/+338bps t~1.0; ETH n=26 mixed)",
       "Re-run training/scripts/blocker_counterfactual_p422.py on the next pull; the WOULD-BLOCK ticks are now observable without costing entries"
@@ -87,13 +101,35 @@
     "opened": "2026-08-22",
     "deadline": "2026-12-01",
     "owner": "operator",
-    "status": "pending",
+    "status": "decided",
+    "decided_on": "2026-10-13",
+    "decided_by": "agent, by operator delegation 2026-10-13 ('from the profitability perspective, make all judgment on my behalf')",
+    "decision": "A then C: the Phase-0 venue probe is the only lever that changes expected return without new capital, and it needs the operator's Kraken Pro US account -- the Bitnomial-cleared US book is NOT exposed on the public Kraken Futures API (probed 2026-10-13: futures.kraken.com serves the GLOBAL PF_XBTUSD/PF_ETHUSD/PF_SOLUSD perps at 0.12/0.40/0.94bps spread, an order of magnitude under CDE, but that venue is US-restricted). Until the operator runs the read-only probe on their US account, C holds: accept the floor, home trio stays as sized. B (add capital) is the operator's money, not a judgment the agent can make.",
+    "config_change": "none; operator step: read-only spread/depth probe of BTC/ETH/SOL on Kraken Derivatives US (Kraken Pro US account), then re-open this entry",
     "evidence": [
       "P374/P375: the fixed per-contract fee amortizes only with notional; BTC edge 26 < 33-40bps threshold (P321/P420b); a percentage venue at <=~8bps RT flips ETH/SOL trained forecasters viable (P407m)",
       "P399: Kraken/Bitnomial CFTC US perps at ~$0.15/ct are a candidate venue; live spread/depth unverified (Phase 0 probe outstanding)",
       "P272/P332: the XRP bag (~53% of the portfolio) is a deliberate unmanaged hold by operator instruction"
     ],
     "options": ["A: Phase-0 probe the Kraken US perp book (read-only) and decide on measured RT", "B: add capital to the CDE sleeve", "C: accept the floor; the home trio stays as sized"],
+    "default": "keep the current live state; escalate every heartbeat until decided (never auto-de-risk, never auto-promote - P141)"
+  },
+  {
+    "id": "home_trio_reread",
+    "title": "Home-trio posture: the pre-committed re-read of the 2026-10-13 KEEP-ENFORCE decision",
+    "opened": "2026-10-13",
+    "deadline": "2026-12-01",
+    "owner": "operator",
+    "status": "pending",
+    "decision_rule": "PRE-COMMITTED 2026-10-13 (P424): B iff the pooled regimebook forward IC over the FULL ledger span is still negative with |t|>=2 at BOTH the 1- and 4-bar horizons AND the span now contains a trending stretch (regime census: bull share >= 25% of bars over the last 60d). A trend book that loses in a trend is broken; one that loses in chop is doing its job.",
+    "evidence": [
+      "home_trio_posture decided A (keep enforce) on 2026-10-13 against a one-era forward failure; this entry is the dated re-read so that decision cannot become 'never' (P421 mitigation a)",
+      "Instrument: the Monday seat_check_weekly.sh step 6/6 pooled regimebook read (90d, Kraken-priced) + a full-span scorer run; both print, neither applies"
+    ],
+    "options": [
+      "A: keep enforce",
+      "B: flat/defensive -- regimebook_mode off + trend_following_mode off AND Best-of-N neutralised in the same change (otherwise B hands the quant slot to an unvalidated decider, P299); the ETF de-risk and every risk control keep binding"
+    ],
     "default": "keep the current live state; escalate every heartbeat until decided (never auto-de-risk, never auto-promote - P141)"
   }
 ]

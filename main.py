@@ -1868,6 +1868,7 @@ class ProductionConfig:
     etf_decide_assets: Optional[List[str]] = None
     skew_seat_mode: str = "off"           # [P407] contrarian 25d-skew direction seat
     skew_seat_assets: Optional[List[str]] = None
+    skew_seat_feed: str = "api"           # [P424] "api" (Laevitas apiv2) | "bank" (the P421c replica archive)
     fusion_conviction_to_sleeve: bool = False
     # [P304] Feed the CascadeExhaustionGovernor a REAL short-window
     # liquidation figure (the change in the rolling 24h total) instead of the
@@ -2344,6 +2345,7 @@ class ProductionConfig:
             skew_seat_assets=(
                 list(data["skew_seat_assets"])
                 if isinstance(data.get("skew_seat_assets"), list) else None),
+            skew_seat_feed=str(data.get("skew_seat_feed", "api") or "api").lower(),  # [P424]
             fusion_conviction_to_sleeve=bool(
                 data.get("fusion_conviction_to_sleeve", False)),
             cascade_real_liquidation_window=bool(
@@ -7283,11 +7285,17 @@ class HMATSProductionRunner:
         self._skew_flow_signal = None
         try:
             from defense.skew_flow_signal import SkewFlowSignal
-            self._skew_flow_signal = SkewFlowSignal(data_dir="data")
+            # [P424] feed selected by config: "bank" reads the replica archive
+            # (the vendor key is dead), "api" is the P407 live fetch.
+            _skew_feed = str(getattr(self.config, "skew_seat_feed", "api") or "api")
+            self._skew_flow_signal = SkewFlowSignal(data_dir="data", feed=_skew_feed)
             from defense.skew_etf_combo_shadow import SkewEtfComboShadow
             self._skew_etf_combo = SkewEtfComboShadow(data_dir="data")  # [P407j] observation-only
-            logger.info("  [P407] SkewFlowSignal: ACTIVE (Deribit 25d skew, "
-                        "contrarian; BTC+ETH; live via LAEVITAS_API_KEY)")
+            logger.info("  [P407] SkewFlowSignal: ACTIVE (Deribit 25d skew; "
+                        f"feed={self._skew_flow_signal._feed} "
+                        f"[{'replica archive, $0' if self._skew_flow_signal._feed == 'bank' else 'live via LAEVITAS_API_KEY'}]; "
+                        f"seat assets={getattr(self.config, 'skew_seat_assets', None)} "
+                        f"mode={getattr(self.config, 'skew_seat_mode', 'off')})")
         except Exception as _sks_err:
             logger.warning(f"  [P407] SkewFlowSignal init failed: "
                            f"{type(_sks_err).__name__}: {_sks_err}")

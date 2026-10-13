@@ -205,7 +205,8 @@
       "Bash(python -m json.tool)",
       "Bash(python -c 'import json,sys *)",
       "Bash(python)",
-      "Bash(python -c \"import json,sys; d=json.loads\\(sys.stdin.read\\(\\)\\); print\\('signals_ schema keys:', list\\(d.keys\\(\\)\\)\\); ag=[s for s in d.get\\('signals',[]\\) if s.get\\('agent_name'\\)=='drl']; print\\('drl in signals:', ag[0] if ag else 'NONE'\\)\")"
+      "Bash(python -c \"import json,sys; d=json.loads\\(sys.stdin.read\\(\\)\\); print\\('signals_ schema keys:', list\\(d.keys\\(\\)\\)\\); ag=[s for s in d.get\\('signals',[]\\) if s.get\\('agent_name'\\)=='drl']; print\\('drl in signals:', ag[0] if ag else 'NONE'\\)\")",
+      "Edit(analytics/decisions/pending_decisions.json)"
     ],
     "additionalDirectories": [
       "\\tmp",

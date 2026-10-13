@@ -19,7 +19,13 @@ if [ -z "$R" ]; then
   exit 2
 fi
 echo "[seat_check] scoring $R"
-docker exec hmats-engine python -X utf8 scripts/seat_check.py --ic-report "$R"
+# [P424] BTC's live decider is the skew seat (re-armed on the replica feed),
+# which this instrument cannot score from the attribution series (P420) --
+# an unscoped run would REFUSE every week. Scope BOTH reads to the assets
+# whose decider IS the regimebook. The skew seat's own exam is the skewetf_*
+# ledger via compute_shadow_ic (the P421 reads), not this controller.
+SCOPE="--assets ETH,SOL"
+docker exec hmats-engine python -X utf8 scripts/seat_check.py --ic-report "$R" $SCOPE
 echo "[seat_check] exit=$? (0=hold 3=SWITCH-recommended 2=refusal; NEVER auto-applied)"
 
 # [P423] step 6/6 — the book's own ledger, pooled, 1/4-bar horizons
@@ -34,5 +40,5 @@ if [ "$SC" -ne 0 ]; then
   exit 2
 fi
 docker exec hmats-engine python -X utf8 scripts/seat_check.py --shadow-ic-report "$S" \
-  --ledger-dir /opt/hmats/data/strategy_shadow
+  --ledger-dir /opt/hmats/data/strategy_shadow $SCOPE
 echo "[seat_check] ledger-read exit=$? (0=hold 3=SWITCH-recommended 2=refusal; NEVER auto-applied — decide via analytics/decisions/pending_decisions.json)"

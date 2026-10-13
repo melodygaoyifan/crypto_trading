@@ -90,8 +90,13 @@ class TestIncumbentPrecedence:
         three arms negative — the seat is PARKED, operator-instructed), so the
         BTC/ETH seats fall through to the regimebook incumbent. A revert of the
         park, or a silent re-arm, fails this pin either way (P237)."""
+        # [P424 re-pointed, was P421] BTC re-armed on the skew seat 2026-10-13
+        # (replica-bank feed, BTC ONLY — ETH stays parked on era-fragility), so
+        # BTC's live decider is skew_contra and ETH/SOL fall through to the
+        # regimebook. A silent park of BTC, or a silent re-arm of ETH, fails
+        # this pin either way (P237).
         m = live_incumbents(LIVE_CFG, ["BTC", "ETH", "SOL"])
-        assert m == {"BTC": "regimebook", "ETH": "regimebook", "SOL": "regimebook"}
+        assert m == {"BTC": "skew_contra", "ETH": "regimebook", "SOL": "regimebook"}
 
     def test_asset_membership_is_case_insensitive_and_absent_lists_are_empty(self):
         cfg = {"skew_seat_mode": "enforce", "regimebook_mode": "enforce"}

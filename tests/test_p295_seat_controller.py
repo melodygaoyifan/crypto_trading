@@ -219,9 +219,19 @@ class TestCli:
         proceeds to a verdict instead of the skew refusal, and it still never
         prescribes the retired `trend_assets` actuator. A silent re-arm of the
         skew seat flips this back to the refusal and fails this pin (P237)."""
-        r = _run("--stats", json.dumps(
-            {"whale": {"ic_4h": 0.04, "ic_16h": 0.011,
-                       "t_4h": 0.98, "t_16h": 0.14, "n": 605}}))
+        # [P424 re-pointed, was P421] BTC's decider is the skew seat again
+        # (re-armed 2026-10-13 on the replica-bank feed, BTC ONLY), so an
+        # UNSCOPED run must REFUSE naming BTC/skew_contra (exit 2, P420), and
+        # the Monday wrapper scopes to --assets ETH,SOL, where the incumbent
+        # is the book and a verdict is reachable. Both halves pinned: a silent
+        # park of BTC makes the unscoped run succeed; a silent re-arm of ETH
+        # makes the scoped run refuse.
+        stats = json.dumps({"whale": {"ic_4h": 0.04, "ic_16h": 0.011,
+                                      "t_4h": 0.98, "t_16h": 0.14, "n": 605}})
+        r = _run("--stats", stats)
+        assert r.returncode == 2, r.stdout + r.stderr
+        assert "BTC" in r.stderr and "skew_contra" in r.stderr, r.stderr
+        r = _run("--stats", stats, "--assets", "ETH,SOL")
         assert r.returncode == 0, r.stdout + r.stderr
         assert re.search(r"incumbent\s*:\s*regimebook", r.stdout), r.stdout
         assert "skew_contra" not in r.stdout, r.stdout
