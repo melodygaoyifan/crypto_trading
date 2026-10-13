@@ -1801,6 +1801,18 @@ class ProductionConfig:
     # preserved here so any profile that omits the key is byte-identical.
     trend_min_abs_signal: float = 0.30
     coinbase_whale_filter_enforce: bool = False
+    # [P422] BitBeast 3-in-1 entry guard mode: "enforce" (the historical
+    # behaviour — SNR/Volume/Structure refusals veto the intent) or "shadow"
+    # (the guard runs, logs [VC-9-SHADOW] WOULD-BLOCK, vetoes nothing).
+    # Measured 2026-10-13 (training/scripts/blocker_counterfactual_p422.py,
+    # 30d): the guard blocked SOL on 86 of 155 book-directional ticks and
+    # ETH on 26 of 147, with the forgone return NOISE-to-costing (SOL h12
+    # +196.9bps, t 1.0; ETH −90.5, t −0.5). It gates a 6-year-certified
+    # book's entries on an intraday-structure read that has never earned a
+    # P166 pass — the P356 shape (an unearned veto on a certified book).
+    # The live profile sets "shadow" by operator decision; default stays
+    # "enforce" so every other profile is byte-identical.
+    bitbeast_veto_mode: str = "enforce"
     # [P352] Minimum whale COUNT behind `whale_net_pressure` before the whale
     # filter is allowed to veto. `net_pressure` is a RATIO — (buy-sell)/(buy+sell)
     # over the whales seen in the last hour — so it says which way they leaned
@@ -2298,6 +2310,10 @@ class ProductionConfig:
                 data.get("trend_min_abs_signal", 0.30) or 0.30),
             coinbase_whale_filter_enforce=bool(
                 data.get("coinbase_whale_filter_enforce", False)),
+            # [P422] BitBeast guard mode (enforce | shadow); unknown -> enforce
+            bitbeast_veto_mode=(
+                "shadow" if str(data.get("bitbeast_veto_mode", "enforce")
+                                ).strip().lower() == "shadow" else "enforce"),
             # [P352] sample-size floor for the whale veto
             coinbase_whale_filter_min_whales=int(
                 data.get("coinbase_whale_filter_min_whales", 2)),
@@ -2849,6 +2865,20 @@ _SLEEVE_FLATTEN_INTENDED_VETOES = (
 # and every data/mechanics fault, where flattening is the P265b bug.
 _SLEEVE_ENTRY_QUALITY_VETOES = ("[VETO]", "[OP_BUDGET]", "[GAMBLER_GATE]",
                                 "[FLIP_GATE]", "[REBUILD_COOLDOWN]",
+    # [P422] The SOTA risk controller's EXIT-ONLY mode (correlation
+    # DECOUPLING / RECOVERING) and its crisis no-new-positions refusal reach
+    # the intent as "[P0_SAFETY] <reason>", and "[P0_SAFETY]" sits in the
+    # FLATTEN roster — so a mode whose own name means "no NEW entries, exits
+    # allowed" LIQUIDATED held positions: the ETH long opened 2026-09-25 was
+    # sold at 04:04 on 09-26 on "Exit-only mode: correlation=RECOVERING" with
+    # direction still +0.5 and the alpha gate passing — the only home-trio
+    # trade in 30 days, closed next day by an entry-only control (P338 class
+    # on a P0 veto; P253c had recorded the translation as a known decision).
+    # Matched on the controller's OWN literals (risk/sota_risk_controller.py
+    # can_open_position) so the guard corpus can see a write site. The other
+    # [P0_SAFETY] reasons (kill switch, HALTED drawdown) stay flatten.
+    "Exit-only mode: correlation=",
+    "Correlation crisis detected - no new positions",
                                 # [P382] trade_gate's "no bottom-fishing"
                                 # check (long + price down + volume_ratio <
     "[WEEKEND]",   # [P416] weekend entry gates (alpha min / entry override)
@@ -2872,6 +2902,20 @@ SLEEVE_HOLD = object()
 # sleeve_entry_blocked_resolve(), because the right answer depends on what is
 # held and which way the signal points.
 SLEEVE_ENTRY_BLOCKED = object()
+
+
+def bitbeast_veto_apply(mode: str, allowed: bool) -> bool:
+    """[P422] Pure: does a BitBeast refusal VETO the intent under `mode`?
+
+    "enforce" -> a refusal vetoes (historical behaviour). "shadow" -> never
+    vetoes; the caller logs WOULD-BLOCK so the evidence keeps accruing while
+    the certified book trades. An unrecognised mode reads as ENFORCE — the
+    fail direction a loosening switch must have (a typo must not disarm a
+    guard).
+    """
+    if allowed:
+        return False
+    return str(mode or "enforce").strip().lower() != "shadow"
 
 
 def sleeve_entry_blocked_resolve(current_contracts, intent_direction, reason):
@@ -14862,7 +14906,17 @@ class HMATSProductionRunner:
                     _vg_allowed, _vg_reasons = _veto_guard.check_entry(
                         direction=intent.direction, confidence=_vg_conf
                     )
-                    if not _vg_allowed:
+                    _vg_mode = str(getattr(self.config, "bitbeast_veto_mode",
+                                           "enforce") or "enforce")
+                    if not _vg_allowed and not bitbeast_veto_apply(_vg_mode, _vg_allowed):
+                        # [P422] SHADOW: the guard ran and would have blocked;
+                        # record it, veto nothing. Grep [VC-9-SHADOW] for the
+                        # forward evidence this mode exists to accrue.
+                        logger.info(
+                            f"[VC-9-SHADOW] {asset}: WOULD-BLOCK entry "
+                            f"dir={'LONG' if intent.direction > 0 else 'SHORT'} "
+                            f"| reasons: {_vg_reasons} (bitbeast_veto_mode=shadow)")
+                    elif not _vg_allowed:
                         intent.veto_active = True
                         intent.veto_reason = f"[VETO] {'; '.join(_vg_reasons)}"
                         # [VC-9] Per-filter diagnostic

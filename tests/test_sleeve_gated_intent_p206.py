@@ -477,6 +477,11 @@ class TestVetoStringCouplingDriftGuard:
         # roster member drawn from it.
         src += code_only(repo / "core" / "execution_service.py",
                          strip_docstrings=True)
+        # [P422] The SOTA risk controller's can_open_position reasons reach
+        # the intent via main.py's "[P0_SAFETY] {reason}" stamp; the
+        # entry-blocked members for its EXIT-ONLY mode are its own literals.
+        src += code_only(repo / "risk" / "sota_risk_controller.py",
+                         strip_docstrings=True)
         # Excise the definition statements themselves.
         src = re.sub(r"_SLEEVE_HOLD_VETOES\s*=\s*\([^)]*\)", "", src)
         src = re.sub(r"_SLEEVE_VENUE_NA_VETOES\s*=\s*\([^)]*\)", "", src)

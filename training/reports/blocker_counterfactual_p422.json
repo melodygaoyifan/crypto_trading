@@ -1,0 +1,533 @@
+{
+ "generated_at": "2026-10-13T08:33:39.190466+00:00",
+ "window_start": "2026-09-13",
+ "horizons_bars": [
+  4,
+  12,
+  24
+ ],
+ "cost_rt_bps": {
+  "BTC": 19.7,
+  "ETH": 29.0,
+  "SOL": 29.0
+ },
+ "t_bar": 1.5,
+ "assets": {
+  "BTC": {
+   "book_wanted_ticks": 186,
+   "blockers": {
+    "ETF_DERISK_HOLD": {
+     "n": 110,
+     "per_horizon": {
+      "4": {
+       "n": 102,
+       "n_eff": 25.5,
+       "mean_bps": 10.9,
+       "t": 0.36,
+       "sum_bps": 1116.8
+      },
+      "12": {
+       "n": 92,
+       "n_eff": 7.7,
+       "mean_bps": 35.7,
+       "t": 0.36,
+       "sum_bps": 3288.1
+      },
+      "24": {
+       "n": 80,
+       "n_eff": 3.3,
+       "mean_bps": 182.7,
+       "t": 0.72,
+       "sum_bps": 14613.1
+      }
+     },
+     "verdict": "NOISE"
+    },
+    "ALPHA_GATE_DIR_ZEROED_UPSTREAM": {
+     "n": 61,
+     "per_horizon": {
+      "4": {
+       "n": 61,
+       "n_eff": 15.2,
+       "mean_bps": 23.7,
+       "t": 0.53,
+       "sum_bps": 1444.7
+      },
+      "12": {
+       "n": 61,
+       "n_eff": 5.1,
+       "mean_bps": 94.1,
+       "t": 0.72,
+       "sum_bps": 5740.2
+      },
+      "24": {
+       "n": 61,
+       "n_eff": 2.5,
+       "mean_bps": 96.3,
+       "t": 0.64,
+       "sum_bps": 5875.8
+      }
+     },
+     "verdict": "NOISE"
+    },
+    "CORRELATION_COLLAPSE": {
+     "n": 11,
+     "per_horizon": {
+      "4": {
+       "n": 11,
+       "n_eff": 2.8,
+       "mean_bps": -4.4,
+       "t": -0.14,
+       "sum_bps": -48.0
+      },
+      "12": {
+       "n": 11,
+       "n_eff": 1.0,
+       "mean_bps": -0.1,
+       "t": -0.0,
+       "sum_bps": -1.5
+      },
+      "24": {
+       "n": 11,
+       "n_eff": 1.0,
+       "mean_bps": -81.5,
+       "t": -1.37,
+       "sum_bps": -896.9
+      }
+     },
+     "verdict": "NOISE"
+    },
+    "BITBEAST_STRUCTURE": {
+     "n": 4,
+     "per_horizon": {
+      "4": {
+       "n": 4,
+       "n_eff": 1.0,
+       "mean_bps": 44.4,
+       "t": 0.65,
+       "sum_bps": 177.7
+      },
+      "12": {
+       "n": 4,
+       "n_eff": 1.0,
+       "mean_bps": -6.1,
+       "t": -0.1,
+       "sum_bps": -24.4
+      },
+      "24": {
+       "n": 4,
+       "n_eff": 1.0,
+       "mean_bps": -67.5,
+       "t": -2.37,
+       "sum_bps": -269.8
+      }
+     },
+     "verdict": "NOISE"
+    }
+   }
+  },
+  "ETH": {
+   "book_wanted_ticks": 147,
+   "blockers": {
+    "ETF_DERISK_HOLD": {
+     "n": 75,
+     "per_horizon": {
+      "4": {
+       "n": 75,
+       "n_eff": 18.8,
+       "mean_bps": 48.7,
+       "t": 1.0,
+       "sum_bps": 3649.1
+      },
+      "12": {
+       "n": 75,
+       "n_eff": 6.2,
+       "mean_bps": 77.9,
+       "t": 0.44,
+       "sum_bps": 5844.8
+      },
+      "24": {
+       "n": 75,
+       "n_eff": 3.1,
+       "mean_bps": 16.3,
+       "t": 0.05,
+       "sum_bps": 1219.2
+      }
+     },
+     "verdict": "NOISE"
+    },
+    "BITBEAST_STRUCTURE": {
+     "n": 26,
+     "per_horizon": {
+      "4": {
+       "n": 26,
+       "n_eff": 6.5,
+       "mean_bps": -11.3,
+       "t": -0.28,
+       "sum_bps": -294.1
+      },
+      "12": {
+       "n": 26,
+       "n_eff": 2.2,
+       "mean_bps": -90.5,
+       "t": -0.54,
+       "sum_bps": -2351.8
+      },
+      "24": {
+       "n": 26,
+       "n_eff": 1.1,
+       "mean_bps": 85.4,
+       "t": 0.26,
+       "sum_bps": 2220.8
+      }
+     },
+     "verdict": "NOISE"
+    },
+    "P0_EXIT_ONLY_MODE": {
+     "n": 23,
+     "per_horizon": {
+      "4": {
+       "n": 23,
+       "n_eff": 5.8,
+       "mean_bps": -44.3,
+       "t": -0.68,
+       "sum_bps": -1018.8
+      },
+      "12": {
+       "n": 23,
+       "n_eff": 1.9,
+       "mean_bps": -37.1,
+       "t": -0.36,
+       "sum_bps": -853.5
+      },
+      "24": {
+       "n": 23,
+       "n_eff": 1.0,
+       "mean_bps": 40.4,
+       "t": 0.17,
+       "sum_bps": 929.9
+      }
+     },
+     "verdict": "NOISE"
+    },
+    "CORRELATION_COLLAPSE": {
+     "n": 11,
+     "per_horizon": {
+      "4": {
+       "n": 11,
+       "n_eff": 2.8,
+       "mean_bps": 18.5,
+       "t": 0.46,
+       "sum_bps": 203.9
+      },
+      "12": {
+       "n": 11,
+       "n_eff": 1.0,
+       "mean_bps": 28.5,
+       "t": 0.33,
+       "sum_bps": 313.7
+      },
+      "24": {
+       "n": 11,
+       "n_eff": 1.0,
+       "mean_bps": -17.5,
+       "t": -0.19,
+       "sum_bps": -192.2
+      }
+     },
+     "verdict": "NOISE"
+    },
+    "TRADE_GATE": {
+     "n": 4,
+     "per_horizon": {
+      "4": {
+       "n": 4,
+       "n_eff": 1.0,
+       "mean_bps": -324.7,
+       "t": -11.6,
+       "sum_bps": -1298.9
+      },
+      "12": {
+       "n": 4,
+       "n_eff": 1.0,
+       "mean_bps": -223.8,
+       "t": -1.81,
+       "sum_bps": -895.3
+      },
+      "24": {
+       "n": 4,
+       "n_eff": 1.0,
+       "mean_bps": 536.5,
+       "t": 4.26,
+       "sum_bps": 2145.9
+      }
+     },
+     "verdict": "NOISE"
+    },
+    "BITBEAST_VOLUME_SNR": {
+     "n": 4,
+     "per_horizon": {
+      "4": {
+       "n": 4,
+       "n_eff": 1.0,
+       "mean_bps": -14.8,
+       "t": -0.18,
+       "sum_bps": -59.1
+      },
+      "12": {
+       "n": 4,
+       "n_eff": 1.0,
+       "mean_bps": -52.1,
+       "t": -1.19,
+       "sum_bps": -208.3
+      },
+      "24": {
+       "n": 4,
+       "n_eff": 1.0,
+       "mean_bps": -61.7,
+       "t": -0.98,
+       "sum_bps": -246.6
+      }
+     },
+     "verdict": "NOISE"
+    },
+    "ACTIONABLE": {
+     "n": 3,
+     "per_horizon": {
+      "4": {
+       "n": 3,
+       "n_eff": 1.0,
+       "mean_bps": 2.2,
+       "t": 0.14,
+       "sum_bps": 6.6
+      },
+      "12": {
+       "n": 3,
+       "n_eff": 1.0,
+       "mean_bps": -2.5,
+       "t": -0.22,
+       "sum_bps": -7.4
+      },
+      "24": {
+       "n": 3,
+       "n_eff": 1.0,
+       "mean_bps": -36.8,
+       "t": -1.73,
+       "sum_bps": -110.4
+      }
+     },
+     "verdict": "(baseline)"
+    },
+    "ALPHA_GATE_DIR_ZEROED_UPSTREAM": {
+     "n": 1,
+     "per_horizon": {
+      "4": {
+       "n": 1,
+       "n_eff": 1.0,
+       "mean_bps": 114.5,
+       "t": 0.0,
+       "sum_bps": 114.5
+      },
+      "12": {
+       "n": 1,
+       "n_eff": 1.0,
+       "mean_bps": -346.1,
+       "t": 0.0,
+       "sum_bps": -346.1
+      },
+      "24": {
+       "n": 1,
+       "n_eff": 1.0,
+       "mean_bps": -193.6,
+       "t": 0.0,
+       "sum_bps": -193.6
+      }
+     },
+     "verdict": "NOISE"
+    }
+   }
+  },
+  "SOL": {
+   "book_wanted_ticks": 155,
+   "blockers": {
+    "BITBEAST_STRUCTURE": {
+     "n": 86,
+     "per_horizon": {
+      "4": {
+       "n": 86,
+       "n_eff": 21.5,
+       "mean_bps": 69.3,
+       "t": 1.06,
+       "sum_bps": 5958.4
+      },
+      "12": {
+       "n": 86,
+       "n_eff": 7.2,
+       "mean_bps": 196.9,
+       "t": 1.02,
+       "sum_bps": 16937.4
+      },
+      "24": {
+       "n": 86,
+       "n_eff": 3.6,
+       "mean_bps": 338.1,
+       "t": 1.11,
+       "sum_bps": 29077.4
+      }
+     },
+     "verdict": "NOISE"
+    },
+    "P0_EXIT_ONLY_MODE": {
+     "n": 47,
+     "per_horizon": {
+      "4": {
+       "n": 47,
+       "n_eff": 11.8,
+       "mean_bps": -87.4,
+       "t": -1.84,
+       "sum_bps": -4109.3
+      },
+      "12": {
+       "n": 47,
+       "n_eff": 3.9,
+       "mean_bps": -210.3,
+       "t": -1.32,
+       "sum_bps": -9882.0
+      },
+      "24": {
+       "n": 47,
+       "n_eff": 2.0,
+       "mean_bps": -50.0,
+       "t": -0.1,
+       "sum_bps": -2351.8
+      }
+     },
+     "verdict": "NOISE"
+    },
+    "CORRELATION_COLLAPSE": {
+     "n": 11,
+     "per_horizon": {
+      "4": {
+       "n": 11,
+       "n_eff": 2.8,
+       "mean_bps": 209.8,
+       "t": 2.05,
+       "sum_bps": 2307.3
+      },
+      "12": {
+       "n": 11,
+       "n_eff": 1.0,
+       "mean_bps": 422.4,
+       "t": 1.94,
+       "sum_bps": 4646.8
+      },
+      "24": {
+       "n": 11,
+       "n_eff": 1.0,
+       "mean_bps": 216.3,
+       "t": 0.96,
+       "sum_bps": 2379.2
+      }
+     },
+     "verdict": "COSTS"
+    },
+    "BITBEAST_VOLUME_SNR": {
+     "n": 6,
+     "per_horizon": {
+      "4": {
+       "n": 6,
+       "n_eff": 1.5,
+       "mean_bps": 28.8,
+       "t": 0.47,
+       "sum_bps": 173.0
+      },
+      "12": {
+       "n": 6,
+       "n_eff": 1.0,
+       "mean_bps": -29.3,
+       "t": -0.4,
+       "sum_bps": -176.0
+      },
+      "24": {
+       "n": 6,
+       "n_eff": 1.0,
+       "mean_bps": -432.8,
+       "t": -0.93,
+       "sum_bps": -2596.8
+      }
+     },
+     "verdict": "NOISE"
+    },
+    "TRADE_GATE": {
+     "n": 3,
+     "per_horizon": {
+      "4": {
+       "n": 3,
+       "n_eff": 1.0,
+       "mean_bps": -35.5,
+       "t": -0.38,
+       "sum_bps": -106.6
+      },
+      "12": {
+       "n": 3,
+       "n_eff": 1.0,
+       "mean_bps": 143.1,
+       "t": 0.31,
+       "sum_bps": 429.4
+      },
+      "24": {
+       "n": 3,
+       "n_eff": 1.0,
+       "mean_bps": 49.7,
+       "t": 0.06,
+       "sum_bps": 149.2
+      }
+     },
+     "verdict": "NOISE"
+    },
+    "ACTIONABLE": {
+     "n": 1,
+     "per_horizon": {
+      "4": {
+       "n": 1,
+       "n_eff": 1.0,
+       "mean_bps": -137.4,
+       "t": 0.0,
+       "sum_bps": -137.4
+      },
+      "12": {
+       "n": 1,
+       "n_eff": 1.0,
+       "mean_bps": -345.9,
+       "t": 0.0,
+       "sum_bps": -345.9
+      },
+      "24": {
+       "n": 1,
+       "n_eff": 1.0,
+       "mean_bps": 185.7,
+       "t": 0.0,
+       "sum_bps": 185.7
+      }
+     },
+     "verdict": "(baseline)"
+    },
+    "ALPHA_GATE_DIR_ZEROED_UPSTREAM": {
+     "n": 1,
+     "per_horizon": {
+      "4": {
+       "n": 0
+      },
+      "12": {
+       "n": 0
+      },
+      "24": {
+       "n": 0
+      }
+     },
+     "verdict": "NOISE"
+    }
+   }
+  }
+ }
+}

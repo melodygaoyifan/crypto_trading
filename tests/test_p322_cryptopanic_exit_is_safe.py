@@ -35,6 +35,17 @@ from pathlib import Path
 
 import pytest
 
+
+@pytest.fixture(autouse=True)
+def _p422_isolate_data_dir(tmp_path, monkeypatch):
+    # [P422] The CryptoPanic feed restores its persisted cache from
+    # $HMATS_DATA_DIR (P154/P293b); on a machine that has run the engine the
+    # untracked data/cryptopanic_state.json carries REAL cached headlines, so
+    # the mock-means-no-news assertion failed on local residue (P194/P294:
+    # construct the state, never inherit it). One test here already isolated
+    # the dir; every test in the file must.
+    monkeypatch.setenv("HMATS_DATA_DIR", str(tmp_path))
+
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
