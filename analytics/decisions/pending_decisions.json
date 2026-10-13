@@ -1,0 +1,99 @@
+[
+  {
+    "id": "home_trio_posture",
+    "title": "Home-trio direction posture after the September reads: regimebook/trend stay `enforce`, or move to the P271 flat/defensive branch?",
+    "opened": "2026-10-13",
+    "deadline": "2026-10-27",
+    "owner": "operator",
+    "status": "pending",
+    "evidence": [
+      "P421: regimebook family pooled forward IC -0.134/-0.336/-0.456 (|t| 2.6-3.8), uniform per asset and per variant; P237 tripwire FIRED 3/3",
+      "P421e: seat controller on the regimebook's own pooled ledger: incumbent -0.1261 -> FLAT wins, SWITCH recommended (printed, never applied)",
+      "P422: on the ticks the book WANTED a position, blockers (exit-only P0 mode, BitBeast, ETF hold, fee floor) ate nearly everything; the book's own record in the window is therefore thin",
+      "65d window = one era (Aug-Oct chop); the books' 6y certification is unchanged but this was their pre-committed forward exam and they failed it"
+    ],
+    "options": [
+      "A: keep enforce (accept the P421 forward failure as one-era noise; re-read at the next full-span scorer run)",
+      "B: flat/defensive (regimebook_mode off + trend_assets [] -> the P271 failure-of-everything branch; the ETF de-risk and every risk control keep binding)",
+      "C: keep enforce for SOL only (the one asset whose book was not uniformly negative) and flat BTC/ETH"
+    ],
+    "default": "keep the current live state; escalate every heartbeat until decided (never auto-de-risk, never auto-promote - P141)",
+    "notes": "A decision in either direction is a one-line config change + redeploy; record it here in the same commit."
+  },
+  {
+    "id": "skew_rearm",
+    "title": "Re-arm the skew seat on the free Deribit-direct replica feed (BTC alive-class, ETH era-fragile per P421b)?",
+    "opened": "2026-10-12",
+    "deadline": "2026-11-10",
+    "owner": "operator",
+    "status": "pending",
+    "evidence": [
+      "P421b runtime-series probe: BTC gross/RT +227 full, +43 (2025), +366 (2026) vs cost 19.7 -> alive-class both sub-eras; ETH 2025 = -188.6 KILL-class, 2026 +850 -> era-fragile",
+      "P421c: scripts/deribit_skew_replica.py validated to 2.7e-6 vs the vendor; daily 06:05 UTC cron appends into the runtime banks (BTC 422+ rows)",
+      "The seat is PARKED (skew_seat_mode off) and its feed is still the dead Laevitas key; re-arming needs the seat pointed at the replica banks + its own P-entry"
+    ],
+    "options": [
+      "A: re-arm BTC only on the replica feed (ETH stays parked on era-fragility)",
+      "B: keep parked; let the bank accrue another quarter and re-probe",
+      "C: re-arm both"
+    ],
+    "default": "keep the current live state; escalate every heartbeat until decided (never auto-de-risk, never auto-promote - P141)"
+  },
+  {
+    "id": "calbasis_reread",
+    "title": "The calbasis near-miss: pre-committed 95d re-read via scripts/calbasis_check.py",
+    "opened": "2026-10-12",
+    "deadline": "2026-11-10",
+    "owner": "operator",
+    "status": "pending",
+    "evidence": [
+      "P421: calbasis pooled IC +0.200/+0.265/+0.307 (t 3.70/2.79/2.23), clears cost at h12/h24, blocked ONLY by h4 edge 53.4 < 58.1",
+      "P421c: the criterion is an executable gate (exit 3 = met -> lab-ladder P-entry; h12/h24 significant + h4 sub-bar -> slow-expression variant ledger)"
+    ],
+    "options": ["run scripts/calbasis_check.py on/after 2026-11-10 and act on its exit code"],
+    "default": "keep the current live state; escalate every heartbeat until decided (never auto-de-risk, never auto-promote - P141)"
+  },
+  {
+    "id": "jump_regime_cutover",
+    "title": "Cut the control tables over from the GMM regime to the jump-model regime (P414c shadow)?",
+    "opened": "2026-08-26",
+    "deadline": "2026-11-10",
+    "owner": "operator",
+    "status": "pending",
+    "evidence": [
+      "P414c: online/filtered churn cut +59% to +66% vs GMM on BTC/ETH/SOL, 7/8 names control-compatible; shadow ledger jumpregime_{ASSET}.jsonl accruing since the P420 decision-tick fix",
+      "The payoff is diffuse (the decider is GMM-independent); the cutover is a P215 atomic campaign incl. the DRL obs regime_proba handling"
+    ],
+    "options": ["A: run the P215 cutover campaign", "B: keep shadow; re-read the churn comparison at the deadline", "C: retire the shadow"],
+    "default": "keep the current live state; escalate every heartbeat until decided (never auto-de-risk, never auto-promote - P141)"
+  },
+  {
+    "id": "bitbeast_shadow_review",
+    "title": "BitBeast guard: read the [VC-9-SHADOW] WOULD-BLOCK forward evidence and decide enforce/shadow/retire",
+    "opened": "2026-10-13",
+    "deadline": "2026-11-10",
+    "owner": "operator",
+    "status": "pending",
+    "evidence": [
+      "P422: shadow by operator decision; blocker counterfactual NOISE-to-costing (SOL n=86 +69/+197/+338bps t~1.0; ETH n=26 mixed)",
+      "Re-run training/scripts/blocker_counterfactual_p422.py on the next pull; the WOULD-BLOCK ticks are now observable without costing entries"
+    ],
+    "options": ["A: keep shadow", "B: restore enforce (only on EARNS)", "C: retire the guard"],
+    "default": "keep the current live state; escalate every heartbeat until decided (never auto-de-risk, never auto-promote - P141)"
+  },
+  {
+    "id": "capital_venue",
+    "title": "Capital / venue: the flat CDE fee floor keeps BTC out and bounds every book; more capital, a percentage-fee venue, or accept",
+    "opened": "2026-08-22",
+    "deadline": "2026-12-01",
+    "owner": "operator",
+    "status": "pending",
+    "evidence": [
+      "P374/P375: the fixed per-contract fee amortizes only with notional; BTC edge 26 < 33-40bps threshold (P321/P420b); a percentage venue at <=~8bps RT flips ETH/SOL trained forecasters viable (P407m)",
+      "P399: Kraken/Bitnomial CFTC US perps at ~$0.15/ct are a candidate venue; live spread/depth unverified (Phase 0 probe outstanding)",
+      "P272/P332: the XRP bag (~53% of the portfolio) is a deliberate unmanaged hold by operator instruction"
+    ],
+    "options": ["A: Phase-0 probe the Kraken US perp book (read-only) and decide on measured RT", "B: add capital to the CDE sleeve", "C: accept the floor; the home trio stays as sized"],
+    "default": "keep the current live state; escalate every heartbeat until decided (never auto-de-risk, never auto-promote - P141)"
+  }
+]

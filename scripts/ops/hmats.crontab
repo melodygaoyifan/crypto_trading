@@ -1,0 +1,19 @@
+# [P235/P237] Weekly evidence pipeline (read-only tools; reports -> hmats-data volume, stdout -> evidence_cron.log)
+10 6 * * 1 docker exec hmats-engine python -X utf8 analytics/ic/agent_ic_review.py --window-days 30 --report-dir /opt/hmats/data/evidence_reports >> /home/hmats/evidence_cron.log 2>&1
+20 6 * * 1 docker exec hmats-engine python -X utf8 analytics/calibration/slope_calibrator.py --window-days 90 --report-dir /opt/hmats/data/evidence_reports >> /home/hmats/evidence_cron.log 2>&1
+25 6 * * 1 docker exec hmats-engine python -X utf8 analytics/calibration/tripwire_check.py >> /home/hmats/evidence_cron.log 2>&1
+30 6 * * 1 docker exec hmats-engine python -X utf8 analytics/sleeve_attribution/sleeve_beta_review.py --window-days 60 >> /home/hmats/evidence_cron.log 2>&1
+35 6 * * 1 docker exec hmats-engine python -X utf8 scripts/trend_regime_review.py >> /home/hmats/evidence_cron.log 2>&1
+40 6 * * 1 sh /home/hmats/seat_check_weekly.sh >> /home/hmats/evidence_cron.log 2>&1
+15 6 * * 1 docker exec hmats-engine python -X utf8 analytics/ic/agent_disagreement_review.py --advisor whale --window-days 90 >> /home/hmats/evidence_cron.log 2>&1
+16 6 * * 1 docker exec hmats-engine python -X utf8 analytics/ic/agent_disagreement_review.py --advisor model_alpha --window-days 90 >> /home/hmats/evidence_cron.log 2>&1
+45 6 * * 1 docker exec hmats-engine python -X utf8 scripts/calibration_check.py >> /home/hmats/evidence_cron.log 2>&1
+50 6 * * 1 docker exec hmats-engine python -X utf8 scripts/september_check.py --countdown-only >> /home/hmats/evidence_cron.log 2>&1
+# [P389c] Weekly forward-accumulation of the derivatives-positioning bundle (OI/liq/funding/long-short ratio).
+# Host venv (runtime image lacks pyarrow); MERGE-accumulates (P266) into a persistent host dir. Feed for the P388 OI-lead OOS validation.
+55 6 * * 1 cd /home/hmats/hmats/app && HMATS_COINGLASS_DIR=/home/hmats/coinglass_history /home/hmats/cg_venv/bin/python -X utf8 training/scripts/fetch_coinglass_history.py --interval 4h >> /home/hmats/coinglass_accum.log 2>&1
+57 6 * * 1 cd /home/hmats/hmats/app && HMATS_COINGLASS_DIR=/home/hmats/coinglass_history /home/hmats/cg_venv/bin/python -X utf8 training/scripts/fetch_coinglass_history.py --interval 1d >> /home/hmats/coinglass_accum.log 2>&1
+47 6 * * 1 docker exec hmats-engine python -X utf8 scripts/conviction_sizing_review.py >> /home/hmats/evidence_cron.log 2>&1
+# [P423] standing-decision alarm (exit 3 = OVERDUE; never edits config) + realized attribution by decider
+52 6 * * 1 docker exec hmats-engine python -X utf8 scripts/decision_check.py >> /home/hmats/evidence_cron.log 2>&1
+32 6 * * 1 docker exec hmats-engine python -X utf8 analytics/sleeve_attribution/decider_attribution.py >> /home/hmats/evidence_cron.log 2>&1

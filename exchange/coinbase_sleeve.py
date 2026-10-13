@@ -1030,6 +1030,35 @@ class CoinbaseSleeve:
     def _fill_quality_path(self) -> str:
         return os.path.join(self._data_dir(), "fill_quality.jsonl")
 
+    # [P423] ORDER CONTEXT — the decider/cause stamp on every sleeve fill.
+    # The P290 ledger recorded COST (slippage, fees) but not CAUSE: no row
+    # said which seat asked for the position or why it was closed, so
+    # realized P&L per decider was unanswerable from the live book
+    # (trade_attribution.jsonl died with the Kraken path on 2026-06-10).
+    # The driver sets the context immediately before manage_to_signal and
+    # clears it after; the emergency paths (watchdog, FORCE_FLAT) set their
+    # own cause. A fill recorded with NO context carries decider=None —
+    # distinguishable from a pre-P423 row (no key at all) so the reader can
+    # count unlabeled post-P423 fills as the ledger defect they are.
+    _ORDER_CTX_KEYS = ("decider", "src", "cause", "intent_direction",
+                       "alpha_bps", "target_contracts")
+
+    def set_order_context(self, asset: str, **ctx: Any) -> None:
+        """[P423] Stamp the next fill(s) for `asset` with decider/cause."""
+        try:
+            store = getattr(self, "_order_context", None)
+            if store is None:
+                store = self._order_context = {}
+            store[asset] = {k: ctx.get(k) for k in self._ORDER_CTX_KEYS}
+        except Exception:  # noqa: silent-swallow — a labelling failure must never touch the order path (Iron Law 7)
+            pass
+
+    def clear_order_context(self, asset: str) -> None:
+        try:
+            (getattr(self, "_order_context", None) or {}).pop(asset, None)
+        except Exception:  # noqa: silent-swallow — see set_order_context
+            pass
+
     def _record_fill_quality(self, asset: str, order_id: Optional[str],
                              side: str, contracts: Optional[int],
                              liquidity: str, urgent: bool,
@@ -1074,6 +1103,22 @@ class CoinbaseSleeve:
                 "fees_usd": None,
                 "filled_size_raw": None,
             }
+            # [P423] decider/cause stamp + the venue position BEFORE the
+            # leg (the P207 window means the post-fill snapshot is stale;
+            # the pre-leg snapshot is the honest anchor for a reader
+            # walking positions). Keys ALWAYS present post-P423; None =
+            # "no context was set" — a defect the reader counts.
+            try:
+                _ctx = (getattr(self, "_order_context", None) or {}).get(asset) or {}
+                for _k in self._ORDER_CTX_KEYS:
+                    rec[_k] = _ctx.get(_k)
+                _snap = (getattr(self, "_last_positions", None) or {}).get(asset) or {}
+                _pb = _snap.get("signed_contracts")
+                rec["position_before"] = (int(_pb) if _pb is not None
+                                          else (0 if getattr(self, "_reconcile_ok", False)
+                                                else None))
+            except Exception:  # noqa: silent-swallow — the stamp is optional; the P290 record stays honest without it
+                pass
             try:
                 if (decision_bid and decision_ask and decision_bid > 0
                         and decision_ask >= decision_bid):

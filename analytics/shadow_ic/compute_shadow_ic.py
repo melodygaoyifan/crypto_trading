@@ -409,7 +409,45 @@ def load_shadow_ledgers(
     return records
 
 
-def load_ohlcv(asset: str) -> Any:
+# [P423] Kraken public 4H OHLC as an OPT-IN price source (--allow-kraken-ohlcv)
+# so the weekly in-container seat read (P421e step 6) can score the regimebook
+# ledger where the parquets are not (P213: training/ is dockerignored). The
+# endpoint serves ~720 bars (~120 days) — enough for the 30-90d reads, and
+# the SAME series agent_ic_review / regime_book_shadow already price on.
+# OFF by default: the P213 refusal ("no prices" is a wrong-environment error,
+# never a verdict) is unchanged unless the caller asks for the fallback.
+try:
+    from analytics.ic.agent_ic_review import KRAKEN_PAIRS as _KRAKEN_PAIRS
+except ImportError:  # run as a script: the repo root is not on sys.path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from analytics.ic.agent_ic_review import KRAKEN_PAIRS as _KRAKEN_PAIRS  # noqa: E402
+
+ALLOW_KRAKEN_OHLCV = False
+
+
+def fetch_kraken_ohlcv(asset: str) -> Any:
+    """4H bars from Kraken's public OHLC endpoint as a DataFrame(timestamp,
+    close), the in-progress candle dropped (P253c/P265). Raises on any
+    failure — the caller's get_ohlcv treats a raise as 'unpriced'."""
+    import urllib.request
+    import pandas as pd
+    pair = _KRAKEN_PAIRS[asset]  # KeyError = no pair = unpriced, correctly
+    url = f"https://api.kraken.com/0/public/OHLC?pair={pair}&interval=240"
+    with urllib.request.urlopen(url, timeout=30) as r:
+        payload = json.loads(r.read().decode())
+    if payload.get("error"):
+        raise RuntimeError(f"Kraken OHLC error for {asset}: {payload['error']}")
+    key = next(k for k in payload["result"] if k != "last")
+    rows = payload["result"][key][:-1]
+    df = pd.DataFrame({"timestamp": pd.to_datetime([float(x[0]) for x in rows],
+                                                   unit="s", utc=True),
+                       "close": [float(x[4]) for x in rows]})
+    logger.info(f"[SHADOW_IC] {asset}: priced on Kraken public OHLC "
+                f"({len(df)} bars, --allow-kraken-ohlcv)")
+    return df.sort_values("timestamp").reset_index(drop=True)
+
+
+def load_ohlcv(asset: str, allow_kraken: Optional[bool] = None) -> Any:
     """Load 4H OHLCV parquet. Returns pd.DataFrame indexed by timestamp."""
     try:
         import pandas as pd
@@ -441,6 +479,8 @@ def load_ohlcv(asset: str) -> Any:
                 continue
             df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
             return df.sort_values("timestamp").reset_index(drop=True)
+    if (ALLOW_KRAKEN_OHLCV if allow_kraken is None else allow_kraken):
+        return fetch_kraken_ohlcv(asset)  # [P423] opt-in only
     raise FileNotFoundError(f"OHLCV parquet for {asset} not found in {OHLCV_DIR}")
 
 
@@ -1189,7 +1229,14 @@ def main(argv: Optional[List[str]] = None) -> int:
                         "30-day clock cannot fire without it (P293g).")
     p.add_argument("--output", default=None,
                    help="optional JSON output path; defaults to analytics/shadow_ic/reports/")
+    p.add_argument("--allow-kraken-ohlcv", action="store_true",
+                   help="[P423] when no parquet exists for an asset, price it on "
+                        "Kraken's public 4H OHLC (~120 days). OFF by default so "
+                        "the P213 refusal still fires in the wrong environment; "
+                        "ON for the weekly in-container regimebook seat read.")
     args = p.parse_args(argv)
+    global ALLOW_KRAKEN_OHLCV
+    ALLOW_KRAKEN_OHLCV = bool(getattr(args, "allow_kraken_ohlcv", False))
 
     horizons = tuple(int(x.strip()) for x in args.horizons.split(",") if x.strip())
     prefixes = tuple(x.strip() for x in args.prefixes.split(",") if x.strip())

@@ -20,7 +20,9 @@ from the image, add it to the `Dockerfile.engine` allowlist AND the
 
 The one historical exception is `seat_check_weekly.sh`, a host-side wrapper
 that resolves the newest report at run time (P295c); it lives on the host, not
-in the container.
+in the container — its tracked copy is `scripts/ops/seat_check_weekly.sh`, and
+the whole `hmats` crontab is tracked as `scripts/ops/hmats.crontab` (install
+by file: `scp` + `crontab -u hmats <file>`, P235).
 
 ## `hmats` user — the weekly evidence pipeline (Mondays, UTC)
 
@@ -35,11 +37,13 @@ All `docker exec hmats-engine ...` unless noted; stdout appends to
 | 06:16 | `analytics/ic/agent_disagreement_review.py --advisor model_alpha --window-days 90` | model_alpha entry-filter counterfactual (P324) |
 | 06:20 | `analytics/calibration/slope_calibrator.py --window-days 90 --report-dir /opt/hmats/data/evidence_reports` | honest alpha-slope calibrator (P232) |
 | 06:25 | `analytics/calibration/tripwire_check.py` | P237 streak DETECTION only — prescription retired (P299); it never edits config |
-| 06:30 | `analytics/sleeve_attribution/sleeve_beta_review.py --window-days 60` | realized sleeve beta (P230) |
+| 06:30 | `analytics/sleeve_attribution/sleeve_beta_review.py --window-days 60` | realized sleeve beta — single-factor BTC + multi-factor/conditional/ex-ante (P230/P423) |
+| 06:32 | `analytics/sleeve_attribution/decider_attribution.py` | realized P&L per ENTRY decider from the P423-stamped fill ledger |
 | 06:35 | `scripts/trend_regime_review.py` | trend-gate forward evidence (P198/P213) |
-| 06:40 | `sh /home/hmats/seat_check_weekly.sh` (host wrapper) | the P295 seat controller on the newest IC report; exit 3 = recommendation, never a config edit |
+| 06:40 | `sh /home/hmats/seat_check_weekly.sh` (host wrapper; tracked copy `scripts/ops/seat_check_weekly.sh`) | the P295 seat controller on the newest IC report, THEN [P423] step 6/6: the regimebook's own pooled ledger scored in-container (`compute_shadow_ic --allow-kraken-ohlcv`) and fed to `seat_check --shadow-ic-report`; exit 3 = recommendation, never a config edit |
 | 06:45 | `scripts/calibration_check.py` | measured-constant staleness (P327) |
 | 06:50 | `scripts/september_check.py --countdown-only` | the September read-date alarm (P333); exit 3 = a read window has closed |
+| 06:52 | `scripts/decision_check.py` | [P423] the standing-decision registry alarm (`analytics/decisions/pending_decisions.json`); exit 3 = a decision is OVERDUE — default is keep-state + escalate, never auto-de-risk |
 | 06:55 | host venv: `training/scripts/fetch_coinglass_history.py --interval 4h` (`HMATS_COINGLASS_DIR=/home/hmats/coinglass_history`) | derivatives-positioning accumulation, MERGE-not-overwrite (P389c) |
 | 06:57 | host venv: `training/scripts/fetch_coinglass_history.py --interval 1d` | same, daily interval |
 

@@ -113,15 +113,23 @@ class TestMockHeadlinesNeverReachHaiku:
         mod_feed = _Feed()
         import data_mgmt.feeds.cryptopanic_feed as cp
         import data_mgmt.feeds.rss_news_feed as rss
+        # [P423] the THIRD source, CC News, is a module-level singleton that
+        # an earlier suite (test_p293e's live fetch) leaves populated with
+        # real headlines — un-stubbed it leaked 14 titles into "mock mode"
+        # under alphabetical ordering. Stub all three, not two.
+        import data_mgmt.feeds.cryptocompare_news_feed as ccn
         orig = cp.get_cryptopanic_feed
         orig_rss = rss.get_rss_news_feed
+        orig_cc = ccn.get_cc_news_feed
         cp.get_cryptopanic_feed = lambda *a, **k: mod_feed
         rss.get_rss_news_feed = lambda *a, **k: _EmptyRSS()
+        ccn.get_cc_news_feed = lambda *a, **k: _EmptyRSS()
         try:
             return asyncio.run(mod.fetch_headlines_with_meta("BTC"))
         finally:
             cp.get_cryptopanic_feed = orig
             rss.get_rss_news_feed = orig_rss
+            ccn.get_cc_news_feed = orig_cc
 
     def test_mock_mode_yields_no_headlines(self):
         """THE HAZARD. 'Mock BTC News 0' stamped 30 minutes ago passes the 4h
@@ -309,6 +317,9 @@ class TestTheDisableReachesTheSingletonsOtherCallers:
 
         orig_rss = rss.get_rss_news_feed
         rss.get_rss_news_feed = lambda *a, **k: _EmptyRSS()
+        import data_mgmt.feeds.cryptocompare_news_feed as ccn  # [P423] see _meta
+        orig_cc = ccn.get_cc_news_feed
+        ccn.get_cc_news_feed = lambda *a, **k: _EmptyRSS()
         try:
             cp.set_feed_enabled(False)
             meta = asyncio.run(mod.fetch_headlines_with_meta("BTC"))
@@ -317,6 +328,7 @@ class TestTheDisableReachesTheSingletonsOtherCallers:
             assert meta.get("reason") == "cryptopanic_disabled_by_config"
         finally:
             rss.get_rss_news_feed = orig_rss
+            ccn.get_cc_news_feed = orig_cc
             self._reset()
 
     def test_main_sets_the_switch_when_the_flag_is_false(self):

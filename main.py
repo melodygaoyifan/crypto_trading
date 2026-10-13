@@ -2904,6 +2904,56 @@ SLEEVE_HOLD = object()
 SLEEVE_ENTRY_BLOCKED = object()
 
 
+def sleeve_order_decider(intent, src) -> str:
+    """[P423] Pure: the seat that produced this tick's direction, for the
+    fill ledger. `quant_strategy_id` is set by integration_v36 from
+    agent_signals["primary_strategy"] (regimebook / whale / skew_contra /
+    etf_derisk / trend_following / ...). When the translation reason says a
+    FILTER or COOLDOWN overrode the seat, that is the decider of record —
+    the seat asked, something else answered. Absent intent -> "unknown"
+    (a string the reader counts, never a fabricated seat name)."""
+    s = str(src or "")
+    for tag, name in (("ma_veto", "ma_filter"), ("whale_veto", "whale_filter"),
+                      ("cooldown", "reentry_cooldown"), ("entry_blocked", "entry_veto"),
+                      ("veto_flat", "veto_flat")):
+        if tag in s:
+            return name
+    q = str(getattr(intent, "quant_strategy_id", "") or "").strip()
+    return q or ("pre_gate_signal" if s == "pre_gate" else "unknown")
+
+
+def sleeve_order_cause(src, target) -> str:
+    """[P423] Pure: why the order exists. `signal` for a seat-driven target,
+    `signal_flat` when the seat said flat, `veto_flat` / `entry_veto` /
+    `filter` / `cooldown` when a control overrode the seat. The emergency
+    paths stamp their own (`risk_exit:*`)."""
+    s = str(src or "")
+    if "veto_flat" in s:
+        return "veto_flat"
+    if "entry_blocked" in s:
+        return "entry_veto"
+    if "ma_veto" in s or "whale_veto" in s:
+        return "filter"
+    if "cooldown" in s:
+        return "cooldown"
+    try:
+        t = float(target or 0.0)
+    except (TypeError, ValueError):
+        t = 0.0
+    return "signal" if abs(t) > 0 else "signal_flat"
+
+
+def decisions_heartbeat_text() -> str:
+    """[P423] The 4H heartbeat's "Decisions pending" field. Reads the
+    standing-decision registry; an unreadable registry says so rather than
+    reading as "none pending" (P2/P199). Never raises."""
+    try:
+        from analytics.decisions.registry import heartbeat_line
+        return heartbeat_line()
+    except Exception as e:  # noqa: silent-swallow — heartbeat text only; the registry's own check (decision_check.py) refuses loudly
+        return f"registry unreadable ({type(e).__name__}) — run scripts/decision_check.py"
+
+
 def bitbeast_veto_apply(mode: str, allowed: bool) -> bool:
     """[P422] Pure: does a BitBeast refusal VETO the intent under `mode`?
 
@@ -3938,7 +3988,14 @@ async def sleeve_fast_risk_action(sleeve, asset: str, action_name: str,
         if action_name == "EXIT_ONLY":
             # [P270] urgent=True: the watchdog exists for immediacy — a
             # maker-wait window here would hold risk open to save 3bps
+            _soc = getattr(sleeve, "set_order_context", None)  # [P423]
+            if callable(_soc):
+                _soc(asset, decider="fast_risk_watchdog", src="fast_risk",
+                     cause="risk_exit:fast_risk", target_contracts=0)
             res = await sleeve.execute_target(asset, 0, urgent=True)
+            _coc = getattr(sleeve, "clear_order_context", None)  # [P423]
+            if callable(_coc):
+                _coc(asset)
             _vs = res.get('status')
             # [P382] execute_target swept the venue stop BEFORE the exit; if
             # the exit limit is left behind or refused, the position has NO
@@ -19994,8 +20051,15 @@ class HMATSProductionRunner:
                             # when the sleeve is halted (P195), so a tripped
                             # drawdown halt cannot block the emergency exit.
                             # [P270] urgent=True: FORCE_FLAT never maker-waits
+                            _soc = getattr(_cb_sleeve, "set_order_context", None)  # [P423]
+                            if callable(_soc):
+                                _soc(_cb_a, decider="force_flat", src="force_flat",
+                                     cause="risk_exit:force_flat", target_contracts=0)
                             _cb_r = await _cb_sleeve.execute_target(
                                 _cb_a, 0, urgent=True)
+                            _coc = getattr(_cb_sleeve, "clear_order_context", None)  # [P423]
+                            if callable(_coc):
+                                _coc(_cb_a)
                             logger.critical(
                                 f"[EMERGENCY_FLAT] Coinbase {_cb_a}: "
                                 f"{_cb_r.get('status')} "
@@ -24433,6 +24497,11 @@ class HMATSProductionRunner:
                                 # only; labels are one tick stale by design
                                 # (the harness runs after this message).
                                 "Passive books (advisory)": _hb_adv_txt,
+                                # [P423] standing operator decisions with
+                                # deadlines (analytics/decisions/); an
+                                # OVERDUE item is its own alarm here, not a
+                                # bigger table (the P421 lesson)
+                                "Decisions pending": decisions_heartbeat_text(),
                                 # [P273] utilization + the capital the risk
                                 # anchors deliberately do not count
                                 "Sleeve utilization": _hb_util_txt,
@@ -25259,8 +25328,35 @@ class HMATSProductionRunner:
                                                     f"[FUSION-CONVICTION] {_m_a}: "
                                                     f"conviction={_cv:.3f} applied to sizing "
                                                     f"(advisors modulated exposure {_cv:.2f}x)")
-                                        _m_res = await _sl.manage_to_signal(
-                                            _m_a, _m_dir, conviction=_cv)
+                                        # [P423] stamp the fill(s) this call
+                                        # may produce with WHO asked (the
+                                        # seat holding the quant slot) and WHY
+                                        # (the translation reason) — the
+                                        # attribution the sleeve ledger never
+                                        # carried. Fail-soft; the stamp can
+                                        # never block the order.
+                                        try:
+                                            _oc_intent = (_live_intents or {}).get(_m_a)
+                                            _sl.set_order_context(
+                                                _m_a,
+                                                decider=sleeve_order_decider(_oc_intent, _m_src),
+                                                src=str(_m_src),
+                                                cause=sleeve_order_cause(_m_src, _m_dir),
+                                                intent_direction=float(getattr(
+                                                    _oc_intent, "direction", 0.0) or 0.0),
+                                                alpha_bps=float(getattr(
+                                                    _oc_intent, "alpha_estimated_bps", 0.0) or 0.0),
+                                                target_contracts=_m_dir)
+                                        except Exception:  # noqa: silent-swallow — labelling only (Iron Law 7)
+                                            pass
+                                        try:
+                                            _m_res = await _sl.manage_to_signal(
+                                                _m_a, _m_dir, conviction=_cv)
+                                        finally:
+                                            try:
+                                                _sl.clear_order_context(_m_a)
+                                            except Exception:  # noqa: silent-swallow — labelling only
+                                                pass
                                         _m_st = _m_res.get("status")
                                         # [P232] record flattens for the cooldown.
                                         # [P251] Record on flatten-SENT, not only
