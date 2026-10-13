@@ -166,7 +166,7 @@ class TestRegistryRecordsTheJudgments:
         ("home_trio_posture", "A: KEEP ENFORCE"),
         ("skew_rearm", "A: RE-ARM BTC ONLY"),
         ("jump_regime_cutover", "B: KEEP SHADOW"),
-        ("capital_venue", "A then C"),
+        ("capital_venue", "C: ACCEPT THE FLOOR, STAY ON COINBASE"),
     ])
     def test_decided_items_carry_date_and_decision(self, reg, item, needle):
         d = reg[item]

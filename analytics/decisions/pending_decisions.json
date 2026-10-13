@@ -59,7 +59,9 @@
       "P421: calbasis pooled IC +0.200/+0.265/+0.307 (t 3.70/2.79/2.23), clears cost at h12/h24, blocked ONLY by h4 edge 53.4 < 58.1",
       "P421c: the criterion is an executable gate (exit 3 = met -> lab-ladder P-entry; h12/h24 significant + h4 sub-bar -> slow-expression variant ledger)"
     ],
-    "options": ["run scripts/calbasis_check.py on/after 2026-11-10 and act on its exit code"],
+    "options": [
+      "run scripts/calbasis_check.py on/after 2026-11-10 and act on its exit code"
+    ],
     "default": "keep the current live state; escalate every heartbeat until decided (never auto-de-risk, never auto-promote - P141)"
   },
   {
@@ -77,7 +79,11 @@
       "P414c: online/filtered churn cut +59% to +66% vs GMM on BTC/ETH/SOL, 7/8 names control-compatible; shadow ledger jumpregime_{ASSET}.jsonl accruing since the P420 decision-tick fix",
       "The payoff is diffuse (the decider is GMM-independent); the cutover is a P215 atomic campaign incl. the DRL obs regime_proba handling"
     ],
-    "options": ["A: run the P215 cutover campaign", "B: keep shadow; re-read the churn comparison at the deadline", "C: retire the shadow"],
+    "options": [
+      "A: run the P215 cutover campaign",
+      "B: keep shadow; re-read the churn comparison at the deadline",
+      "C: retire the shadow"
+    ],
     "default": "keep the current live state; escalate every heartbeat until decided (never auto-de-risk, never auto-promote - P141)"
   },
   {
@@ -92,7 +98,11 @@
       "P422: shadow by operator decision; blocker counterfactual NOISE-to-costing (SOL n=86 +69/+197/+338bps t~1.0; ETH n=26 mixed)",
       "Re-run training/scripts/blocker_counterfactual_p422.py on the next pull; the WOULD-BLOCK ticks are now observable without costing entries"
     ],
-    "options": ["A: keep shadow", "B: restore enforce (only on EARNS)", "C: retire the guard"],
+    "options": [
+      "A: keep shadow",
+      "B: restore enforce (only on EARNS)",
+      "C: retire the guard"
+    ],
     "default": "keep the current live state; escalate every heartbeat until decided (never auto-de-risk, never auto-promote - P141)"
   },
   {
@@ -104,14 +114,18 @@
     "status": "decided",
     "decided_on": "2026-10-13",
     "decided_by": "agent, by operator delegation 2026-10-13 ('from the profitability perspective, make all judgment on my behalf')",
-    "decision": "A then C: the Phase-0 venue probe is the only lever that changes expected return without new capital, and it needs the operator's Kraken Pro US account -- the Bitnomial-cleared US book is NOT exposed on the public Kraken Futures API (probed 2026-10-13: futures.kraken.com serves the GLOBAL PF_XBTUSD/PF_ETHUSD/PF_SOLUSD perps at 0.12/0.40/0.94bps spread, an order of magnitude under CDE, but that venue is US-restricted). Until the operator runs the read-only probe on their US account, C holds: accept the floor, home trio stays as sized. B (add capital) is the operator's money, not a judgment the agent can make.",
-    "config_change": "none; operator step: read-only spread/depth probe of BTC/ETH/SOL on Kraken Derivatives US (Kraken Pro US account), then re-open this entry",
+    "decision": "C: ACCEPT THE FLOOR, STAY ON COINBASE. Operator instruction 2026-10-13: \"derivatives trade should happen on coinbase\" -- the venue question is CLOSED; no Kraken/Bitnomial US probe is owed and the P399 candidate is withdrawn (the public Kraken Futures book probed at 0.12/0.40/0.94bps is the GLOBAL venue and US-restricted anyway). Consequences stated honestly: the flat CDE per-contract fee keeps BTC out on its fee floor (26 < 33-40bps) and bounds every book; the only remaining lever on that floor is notional (more capital in the CDE sleeve, or a higher BTC price), which is the operator's money, not a judgment to delegate. The home trio stays as sized.",
+    "config_change": "none (Coinbase CDE remains the sole directional venue since 2026-06-13, P152)",
     "evidence": [
       "P374/P375: the fixed per-contract fee amortizes only with notional; BTC edge 26 < 33-40bps threshold (P321/P420b); a percentage venue at <=~8bps RT flips ETH/SOL trained forecasters viable (P407m)",
       "P399: Kraken/Bitnomial CFTC US perps at ~$0.15/ct are a candidate venue; live spread/depth unverified (Phase 0 probe outstanding)",
       "P272/P332: the XRP bag (~53% of the portfolio) is a deliberate unmanaged hold by operator instruction"
     ],
-    "options": ["A: Phase-0 probe the Kraken US perp book (read-only) and decide on measured RT", "B: add capital to the CDE sleeve", "C: accept the floor; the home trio stays as sized"],
+    "options": [
+      "A: Phase-0 probe the Kraken US perp book (read-only) and decide on measured RT",
+      "B: add capital to the CDE sleeve",
+      "C: accept the floor; the home trio stays as sized"
+    ],
     "default": "keep the current live state; escalate every heartbeat until decided (never auto-de-risk, never auto-promote - P141)"
   },
   {
