@@ -1869,6 +1869,11 @@ class ProductionConfig:
     skew_seat_mode: str = "off"           # [P407] contrarian 25d-skew direction seat
     skew_seat_assets: Optional[List[str]] = None
     skew_seat_feed: str = "api"           # [P424] "api" (Laevitas apiv2) | "bank" (the P421c replica archive)
+    # [P425] assets whose skew seat is taken ONLY when the ETF seat reading is
+    # fresh and AGREES (the P407i/P407j agree-gate, P414 #3 equal-weight).
+    # Default [] = no gating (today's behaviour). Arming ETH is the
+    # skewetf_eth_agree_read (2026-12-12) decision, never a side effect.
+    skew_seat_agree_assets: Optional[List[str]] = None
     fusion_conviction_to_sleeve: bool = False
     # [P304] Feed the CascadeExhaustionGovernor a REAL short-window
     # liquidation figure (the change in the rolling 24h total) instead of the
@@ -2346,6 +2351,9 @@ class ProductionConfig:
                 list(data["skew_seat_assets"])
                 if isinstance(data.get("skew_seat_assets"), list) else None),
             skew_seat_feed=str(data.get("skew_seat_feed", "api") or "api").lower(),  # [P424]
+            skew_seat_agree_assets=(  # [P425]
+                list(data["skew_seat_agree_assets"])
+                if isinstance(data.get("skew_seat_agree_assets"), list) else None),
             fusion_conviction_to_sleeve=bool(
                 data.get("fusion_conviction_to_sleeve", False)),
             cascade_real_liquidation_window=bool(
@@ -3030,6 +3038,35 @@ def skew_seat_decision(asset, skew_dir, fresh, decide_assets):
     if asset in (decide_assets or []) and abs(skew_dir) > 0:
         return ("skew_contra", float(skew_dir))
     return None
+
+
+def skew_seat_agree_ok(asset, skew_dir, etf_reading, agree_assets):
+    """[P425] Pure agree-gate for the skew seat -> (ok, reason).
+
+    For an asset NOT in `agree_assets` the gate is inert (True, "ungated").
+    For a gated asset the seat may be taken only when the ETF seat reading is
+    FRESH and AGREES with the skew direction, decided by the SAME
+    `combo_directions` the P407j `skewetf_agree` ledger records (one
+    implementation, P172) -- so the live gate IS the thing the forward exam
+    scored. Fail directions: a missing/not-fresh ETF reading -> NO seat
+    (absence is never agreement, P2); an unimportable combiner -> NO seat.
+    """
+    if not asset or asset not in (agree_assets or []):
+        return True, "ungated"
+    if not etf_reading:
+        return False, "etf_absent"
+    try:
+        etf_dir, etf_fresh = float(etf_reading[0]), bool(etf_reading[1])
+    except (TypeError, ValueError, IndexError):  # noqa: silent-swallow — a malformed reading refuses the seat; the returned reason string is logged by the caller
+        return False, "etf_unreadable"
+    if not etf_fresh:
+        return False, "etf_not_fresh"
+    try:
+        from defense.skew_etf_combo_shadow import combo_directions
+    except Exception as _ce:  # noqa: silent-swallow — no combiner -> no seat for a gated asset (fail toward the incumbent); the reason string is the report
+        return False, f"combo_unavailable:{type(_ce).__name__}"
+    agree = combo_directions(float(skew_dir), True, etf_dir, etf_fresh)["skewetf_agree"]
+    return (True, "agree") if agree != 0.0 else (False, "disagree")
 
 
 def sleeve_direction_from_intent(intent, fallback_dir: float):
@@ -11740,6 +11777,18 @@ class HMATSProductionRunner:
                 if _ss is not None:
                     _took = skew_seat_decision(
                         asset, float(_ss[0]), bool(_ss[1]), _skew_decide)
+                    # [P425] agree-gate: for assets in skew_seat_agree_assets the
+                    # seat is taken only when the ETF seat reading agrees (fresh).
+                    if _took is not None:
+                        _agree_assets = getattr(self.config, "skew_seat_agree_assets", None) or []
+                        if asset in _agree_assets:
+                            _efr = (self._etf_flow_shadow.seat_direction(asset)
+                                    if getattr(self, "_etf_flow_shadow", None) is not None else None)
+                            _ok, _why = skew_seat_agree_ok(asset, float(_took[1]), _efr, _agree_assets)
+                            if not _ok:
+                                logger.info(f"[SKEW-SEAT] {asset}: agree-gate HOLD ({_why}) "
+                                            f"skew_dir={float(_took[1]):+.1f} -- incumbent stands")
+                                _took = None
                     if _took is not None:
                         _lbl, _nd = _took
                         # [P407e] calibrated per-RT edge via the P320 framework

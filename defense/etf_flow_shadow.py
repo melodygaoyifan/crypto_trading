@@ -139,8 +139,19 @@ def etf_flow_zscore_direction(flow_usd: Optional[float],
                               max_age_days: float = MAX_AGE_DAYS,
                               band: float = ZSCORE_BAND,
                               min_obs: int = ZSCORE_MIN_OBS,
+                              release_band: Optional[float] = None,
                               ) -> Tuple[float, float, str]:
     """[P402] The P400 tradeable signal: (direction, z, reason).
+
+    [P425] ``release_band`` (default None = the P400/P402 rule exactly): when
+    set, a HELD position inside the deadband is RELEASED to flat once the z
+    has crossed back past -release_band (held -1 -> 0 when z > -release_band;
+    held +1 -> 0 when z < +release_band, symmetric). The P422 finding behind
+    it: the de-risk hold kept BTC/ETH unable to go long for 12 days on a z
+    that had recovered to -0.43/-0.85 -- a -1 taken at z<-1 is held until an
+    INFLOW day with z>+1, which is a different (stronger) condition than
+    "the outflow is over". Judged by the P404 lab through THIS function
+    (single-source) before anything is armed; None keeps today's behaviour.
 
     z = (newest completed flow - mean(trailing)) / std(trailing), clipped +-5.
     z >  band -> +1 (strong inflow); z < -band -> -1; else HOLD prev_direction
@@ -167,12 +178,19 @@ def etf_flow_zscore_direction(flow_usd: Optional[float],
         return 1.0, z, "inflow_z"
     if z < -band:
         return -1.0, z, "outflow_z"
+    # [P425] inside the deadband with a release rule armed: a held position
+    # whose z has crossed back past the release level goes FLAT (a real claim).
+    if release_band is not None and prev_direction:
+        rb = float(release_band)
+        if (prev_direction < 0 and z > -rb) or (prev_direction > 0 and z < rb):
+            return 0.0, z, "release_to_flat"
     # inside the deadband: hold the previous position (0 if never set)
     return float(prev_direction), z, "deadband_hold"
 
 
 def replay_hold(completed_flows, window: int = ZSCORE_WINDOW,
-                band: float = ZSCORE_BAND, min_obs: int = ZSCORE_MIN_OBS) -> float:
+                band: float = ZSCORE_BAND, min_obs: int = ZSCORE_MIN_OBS,
+                release_band: Optional[float] = None) -> float:
     """[P420] Walk the COMPLETED flow history forward through the z-deadband
     rule from state 0 and return the hold a continuous process would carry
     INTO the newest completed day (state after every day except the last).
@@ -183,7 +201,7 @@ def replay_hold(completed_flows, window: int = ZSCORE_WINDOW,
     for i in range(1, len(flows)):
         d, _z, _r = etf_flow_zscore_direction(
             flows[i - 1], 0.0, flows[max(0, i - 1 - window):i - 1], prev,
-            band=band, min_obs=min_obs)
+            band=band, min_obs=min_obs, release_band=release_band)
         prev = d
     return prev
 
@@ -193,9 +211,14 @@ class EtfFlowShadow:
     ledger, every failure is per-asset and fail-soft. A fault here can never
     touch the order path."""
 
-    def __init__(self, data_dir: str = "data"):
+    def __init__(self, data_dir: str = "data",
+                 release_band: Optional[float] = None):
         self._dir = Path(data_dir) / "strategy_shadow"
         self._dir.mkdir(parents=True, exist_ok=True)
+        # [P425] the de-risk RELEASE rule (etf_derisk_release_z); None = the
+        # P400/P402 hold exactly. Read by record_tick and the restart replay.
+        self._release_band: Optional[float] = (
+            float(release_band) if release_band is not None else None)
         self._api_key = os.environ.get("COINGLASS_API_KEY", "")
         self._cache: dict = {}          # asset -> (fetched_at, rows)
         self._warned: dict = {}         # key -> last reason (transition log)
@@ -234,7 +257,8 @@ class EtfFlowShadow:
 
     # seat freshness: a held deadband position IS a live claim; warmup/no_data/
     # stale/zero_var are NOT (absence must never seat a position, P2).
-    _SEAT_FRESH_REASONS = frozenset({"inflow_z", "outflow_z", "deadband_hold"})
+    _SEAT_FRESH_REASONS = frozenset({"inflow_z", "outflow_z", "deadband_hold",
+                                     "release_to_flat"})  # [P425] a release IS a fresh (flat) claim
     _SEAT_MAX_AGE_SEC = 12 * 3600.0   # 3 ticks; a shadow that stopped updating -> no seat
 
     def seat_direction(self, asset: str):
@@ -411,7 +435,9 @@ class EtfFlowShadow:
                     hist = self.trailing_completed_flows(asset, 10 ** 6)
                     newest = self.latest_completed_flow(asset)[0]
                     if hist and newest is not None:
-                        self._last_direction[asset] = replay_hold(hist + [newest])
+                        self._last_direction[asset] = replay_hold(
+                            hist + [newest],
+                            release_band=getattr(self, "_release_band", None))
                         hold_source = "replayed"
                         logger.warning("[ETFFLOW] %s: hold REPLAYED from %d "
                                        "completed days -> %+.0f", asset,
@@ -431,7 +457,8 @@ class EtfFlowShadow:
             prev = getattr(self, "_last_direction", {}).get(asset, 0.0)
             # [P402] primary ledger claim = the P400 z-score+deadband signal
             direction, z, reason = etf_flow_zscore_direction(
-                flow, age, trailing, prev)
+                flow, age, trailing, prev,
+                release_band=getattr(self, "_release_band", None))  # [P425]
             if reason == "deadband_hold" and hold_source == "restart_transient":
                 # [P420] a hold with nothing behind it is NOT a live claim:
                 # not a seat-fresh reason, so it cannot de-risk the book.
@@ -442,7 +469,7 @@ class EtfFlowShadow:
             # transient outage does not permanently drop the held position
             # (P400 holds through gaps; we log NO CLAIM while blind, then
             # resume). Persist so the hold survives restarts (P154).
-            if reason in ("inflow_z", "outflow_z"):
+            if reason in ("inflow_z", "outflow_z", "release_to_flat"):  # [P425] a release moves the hold to 0
                 if not hasattr(self, "_last_direction"):
                     self._last_direction = {}
                 self._last_direction[asset] = float(direction)

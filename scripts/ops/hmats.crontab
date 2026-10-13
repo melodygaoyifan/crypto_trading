@@ -23,3 +23,9 @@
 # human decision via pending_decisions.json). 110d spans the ledger (start 2026-08-16) through early
 # December inside Kraken's 720-bar window; a shorter window would REFUSE (P421 mitigation c).
 54 6 * * 1 docker exec hmats-engine sh -c 'python -X utf8 analytics/shadow_ic/compute_shadow_ic.py --ledger-dir /opt/hmats/data/strategy_shadow --window-days 110 --prefixes calbasis --pool-assets --allow-kraken-ohlcv --output /opt/hmats/data/evidence_reports/shadow_ic_calbasis_$(date -u +\%Y\%m\%d).json && python -X utf8 scripts/calbasis_check.py --report /opt/hmats/data/evidence_reports/shadow_ic_calbasis_$(date -u +\%Y\%m\%d).json' >> /home/hmats/evidence_cron.log 2>&1
+# [P425] the skew+ETF ETH agree-gate pre-committed read (2026-12-12): a PER-ASSET 75d skewetf report
+# (the skewetf_agree ETH record is what the gate scores; NOT --pool-assets -- the question is ETH),
+# Kraken-priced (P423), then the gate. Exit 0 = not due / keep accruing, 2 = refusal, 3 = PROMOTE fired
+# (owed a human decision via pending_decisions.json: skewetf_eth_agree_read). 75d spans the replica-fed
+# ledger (start 2026-10-13) through the read date inside Kraken's 720-bar window.
+56 6 * * 1 docker exec hmats-engine sh -c 'python -X utf8 analytics/shadow_ic/compute_shadow_ic.py --ledger-dir /opt/hmats/data/strategy_shadow --window-days 75 --prefixes skewetf --allow-kraken-ohlcv --output /opt/hmats/data/evidence_reports/shadow_ic_skewetf_$(date -u +\%Y\%m\%d).json && python -X utf8 scripts/skewetf_agree_check.py --report /opt/hmats/data/evidence_reports/shadow_ic_skewetf_$(date -u +\%Y\%m\%d).json' >> /home/hmats/evidence_cron.log 2>&1

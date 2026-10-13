@@ -145,5 +145,24 @@
       "B: flat/defensive -- regimebook_mode off + trend_following_mode off AND Best-of-N neutralised in the same change (otherwise B hands the quant slot to an unvalidated decider, P299); the ETF de-risk and every risk control keep binding"
     ],
     "default": "keep the current live state; escalate every heartbeat until decided (never auto-de-risk, never auto-promote - P141)"
+  },
+  {
+    "id": "skewetf_eth_agree_read",
+    "title": "ETH skew seat behind the ETF agree-gate: pre-committed 2026-12-12 forward read via scripts/skewetf_agree_check.py",
+    "opened": "2026-10-13",
+    "deadline": "2026-12-12",
+    "owner": "operator",
+    "status": "pending",
+    "decision_rule": "PRE-COMMITTED 2026-10-13 (P425): arm ETH (skew_seat_agree_assets [ETH] + skew_seat_assets [BTC, ETH], ONE commit with this decision) iff the scorer's own verdict on the skewetf_agree ETH record is PROMOTE (ic > 0, |t| >= 2, edge >= required at EVERY horizon) on a PER-ASSET --prefixes skewetf report whose window spans the replica-fed ledger (start 2026-10-13); the Monday 06:56 in-container cron runs the report + scripts/skewetf_agree_check.py (exit 3 = fired). A skew-SOLO ETH PROMOTE is context, not a criterion (P421b era-fragility). Act on the exit code; do not reinterpret the criterion (P332).",
+    "evidence": [
+      "P407i: on the 1.7y overlap skew alone is NEGATIVE OOS on ETH (-223/RT) while requiring skew+ETF AGREEMENT is positive OOS on both assets (BTC +283%, ETH +282%) -- the agree-gate is the form that rescued the ETH case",
+      "P421b: ETH's runtime skew series is era-fragile (2025 sub-era -188.6 kill-class), which is why P424 parked ETH; the gate is the only recorded path by which ETH re-enters",
+      "P425: the live gate (main.py skew_seat_agree_ok) is decided by the SAME combo_directions the skewetf_agree ledger records, so the forward read scores the thing that would go live; skewetf ETH rows are replica-fed (true skew arm) from 2026-10-13 13:16 UTC -- rows before that carry the stale post-09-10 arm (P421e) and are excluded by the checker's window refusal"
+    ],
+    "options": [
+      "A: arm ETH behind the agree-gate (the exit-3 action) -- a human config change in the same commit as this decision",
+      "B: keep ETH parked (exit 0); the ledger keeps accruing for a later read"
+    ],
+    "default": "keep the current live state (ETH parked); escalate every heartbeat until decided (never auto-de-risk, never auto-promote - P141)"
   }
 ]

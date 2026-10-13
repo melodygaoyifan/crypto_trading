@@ -594,6 +594,9 @@ POOLABLE_FAMILIES = frozenset({
     # [P407j] skew+ETF ensemble A/B; pooled for power (thin 1.7y, P293g).
     "skewetf_skew", "skewetf_etf", "skewetf_agree",
     "calbasis", "etfflow",
+    # [P425] the calbasis slow-expression (12-bar hold) variant: one rule
+    # across the three CDE-quoted assets, pooled like its parent.
+    "calbasis_slow12",
     # NOT here on purpose: `mlpshadow` is a BTC-only exported model, not one
     # rule applied across assets.
 })

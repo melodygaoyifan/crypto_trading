@@ -53,6 +53,8 @@ scripts/
 !scripts/decision_check.py
 # [P424] the calbasis pre-committed re-read gate; stdlib-only, reads a report, never edits config
 !scripts/calbasis_check.py
+# [P425] the skew+ETF ETH agree-gate pre-committed read (2026-12-12); stdlib-only, reads a report, never edits config
+!scripts/skewetf_agree_check.py
 pytorch_build/
 deploy/
 data/diagnostics/

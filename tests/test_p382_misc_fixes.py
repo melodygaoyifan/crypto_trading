@@ -176,7 +176,7 @@ class TestScannerCoverage:
 
     @pytest.mark.parametrize("name,keys", [
         ("silent_swallow_baseline.json", {"total_count": 704}),
-        ("silent_failure_baseline.json", {"tryexcept_count": 730, "dictget_count": 45}),  # [P423] +2 sleeve driver-side labelling guards (set/clear_order_context); [P420] +1 jump-regime ledger mkdir guard; [P407j] +1 skew+ETF combo; [P409] +1 held-BTC-ridge shadow wiring; [P414c] +1 tryexcept + +1 dictget jump-regime shadow; [WS2] +1 tryexcept conviction-sizing shadow fail-soft wiring
+        ("silent_failure_baseline.json", {"tryexcept_count": 732, "dictget_count": 45}),  # [P425] +2 calbasis_slow12 hold-state restore guards (self._slow_path.exists/read_text); [P423] +2 sleeve driver-side labelling guards (set/clear_order_context); [P420] +1 jump-regime ledger mkdir guard; [P407j] +1 skew+ETF combo; [P409] +1 held-BTC-ridge shadow wiring; [P414c] +1 tryexcept + +1 dictget jump-regime shadow; [WS2] +1 tryexcept conviction-sizing shadow fail-soft wiring
         ("mypy_baseline.json", {"total_count": 1084, "mypy_version": "2.3.0"}),
     ])
     def test_baselines_were_bumped_with_attribution(self, name, keys):

@@ -1,0 +1,116 @@
+{
+  "rule": "adopt release_z=0.00 iff combo+release OOS Sharpe >= combo AND maxDD not worse, BOTH assets",
+  "assets": {
+    "BTC": {
+      "n_oos": 354,
+      "corr_sma_etf": -0.19,
+      "rows": {
+        "SMA200 long/flat (certified)": {
+          "net_pct": 1.1,
+          "sharpe": 0.05,
+          "maxdd_pct": -24.4,
+          "flat_share_oos": 0.556
+        },
+        "ETF lag1 z-deadband (P402)": {
+          "net_pct": 58.8,
+          "sharpe": 1.25,
+          "maxdd_pct": -21.5,
+          "flat_share_oos": 0.0
+        },
+        "SMA200 + ETF-outflow de-risk": {
+          "net_pct": 5.5,
+          "sharpe": 0.37,
+          "maxdd_pct": -12.1,
+          "flat_share_oos": 0.819
+        },
+        "0.5*(SMA+ETF)": {
+          "net_pct": 30.0,
+          "sharpe": 1.21,
+          "maxdd_pct": -10.8,
+          "flat_share_oos": 0.263
+        },
+        "ETF +release [P425 cand z>-0.0]": {
+          "net_pct": 55.2,
+          "sharpe": 1.48,
+          "maxdd_pct": -20.3,
+          "flat_share_oos": 0.407
+        },
+        "combo +release [P425 cand z>-0.0]": {
+          "net_pct": -5.0,
+          "sharpe": -0.24,
+          "maxdd_pct": -18.5,
+          "flat_share_oos": 0.703
+        },
+        "ETF +release [context z>-0.5]": {
+          "net_pct": 30.6,
+          "sharpe": 0.9,
+          "maxdd_pct": -21.3,
+          "flat_share_oos": 0.537
+        },
+        "combo +release [context z>-0.5]": {
+          "net_pct": -16.5,
+          "sharpe": -0.74,
+          "maxdd_pct": -25.7,
+          "flat_share_oos": 0.667
+        }
+      },
+      "candidate_earns": false
+    },
+    "ETH": {
+      "n_oos": 285,
+      "corr_sma_etf": -0.13,
+      "rows": {
+        "SMA200 long/flat (certified)": {
+          "net_pct": -49.5,
+          "sharpe": -1.66,
+          "maxdd_pct": -61.0,
+          "flat_share_oos": 0.625
+        },
+        "ETF lag1 z-deadband (P402)": {
+          "net_pct": 102.9,
+          "sharpe": 1.81,
+          "maxdd_pct": -36.2,
+          "flat_share_oos": 0.0
+        },
+        "SMA200 + ETF-outflow de-risk": {
+          "net_pct": -31.3,
+          "sharpe": -2.02,
+          "maxdd_pct": -41.9,
+          "flat_share_oos": 0.856
+        },
+        "0.5*(SMA+ETF)": {
+          "net_pct": 26.7,
+          "sharpe": 0.93,
+          "maxdd_pct": -33.4,
+          "flat_share_oos": 0.232
+        },
+        "ETF +release [P425 cand z>-0.0]": {
+          "net_pct": 58.9,
+          "sharpe": 1.38,
+          "maxdd_pct": -33.1,
+          "flat_share_oos": 0.425
+        },
+        "combo +release [P425 cand z>-0.0]": {
+          "net_pct": -42.3,
+          "sharpe": -1.82,
+          "maxdd_pct": -48.7,
+          "flat_share_oos": 0.754
+        },
+        "ETF +release [context z>-0.5]": {
+          "net_pct": 52.2,
+          "sharpe": 1.36,
+          "maxdd_pct": -29.6,
+          "flat_share_oos": 0.551
+        },
+        "combo +release [context z>-0.5]": {
+          "net_pct": -46.6,
+          "sharpe": -1.98,
+          "maxdd_pct": -53.0,
+          "flat_share_oos": 0.744
+        }
+      },
+      "candidate_earns": false
+    }
+  },
+  "verdict": "RECORD_NOT_ARM"
+}

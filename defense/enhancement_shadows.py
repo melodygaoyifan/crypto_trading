@@ -62,7 +62,40 @@ FETCH_TTL_SEC = 3600.0
 SHADOW_STRATEGY_NAMES = frozenset({
     "stablecoinflow", "oidiv_confirm", "oidiv_fade", "calbasis",
     "xsmom", "eventfilter",
+    "calbasis_slow12",   # [P425] the P421 slow-expression variant (12-bar hold)
 })
+
+# [P425] calbasis SLOW-EXPRESSION variant. The 2026-10-11/12 reads measured
+# calbasis significant at ALL horizons but cost-clearing only at h12/h24
+# (136/214bps vs 58) -- its edge lives at the 12-24 bar cadence, and the P421
+# pre-commitment names "a SLOW-EXPRESSION (12-24 bar cadence) variant ledger"
+# as the sanctioned next build. Rule (fixed here, before any number exists):
+# a taken fast-calbasis direction is HELD for SLOW_HOLD_BARS 4H bars by
+# wall-clock; while held, the fast signal (neutral OR opposite) is recorded
+# but does not move the claim; on expiry the next tick re-takes from the fast
+# signal. Pure step + persisted state (P154) so a deploy cannot shorten a hold.
+SLOW_HOLD_BARS = 12
+SLOW_HOLD_SEC = SLOW_HOLD_BARS * 4 * 3600.0
+
+
+def slow_hold_step(state: Optional[dict], fast_dir: float, now: float,
+                   hold_sec: float = SLOW_HOLD_SEC):
+    """[P425] Pure: (new_state, direction, reason). state = {"dir", "until"}
+    or None. A held claim is served until `until`; then the fast direction
+    is re-taken (if non-zero) for another hold_sec; a zero fast signal with
+    no live hold is flat. Unusable state (missing keys, non-numeric) reads
+    as NO hold -- absence is never a position (P2)."""
+    try:
+        d0 = float((state or {}).get("dir", 0.0) or 0.0)
+        until = float((state or {}).get("until", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        d0, until = 0.0, 0.0
+    fd = float(fast_dir or 0.0)
+    if d0 != 0.0 and now < until:
+        return {"dir": d0, "until": until}, d0, "held"
+    if fd != 0.0:
+        return {"dir": fd, "until": float(now) + float(hold_sec)}, fd, "taken"
+    return None, 0.0, "flat"
 
 XS_ASSETS = ("BTC", "ETH", "SOL", "XRP", "ADA", "LTC", "DOGE", "BNB")
 XS_LOOKBACK_BARS = 180          # 30d of 4H bars
@@ -152,6 +185,18 @@ class EnhancementShadows:
         # RAM-only meant every deploy restarted the ~3.3-day warmup, and
         # deploy-heavy weeks would keep it permanently flat. Fail-soft.
         self._basis_path = Path(data_dir) / "calbasis_state.json"
+        # [P425] slow-expression hold state, its own file (the basis file holds
+        # LISTS and its loader filters on that shape -- do not overload it).
+        self._slow_state: Dict[str, dict] = {}
+        self._slow_path = Path(data_dir) / "calbasis_slow_state.json"
+        try:
+            if self._slow_path.exists():
+                d = json.loads(self._slow_path.read_text(encoding="utf-8"))
+                self._slow_state = {k: dict(v) for k, v in (d or {}).items()
+                                    if isinstance(v, dict)}
+        except Exception as e:  # noqa: silent-swallow — a corrupt slow-state file restarts the hold flat (logged); never breaks init
+            logger.warning("[ENH] calbasis_slow12 state restore failed "
+                           "(%s) — holds restart flat", type(e).__name__)
         try:
             if self._basis_path.exists():
                 d = json.loads(self._basis_path.read_text(encoding="utf-8"))
@@ -161,6 +206,16 @@ class EnhancementShadows:
         except Exception as e:  # noqa: silent-swallow — a corrupt state file must not break init; warmup restarts (the pre-P281 behavior)
             logger.warning("[ENH] calbasis state restore failed "
                            "(%s) — warmup restarts", type(e).__name__)
+
+    def _persist_slow(self) -> None:
+        try:
+            tmp = self._slow_path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(self._slow_state), encoding="utf-8")
+            tmp.replace(self._slow_path)
+        except Exception as e:  # noqa: silent-swallow — persistence only guards the hold across a deploy; failure is logged
+            self._transition_log("slow_persist",
+                                 f"[ENH] calbasis_slow12 persist failed "
+                                 f"({type(e).__name__})")
 
     def _persist_basis(self) -> None:
         try:
@@ -348,6 +403,25 @@ class EnhancementShadows:
                 self._write("calbasis", a, d,
                             {"slope_ann": None if slope is None
                              else round(slope, 5), "reason": reason})
+                # [P425] slow-expression variant beside the fast claim
+                try:
+                    _now = time.time()
+                    _st, _sd, _sr = slow_hold_step(
+                        self._slow_state.get(a), d, _now)
+                    if _st is None:
+                        self._slow_state.pop(a, None)
+                    else:
+                        self._slow_state[a] = _st
+                    self._persist_slow()
+                    self._write("calbasis_slow12", a, _sd,
+                                {"reason": _sr, "fast_dir": float(d),
+                                 "fast_reason": reason,
+                                 "hold_bars": SLOW_HOLD_BARS,
+                                 "hold_until_iso": (
+                                     None if _st is None else datetime.fromtimestamp(
+                                         _st["until"], tz=timezone.utc).isoformat())})
+                except Exception as e:  # noqa: silent-swallow — the variant must never starve the fast ledger; logged via summary
+                    summary.append(f"slow12=ERR({type(e).__name__})")
                 n += 1
             summary.append(f"basis={n}a")
         except Exception as e:  # noqa: silent-swallow — per-family fail-soft
