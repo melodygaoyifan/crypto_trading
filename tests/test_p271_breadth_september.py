@@ -133,7 +133,9 @@ class TestBothReadsRun:
     def test_a_refusal_in_either_read_is_a_refusal(self):
         """A missing pooled read must not hide behind a healthy per-asset one
         (P199, one level up)."""
-        assert "return rc_asset or rc_pooled" in self._src()
+        # [P421e] run_scorer now records the reads it sat before returning,
+        # so the either-refusal expression moved off the return statement.
+        assert "rc = rc_asset or rc_pooled" in self._src()
 
     def test_the_decision_tree_states_which_read_governs(self):
         import io

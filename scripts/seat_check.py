@@ -197,6 +197,42 @@ def availability_from_ledger(ledger_dir: Path, asset: str) -> Optional[bool]:
     return bool(rec.get("available"))
 
 
+def regimebook_from_shadow_report(path: Path) -> Optional[dict]:
+    """[P421e] The POOLED `regimebook` record of a compute_shadow_ic report
+    scored at --horizons 1,4, mapped onto the controller's two horizons.
+
+    Returns None when the record is absent. When it IS present but lacks the
+    1-bar or 4-bar horizon the stats carry None for that IC plus a note — the
+    candidate then reads "missing an IC horizon: ..." and is NOT scoreable,
+    because a verdict from half a report is a guess (P199). t comes from the
+    scorer's overlap-corrected `t_stat`.
+    """
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return None
+    recs = data.get("per_strategy") or []
+    rows = [r for r in recs if r.get("strategy") == "regimebook"
+            and r.get("asset") == "POOLED"]
+    if not rows:
+        return None
+    ph = rows[0].get("per_horizon") or {}
+    h1, h4 = ph.get("1") or {}, ph.get("4") or {}
+    missing = [h for h, d in (("1", h1), ("4", h4))
+               if not d or d.get("ic") is None]
+    # n from whichever horizons exist: zeroing it would stop the reason chain
+    # at "insufficient evidence" and hide WHICH horizon the report lacks.
+    n = min([int(d.get("n") or 0) for d in (h1, h4) if d] or [0])
+    out = {"ic_4h": h1.get("ic"), "ic_16h": h4.get("ic"),
+           "t_4h": h1.get("t_stat"), "t_16h": h4.get("t_stat"), "n": n,
+           "in_market_rate": (float(rows[0].get("n_directional") or 0)
+                              / float(rows[0].get("n_records") or 1))}
+    if missing:
+        out["note"] = (f"shadow report lacks the {'/'.join(missing)}-bar "
+                       f"horizon(s); re-score with --horizons 1,4")
+    return out
+
+
 def build_candidates(stats: dict) -> list:
     """stats: {name: {"ic_4h":..,"ic_16h":..,"t_4h":..,"t_16h":..,"n":..,
                       "available":bool, "in_market_rate":float, "note":str}}"""
@@ -228,6 +264,16 @@ def main(argv=None) -> int:
                          "bypasses the report readers (operator-local use)")
     ap.add_argument("--ic-report", default=None,
                     help="path to an agent_ic_review JSON report")
+    ap.add_argument("--shadow-ic-report", default=None,
+                    help="[P421e] path to a compute_shadow_ic JSON report scored "
+                         "with --horizons 1,4 --pool-assets; the POOLED "
+                         "`regimebook` record becomes the regimebook candidate's "
+                         "evidence (the book's OWN claim series — scoreable "
+                         "even when the live quant series was flat all window)")
+    ap.add_argument("--ledger-dir", default=str(REPO / "data" / "strategy_shadow"),
+                    help="[P421e] regimebook ledger dir for the `available` flag "
+                         "(operator-local runs pass the PULLED dir — local "
+                         "data/ is never live evidence, P255)")
     ap.add_argument("--config", default=str(REPO / "configs" / "live_high_risk.json"))
     args = ap.parse_args(argv)
 
@@ -287,14 +333,16 @@ def main(argv=None) -> int:
             stats = json.loads(args.stats)
         except Exception as e:
             return _refuse(f"--stats is not valid JSON ({type(e).__name__})")
-    elif args.ic_report:
-        report_path = Path(args.ic_report)
-        if not report_path.exists():
-            return _refuse(f"ic report not found: {report_path}")
-        raw = _from_ic_report(report_path)
-        if not raw:
-            return _refuse(f"ic report {report_path} held no agent rows")
+    elif args.ic_report or args.shadow_ic_report:
         stats = {}
+        raw = {}
+        if args.ic_report:
+            report_path = Path(args.ic_report)
+            if not report_path.exists():
+                return _refuse(f"ic report not found: {report_path}")
+            raw = _from_ic_report(report_path)
+            if not raw:
+                return _refuse(f"ic report {report_path} held no agent rows")
         # `quant` IS the seat holder's series — the decider slot, whoever
         # occupied it on each tick. It is compared under the INCUMBENT's name
         # (that is what it is evidence about) and labelled honestly below.
@@ -314,9 +362,32 @@ def main(argv=None) -> int:
             ic16, t16, n16 = series.get(4, (None, None, 0))
             stats[name] = {"ic_4h": ic4, "ic_16h": ic16, "t_4h": t4,
                            "t_16h": t16, "n": max(n4, n16)}
+            # [P421e] n>0 with no IC means the series was a CONSTANT in the
+            # window (the decider claimed flat on every tick, so there is
+            # nothing to correlate). That is not missing data — the book was
+            # flat — and the refusal must say so, naming the route that CAN
+            # score the book (its own ledger via --shadow-ic-report).
+            if max(n4, n16) > 0 and ic4 is None and ic16 is None:
+                stats[name]["note"] = (
+                    f"the decider emitted no directional claim in the window "
+                    f"(n={max(n4, n16)} rows, IC undefined on a constant "
+                    f"series) — a flat book is not missing evidence; score "
+                    f"the book from its own ledger via --shadow-ic-report")
         if "whale" in raw and not whale_is_candidate and incumbent != "whale":
             print("note: `whale` agent series present but whale_seat_mode is "
                   "not 'enforce' — not a seat candidate (P417).")
+        if args.shadow_ic_report:
+            sp = Path(args.shadow_ic_report)
+            if not sp.exists():
+                return _refuse(f"shadow-ic report not found: {sp}")
+            rb = regimebook_from_shadow_report(sp)
+            if rb is None:
+                return _refuse(f"shadow-ic report {sp} holds no POOLED "
+                               f"`regimebook` record")
+            # the book's own claims outrank the mixed quant series for the
+            # regimebook candidate; the quant series stays as the incumbent
+            # label only when the incumbent is something else.
+            stats["regimebook"] = rb
     else:
         return _refuse("no evidence source: pass --stats or --ic-report")
 
@@ -325,7 +396,7 @@ def main(argv=None) -> int:
     # hand-passed value — the producer knows whether it can take a position.
     # [P420] HOME TRIO BY DESIGN: the `regimebook` candidate is the pooled
     # BTC/ETH/SOL book; breadth ledgers belong to `regimebook_breadth`.
-    _ldir = REPO / "data" / "strategy_shadow"
+    _ldir = Path(args.ledger_dir)
     for c in cands:
         if c.name != "regimebook":
             continue

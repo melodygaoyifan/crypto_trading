@@ -52,6 +52,17 @@ sys.path.insert(0, str(REPO))
 LEDGER_DIR = REPO / "data" / "strategy_shadow_pulled"
 REPORTS_DIR = REPO / "data" / "evidence_reports_pulled"
 OHLCV_DIR = REPO / "training" / "training_data" / "drl_training"
+# [P421e] The ledger of reads TAKEN (committed). The countdown had no notion
+# of a read having happened: after the 19 September reads were executed on
+# 2026-10-12 it kept printing "19 READ(S) ARE DUE" every Monday forever — an
+# alarm that fires on the healthy state is wallpaper (P202), and the one read
+# that genuinely needs a human would be indistinguishable from the 18 that do
+# not. A read is recorded here ONLY by run_scorer when its window covered the
+# candidate's full accrual (the P421 trap: the 30d-from-today default read
+# n=0..noise while the full-span read was decisive).
+READS_TAKEN_PATH = REPO / "analytics" / "shadow_ic" / "reads_taken.json"
+SCORER_REPORTS_DIR = REPO / "analytics" / "shadow_ic" / "reports"
+SEAT_REPORT_PATH = SCORER_REPORTS_DIR / "seat_read_regimebook_latest.json"
 
 # [P420] TWO-FILE CONVENTION for the breadth price series, pinned by test:
 #   {ASSET}_4H_ohlcv.parquet         PRIMARY — Binance-sourced, built ONLY by
@@ -132,6 +143,154 @@ CANDIDATES = {
     "regimebook_breadth": ("regimebook",  "TBD-at-deploy",
                        "breadth book verdict per asset; XRP/BNB already routed, ADA/LTC/DOGE stay out (P412c)"),
 }
+
+# [P421e] Which scorer `strategy` names carry each candidate's verdict. A
+# ledger PREFIX is not a strategy name: "regimebook" prefixes five families
+# (regimebook, _adj, _volskip, _fgshort, _breadth) and "derivflow" holds two
+# strategies, so a prefix match would lump a candidate's verdict with its
+# neighbours'. An empty tuple = the scorer does not judge this candidate (its
+# reader is named in the CANDIDATES action text).
+VERDICT_STRATEGIES = {
+    "regimebook":     ("regimebook",),
+    "regimebook_adj": ("regimebook_adj",),
+    "derivflow":      ("liquidation_squeeze", "liquidation_exhaustion"),
+    "ma_filter":      ("ma_filtered",),
+    "whale_filter":   ("whale_filtered",),
+    "volskip":        ("regimebook_volskip",),
+    "etfflow":        ("etfflow",),
+    "breadth books":  ("regimebook_breadth",),
+    "stablecoinflow": ("stablecoinflow",),
+    "oidiv_confirm":  ("oidiv_confirm",),
+    "oidiv_fade":     ("oidiv_fade",),
+    "calbasis":       ("calbasis",),
+    "xsmom":          ("xsmom",),
+    "eventfilter":    ("eventfilter",),
+    "mlpshadow":      ("mlpshadow",),
+    "donchian":       ("donchian",),
+    "emaens":         ("emaens",),
+    "skewetf":        ("skewetf_skew", "skewetf_etf", "skewetf_agree"),
+    "convsize":       (),
+    "regimebook_breadth": ("regimebook_breadth",),
+}
+
+# [P421e] Candidates with a PRE-COMMITTED next read beyond the P166 clock.
+# Stamped onto the ledger entry so the countdown shows the date and the
+# instrument that owns it, instead of a human remembering (P333).
+NEXT_READS = {
+    "calbasis": "2026-11-10 (scripts/calbasis_check.py, P421 criterion)",
+}
+
+
+def load_reads_taken(path: Path = None) -> dict:
+    """[P421e] {candidate: {read_on, window_days, verdicts, reports, ...}}.
+    An unreadable ledger reads as EMPTY (every overdue read shouts) — the
+    fail direction a missing alarm must have (P2)."""
+    path = Path(path) if path else READS_TAKEN_PATH
+    try:
+        d = json.loads(path.read_text(encoding="utf-8-sig"))
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _verdict_summary(report: dict, strategies: tuple) -> dict:
+    """Per strategy: the POOLED record's verdict when one exists, else the
+    per-asset verdicts. Reads the scorer's own fields; computes nothing."""
+    out = {}
+    recs = (report or {}).get("per_strategy") or []
+    for st in strategies:
+        rows = [r for r in recs if r.get("strategy") == st]
+        pooled = [r for r in rows if r.get("asset") == "POOLED"]
+        if pooled:
+            r = pooled[0]
+            ic = r.get("ic_per_horizon") or {}
+            out[st] = {"scope": "POOLED", "verdict": r.get("verdict"),
+                       "ic": {h: round(float(v), 4) for h, v in ic.items()},
+                       "n": r.get("n_per_horizon")}
+        elif rows:
+            out[st] = {"scope": "per-asset",
+                       "verdict": {r.get("asset"): r.get("verdict") for r in rows}}
+        else:
+            out[st] = {"scope": "absent", "verdict": None}
+    return out
+
+
+def record_reads_taken(window_days: int, per_asset_report: Path,
+                       pooled_report: Path, today=None,
+                       path: Path = None) -> tuple:
+    """[P421e] Record every candidate whose FULL accrual the window covered.
+
+    Returns (recorded, skipped) candidate-name lists. A candidate whose ledger
+    started more than `window_days` ago is SKIPPED, never recorded: a short
+    window is the exact mistake P421 made first (30d default, n=0..noise) and
+    recording it as "read" would silence the alarm on an exam that was not
+    sat. An unstarted clock (TBD-since) is skipped too.
+    """
+    path = Path(path) if path else READS_TAKEN_PATH
+    today = today or datetime.now(timezone.utc).date()
+    try:
+        per_asset = json.loads(Path(per_asset_report).read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        per_asset = {}
+    try:
+        pooled = json.loads(Path(pooled_report).read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        pooled = {}
+    ledger = load_reads_taken(path)
+    recorded, skipped = [], []
+    for name, (prefix, since, _action) in CANDIDATES.items():
+        try:
+            d0 = datetime.strptime(since, "%Y-%m-%d").date()
+        except ValueError:
+            skipped.append(name)
+            continue
+        span = (today - d0).days
+        if window_days < span:
+            skipped.append(name)
+            continue
+        strategies = VERDICT_STRATEGIES.get(name, (prefix,))
+        summary = _verdict_summary(pooled, strategies) if strategies else {}
+        # a strategy with no POOLED row falls back to the per-asset report
+        for st, v in list(summary.items()):
+            if v.get("scope") == "absent":
+                summary[st] = _verdict_summary(per_asset, (st,))[st]
+        entry = {"read_on": today.isoformat(), "window_days": int(window_days),
+                 "ledger_since": since, "span_days": span,
+                 "verdicts": summary,
+                 "reports": {"per_asset": str(per_asset_report),
+                             "pooled": str(pooled_report)}}
+        if not strategies:
+            entry["note"] = ("not judged by the shadow-IC scorer; "
+                             "see the action column for its reader")
+        nxt = NEXT_READS.get(name) or (ledger.get(name) or {}).get("next_read")
+        if nxt:
+            entry["next_read"] = nxt
+        ledger[name] = entry
+        recorded.append(name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(ledger, indent=1, sort_keys=True) + "\n",
+                   encoding="utf-8")
+    tmp.replace(path)
+    return recorded, skipped
+
+
+def _verdict_line(entry: dict) -> str:
+    vs = entry.get("verdicts") or {}
+    if not vs:
+        return entry.get("note") or "read taken"
+    parts = []
+    for st, v in vs.items():
+        verdict = v.get("verdict")
+        if isinstance(verdict, dict):
+            verdict = "/".join(f"{a}:{x}" for a, x in verdict.items())
+        ic = v.get("ic") or {}
+        ic_s = ("" if not ic else
+                " ic " + "/".join(f"{ic[h]:+.2f}" for h in sorted(ic, key=int)))
+        parts.append(f"{st} {verdict}{ic_s}")
+    s = "; ".join(parts)
+    nxt = entry.get("next_read")
+    return s + (f"  | next read {nxt}" if nxt else "")
 
 KRAKEN_PAIRS_BREADTH = {"XRP": "XRPUSD", "ADA": "ADAUSD", "LTC": "LTCUSD",
                         "DOGE": "XDGUSD", "BNB": "BNBUSD"}
@@ -238,7 +397,7 @@ def build_breadth_ohlcv() -> int:
     return n_failed
 
 
-def run_scorer(window_days: int) -> int:
+def run_scorer(window_days: int, record: bool = True) -> int:
     """[P332] Score BOTH ways: per-asset for diagnosis, POOLED for the verdict.
 
     Until now this ran the per-asset read only, and P293g measured that such a
@@ -258,10 +417,15 @@ def run_scorer(window_days: int) -> int:
       * PER-ASSET is diagnosis: it shows WHERE a family works, which is what
         P307c needed to explain two labs that appeared to disagree.
     """
+    SCORER_REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    per_asset_path = SCORER_REPORTS_DIR / f"shadow_ic_{stamp}_perasset.json"
+    pooled_path = SCORER_REPORTS_DIR / f"shadow_ic_{stamp}_pooled.json"
     rc_asset = _run([sys.executable, "-X", "utf8", "-m",
                      "analytics.shadow_ic.compute_shadow_ic",
                      "--ledger-dir", str(LEDGER_DIR),
-                     "--window-days", str(window_days)])
+                     "--window-days", str(window_days),
+                     "--output", str(per_asset_path)])
     print("")
     print("=" * 74)
     print("  POOLED READ — this is the one the P166 gate can fire on for a")
@@ -271,11 +435,52 @@ def run_scorer(window_days: int) -> int:
                       "analytics.shadow_ic.compute_shadow_ic",
                       "--ledger-dir", str(LEDGER_DIR),
                       "--window-days", str(window_days),
-                      "--pool-assets"])
+                      "--pool-assets", "--output", str(pooled_path)])
     # A refusal in EITHER read is a refusal: a missing pooled read must not be
     # invisible behind a healthy per-asset one (P199 — "no data" is not "no
     # signal", one level up).
-    return rc_asset or rc_pooled
+    rc = rc_asset or rc_pooled
+    if rc == 0 and record:
+        # [P421e] Record the reads this run actually SAT — only the candidates
+        # whose full accrual the window covered. The rest keep shouting.
+        recorded, skipped = record_reads_taken(window_days, per_asset_path,
+                                               pooled_path)
+        print(f"\n[P421e] reads recorded in {READS_TAKEN_PATH.name}: "
+              f"{', '.join(recorded) or '(none)'}")
+        if skipped:
+            print(f"[P421e] NOT recorded (window {window_days}d shorter than "
+                  f"the ledger span, or clock unstarted): {', '.join(skipped)}"
+                  f" -> re-run with --window-days >= the span to take those reads")
+    return rc
+
+
+def run_seat_read(window_days: int) -> int:
+    """[P421e] Score the regimebook DECIDE candidate from its OWN ledger.
+
+    scripts/seat_check.py scores the seat from agent_ic_review's `quant`
+    series, which is the live decider's claims AFTER the seats ran. When the
+    book has said flat all window that series is a constant, its IC is
+    undefined, and the controller correctly REFUSES — so the one verdict it
+    was built to reach (flat wins by comparison, P271) was unreachable from a
+    flat book. The pooled regimebook ledger is the book's own claim series,
+    the exact thing the September exam scored; scored at 1 and 4 bars (the
+    controller's two horizons) it is the evidence the controller needs. The
+    verdict is printed, NEVER applied (P141).
+    """
+    SCORER_REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    rc = _run([sys.executable, "-X", "utf8", "-m",
+               "analytics.shadow_ic.compute_shadow_ic",
+               "--ledger-dir", str(LEDGER_DIR),
+               "--window-days", str(window_days),
+               "--horizons", "1,4", "--prefixes", "regimebook",
+               "--pool-assets", "--output", str(SEAT_REPORT_PATH)])
+    if rc not in (0, 3):
+        print(f"[P421e] seat read: scorer rc={rc}; seat controller not run")
+        return 2
+    return _run([sys.executable, "-X", "utf8",
+                 str(REPO / "scripts" / "seat_check.py"),
+                 "--shadow-ic-report", str(SEAT_REPORT_PATH),
+                 "--ledger-dir", str(LEDGER_DIR)])
 
 
 def run_tripwire() -> int:
@@ -303,6 +508,7 @@ def countdown(return_due: bool = False, today_override=None):
     today = (today_override
              or datetime.now(timezone.utc).date())
     due = []
+    taken = load_reads_taken()
     print("\n" + "=" * 74)
     print(f"  SEPTEMBER COUNTDOWN (today {today})   "
           f"decision tree: docs/SEPTEMBER_DECISION_TREE.md")
@@ -322,6 +528,15 @@ def countdown(return_due: bool = False, today_override=None):
         read = d0.toordinal() + 30
         left = read - today.toordinal()
         read_s = datetime.fromordinal(read).date().isoformat()
+        # [P421e] A read that was TAKEN is reported as taken — date, window
+        # and the scorer's own verdict — and never counted DUE again.
+        # A read taken AFTER the reference date does not count: a --today
+        # override must see the world as it stood on that date.
+        t = taken.get(name)
+        if t and t.get("read_on") and str(t["read_on"]) <= today.isoformat():
+            print(f"  {name:<16} {since:<13} {t['read_on']:<14} "
+                  f"{'TAKEN':<10} {_verdict_line(t)}")
+            continue
         print(f"  {name:<16} {since:<13} {read_s:<14} "
               f"{max(0, left):<10} {action}")
         if left <= 0:
@@ -388,27 +603,34 @@ def main() -> int:
         due = countdown(return_due=True, today_override=_t)
         return 3 if due else 0
     if not args.no_pull:
-        print("[1/5] pulling ledgers + reports from the server...")
+        print("[1/6] pulling ledgers + reports from the server...")
         if not pull_from_server():
             print("REFUSING to score without a fresh pull — stale local "
                   "ledgers score yesterday's system (P255: local data/ is "
                   "never live evidence). Use --no-pull to override.")
             return 2
-    print("[2/5] refreshing home-asset OHLCV...")
+    print("[2/6] refreshing home-asset OHLCV...")
     prices_rc = refresh_prices()
-    print("[3/5] building breadth-asset OHLCV from Kraken...")
+    print("[3/6] building breadth-asset OHLCV from Kraken...")
     breadth_failed = build_breadth_ohlcv()
-    print(f"[4/5] scoring all candidates (window={args.window_days}d)...")
+    print(f"[4/6] scoring all candidates (window={args.window_days}d)...")
     rc = run_scorer(args.window_days)
-    print("[5/5] tripwire status...")
+    print("[5/6] tripwire status...")
     tw_rc = run_tripwire()
+    print("[6/6] seat controller on the pooled regimebook ledger (P421e)...")
+    seat_rc = run_seat_read(args.window_days)
     countdown()
     # [P287] one unmissable RESULT line — step failures used to be `!!`
     # noise mid-scroll above a normal-looking verdict table, and the
     # tripwire's exit code was dropped entirely.
-    tw_txt = {0: "not fired", 2: "REFUSED (reports unreadable/missing)",
+    # [P421e] rc 0 is NOT "nothing happened": P299 made the checker
+    # detection-only, so 0 means "streak reported above" (it printed 4/4
+    # GATE-CLOSED on all three assets while this line said not fired).
+    tw_txt = {0: "detection-only, see streak lines (P299)", 2: "REFUSED (reports unreadable/missing)",
               3: "*** FIRED ***"}.get(tw_rc, f"rc={tw_rc}")
-    print(f"\nRESULT: scorer rc={rc} | tripwire {tw_txt} | "
+    seat_txt = {0: "incumbent holds", 2: "REFUSED",
+                3: "*** SWITCH recommended ***"}.get(seat_rc, f"rc={seat_rc}")
+    print(f"\nRESULT: scorer rc={rc} | tripwire {tw_txt} | seat {seat_txt} | "
           f"price refresh {'OK' if prices_rc == 0 else 'FAILED'} | "
           f"breadth OHLCV failures {breadth_failed}"
           + ("  <- some price series are stale; forward joins shrink "

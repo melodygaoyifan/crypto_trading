@@ -1,0 +1,517 @@
+{
+ "breadth books": {
+  "ledger_since": "2026-08-16",
+  "read_on": "2026-10-13",
+  "reports": {
+   "per_asset": "C:\\Users\\melod\\Downloads\\hmats\\analytics\\shadow_ic\\reports\\shadow_ic_20261013_080040_perasset.json",
+   "pooled": "C:\\Users\\melod\\Downloads\\hmats\\analytics\\shadow_ic\\reports\\shadow_ic_20261013_080040_pooled.json"
+  },
+  "span_days": 58,
+  "verdicts": {
+   "regimebook_breadth": {
+    "ic": {
+     "12": -0.1755,
+     "24": -0.2332,
+     "4": -0.1282
+    },
+    "n": {
+     "12": 522,
+     "24": 498,
+     "4": 538
+    },
+    "scope": "POOLED",
+    "verdict": "HOLD"
+   }
+  },
+  "window_days": 67
+ },
+ "calbasis": {
+  "ledger_since": "2026-08-16",
+  "next_read": "2026-11-10 (scripts/calbasis_check.py, P421 criterion)",
+  "read_on": "2026-10-13",
+  "reports": {
+   "per_asset": "C:\\Users\\melod\\Downloads\\hmats\\analytics\\shadow_ic\\reports\\shadow_ic_20261013_080040_perasset.json",
+   "pooled": "C:\\Users\\melod\\Downloads\\hmats\\analytics\\shadow_ic\\reports\\shadow_ic_20261013_080040_pooled.json"
+  },
+  "span_days": 58,
+  "verdicts": {
+   "calbasis": {
+    "ic": {
+     "12": 0.2471,
+     "24": 0.2631,
+     "4": 0.2054
+    },
+    "n": {
+     "12": 1629,
+     "24": 1581,
+     "4": 1664
+    },
+    "scope": "POOLED",
+    "verdict": "HOLD"
+   }
+  },
+  "window_days": 67
+ },
+ "convsize": {
+  "ledger_since": "2026-08-27",
+  "note": "not judged by the shadow-IC scorer; see the action column for its reader",
+  "read_on": "2026-10-13",
+  "reports": {
+   "per_asset": "C:\\Users\\melod\\Downloads\\hmats\\analytics\\shadow_ic\\reports\\shadow_ic_20261013_080040_perasset.json",
+   "pooled": "C:\\Users\\melod\\Downloads\\hmats\\analytics\\shadow_ic\\reports\\shadow_ic_20261013_080040_pooled.json"
+  },
+  "span_days": 47,
+  "verdicts": {},
+  "window_days": 67
+ },
+ "derivflow": {
+  "ledger_since": "2026-08-08",
+  "read_on": "2026-10-13",
+  "reports": {
+   "per_asset": "C:\\Users\\melod\\Downloads\\hmats\\analytics\\shadow_ic\\reports\\shadow_ic_20261013_080040_perasset.json",
+   "pooled": "C:\\Users\\melod\\Downloads\\hmats\\analytics\\shadow_ic\\reports\\shadow_ic_20261013_080040_pooled.json"
+  },
+  "span_days": 66,
+  "verdicts": {
+   "liquidation_exhaustion": {
+    "ic": {
+     "12": -0.1241,
+     "24": -0.1116,
+     "4": -0.0173
+    },
+    "n": {
+     "12": 2167,
+     "24": 2107,
+     "4": 2210
+    },
+    "scope": "POOLED",
+    "verdict": "HOLD"
+   },
+   "liquidation_squeeze": {
+    "ic": {
+     "12": 0.1241,
+     "24": 0.1116,
+     "4": 0.0173
+    },
+    "n": {
+     "12": 2167,
+     "24": 2107,
+     "4": 2210
+    },
+    "scope": "POOLED",
+    "verdict": "HOLD"
+   }
+  },
+  "window_days": 67
+ },
+ "donchian": {
+  "ledger_since": "2026-08-17",
+  "read_on": "2026-10-13",
+  "reports": {
+   "per_asset": "C:\\Users\\melod\\Downloads\\hmats\\analytics\\shadow_ic\\reports\\shadow_ic_20261013_080040_perasset.json",
+   "pooled": "C:\\Users\\melod\\Downloads\\hmats\\analytics\\shadow_ic\\reports\\shadow_ic_20261013_080040_pooled.json"
+  },
+  "span_days": 57,
+  "verdicts": {
+   "donchian": {
+    "ic": {
+     "12": -0.2023,
+     "24": -0.2773,
+     "4": -0.0514
+    },
+    "n": {
+     "12": 1338,
+     "24": 1302,
+     "4": 1365
+    },
+    "scope": "POOLED",
+    "verdict": "HOLD"
+   }
+  },
+  "window_days": 67
+ },
+ "emaens": {
+  "ledger_since": "2026-08-17",
+  "read_on": "2026-10-13",
+  "reports": {
+   "per_asset": "C:\\Users\\melod\\Downloads\\hmats\\analytics\\shadow_ic\\reports\\shadow_ic_20261013_080040_perasset.json",
+   "pooled": "C:\\Users\\melod\\Downloads\\hmats\\analytics\\shadow_ic\\reports\\shadow_ic_20261013_080040_pooled.json"
+  },
+  "span_days": 57,
+  "verdicts": {
+   "emaens": {
+    "ic": {
+     "12": -0.3018,
+     "24": -0.3243,
+     "4": -0.113
+    },
+    "n": {
+     "12": 1338,
+     "24": 1302,
+     "4": 1365
+    },
+    "scope": "POOLED",
+    "verdict": "HOLD"
+   }
+  },
+  "window_days": 67
+ },
+ "etfflow": {
+  "ledger_since": "2026-08-16",
+  "read_on": "2026-10-13",
+  "reports": {
+   "per_asset": "C:\\Users\\melod\\Downloads\\hmats\\analytics\\shadow_ic\\reports\\shadow_ic_20261013_080040_perasset.json",
+   "pooled": "C:\\Users\\melod\\Downloads\\hmats\\analytics\\shadow_ic\\reports\\shadow_ic_20261013_080040_pooled.json"
+  },
+  "span_days": 58,
+  "verdicts": {
+   "etfflow": {
+    "ic": {
+     "12": 0.1095,
+     "24": 0.0724,
+     "4": 0.102
+    },
+    "n": {
+     "12": 924,
+     "24": 900,
+     "4": 942
+    },
+    "scope": "POOLED",
+    "verdict": "HOLD"
+   }
+  },
+  "window_days": 67
+ },
+ "eventfilter": {
+  "ledger_since": "2026-08-16",
+  "read_on": "2026-10-13",
+  "reports": {
+   "per_asset": "C:\\Users\\melod\\Downloads\\hmats\\analytics\\shadow_ic\\reports\\shadow_ic_20261013_080040_perasset.json",
+   "pooled": "C:\\Users\\melod\\Downloads\\hmats\\analytics\\shadow_ic\\reports\\shadow_ic_20261013_080040_pooled.json"
+  },
+  "span_days": 58,
+  "verdicts": {
+   "eventfilter": {
+    "ic": {
+     "12": -0.135,
+     "24": -0.1851,
+     "4": -0.0504
+    },
+    "n": {
+     "12": 1930,
+     "24": 1870,
+     "4": 1973
+    },
+    "scope": "POOLED",
+    "verdict": "HOLD"
+   }
+  },
+  "window_days": 67
+ },
+ "ma_filter": {
+  "ledger_since": "2026-08-08",
+  "read_on": "2026-10-13",
+  "reports": {
+   "per_asset": "C:\\Users\\melod\\Downloads\\hmats\\analytics\\shadow_ic\\reports\\shadow_ic_20261013_080040_perasset.json",
+   "pooled": "C:\\Users\\melod\\Downloads\\hmats\\analytics\\shadow_ic\\reports\\shadow_ic_20261013_080040_pooled.json"
+  },
+  "span_days": 66,
+  "verdicts": {
+   "ma_filtered": {
+    "ic": {
+     "12": -0.1069,
+     "24": -0.1729,
+     "4": 0.0088
+    },
+    "n": {
+     "12": 1645,
+     "24": 1585,
+     "4": 1688
+    },
+    "scope": "POOLED",
+    "verdict": "HOLD"
+   }
+  },
+  "window_days": 67
+ },
+ "mlpshadow": {
+  "ledger_since": "2026-08-16",
+  "read_on": "2026-10-13",
+  "reports": {
+   "per_asset": "C:\\Users\\melod\\Downloads\\hmats\\analytics\\shadow_ic\\reports\\shadow_ic_20261013_080040_perasset.json",
+   "pooled": "C:\\Users\\melod\\Downloads\\hmats\\analytics\\shadow_ic\\reports\\shadow_ic_20261013_080040_pooled.json"
+  },
+  "span_days": 58,
+  "verdicts": {
+   "mlpshadow": {
+    "scope": "per-asset",
+    "verdict": {
+     "BTC": "HOLD"
+    }
+   }
+  },
+  "window_days": 67
+ },
+ "oidiv_confirm": {
+  "ledger_since": "2026-08-16",
+  "read_on": "2026-10-13",
+  "reports": {
+   "per_asset": "C:\\Users\\melod\\Downloads\\hmats\\analytics\\shadow_ic\\reports\\shadow_ic_20261013_080040_perasset.json",
+   "pooled": "C:\\Users\\melod\\Downloads\\hmats\\analytics\\shadow_ic\\reports\\shadow_ic_20261013_080040_pooled.json"
+  },
+  "span_days": 58,
+  "verdicts": {
+   "oidiv_confirm": {
+    "ic": {
+     "12": 0.0659,
+     "24": 0.1255,
+     "4": -0.0017
+    },
+    "n": {
+     "12": 1935,
+     "24": 1875,
+     "4": 1978
+    },
+    "scope": "POOLED",
+    "verdict": "HOLD"
+   }
+  },
+  "window_days": 67
+ },
+ "oidiv_fade": {
+  "ledger_since": "2026-08-16",
+  "read_on": "2026-10-13",
+  "reports": {
+   "per_asset": "C:\\Users\\melod\\Downloads\\hmats\\analytics\\shadow_ic\\reports\\shadow_ic_20261013_080040_perasset.json",
+   "pooled": "C:\\Users\\melod\\Downloads\\hmats\\analytics\\shadow_ic\\reports\\shadow_ic_20261013_080040_pooled.json"
+  },
+  "span_days": 58,
+  "verdicts": {
+   "oidiv_fade": {
+    "ic": {
+     "12": -0.0273,
+     "24": -0.0498,
+     "4": 0.0497
+    },
+    "n": {
+     "12": 1935,
+     "24": 1875,
+     "4": 1978
+    },
+    "scope": "POOLED",
+    "verdict": "KILL"
+   }
+  },
+  "window_days": 67
+ },
+ "regimebook": {
+  "ledger_since": "2026-08-10",
+  "read_on": "2026-10-13",
+  "reports": {
+   "per_asset": "C:\\Users\\melod\\Downloads\\hmats\\analytics\\shadow_ic\\reports\\shadow_ic_20261013_080040_perasset.json",
+   "pooled": "C:\\Users\\melod\\Downloads\\hmats\\analytics\\shadow_ic\\reports\\shadow_ic_20261013_080040_pooled.json"
+  },
+  "span_days": 64,
+  "verdicts": {
+   "regimebook": {
+    "ic": {
+     "12": -0.3293,
+     "24": -0.45,
+     "4": -0.1261
+    },
+    "n": {
+     "12": 1521,
+     "24": 1485,
+     "4": 1548
+    },
+    "scope": "POOLED",
+    "verdict": "HOLD"
+   }
+  },
+  "window_days": 67
+ },
+ "regimebook_adj": {
+  "ledger_since": "2026-08-10",
+  "read_on": "2026-10-13",
+  "reports": {
+   "per_asset": "C:\\Users\\melod\\Downloads\\hmats\\analytics\\shadow_ic\\reports\\shadow_ic_20261013_080040_perasset.json",
+   "pooled": "C:\\Users\\melod\\Downloads\\hmats\\analytics\\shadow_ic\\reports\\shadow_ic_20261013_080040_pooled.json"
+  },
+  "span_days": 64,
+  "verdicts": {
+   "regimebook_adj": {
+    "ic": {
+     "12": -0.3371,
+     "24": -0.4605,
+     "4": -0.1386
+    },
+    "n": {
+     "12": 1518,
+     "24": 1482,
+     "4": 1545
+    },
+    "scope": "POOLED",
+    "verdict": "HOLD"
+   }
+  },
+  "window_days": 67
+ },
+ "skewetf": {
+  "ledger_since": "2026-08-25",
+  "read_on": "2026-10-13",
+  "reports": {
+   "per_asset": "C:\\Users\\melod\\Downloads\\hmats\\analytics\\shadow_ic\\reports\\shadow_ic_20261013_080040_perasset.json",
+   "pooled": "C:\\Users\\melod\\Downloads\\hmats\\analytics\\shadow_ic\\reports\\shadow_ic_20261013_080040_pooled.json"
+  },
+  "span_days": 49,
+  "verdicts": {
+   "skewetf_agree": {
+    "ic": {
+     "12": -0.1694,
+     "24": -0.2161,
+     "4": -0.0093
+    },
+    "n": {
+     "12": 604,
+     "24": 580,
+     "4": 622
+    },
+    "scope": "POOLED",
+    "verdict": "HOLD"
+   },
+   "skewetf_etf": {
+    "ic": {
+     "12": -0.1368,
+     "24": -0.0739,
+     "4": -0.0316
+    },
+    "n": {
+     "12": 604,
+     "24": 580,
+     "4": 622
+    },
+    "scope": "POOLED",
+    "verdict": "HOLD"
+   },
+   "skewetf_skew": {
+    "ic": {
+     "12": -0.1165,
+     "24": -0.1857,
+     "4": -0.0316
+    },
+    "n": {
+     "12": 604,
+     "24": 580,
+     "4": 622
+    },
+    "scope": "POOLED",
+    "verdict": "HOLD"
+   }
+  },
+  "window_days": 67
+ },
+ "stablecoinflow": {
+  "ledger_since": "2026-08-16",
+  "read_on": "2026-10-13",
+  "reports": {
+   "per_asset": "C:\\Users\\melod\\Downloads\\hmats\\analytics\\shadow_ic\\reports\\shadow_ic_20261013_080040_perasset.json",
+   "pooled": "C:\\Users\\melod\\Downloads\\hmats\\analytics\\shadow_ic\\reports\\shadow_ic_20261013_080040_pooled.json"
+  },
+  "span_days": 58,
+  "verdicts": {
+   "stablecoinflow": {
+    "ic": {
+     "12": 0.1599,
+     "24": 0.1031,
+     "4": 0.0232
+    },
+    "n": {
+     "12": 912,
+     "24": 888,
+     "4": 930
+    },
+    "scope": "POOLED",
+    "verdict": "HOLD"
+   }
+  },
+  "window_days": 67
+ },
+ "volskip": {
+  "ledger_since": "2026-08-16",
+  "read_on": "2026-10-13",
+  "reports": {
+   "per_asset": "C:\\Users\\melod\\Downloads\\hmats\\analytics\\shadow_ic\\reports\\shadow_ic_20261013_080040_perasset.json",
+   "pooled": "C:\\Users\\melod\\Downloads\\hmats\\analytics\\shadow_ic\\reports\\shadow_ic_20261013_080040_pooled.json"
+  },
+  "span_days": 58,
+  "verdicts": {
+   "regimebook_volskip": {
+    "ic": {
+     "12": -0.5493,
+     "24": -0.6588,
+     "4": -0.3
+    },
+    "n": {
+     "12": 462,
+     "24": 450,
+     "4": 471
+    },
+    "scope": "POOLED",
+    "verdict": "HOLD"
+   }
+  },
+  "window_days": 67
+ },
+ "whale_filter": {
+  "ledger_since": "2026-08-18",
+  "read_on": "2026-10-13",
+  "reports": {
+   "per_asset": "C:\\Users\\melod\\Downloads\\hmats\\analytics\\shadow_ic\\reports\\shadow_ic_20261013_080040_perasset.json",
+   "pooled": "C:\\Users\\melod\\Downloads\\hmats\\analytics\\shadow_ic\\reports\\shadow_ic_20261013_080040_pooled.json"
+  },
+  "span_days": 56,
+  "verdicts": {
+   "whale_filtered": {
+    "ic": {
+     "12": -0.1519,
+     "24": -0.1769,
+     "4": -0.0321
+    },
+    "n": {
+     "12": 1371,
+     "24": 1311,
+     "4": 1414
+    },
+    "scope": "POOLED",
+    "verdict": "HOLD"
+   }
+  },
+  "window_days": 67
+ },
+ "xsmom": {
+  "ledger_since": "2026-08-16",
+  "read_on": "2026-10-13",
+  "reports": {
+   "per_asset": "C:\\Users\\melod\\Downloads\\hmats\\analytics\\shadow_ic\\reports\\shadow_ic_20261013_080040_perasset.json",
+   "pooled": "C:\\Users\\melod\\Downloads\\hmats\\analytics\\shadow_ic\\reports\\shadow_ic_20261013_080040_pooled.json"
+  },
+  "span_days": 58,
+  "verdicts": {
+   "xsmom": {
+    "ic": {
+     "12": -0.0568,
+     "24": -0.0336,
+     "4": -0.0426
+    },
+    "n": {
+     "12": 2700,
+     "24": 2571,
+     "4": 2788
+    },
+    "scope": "POOLED",
+    "verdict": "HOLD"
+   }
+  },
+  "window_days": 67
+ }
+}

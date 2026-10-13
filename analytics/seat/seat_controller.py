@@ -112,7 +112,12 @@ class Candidate:
         elif self.n < MIN_N:
             out.append(f"insufficient evidence (n={self.n} < {MIN_N})")
         elif self.ic_4h is None or self.ic_16h is None:
-            out.append("missing an IC horizon")
+            # [P421e] A producer that knows WHY the horizon is missing says so
+            # here — "no directional claims in the window" is a different
+            # fact from "the report lacks the horizon", and the operator
+            # reading the refusal must be able to tell them apart.
+            out.append("missing an IC horizon"
+                       + (f": {self.note}" if self.note else ""))
         if self.in_market_rate is not None and self.in_market_rate <= 0.0:
             out.append("never takes a position (in-market rate 0%)")
         return out
