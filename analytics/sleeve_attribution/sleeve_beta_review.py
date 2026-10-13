@@ -54,6 +54,7 @@ import argparse
 import json
 import math
 import sys
+from typing import NoReturn  # [P423b] lets mypy narrow past a refusal
 import urllib.request
 from bisect import bisect_right
 from datetime import datetime, timezone
@@ -69,7 +70,7 @@ FACTOR_PAIRS = {"BTC": "XBTUSD", "ETH": "ETHUSD", "SOL": "SOLUSD"}
 CONTRACT_SIZE = {"BTC": 0.01, "ETH": 0.1, "SOL": 5.0}
 
 
-def _refuse(msg: str) -> None:
+def _refuse(msg: str) -> NoReturn:
     print(f"REFUSING TO REPORT: {msg}", file=sys.stderr)
     sys.exit(2)
 

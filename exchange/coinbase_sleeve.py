@@ -1046,9 +1046,10 @@ class CoinbaseSleeve:
     def set_order_context(self, asset: str, **ctx: Any) -> None:
         """[P423] Stamp the next fill(s) for `asset` with decider/cause."""
         try:
-            store = getattr(self, "_order_context", None)
+            store: Optional[Dict[str, Dict[str, Any]]] = getattr(self, "_order_context", None)
             if store is None:
-                store = self._order_context = {}
+                store = {}
+                self._order_context: Dict[str, Dict[str, Any]] = store
             store[asset] = {k: ctx.get(k) for k in self._ORDER_CTX_KEYS}
         except Exception:  # noqa: silent-swallow — a labelling failure must never touch the order path (Iron Law 7)
             pass
