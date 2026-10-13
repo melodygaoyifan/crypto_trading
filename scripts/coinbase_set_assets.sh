@@ -136,8 +136,21 @@ print(json.dumps({
 " "$REQUESTED_ASSETS" "$HOME_ASSETS" > /tmp/cb_routing.json
 echo "ROUTING -> $(cat /tmp/cb_routing.json)"
 
-scp -o BatchMode=yes /tmp/cb_routing.json \
-  hmats:/var/lib/docker/volumes/hmats-data/_data/coinbase_routing_state.json
+# [P421d] The write and the restart both go over ssh to the host alias
+# `hmats`. Run ON the server (2026-10-12) both steps failed silently -- scp
+# cannot reach `hmats:` from the host itself, nothing was written, the manual
+# restart re-read the OLD five-asset state, and the run still printed "done.".
+# The XRP/BNB de-route the operator instructed therefore never landed until it
+# was re-run (2026-10-13) from a machine where `ssh hmats` resolves. A state
+# write that fails must be a loud refusal, never a success line.
+if ! scp -o BatchMode=yes /tmp/cb_routing.json \
+  hmats:/var/lib/docker/volumes/hmats-data/_data/coinbase_routing_state.json; then
+  rm -f /tmp/cb_routing.json
+  echo "FAILED: could not write the routing state (scp to host alias 'hmats' failed)." >&2
+  echo "  Run this script from the OPERATOR machine, not on the server -- the write" >&2
+  echo "  and the restart both go through 'ssh hmats'. Routing is UNCHANGED." >&2
+  exit 4
+fi
 rm -f /tmp/cb_routing.json
 
 CHECK_ASSETS="$HOME_ASSETS $REQUESTED_BREADTH"
@@ -151,5 +164,9 @@ from types import SimpleNamespace
 ctx = SimpleNamespace(config=SimpleNamespace(coinbase_routing_enabled=True))
 es._coinbase_get_routing()
 print('ROUTED:', {a: es._coinbase_routed(ctx, a) for a in '$CHECK_ASSETS'.split()})
-\" 2>/dev/null | grep ROUTED"
+\" 2>/dev/null | grep ROUTED" || {
+  echo "FAILED: the routing state WAS written but the engine restart/verify over 'ssh hmats' failed." >&2
+  echo "  The running engine may still hold the OLD routing until it is restarted by hand (P421d)." >&2
+  exit 5
+}
 echo "done. Watch [COINBASE-MANAGE] in the heartbeat; revert with: bash scripts/coinbase_set_assets.sh \"\""
