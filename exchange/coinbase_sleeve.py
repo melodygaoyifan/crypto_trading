@@ -128,8 +128,19 @@ class CoinbaseSleeve:
                  maker_wait_sec: float = 45.0,
                  maker_reprice: bool = False,
                  max_contracts_by_asset: Optional[Dict[str, int]] = None,
-                 target_fraction_by_asset: Optional[Dict[str, float]] = None) -> None:
+                 target_fraction_by_asset: Optional[Dict[str, float]] = None,
+                 contract_floor_mode: str = "shadow") -> None:
         self._adapter = adapter
+        # [P1-4] floor(fraction x equity / 1-contract notional) == 0 used to be
+        # bumped to 1 contract (P274's `max(1, ...)`), i.e. a budget worth 0.16
+        # of a contract traded a whole one. off | shadow | enforce; shadow
+        # (default) logs WOULD_SUPPRESS and still sizes 1 (byte-identical);
+        # enforce sends NO order for it: flat stays flat, a same-side position
+        # is held, an opposite position is closed (a reduce is always free,
+        # P195). Unknown -> shadow.
+        _cfm = str(contract_floor_mode or "shadow").strip().lower()
+        self._contract_floor_mode = _cfm if _cfm in ("off", "shadow", "enforce") else "shadow"
+        self._contract_floor_logged: Dict[str, float] = {}
         # [P270] Maker-first execution. CDE charges 0bps maker vs 3bps taker
         # (probed 2026-08-15: post_only is genuinely ENFORCED — a crossing
         # post-only previews PREVIEW_INVALID_LIMIT_PRICE_POST_ONLY, so this
@@ -1588,7 +1599,12 @@ class CoinbaseSleeve:
         si = self._sizing_inputs(asset)
         if si is not None:
             fr, eq, one_ct = si
-            sized = max(1, int(fr * eq / one_ct))
+            _raw = int(fr * eq / one_ct)
+            if _raw == 0:
+                _floored = self._contract_floor_zero(asset, sign, fr * eq, one_ct)
+                if _floored is not None:
+                    return _floored
+            sized = max(1, _raw)
             # [P287] Boundary hysteresis — see _dampen_boundary_step. The
             # damping lives HERE (not in _sized_contracts) so every
             # target_for caller — the driver AND main.py's three
@@ -1608,6 +1624,44 @@ class CoinbaseSleeve:
             asset, 1) or 1)
         fixed = self._apply_conviction(max(1, fixed), conviction)
         return sign * fixed
+
+    def _contract_floor_zero(self, asset: str, sign: int, budget_usd: float,
+                             one_ct_usd: float) -> Optional[int]:
+        """[P1-4] The sized budget is below ONE contract. Returns the target
+        to use in enforce mode, or None to keep the historical 1-contract
+        floor (shadow / off). Logs WOULD_SUPPRESS at most once per asset per
+        4H (target_for is read several times per tick). Never raises: any
+        error keeps today's behavior."""
+        mode = str(getattr(self, "_contract_floor_mode", "shadow") or "shadow")
+        if mode == "off":
+            return None
+        try:
+            cur = int(round(float(self.signed_contracts(asset) or 0.0)))
+        except Exception:  # noqa: silent-swallow — unreadable position: hold-safe answer below uses 0
+            cur = 0
+        if cur == 0:
+            enforced = 0
+        elif (cur > 0) == (sign > 0):
+            enforced = cur          # hold the existing position: NO_TRADE
+        else:
+            enforced = 0            # close the abandoned leg; never open the new side
+        try:
+            logs = getattr(self, "_contract_floor_logged", None)
+            if logs is None:
+                logs = self._contract_floor_logged = {}
+            now = time.time()
+            if now - float(logs.get(asset, 0.0)) > 4 * 3600:
+                logs[asset] = now
+                logger.info(
+                    f"[P1-4-FLOOR] {asset}: budget ${budget_usd:,.2f} < 1 contract "
+                    f"(${one_ct_usd:,.2f}) — "
+                    + ("ENFORCED: no 1-contract round-up, target "
+                       f"{enforced:+d}ct (cur {cur:+d})" if mode == "enforce"
+                       else f"WOULD_SUPPRESS (shadow): still sizing 1ct; enforce "
+                            f"would target {enforced:+d}ct (cur {cur:+d})"))
+        except Exception:  # noqa: silent-swallow — logging must never touch the order path
+            pass
+        return enforced if mode == "enforce" else None
 
     @staticmethod
     def _apply_conviction(size: int, conviction: float) -> int:

@@ -23970,6 +23970,9 @@ class HMATSProductionRunner:
                 # [P416] same-direction resize persistence (conviction flap)
                 resize_persist_ticks=int(getattr(
                     self.config, "coinbase_resize_persist_ticks", 0) or 0),
+                # [P1-4] contract-granularity sizing floor (default shadow)
+                contract_floor_mode=str(getattr(
+                    self.config, "contract_floor_sizing_mode", "shadow") or "shadow"),
                 # [P291] one-reprice maker ladder (inside the SAME wait budget)
                 maker_reprice=bool(getattr(
                     self.config, "coinbase_maker_reprice", False)),
