@@ -120,6 +120,42 @@ def classify_intent_type(position_before: Any, target: Any,
     return "REBALANCE"
 
 
+def risk_exit_cooldown_decision(current: float, target: float,
+                                age_sec: Optional[float],
+                                window_sec: float) -> Tuple[bool, float, str]:
+    """[P429] Would this manage target REBUILD exposure a watchdog risk exit
+    just took off? Pure; returns (suppress, held_target, reason).
+
+    Only orders that INCREASE |exposure| inside the window are suppressible:
+      - same-sign add (|target| > |current|)   -> hold current
+      - entry from flat (current == 0)          -> stay flat
+      - flip (signs differ, current != 0)       -> flatten (the closing leg
+        is a reduce and always free, P195/P341; opening the other side is
+        the rebuild)
+    Reduces, flattens and holds are never suppressed. No stamp, an
+    unreadable age, a non-positive window, or age >= window -> no suppress
+    (absence of a risk exit is not a reason to block, P2)."""
+    try:
+        cur, tgt = float(current), float(target)
+    except (TypeError, ValueError):  # noqa: silent-swallow — unknown input never suppresses
+        return False, target, "unreadable"
+    if age_sec is None or window_sec <= 0:
+        return False, tgt, "no_recent_risk_exit"
+    try:
+        age = float(age_sec)
+    except (TypeError, ValueError):  # noqa: silent-swallow — unreadable age never suppresses
+        return False, tgt, "no_recent_risk_exit"
+    if age != age or age < 0 or age >= window_sec:
+        return False, tgt, "no_recent_risk_exit"
+    if tgt == 0 or (abs(tgt) <= abs(cur) and (tgt > 0) == (cur > 0)):
+        return False, tgt, "not_a_rebuild"
+    if cur == 0:
+        return True, 0.0, "entry_from_flat"
+    if (tgt > 0) != (cur > 0):
+        return True, 0.0, "flip_demoted_to_flatten"
+    return True, cur, "add_held"
+
+
 class CoinbaseSleeve:
     """LIVE Coinbase perp sleeve: venue-reconciled state + the sole order
     driver (`manage_to_signal`/`execute_target`), with its own risk guard
@@ -173,8 +209,33 @@ class CoinbaseSleeve:
                  maker_reprice: bool = False,
                  max_contracts_by_asset: Optional[Dict[str, int]] = None,
                  target_fraction_by_asset: Optional[Dict[str, float]] = None,
-                 contract_floor_mode: str = "shadow") -> None:
+                 contract_floor_mode: str = "shadow",
+                 risk_exit_cooldown_mode: str = "shadow",
+                 risk_exit_cooldown_hours: float = 24.0) -> None:
         self._adapter = adapter
+        # [P429] Risk-exit rebuild cooldown. Measured live 2026-10-14/15: the
+        # 30s watchdog REDUCE_50 took BTC -2 -> -1ct, and the 4H driver,
+        # whose target_for() has no memory of WHY the book shrank (signal and
+        # equity unchanged), read it as a resize and re-added after the P416
+        # 2-tick persistence (~5-8h later) — a taker exit + maker re-add per
+        # cycle, twice in 24h. Not a state-sync defect (reconcile is
+        # venue-authoritative and correct): two controllers sizing one book
+        # with no shared state. P232/P418 arm only on a FLATTEN, so a partial
+        # reduce never armed any cooldown. Within the window after an
+        # EXECUTED watchdog reduce/exit, a manage call that would INCREASE
+        # |exposure| (add, entry from flat, flip) is suppressed under enforce
+        # (add -> hold, flip -> flatten, entry -> stay flat); reduces/flattens
+        # are never touched and the watchdog itself is unchanged.
+        # off | shadow | enforce; default SHADOW (logs + ledgers WOULD_SUPPRESS,
+        # changes no order). Unknown -> shadow. Stamp PERSISTED (P154).
+        _rcm = str(risk_exit_cooldown_mode or "shadow").strip().lower()
+        self._risk_cd_mode = _rcm if _rcm in ("off", "shadow", "enforce") else "shadow"
+        try:
+            _rch = float(risk_exit_cooldown_hours)
+        except (TypeError, ValueError):  # noqa: silent-swallow — unparseable -> the default window
+            _rch = 24.0
+        self._risk_cd_window_sec = max(0.0, _rch) * 3600.0
+        self._risk_exit_at: Dict[str, Any] = {}  # asset -> {"ts","cause","before","after"}
         # [P1-4] floor(fraction x equity / 1-contract notional) == 0 used to be
         # bumped to 1 contract (P274's `max(1, ...)`), i.e. a budget worth 0.16
         # of a contract traded a whole one. off | shadow | enforce; shadow
@@ -1272,6 +1333,7 @@ class CoinbaseSleeve:
             # independent of the equity formula, and a version-bumped file
             # still carries a real half-finished streak.
             self._restore_streaks(st)
+            self._restore_risk_exits(st)  # [P429]
             # [P151] the baseline UNIT changed (buying_power -> net-liq equity).
             # Discard any state written under the old formula so the cap
             # re-anchors to true equity instead of false-halting (a ~$3,561
@@ -1404,6 +1466,83 @@ class CoinbaseSleeve:
             logger.warning(f"[COINBASE_SLEEVE] streak persist skipped: "
                            f"{type(e).__name__}: {e}")
 
+    # ----- [P429] risk-exit rebuild cooldown -----------------------------
+
+    def _risk_cd_ledger_path(self) -> str:
+        return os.path.join(self._data_dir(), "risk_exit_cooldown_shadow.jsonl")
+
+    def _risk_cd_record(self, row: Dict[str, Any]) -> None:
+        """Append one evidence row. Observation only (Iron Law 7)."""
+        try:
+            p = self._risk_cd_ledger_path()
+            os.makedirs(os.path.dirname(p) or ".", exist_ok=True)
+            row = {"ts": time.time(),
+                   "iso": datetime.now(timezone.utc).isoformat(),
+                   "mode": getattr(self, "_risk_cd_mode", "shadow"),
+                   "window_h": getattr(self, "_risk_cd_window_sec", 0.0) / 3600.0,
+                   **row}
+            with open(p, "a", encoding="utf-8") as f:
+                f.write(json.dumps(row) + "\n")
+        except Exception as e:  # noqa: silent-swallow — logs; an evidence ledger must never touch the order path
+            logger.warning(f"[P429-RISK-COOLDOWN] ledger write failed "
+                           f"({type(e).__name__}: {e}) — order path unaffected")
+
+    def _restore_risk_exits(self, st: Dict[str, Any]) -> None:
+        """Restore the per-asset risk-exit stamps (persisted so a deploy
+        cannot shorten an armed cooldown — the P287/P154 loosening)."""
+        raw = st.get("risk_exit_at")
+        if not isinstance(raw, dict):
+            return
+        cur = getattr(self, "_risk_exit_at", None)
+        if not isinstance(cur, dict):
+            cur = self._risk_exit_at = {}
+        for a, e in raw.items():
+            try:
+                cur[str(a)] = {"ts": float(e["ts"]),
+                               "cause": str(e.get("cause", "")),
+                               "before": e.get("before"),
+                               "after": e.get("after")}
+            except (TypeError, ValueError, KeyError, AttributeError):  # noqa: silent-swallow — malformed stamp = no stamp (cold start for that asset)
+                continue
+
+    def note_risk_exit(self, asset: str, cause: str,
+                       contracts_before: Optional[float],
+                       contracts_after: Optional[float]) -> None:
+        """Stamp an EXECUTED watchdog reduce/exit. Never raises."""
+        try:
+            d = getattr(self, "_risk_exit_at", None)
+            if not isinstance(d, dict):
+                d = self._risk_exit_at = {}
+            d[asset] = {"ts": time.time(), "cause": str(cause),
+                        "before": contracts_before, "after": contracts_after}
+            self._persist_state()
+            self._risk_cd_record({"event": "risk_exit", "asset": asset,
+                                  "cause": str(cause),
+                                  "contracts_before": contracts_before,
+                                  "contracts_after": contracts_after})
+        except Exception as e:  # noqa: silent-swallow — bookkeeping must never break the watchdog
+            logger.warning(f"[P429-RISK-COOLDOWN] {asset}: risk-exit stamp "
+                           f"failed ({type(e).__name__}: {e})")
+
+    def note_risk_trigger(self, asset: str, action: str, status: str,
+                          contracts: Optional[float]) -> None:
+        """Ledger a watchdog trigger that did NOT execute (e.g. REDUCE_NOOP
+        at 1ct). This is the evidence the shadow read needs: a trigger that
+        lands while a re-add would have been suppressed is a reduce->re-add
+        round trip enforce would have avoided."""
+        self._risk_cd_record({"event": "risk_trigger", "asset": asset,
+                              "action": str(action), "status": str(status),
+                              "contracts": contracts})
+
+    def risk_exit_age_sec(self, asset: str) -> Optional[float]:
+        e = (getattr(self, "_risk_exit_at", None) or {}).get(asset)
+        if not isinstance(e, dict):
+            return None
+        try:
+            return time.time() - float(e["ts"])
+        except (TypeError, ValueError, KeyError):  # noqa: silent-swallow — unreadable stamp = no stamp
+            return None
+
     def _persist_state(self) -> None:
         """Atomically write the baseline + halt. Best-effort; never raises."""
         try:
@@ -1439,6 +1578,9 @@ class CoinbaseSleeve:
                     "saved_ts": time.time(),
                     # [P420] flip/resize persistence streaks, timestamped
                     **self._streaks_payload(),
+                    # [P429] last executed watchdog risk exit per asset
+                    "risk_exit_at": dict(getattr(self, "_risk_exit_at", None)
+                                         or {}),
                 }, fh)
             os.replace(tmp, p)
         except Exception as e:  # noqa: silent-swallow — persistence must never break the tick, but it must be LOUD
@@ -1917,6 +2059,45 @@ class CoinbaseSleeve:
             # Same-direction, flat, or flatten: any pending flip streak is
             # broken — a flip must be CONSECUTIVE opposing ticks.
             _fp.pop(asset, None)
+        # [P429] Risk-exit rebuild cooldown — see __init__. Runs after the
+        # flip streak (a deferred flip already returned) and BEFORE resize
+        # persistence, so a watchdog reduce cannot be undone by a resize.
+        # getattr-defended (P85: object.__new__ sleeves read as OFF).
+        _rc_mode = getattr(self, "_risk_cd_mode", "off")
+        if _rc_mode in ("shadow", "enforce"):
+            _rc_age = self.risk_exit_age_sec(asset)
+            _rc_sup, _rc_held, _rc_why = risk_exit_cooldown_decision(
+                cur, target, _rc_age,
+                float(getattr(self, "_risk_cd_window_sec", 0.0) or 0.0))
+            if _rc_sup:
+                _rc_e = (getattr(self, "_risk_exit_at", None) or {}).get(asset) or {}
+                self._risk_cd_record({
+                    "event": "suppressed" if _rc_mode == "enforce" else "would_suppress",
+                    "asset": asset, "reason": _rc_why,
+                    "current": cur, "target": target, "held_target": _rc_held,
+                    "age_h": (_rc_age or 0.0) / 3600.0,
+                    "risk_exit_cause": _rc_e.get("cause")})
+                logger.info(
+                    f"[P429-RISK-COOLDOWN] {asset}: "
+                    f"{'SUPPRESSED' if _rc_mode == 'enforce' else 'WOULD_SUPPRESS'} "
+                    f"{_rc_why} (cur={cur:+.0f}ct target={target:+d}ct -> "
+                    f"{_rc_held:+.0f}ct; {(_rc_age or 0.0) / 3600.0:.1f}h after "
+                    f"{_rc_e.get('cause')}, window "
+                    f"{getattr(self, '_risk_cd_window_sec', 0.0) / 3600.0:.0f}h)")
+                if _rc_mode == "enforce":
+                    # The resize streak must not keep counting across a
+                    # suppressed rebuild (that would make the first post-
+                    # window tick an instant 2/2).
+                    _rp0 = getattr(self, "_resize_pending", None)
+                    if isinstance(_rp0, dict):
+                        _rp0.pop(asset, None)
+                    if float(_rc_held) == float(cur):
+                        self._persist_streaks_if_changed(_streaks_before)
+                        await self.sweep_stale_entries(asset)
+                        return {"status": "RISK_COOLDOWN", "asset": asset,
+                                "reason": _rc_why, "current": cur,
+                                "target": int(cur)}
+                    target = int(_rc_held)  # flip -> flatten (a reduce)
         # [P416] Same-direction resize persistence -- see __init__. Runs AFTER
         # flip-persist (a deferred flip already returned above) and never
         # touches entries (cur==0), flattens (target==0) or flips (sign

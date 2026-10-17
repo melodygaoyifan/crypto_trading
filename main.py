@@ -1833,6 +1833,13 @@ class ProductionConfig:
     # that rounds to 0 must not be bumped up to 1 contract. off | shadow |
     # enforce; default SHADOW (logs WOULD_SUPPRESS, still sizes 1).
     contract_floor_sizing_mode: str = "shadow"
+    # [P429] Risk-exit rebuild cooldown on the sleeve: after an EXECUTED
+    # watchdog reduce/exit, the 4H driver may not rebuild |exposure| for
+    # this many hours. off | shadow | enforce; default SHADOW (ledger
+    # data/risk_exit_cooldown_shadow.jsonl, no order change). Enforce is
+    # gated on a 48h shadow read (scripts/risk_cooldown_shadow_review.py).
+    coinbase_risk_exit_cooldown_mode: str = "shadow"
+    coinbase_risk_exit_cooldown_hours: float = 24.0
     # [P352] Minimum whale COUNT behind `whale_net_pressure` before the whale
     # filter is allowed to veto. `net_pressure` is a RATIO — (buy-sell)/(buy+sell)
     # over the whales seen in the last hour — so it says which way they leaned
@@ -2347,6 +2354,12 @@ class ProductionConfig:
             contract_floor_sizing_mode=(
                 lambda _v: _v if _v in ("off", "shadow", "enforce") else "shadow")(
                 str(data.get("contract_floor_sizing_mode", "shadow")).strip().lower()),
+            # [P429] off | shadow | enforce; unknown -> shadow
+            coinbase_risk_exit_cooldown_mode=(
+                lambda _v: _v if _v in ("off", "shadow", "enforce") else "shadow")(
+                str(data.get("coinbase_risk_exit_cooldown_mode", "shadow")).strip().lower()),
+            coinbase_risk_exit_cooldown_hours=float(
+                data.get("coinbase_risk_exit_cooldown_hours", 24.0)),
             # [P352] sample-size floor for the whale veto
             coinbase_whale_filter_min_whales=int(
                 data.get("coinbase_whale_filter_min_whales", 2)),
@@ -4049,6 +4062,27 @@ def funding_accrual_rows(positions, funding_rate_8h, contract_size_fn,
     return out
 
 
+def _sleeve_note_risk(sleeve, asset: str, action: str, status: str,
+                      before, after) -> None:
+    """[P429] Tell the sleeve a watchdog risk action happened, so its 4H
+    sizer does not silently rebuild what the watchdog just took off.
+    An EXECUTED reduce/exit arms the rebuild cooldown; anything else is
+    ledgered as a trigger (the shadow read's evidence). Never raises; the
+    watchdog's own behaviour is unchanged by this call."""
+    try:
+        if status in ("EXITED", "REDUCED"):
+            _n = getattr(sleeve, "note_risk_exit", None)
+            if callable(_n):
+                _n(asset, f"risk_exit:fast_risk:{action}", before, after)
+        else:
+            _n = getattr(sleeve, "note_risk_trigger", None)
+            if callable(_n):
+                _n(asset, action, status, before)
+    except Exception as e:  # noqa: silent-swallow — logs; bookkeeping must never break the watchdog
+        logger.warning(f"[P429-RISK-COOLDOWN] {asset}: note failed "
+                       f"({type(e).__name__}: {e})")
+
+
 async def sleeve_fast_risk_action(sleeve, asset: str, action_name: str,
                                   enabled: bool):
     """[P227] FastRiskTick's inter-tick safety net, for the Coinbase sleeve.
@@ -4112,10 +4146,13 @@ async def sleeve_fast_risk_action(sleeve, asset: str, action_name: str,
                 _rf(asset, watchdog_stop_followup_target(_vs, 0.0, float(cur)))
             # [P366] classify, never assume. "EXITED" used to be returned here
             # unconditionally — see the note above sleeve_exit_status.
-            return (sleeve_exit_status(_vs, "EXITED"),
-                    f"execute_target(0) -> {_vs}")
+            _st = sleeve_exit_status(_vs, "EXITED")
+            _sleeve_note_risk(sleeve, asset, "EXIT_ONLY", _st, cur, 0)  # [P429]
+            return (_st, f"execute_target(0) -> {_vs}")
         if action_name == "REDUCE_50":
             if abs(cur) <= 1:
+                _sleeve_note_risk(sleeve, asset, "REDUCE_50", "REDUCE_NOOP",  # [P429]
+                                  cur, cur)
                 return ("REDUCE_NOOP",
                         f"|contracts|={abs(cur)} — 1-contract granularity, "
                         f"cannot halve (venue-resting stop still protects)")
@@ -4140,8 +4177,9 @@ async def sleeve_fast_risk_action(sleeve, asset: str, action_name: str,
             # [P366] same collapse existed here: a BLOCKED or FAILED reduce
             # reported as "REDUCED" refreshed the depth baseline (P287), which
             # masks the very depth collapse the trigger fired on.
-            return (sleeve_exit_status(_vs, "REDUCED"),
-                    f"execute_target({_tgt}) -> {_vs}")
+            _st = sleeve_exit_status(_vs, "REDUCED")
+            _sleeve_note_risk(sleeve, asset, "REDUCE_50", _st, cur, _tgt)  # [P429]
+            return (_st, f"execute_target({_tgt}) -> {_vs}")
         return "IGNORED", f"unhandled action {action_name!r}"
     except Exception as e:  # fail-soft: watchdog must never kill the loop
         logger.warning(
@@ -24070,6 +24108,11 @@ class HMATSProductionRunner:
                 # [P1-4] contract-granularity sizing floor (default shadow)
                 contract_floor_mode=str(getattr(
                     self.config, "contract_floor_sizing_mode", "shadow") or "shadow"),
+                # [P429] risk-exit rebuild cooldown (default shadow)
+                risk_exit_cooldown_mode=str(getattr(
+                    self.config, "coinbase_risk_exit_cooldown_mode", "shadow") or "shadow"),
+                risk_exit_cooldown_hours=float(getattr(
+                    self.config, "coinbase_risk_exit_cooldown_hours", 24.0)),
                 # [P291] one-reprice maker ladder (inside the SAME wait budget)
                 maker_reprice=bool(getattr(
                     self.config, "coinbase_maker_reprice", False)),
