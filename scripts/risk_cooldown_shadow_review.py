@@ -15,8 +15,9 @@ watchdog reduce/exit had just removed):
     Positive = enforce would have forgone that much upside.
 
 Pre-committed verdict (fixed before any shadow row exists):
-  NOT_YET           ledger span < 48h, or zero would_suppress rows
-  ENFORCE_ELIGIBLE  span >= 48h AND avoided round trips >= 1 AND the summed
+  NOT_YET           ledger span < 7 days (operator 2026-10-18: 48h holds
+                    only 1-3 events; read at day 7-14), or zero would_suppress rows
+  ENFORCE_ELIGIBLE  span >= 7 days AND avoided round trips >= 1 AND the summed
                     opportunity cost (bps of the re-added notional) is below
                     the summed avoided friction (2 legs x 11bps per avoided
                     round trip, the P427 BTC taker leg, conservative)
@@ -38,7 +39,7 @@ import urllib.request
 from typing import Any, Dict, List, Optional
 
 LEG_BPS = 11.0          # conservative taker leg (P427 BTC 11.35bps)
-MIN_SPAN_H = 48.0
+MIN_SPAN_H = 7 * 24.0   # [P430] operator: 48h holds 1-3 events; read at 7-14 days
 KRAKEN_PAIRS = {"BTC": "XBTUSD", "ETH": "ETHUSD", "SOL": "SOLUSD",
                 "XRP": "XRPUSD", "BNB": "BNBUSD"}
 

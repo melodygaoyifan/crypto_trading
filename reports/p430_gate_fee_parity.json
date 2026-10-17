@@ -1,0 +1,74 @@
+{
+ "window": [
+  "2026-08-18T16:03:15.849784+00:00",
+  "2026-10-17T16:03:15.849784+00:00"
+ ],
+ "assets": {
+  "BTC": {
+   "n_directional": 356,
+   "n_vetoed_by_alpha_gate": 155,
+   "n_skipped_pre_p321_leg": 0,
+   "counts_observable": true,
+   "min_leg_delta_bps_all_ticks": {
+    "p427_as_written": 1.3987281576913766,
+    "p427_with_ratchet": 1.3987281576913766
+   },
+   "p427_as_written": {
+    "leg_delta_bps_median": 1.529907860609903,
+    "newly_pass": 0,
+    "newly_fail": 0,
+    "newly_fail_unknown": 126
+   },
+   "p427_with_ratchet": {
+    "leg_delta_bps_median": 1.529907860609903,
+    "newly_pass": 0,
+    "newly_fail": 0,
+    "newly_fail_unknown": 126
+   }
+  },
+  "ETH": {
+   "n_directional": 294,
+   "n_vetoed_by_alpha_gate": 6,
+   "n_skipped_pre_p321_leg": 0,
+   "counts_observable": true,
+   "min_leg_delta_bps_all_ticks": {
+    "p427_as_written": -0.5485125241278741,
+    "p427_with_ratchet": 0.0
+   },
+   "p427_as_written": {
+    "leg_delta_bps_median": -0.07108432496128891,
+    "newly_pass": 0,
+    "newly_fail": 0,
+    "newly_fail_unknown": 165
+   },
+   "p427_with_ratchet": {
+    "leg_delta_bps_median": 0.0,
+    "newly_pass": 0,
+    "newly_fail": 0,
+    "newly_fail_unknown": 165
+   }
+  },
+  "SOL": {
+   "n_directional": 355,
+   "n_vetoed_by_alpha_gate": 0,
+   "n_skipped_pre_p321_leg": 0,
+   "counts_observable": false,
+   "min_leg_delta_bps_all_ticks": {
+    "p427_as_written": -2.738084395999101,
+    "p427_with_ratchet": 0.0
+   },
+   "p427_as_written": {
+    "leg_delta_bps_median": -2.384028834105754,
+    "newly_pass": 0,
+    "newly_fail": 0,
+    "newly_fail_unknown": 355
+   },
+   "p427_with_ratchet": {
+    "leg_delta_bps_median": 0.0,
+    "newly_pass": 0,
+    "newly_fail": 0,
+    "newly_fail_unknown": 355
+   }
+  }
+ }
+}

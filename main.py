@@ -4062,6 +4062,34 @@ def funding_accrual_rows(positions, funding_rate_8h, contract_size_fn,
     return out
 
 
+def gate_fee_ratchet(asset: str, price: float, maker, taker):
+    """[P430] Floor the venue-schedule gate fee at the legacy P334 table.
+
+    `maker`/`taker` are `(bps, provenance)` tuples from venue_fee_bps (or
+    None). Returns the same shape, each leg = max(schedule, table); the
+    provenance names which one won. A table that cannot price the asset
+    leaves the schedule as-is (absence is not a floor of zero, and not a
+    reason to refuse a price the schedule produced). Never raises."""
+    try:
+        from core.cde_fees import cde_fee_bps as _legacy
+    except Exception:  # noqa: silent-swallow — no table -> schedule unchanged (still the P167 max with the modelled figure upstream)
+        return maker, taker
+    out = []
+    for leg, is_mk in ((maker, True), (taker, False)):
+        if not leg:
+            out.append(leg)
+            continue
+        try:
+            old = _legacy(asset, price, is_maker=is_mk)
+        except Exception:  # noqa: silent-swallow — unpriceable table leg leaves the schedule leg
+            old = None
+        if old and float(old[0]) > float(leg[0]):
+            out.append((float(old[0]), f"ratchet_floor:{old[1]}"))
+        else:
+            out.append(leg)
+    return out[0], out[1]
+
+
 def _sleeve_note_risk(sleeve, asset: str, action: str, status: str,
                       before, after) -> None:
     """[P429] Tell the sleeve a watchdog risk action happened, so its 4H
@@ -12970,6 +12998,15 @@ class HMATSProductionRunner:
                                             market_data.get("price", 0.0)) or 0.0)
                             _mk = _cfb(asset, _px_fee, is_maker=True)
                             _tk = _cfb(asset, _px_fee, is_maker=False)
+                            # [P430] RATCHET: the P1-1 venue schedule may RAISE
+                            # the gate fee, never lower it below the P334 table
+                            # it replaced (SOL 14.51 -> 12.12bps/leg would have
+                            # been a gate LOOSENING on a book the IC audit
+                            # measured at no edge). Cost estimates rise fast
+                            # and fall only through an explicit decision — the
+                            # P1-2 "fast up, slow down" rule. Lowering the floor
+                            # is its own P-entry, never a model side effect.
+                            _mk, _tk = gate_fee_ratchet(asset, _px_fee, _mk, _tk)
                             if _mk and _tk:
                                 # Never CHEAPER than the modeled figure: this
                                 # correction exists to stop undercharging, so

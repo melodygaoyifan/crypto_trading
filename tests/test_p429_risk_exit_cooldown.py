@@ -263,12 +263,14 @@ def test_review_verdicts():
         {"ts": t0 + 7200, "event": "would_suppress", "asset": "BTC", "age_h": 2.0,
          "window_h": 24.0, "current": -1, "target": -2, "held_target": -1},
         {"ts": t0 + 15 * 3600, "event": "risk_exit", "asset": "BTC"},
-        {"ts": t0 + 50 * 3600, "event": "risk_trigger", "asset": "BTC"},
+        {"ts": t0 + 8 * 24 * 3600, "event": "risk_trigger", "asset": "BTC"},
     ]
     flat = lambda a: {int(t0 - 3600): 100.0, int(t0 + 100 * 3600): 100.0}
     out = m.review(rows, fetch=flat)
     assert out["rebuild_cycles"] == 1 and out["avoided_round_trips"] == 1
     assert out["verdict"] == "ENFORCE_ELIGIBLE"
     assert m.review(rows[:3], fetch=flat)["verdict"] == "NOT_YET"
+    short = rows[:4] + [{"ts": t0 + 50 * 3600, "event": "risk_trigger", "asset": "BTC"}]
+    assert m.review(short, fetch=flat)["verdict"] == "NOT_YET"   # 50h < 7 days
     nopx = m.review(rows, fetch=lambda a: {})
     assert nopx["verdict"] == "KEEP_SHADOW"   # unknown opportunity cost never passes
