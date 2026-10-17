@@ -29,3 +29,5 @@
 # (owed a human decision via pending_decisions.json: skewetf_eth_agree_read). 75d spans the replica-fed
 # ledger (start 2026-10-13) through the read date inside Kraken's 720-bar window.
 56 6 * * 1 docker exec hmats-engine sh -c 'python -X utf8 analytics/shadow_ic/compute_shadow_ic.py --ledger-dir /opt/hmats/data/strategy_shadow --window-days 75 --prefixes skewetf --allow-kraken-ohlcv --output /opt/hmats/data/evidence_reports/shadow_ic_skewetf_$(date -u +\%Y\%m\%d).json && python -X utf8 scripts/skewetf_agree_check.py --report /opt/hmats/data/evidence_reports/shadow_ic_skewetf_$(date -u +\%Y\%m\%d).json' >> /home/hmats/evidence_cron.log 2>&1
+# [P1-6] weekly unit economics from the venue ledger (Phase 0 round-trip model, read-only get_fills).
+58 6 * * 1 docker exec hmats-engine python -X utf8 scripts/weekly_unit_economics.py >> /home/hmats/evidence_cron.log 2>&1

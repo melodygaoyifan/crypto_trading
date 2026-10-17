@@ -55,6 +55,8 @@ scripts/
 !scripts/calbasis_check.py
 # [P425] the skew+ETF ETH agree-gate pre-committed read (2026-12-12); stdlib-only, reads a report, never edits config
 !scripts/skewetf_agree_check.py
+# [P1-6] weekly unit-economics KPI report: READ-ONLY venue calls (get_fills), places no orders
+!scripts/weekly_unit_economics.py
 pytorch_build/
 deploy/
 data/diagnostics/
