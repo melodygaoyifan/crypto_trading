@@ -1,0 +1,77 @@
+{
+ "window_60d": [
+  "2026-08-18T16:03:15.849784+00:00",
+  "2026-10-17T16:03:15.849784+00:00"
+ ],
+ "assets": {
+  "BTC": {
+   "n_vetoed_ticks_60d": 255,
+   "n_vetoed_directional_60d": 155,
+   "n_passed_directional_60d": 159,
+   "friction_now_rt_bps": 29.4,
+   "multiplier_median": 1.1,
+   "threshold_now_bps": 32.3,
+   "pass_now": 159,
+   "realized_jun_oct": {
+    "friction_rt_bps": 21.83,
+    "threshold_bps_median": 28.9,
+    "pass": 165,
+    "newly_passing_vetoed_ticks": 6,
+    "direction": "LOOSENS"
+   },
+   "current_tier_projection": {
+    "friction_rt_bps": 23.87,
+    "threshold_bps_median": 31.6,
+    "pass": 160,
+    "newly_passing_vetoed_ticks": 1,
+    "direction": "LOOSENS"
+   }
+  },
+  "ETH": {
+   "n_vetoed_ticks_60d": 81,
+   "n_vetoed_directional_60d": 6,
+   "n_passed_directional_60d": 255,
+   "friction_now_rt_bps": 45.5,
+   "multiplier_median": 1.1,
+   "threshold_now_bps": 50.1,
+   "pass_now": 255,
+   "realized_jun_oct": {
+    "friction_rt_bps": 32.12,
+    "threshold_bps_median": 40.8,
+    "pass": 255,
+    "newly_passing_vetoed_ticks": 0,
+    "direction": "LOOSENS"
+   },
+   "current_tier_projection": {
+    "friction_rt_bps": 31.72,
+    "threshold_bps_median": 40.3,
+    "pass": 255,
+    "newly_passing_vetoed_ticks": 0,
+    "direction": "LOOSENS"
+   }
+  },
+  "SOL": {
+   "n_vetoed_ticks_60d": 50,
+   "n_vetoed_directional_60d": 0,
+   "n_passed_directional_60d": 323,
+   "friction_now_rt_bps": 42.7,
+   "multiplier_median": 1.1,
+   "threshold_now_bps": 47.0,
+   "pass_now": 323,
+   "realized_jun_oct": {
+    "friction_rt_bps": 26.62,
+    "threshold_bps_median": 29.1,
+    "pass": 323,
+    "newly_passing_vetoed_ticks": 0,
+    "direction": "LOOSENS"
+   },
+   "current_tier_projection": {
+    "friction_rt_bps": 25.6,
+    "threshold_bps_median": 27.9,
+    "pass": 323,
+    "newly_passing_vetoed_ticks": 0,
+    "direction": "LOOSENS"
+   }
+  }
+ }
+}
