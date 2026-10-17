@@ -15,5 +15,48 @@
   "tier": "Intro",
   "thirty_day_volume_usd": 9600.65,
   "note": "current tier is the MOST expensive (Intro, 30d vol <$10k); a cheaper tier only makes this schedule overcharge (P167 safe side)"
- }
+ },
+ "tiers": [
+  {
+   "min_30d_volume_usd": 0.0,
+   "maker_bps": 9.5,
+   "taker_bps": 10.0,
+   "source": "venue get_transaction_summary fee_tier Intro (usd_to=10000)"
+  },
+  {
+   "min_30d_volume_usd": 10000.0,
+   "maker_bps": 7.5,
+   "taker_bps": 8.0,
+   "source": "inferred from 80 taker + 22 maker fills at rolling 30d vol 10,496-49,908"
+  },
+  {
+   "min_30d_volume_usd": 50364.950000000004,
+   "maker_bps": 6.5,
+   "taker_bps": 7.0,
+   "source": "inferred from 30 taker + 48 maker fills at rolling 30d vol 50,365-74,695"
+  }
+ ],
+ "fixed_components_by_asset": {
+  "BTC": {
+   "venue": 0.1,
+   "clearing": 0.01,
+   "regulatory": 0.0
+  },
+  "ETH": {
+   "venue": 0.1,
+   "clearing": 0.01,
+   "regulatory": 0.0
+  },
+  "SOL": {
+   "venue": 0.1,
+   "clearing": 0.01,
+   "regulatory": 0.0
+  },
+  "XRP": {
+   "venue": 0.1,
+   "clearing": 0.01,
+   "regulatory": 0.0
+  }
+ },
+ "fixed_components_source": "median per contract over the 6 fills in the last 14 days of the ledger, pooled across assets"
 }

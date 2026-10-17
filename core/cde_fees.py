@@ -170,8 +170,8 @@ import json as _json
 import os as _os
 from dataclasses import dataclass as _dataclass
 
-_SCHEDULE_MEASURED_ON = "2026-10-17"
-_SCHEDULE_MEASURED_BY = ("scripts/export_venue_fee_schedule.py <- reports/phase0_params.json "
+_SCHEDULE_MEASURED_ON = "2026-10-18"
+_SCHEDULE_MEASURED_BY = ("scripts/export_venue_fee_schedule.py <- reports/phase0_params.json + data/phase0/fills_raw.parquet (tiers, fixed components) "
                          "(Phase 0: 211 venue fills + get_transaction_summary)")
 _SCHEDULE_PATH = _os.path.join(
     _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
@@ -186,23 +186,60 @@ class VenueFeeSchedule:
     fixed_per_contract_usd: float
     min_fee_per_contract_usd: float
     contract_size: Dict[str, float]
+    # [P1R-1] Volume tiers ((min_30d_volume_usd, maker_bps, taker_bps), ...)
+    # ascending by volume, and the per-asset fixed components
+    # {asset: {"venue": $, "clearing": $, "regulatory": $}} per contract.
+    # Both come from the producer (scripts/export_venue_fee_schedule.py),
+    # derived from the venue's own fills; empty -> the flat P1-1 fields.
+    tiers: Tuple[Tuple[float, float, float], ...] = ()
+    fixed_components_by_asset: Optional[Dict[str, Dict[str, float]]] = None
+
+    def rate_bps(self, is_maker: bool,
+                 rolling_30d_volume_usd: Optional[float] = None) -> float:
+        """The pct-of-notional rate for the tier the 30-day volume falls in.
+
+        Unknown volume (None/NaN/negative) -> the MOST EXPENSIVE tier: an
+        unreadable volume must never buy a cheaper fee (P167 safe side)."""
+        if not self.tiers:
+            return self.rate_bps_maker if is_maker else self.rate_bps_taker
+        col = 1 if is_maker else 2
+        v = rolling_30d_volume_usd
+        if v is None or v != v or v < 0:
+            return max(t[col] for t in self.tiers)
+        rate = self.tiers[0][col]
+        for t in self.tiers:
+            if v >= t[0]:
+                rate = t[col]
+        return rate
+
+    def fixed_usd_per_contract(self, asset: str) -> float:
+        comps = (self.fixed_components_by_asset or {}).get(str(asset).upper())
+        if comps:
+            return float(sum(float(x) for x in comps.values()))
+        return self.fixed_per_contract_usd
 
     def fee_usd(self, asset: str, contracts: float, price: float,
-                is_maker: bool) -> float:
+                is_maker: bool,
+                rolling_30d_volume_usd: Optional[float] = None) -> float:
         cs = self.contract_size[str(asset).upper()]
         n = abs(float(contracts))
         notional = n * cs * float(price)
-        rate = self.rate_bps_maker if is_maker else self.rate_bps_taker
-        fee = notional * rate / 1e4 + self.fixed_per_contract_usd * n
+        if self.tiers:
+            rate = self.rate_bps(is_maker, rolling_30d_volume_usd)
+        else:
+            rate = self.rate_bps_maker if is_maker else self.rate_bps_taker
+        fee = notional * rate / 1e4 + self.fixed_usd_per_contract(asset) * n
         return max(fee, self.min_fee_per_contract_usd * n)
 
     def fee_bps(self, asset: str, contracts: float, price: float,
-                is_maker: bool) -> float:
+                is_maker: bool,
+                rolling_30d_volume_usd: Optional[float] = None) -> float:
         n = abs(float(contracts))
         notional = n * self.contract_size[str(asset).upper()] * float(price)
         if not notional > 0:
             return float("inf")
-        return self.fee_usd(asset, n, price, is_maker) / notional * 1e4
+        return self.fee_usd(asset, n, price, is_maker,
+                            rolling_30d_volume_usd) / notional * 1e4
 
     def covers(self, asset: str) -> bool:
         return str(asset).upper() in self.contract_size
@@ -230,6 +267,13 @@ def load_venue_fee_schedule(path: Optional[str] = None,
             min_fee_per_contract_usd=float(d.get("min_fee_per_contract_usd", 0.0)),
             contract_size={str(k).upper(): float(v)
                            for k, v in dict(d["contract_size"]).items()},
+            tiers=tuple(sorted(
+                (float(t["min_30d_volume_usd"]), float(t["maker_bps"]),
+                 float(t["taker_bps"])) for t in (d.get("tiers") or []))),
+            fixed_components_by_asset=(
+                {str(k).upper(): {c: float(x) for c, x in dict(v).items()}
+                 for k, v in dict(d["fixed_components_by_asset"]).items()}
+                if d.get("fixed_components_by_asset") else None),
         )
         if not (sched.rate_bps_taker > 0 and sched.rate_bps_maker > 0):
             raise ValueError("non-positive rate")
@@ -322,7 +366,8 @@ def cde_fee_bps(asset: str, price: float, *, is_maker: bool,
 
 
 def venue_fee_bps(asset: str, price: float, *, is_maker: bool,
-                  contract_size: Optional[float] = None) -> Optional[Tuple[float, str]]:
+                  contract_size: Optional[float] = None,
+                  rolling_30d_volume_usd: Optional[float] = None) -> Optional[Tuple[float, str]]:
     """[P1-1] Per-LEG fee in bps from the Phase-0 VENUE SCHEDULE.
 
     Live pricing entry point (alpha gate, seat-alpha interlock). Kept separate
@@ -351,7 +396,77 @@ def venue_fee_bps(asset: str, price: float, *, is_maker: bool,
     notional = float(cs) * px
     if not notional > 0:
         return None
-    rate = vfs.rate_bps_maker if is_maker else vfs.rate_bps_taker
-    bps = rate + vfs.fixed_per_contract_usd / notional * 1e4
+    vol = rolling_30d_volume_usd
+    if vol is None and vfs.tiers:
+        vol = rolling_30d_volume_usd_from_ledger()
+    rate = vfs.rate_bps(is_maker, vol) if vfs.tiers else (
+        vfs.rate_bps_maker if is_maker else vfs.rate_bps_taker)
+    bps = rate + vfs.fixed_usd_per_contract(a) / notional * 1e4
     bps = max(bps, vfs.min_fee_per_contract_usd / notional * 1e4)
     return bps, "venue_fee_schedule_phase0"
+
+
+# [P1R-1] Rolling 30-day traded volume from the sleeve's own fill ledger
+# (data/fill_quality.jsonl, P290), so the tier is DERIVED from what we
+# actually traded rather than typed in. Only `status == "filled"` rows with a
+# fill price count; unresolved rows are excluded, which can only UNDERSTATE
+# volume and so price a more expensive tier (the safe direction). Unreadable
+# ledger -> None -> the most expensive tier (VenueFeeSchedule.rate_bps).
+_VOL_CACHE: Dict[str, Tuple[float, Optional[float]]] = {}
+_VOL_TTL_SEC = 3600.0
+
+
+def rolling_30d_volume_usd_from_ledger(path: Optional[str] = None,
+                                       now: Optional[float] = None,
+                                       *, use_cache: bool = True) -> Optional[float]:
+    import time as _time
+    t_now = float(now) if now is not None else _time.time()
+    p = path or _os.path.join(
+        _os.environ.get("HMATS_DATA_DIR") or _os.path.join(
+            _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "data"),
+        "fill_quality.jsonl")
+    if use_cache and now is None:
+        hit = _VOL_CACHE.get(p)
+        if hit and t_now - hit[0] < _VOL_TTL_SEC:
+            return hit[1]
+    vfs = load_venue_fee_schedule()
+    sizes = dict(vfs.contract_size) if vfs else {}
+    sizes.update({k: v for k, v in _contract_sizes().items() if k not in sizes})
+    total: Optional[float] = None
+    try:
+        with open(p, encoding="utf-8") as fh:
+            total = 0.0
+            for line in fh:
+                try:
+                    r = _json.loads(line)
+                    if not isinstance(r, dict) or r.get("status") != "filled":
+                        continue
+                    ts = float(r.get("ts"))
+                    if not (t_now - 30 * 86400.0 <= ts <= t_now):
+                        continue
+                    cs = sizes.get(str(r.get("asset") or "").upper())
+                    px = float(r.get("fill_avg_price"))
+                    n = abs(float(r.get("contracts")))
+                    if cs and px > 0:
+                        total += n * cs * px
+                except (TypeError, ValueError):  # noqa: silent-swallow — a malformed row adds no volume (understates -> dearer tier)
+                    continue
+    except FileNotFoundError:  # noqa: silent-swallow — absence returns None and the schedule prices the dearest tier
+        total = None
+    if use_cache and now is None:
+        _VOL_CACHE[p] = (t_now, total)
+    return total
+
+
+def schedule_pct_fraction(is_maker: bool) -> Optional[float]:
+    """[P1R-1] The schedule's pct-of-notional rate as a FRACTION, for the
+    fraction-based fallback models (core.paper_fee_service.VENUE_FEE_STD,
+    core.execution_service._COINBASE_*_BPS) that used to hardcode the refuted
+    0/3bps Coinbase model. Tier from the ledger's rolling 30d volume; the fixed
+    per-contract term is NOT representable as a fraction and is added by
+    venue_fee_bps where a price is known. None when the schedule is absent."""
+    vfs = load_venue_fee_schedule()
+    if vfs is None:
+        return None
+    vol = rolling_30d_volume_usd_from_ledger() if vfs.tiers else None
+    return vfs.rate_bps(is_maker, vol) / 1e4

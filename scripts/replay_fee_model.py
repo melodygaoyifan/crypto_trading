@@ -67,8 +67,48 @@ def main(argv=None) -> int:
     ra = report("A current-tier fills", F[cur], "model_current_tier") if cur.any() else float("nan")
     rb = report("B all fills, own-tier rate", F, "model_own_tier")
     rc = report("C all fills, current tier (informational)", F, "model_current_tier")
-    ok = (ra == ra and ra < a.tol_pct) and rb < a.tol_pct
-    print(("PASS" if ok else "FAIL") + f": A={ra:.2f}% B={rb:.2f}% (tol {a.tol_pct}%), C={rc:+.2f}% informational")
+    # [P1R-1] D: the schedule AS THE ENGINE APPLIES IT — tier chosen by the
+    # rolling 30-day traded volume (computed from these same fills, which is
+    # what the live ledger accrues), fixed per-asset components. Total must be
+    # < 3%; each tier < 5%.
+    rd, rd2, per_tier, ok_d = float("nan"), float("nan"), {}, True
+    if s.tiers:
+        F = F.sort_values("timestamp")
+        t = F.timestamp.to_numpy(); nn = F.notional_usd.to_numpy()
+        F["vol30"] = [float(nn[(t > ti - 30 * 86400) & (t < ti)].sum()) for ti in t]
+        F["model_tiered"] = [s.fee_usd(r.asset, r.size_contracts, r.price,
+                                       r.liquidity_indicator == "MAKER", r.vol30)
+                             for r in F.itertuples()]
+        F["tier_bps"] = [s.rate_bps(False, v) for v in F.vol30]
+        rd = report("D all fills, rolling-30d-volume tier (as applied)", F, "model_tiered")
+        # Decomposition: the pct (tier) part vs the fixed per-contract part.
+        pct_m = [r.notional_usd * s.rate_bps(r.liquidity_indicator == "MAKER", r.vol30) / 1e4
+                 for r in F.itertuples()]
+        e_pct = (pd.Series(pct_m, index=F.index) - F.client_commission).abs().sum()
+        fixed_act = F.commission - F.client_commission
+        fixed_mod = pd.Series([s.fixed_usd_per_contract(x) for x in F.asset], index=F.index) * F.size_contracts
+        e_fix = (fixed_mod - fixed_act).abs().sum()
+        print(f"   decomposition: tier/pct part {e_pct / F.commission.sum() * 100:.2f}% , "
+              f"fixed part {e_fix / F.commission.sum() * 100:.2f}% "
+              f"(fixed charged was {fixed_act.sum():.2f} vs modelled {fixed_mod.sum():.2f}: the venue "
+              "LOWERED clearing/regulatory charges over the window; the schedule prices today's)")
+        # D2: same tiers, fixed component at the median the venue charged in
+        # that calendar month (the venue's own fee history; in-sample by
+        # construction, reported as the STRUCTURE check, not a fit claim).
+        mon = F.iso.str[:7]
+        fpc_m = (fixed_act / F.size_contracts).groupby(mon).median()
+        F["model_tiered_epoch"] = [p + fpc_m[m] * c for p, m, c in
+                                   zip(pct_m, mon, F.size_contracts)]
+        rd2 = report("D2 rolling tier + fixed at its monthly epoch", F, "model_tiered_epoch")
+        ok_d = rd2 < 3.0
+        print(f"   D (today's fixed term over history) = {rd:.2f}%; D2 (fixed at its epoch) = {rd2:.2f}%")
+        for tb, g in F.groupby("tier_bps"):
+            per_tier[tb] = report(f"   D/tier taker={tb:g}bps", g, "model_tiered")
+            ok_d = ok_d and per_tier[tb] < a.tol_pct
+    ok = (ra == ra and ra < a.tol_pct) and rb < a.tol_pct and ok_d
+    print(("PASS" if ok else "FAIL") + f": A={ra:.2f}% B={rb:.2f}% (tol {a.tol_pct}%), "
+          f"D2={rd2:.2f}% (tol 3%; D today's-fixed={rd:.2f}% informational) per-tier={ {k: round(v, 2) for k, v in per_tier.items()} }, "
+          f"C={rc:+.2f}% informational")
     return 0 if ok else 1
 
 

@@ -1,0 +1,107 @@
+A current-tier fills: n=11 sum_actual=$8.3230 sum_model=$8.0830 sum|err|/sum(actual)=2.88%
+   fills with |err| > $0.02: 6
+   >$0.02  2026-06-13T05:09:28.312422Z ETH TAKER ct=1 actual=0.3164 model=0.2764 err=-0.0400 fixed_actual/ct=0.150
+   >$0.02  2026-06-13T05:10:17.559902Z ETH TAKER ct=1 actual=0.3164 model=0.2764 err=-0.0400 fixed_actual/ct=0.150
+   >$0.02  2026-06-13T20:26:04.616611Z ETH TAKER ct=1 actual=0.3176 model=0.2777 err=-0.0400 fixed_actual/ct=0.150
+   >$0.02  2026-06-13T20:26:10.687216Z ETH TAKER ct=1 actual=0.3175 model=0.2776 err=-0.0400 fixed_actual/ct=0.150
+   >$0.02  2026-06-13T20:38:25.857137Z BTC TAKER ct=1 actual=0.7926 model=0.7526 err=-0.0400 fixed_actual/ct=0.150
+   >$0.02  2026-06-13T20:53:50.116195Z BTC TAKER ct=1 actual=0.7923 model=0.7523 err=-0.0400 fixed_actual/ct=0.150
+B all fills, own-tier rate: n=207 sum_actual=$151.9395 sum_model=$146.4795 sum|err|/sum(actual)=4.33%
+   fills with |err| > $0.02: 120 (showing first 12)
+   >$0.02  2026-06-13T05:09:28.312422Z ETH TAKER ct=1 actual=0.3164 model=0.2764 err=-0.0400 fixed_actual/ct=0.150
+   >$0.02  2026-06-13T05:10:17.559902Z ETH TAKER ct=1 actual=0.3164 model=0.2763 err=-0.0400 fixed_actual/ct=0.150
+   >$0.02  2026-06-13T20:26:04.616611Z ETH TAKER ct=1 actual=0.3176 model=0.2777 err=-0.0400 fixed_actual/ct=0.150
+   >$0.02  2026-06-13T20:26:10.687216Z ETH TAKER ct=1 actual=0.3175 model=0.2776 err=-0.0400 fixed_actual/ct=0.150
+   >$0.02  2026-06-13T20:38:25.857137Z BTC TAKER ct=1 actual=0.7926 model=0.7526 err=-0.0400 fixed_actual/ct=0.150
+   >$0.02  2026-06-13T20:53:50.116195Z BTC TAKER ct=1 actual=0.7923 model=0.7523 err=-0.0400 fixed_actual/ct=0.150
+   >$0.02  2026-06-13T21:06:24.235352Z ETH TAKER ct=1 actual=0.3009 model=0.2609 err=-0.0400 fixed_actual/ct=0.150
+   >$0.02  2026-06-13T21:06:30.390688Z ETH TAKER ct=1 actual=0.3008 model=0.2608 err=-0.0400 fixed_actual/ct=0.150
+   >$0.02  2026-06-13T21:21:51.041729Z SOL TAKER ct=1 actual=0.4578 model=0.4178 err=-0.0400 fixed_actual/ct=0.150
+   >$0.02  2026-06-13T22:21:15.615415Z SOL TAKER ct=1 actual=0.4607 model=0.4207 err=-0.0400 fixed_actual/ct=0.150
+   >$0.02  2026-06-13T22:39:56.481372Z SOL TAKER ct=1 actual=0.4605 model=0.4205 err=-0.0400 fixed_actual/ct=0.150
+   >$0.02  2026-06-13T23:03:01.894452Z SOL TAKER ct=1 actual=0.4602 model=0.4202 err=-0.0400 fixed_actual/ct=0.150
+C all fills, current tier (informational): n=207 sum_actual=$151.9395 sum_model=$177.4781 sum|err|/sum(actual)=17.35%
+   fills with |err| > $0.02: 178 (showing first 12)
+   >$0.02  2026-06-13T05:09:28.312422Z ETH TAKER ct=1 actual=0.3164 model=0.2764 err=-0.0400 fixed_actual/ct=0.150
+   >$0.02  2026-06-13T05:10:17.559902Z ETH TAKER ct=1 actual=0.3164 model=0.2764 err=-0.0400 fixed_actual/ct=0.150
+   >$0.02  2026-06-13T20:26:04.616611Z ETH TAKER ct=1 actual=0.3176 model=0.2777 err=-0.0400 fixed_actual/ct=0.150
+   >$0.02  2026-06-13T20:26:10.687216Z ETH TAKER ct=1 actual=0.3175 model=0.2776 err=-0.0400 fixed_actual/ct=0.150
+   >$0.02  2026-06-13T20:38:25.857137Z BTC TAKER ct=1 actual=0.7926 model=0.7526 err=-0.0400 fixed_actual/ct=0.150
+   >$0.02  2026-06-13T20:53:50.116195Z BTC TAKER ct=1 actual=0.7923 model=0.7523 err=-0.0400 fixed_actual/ct=0.150
+   >$0.02  2026-06-13T21:06:24.235352Z ETH TAKER ct=1 actual=0.3009 model=0.2777 err=-0.0232 fixed_actual/ct=0.150
+   >$0.02  2026-06-13T21:06:30.390688Z ETH TAKER ct=1 actual=0.3008 model=0.2776 err=-0.0232 fixed_actual/ct=0.150
+   >$0.02  2026-06-14T03:28:29.630887Z BTC TAKER ct=1 actual=0.7306 model=0.7551 err=+0.0245 fixed_actual/ct=0.150
+   >$0.02  2026-06-14T03:28:30.857206Z ETH TAKER ct=1 actual=0.3013 model=0.2782 err=-0.0232 fixed_actual/ct=0.150
+   >$0.02  2026-06-27T20:02:46.313813Z SOL TAKER ct=2 actual=0.8682 model=0.9303 err=+0.0621 fixed_actual/ct=0.150
+   >$0.02  2026-06-28T08:02:56.406793Z SOL TAKER ct=2 actual=0.8694 model=0.9318 err=+0.0624 fixed_actual/ct=0.150
+D all fills, rolling-30d-volume tier (as applied): n=207 sum_actual=$151.9395 sum_model=$147.3338 sum|err|/sum(actual)=3.80%
+   fills with |err| > $0.02: 100 (showing first 12)
+   >$0.02  2026-06-13T05:09:28.312422Z ETH TAKER ct=1 actual=0.3164 model=0.2764 err=-0.0400 fixed_actual/ct=0.150
+   >$0.02  2026-06-13T05:10:17.559902Z ETH TAKER ct=1 actual=0.3164 model=0.2764 err=-0.0400 fixed_actual/ct=0.150
+   >$0.02  2026-06-13T20:26:04.616611Z ETH TAKER ct=1 actual=0.3176 model=0.2777 err=-0.0400 fixed_actual/ct=0.150
+   >$0.02  2026-06-13T20:26:10.687216Z ETH TAKER ct=1 actual=0.3175 model=0.2776 err=-0.0400 fixed_actual/ct=0.150
+   >$0.02  2026-06-13T20:38:25.857137Z BTC TAKER ct=1 actual=0.7926 model=0.7526 err=-0.0400 fixed_actual/ct=0.150
+   >$0.02  2026-06-13T20:53:50.116195Z BTC TAKER ct=1 actual=0.7923 model=0.7523 err=-0.0400 fixed_actual/ct=0.150
+   >$0.02  2026-06-13T21:06:24.235352Z ETH TAKER ct=1 actual=0.3009 model=0.2777 err=-0.0232 fixed_actual/ct=0.150
+   >$0.02  2026-06-13T21:06:30.390688Z ETH TAKER ct=1 actual=0.3008 model=0.2776 err=-0.0232 fixed_actual/ct=0.150
+   >$0.02  2026-06-14T03:28:29.630887Z BTC TAKER ct=1 actual=0.7306 model=0.7551 err=+0.0245 fixed_actual/ct=0.150
+   >$0.02  2026-06-14T03:28:30.857206Z ETH TAKER ct=1 actual=0.3013 model=0.2782 err=-0.0232 fixed_actual/ct=0.150
+   >$0.02  2026-06-27T20:02:46.313813Z SOL TAKER ct=2 actual=0.8682 model=0.7882 err=-0.0800 fixed_actual/ct=0.150
+   >$0.02  2026-06-28T08:02:56.406793Z SOL TAKER ct=2 actual=0.8694 model=0.7894 err=-0.0800 fixed_actual/ct=0.150
+   decomposition: tier/pct part 0.56% , fixed part 4.33% (fixed charged was 43.08 vs modelled 37.62: the venue LOWERED clearing/regulatory charges over the window; the schedule prices today's)
+D2 rolling tier + fixed at its monthly epoch: n=207 sum_actual=$151.9395 sum_model=$153.2638 sum|err|/sum(actual)=1.08%
+   fills with |err| > $0.02: 25 (showing first 12)
+   >$0.02  2026-06-13T21:21:51.041729Z SOL TAKER ct=1 actual=0.4578 model=0.4919 err=+0.0342 fixed_actual/ct=0.150
+   >$0.02  2026-06-13T22:21:15.615415Z SOL TAKER ct=1 actual=0.4607 model=0.4952 err=+0.0345 fixed_actual/ct=0.150
+   >$0.02  2026-06-13T22:39:56.481372Z SOL TAKER ct=1 actual=0.4605 model=0.4950 err=+0.0345 fixed_actual/ct=0.150
+   >$0.02  2026-06-13T23:03:01.894452Z SOL TAKER ct=1 actual=0.4602 model=0.4947 err=+0.0345 fixed_actual/ct=0.150
+   >$0.02  2026-06-14T00:02:57.324596Z SOL TAKER ct=1 actual=0.4595 model=0.4938 err=+0.0344 fixed_actual/ct=0.150
+   >$0.02  2026-06-14T02:22:15.568803Z SOL TAKER ct=1 actual=0.4603 model=0.4948 err=+0.0345 fixed_actual/ct=0.150
+   >$0.02  2026-06-14T02:32:46.338196Z SOL TAKER ct=1 actual=0.4601 model=0.4945 err=+0.0344 fixed_actual/ct=0.150
+   >$0.02  2026-06-14T03:28:29.630887Z BTC TAKER ct=1 actual=0.7306 model=0.7951 err=+0.0645 fixed_actual/ct=0.150
+   >$0.02  2026-06-24T04:02:52.045183Z SOL TAKER ct=2 actual=0.9257 model=0.9952 err=+0.0695 fixed_actual/ct=0.150
+   >$0.02  2026-06-24T16:02:58.539660Z SOL TAKER ct=2 actual=0.9062 model=0.9736 err=+0.0674 fixed_actual/ct=0.150
+   >$0.02  2026-06-26T20:02:47.163694Z SOL TAKER ct=1 actual=0.4795 model=0.5161 err=+0.0366 fixed_actual/ct=0.150
+   >$0.02  2026-06-26T20:02:47.163694Z SOL TAKER ct=1 actual=0.4795 model=0.5162 err=+0.0366 fixed_actual/ct=0.150
+   D (today's fixed term over history) = 3.80%; D2 (fixed at its epoch) = 1.08%
+   D/tier taker=7bps: n=75 sum_actual=$48.1619 sum_model=$47.4319 sum|err|/sum(actual)=3.84%
+   fills with |err| > $0.02: 28 (showing first 12)
+   >$0.02  2026-08-21T22:00:00.000015Z ETH MAKER ct=3 actual=0.8475 model=0.8175 err=-0.0300 fixed_actual/ct=0.120
+   >$0.02  2026-08-22T01:33:59.432630Z SOL MAKER ct=2 actual=0.8537 model=0.8337 err=-0.0200 fixed_actual/ct=0.120
+   >$0.02  2026-08-22T01:34:18.110256Z ETH MAKER ct=3 actual=0.8529 model=0.8229 err=-0.0300 fixed_actual/ct=0.120
+   >$0.02  2026-08-22T02:37:43.084431Z ETH MAKER ct=3 actual=0.8486 model=0.8186 err=-0.0300 fixed_actual/ct=0.120
+   >$0.02  2026-08-22T04:35:21.573239Z SOL TAKER ct=3 actual=1.4054 model=1.3754 err=-0.0300 fixed_actual/ct=0.120
+   >$0.02  2026-08-22T05:10:49.476646Z ETH TAKER ct=6 actual=1.7381 model=1.6781 err=-0.0600 fixed_actual/ct=0.120
+   >$0.02  2026-08-22T08:29:23.731342Z ETH MAKER ct=5 actual=1.3891 model=1.3391 err=-0.0500 fixed_actual/ct=0.120
+   >$0.02  2026-08-22T09:35:12.637839Z ETH TAKER ct=2 actual=0.5794 model=0.5594 err=-0.0200 fixed_actual/ct=0.120
+   >$0.02  2026-08-24T09:16:37.369890Z ETH MAKER ct=3 actual=0.8401 model=0.8101 err=-0.0300 fixed_actual/ct=0.120
+   >$0.02  2026-08-24T15:17:36.397556Z ETH MAKER ct=6 actual=1.7024 model=1.6424 err=-0.0600 fixed_actual/ct=0.120
+   >$0.02  2026-08-25T05:01:32.886581Z BTC MAKER ct=2 actual=1.2855 model=1.2655 err=-0.0200 fixed_actual/ct=0.120
+   >$0.02  2026-08-25T05:02:29.764672Z ETH TAKER ct=5 actual=1.4750 model=1.4250 err=-0.0500 fixed_actual/ct=0.120
+   D/tier taker=8bps: n=102 sum_actual=$84.0159 sum_model=$80.5259 sum|err|/sum(actual)=4.15%
+   fills with |err| > $0.02: 62 (showing first 12)
+   >$0.02  2026-06-27T20:02:46.313813Z SOL TAKER ct=2 actual=0.8682 model=0.7882 err=-0.0800 fixed_actual/ct=0.150
+   >$0.02  2026-06-28T08:02:56.406793Z SOL TAKER ct=2 actual=0.8694 model=0.7894 err=-0.0800 fixed_actual/ct=0.150
+   >$0.02  2026-07-03T04:02:55.683512Z ETH TAKER ct=2 actual=0.5530 model=0.4930 err=-0.0600 fixed_actual/ct=0.140
+   >$0.02  2026-07-05T12:02:53.013368Z ETH TAKER ct=2 actual=0.5610 model=0.5010 err=-0.0600 fixed_actual/ct=0.140
+   >$0.02  2026-07-06T00:03:01.362199Z ETH TAKER ct=2 actual=0.5654 model=0.5054 err=-0.0600 fixed_actual/ct=0.140
+   >$0.02  2026-07-06T08:03:03.458488Z ETH TAKER ct=2 actual=0.5637 model=0.5037 err=-0.0600 fixed_actual/ct=0.140
+   >$0.02  2026-07-07T00:02:53.277808Z ETH TAKER ct=2 actual=0.5678 model=0.5078 err=-0.0600 fixed_actual/ct=0.140
+   >$0.02  2026-07-07T04:02:46.876007Z ETH TAKER ct=2 actual=0.5629 model=0.5029 err=-0.0600 fixed_actual/ct=0.140
+   >$0.02  2026-07-07T08:02:46.348738Z ETH TAKER ct=2 actual=0.5633 model=0.5033 err=-0.0600 fixed_actual/ct=0.140
+   >$0.02  2026-07-09T08:02:48.291025Z BTC TAKER ct=1 actual=0.6435 model=0.6135 err=-0.0300 fixed_actual/ct=0.140
+   >$0.02  2026-07-09T08:02:48.291025Z BTC TAKER ct=1 actual=0.6435 model=0.6135 err=-0.0300 fixed_actual/ct=0.140
+   >$0.02  2026-07-09T12:02:45.754184Z BTC TAKER ct=1 actual=0.6415 model=0.6115 err=-0.0300 fixed_actual/ct=0.140
+   D/tier taker=10bps: n=30 sum_actual=$19.7618 sum_model=$19.3761 sum|err|/sum(actual)=2.20%
+   fills with |err| > $0.02: 10
+   >$0.02  2026-06-13T05:09:28.312422Z ETH TAKER ct=1 actual=0.3164 model=0.2764 err=-0.0400 fixed_actual/ct=0.150
+   >$0.02  2026-06-13T05:10:17.559902Z ETH TAKER ct=1 actual=0.3164 model=0.2764 err=-0.0400 fixed_actual/ct=0.150
+   >$0.02  2026-06-13T20:26:04.616611Z ETH TAKER ct=1 actual=0.3176 model=0.2777 err=-0.0400 fixed_actual/ct=0.150
+   >$0.02  2026-06-13T20:26:10.687216Z ETH TAKER ct=1 actual=0.3175 model=0.2776 err=-0.0400 fixed_actual/ct=0.150
+   >$0.02  2026-06-13T20:38:25.857137Z BTC TAKER ct=1 actual=0.7926 model=0.7526 err=-0.0400 fixed_actual/ct=0.150
+   >$0.02  2026-06-13T20:53:50.116195Z BTC TAKER ct=1 actual=0.7923 model=0.7523 err=-0.0400 fixed_actual/ct=0.150
+   >$0.02  2026-06-13T21:06:24.235352Z ETH TAKER ct=1 actual=0.3009 model=0.2777 err=-0.0232 fixed_actual/ct=0.150
+   >$0.02  2026-06-13T21:06:30.390688Z ETH TAKER ct=1 actual=0.3008 model=0.2776 err=-0.0232 fixed_actual/ct=0.150
+   >$0.02  2026-06-14T03:28:29.630887Z BTC TAKER ct=1 actual=0.7306 model=0.7551 err=+0.0245 fixed_actual/ct=0.150
+   >$0.02  2026-06-14T03:28:30.857206Z ETH TAKER ct=1 actual=0.3013 model=0.2782 err=-0.0232 fixed_actual/ct=0.150
+PASS: A=2.88% B=4.33% (tol 5.0%), D2=1.08% (tol 3%; D today's-fixed=3.80% informational) per-tier={7.0: 3.84, 8.0: 4.15, 10.0: 2.2}, C=+17.35% informational

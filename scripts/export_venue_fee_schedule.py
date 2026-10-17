@@ -60,9 +60,76 @@ def build(params: dict) -> dict:
     }
 
 
+def build_tiers(fills, api_tier: dict, recent_days: float = 14.0) -> dict:
+    """[P1R-1] Volume tiers + per-asset fixed components FROM THE FILLS.
+
+    fills: the Phase 0 frame (data/phase0/fills_raw.parquet) — per fill the
+    venue's own commission_detail_total split, so every number here is read
+    off a fill, not a fee table.
+
+      * Tier 0 = the tier the venue reports NOW (get_transaction_summary
+        fee_tier): its rates and its usd_to boundary are authoritative.
+      * Cheaper tiers = clusters of the observed pct-of-notional rate
+        (client_commission / notional, rounded to 0.5bps) among fills whose
+        rolling 30d volume is >= tier 0's usd_to. A cluster's lower bound is
+        the smallest rolling volume at which that rate was observed (the
+        conservative choice: just below it, the dearer tier is charged).
+        Maker and taker clusters are paired by overlapping volume range.
+      * Rates observed BELOW tier 0's usd_to that differ from the API rate
+        (e.g. June's 9bps Intro) are an earlier fee-schedule epoch and are
+        dropped — the API's current rate wins inside its own band.
+      * Fixed components: medians of venue/clearing/regulatory commission
+        per contract over the last `recent_days` of fills, pooled across
+        assets (they are asset-independent on every fill).
+    """
+    import pandas as pd
+    F = fills.sort_values("timestamp").copy()
+    t = F["timestamp"].to_numpy(); n = F["notional_usd"].to_numpy()
+    F["vol30"] = [float(n[(t > ti - 30 * 86400) & (t < ti)].sum()) for ti in t]
+    F["rate"] = (F["client_commission"] / F["notional_usd"] * 1e4 * 2).round() / 2
+    lo = float(api_tier["usd_to"])
+    tiers = [{"min_30d_volume_usd": 0.0,
+              "maker_bps": float(api_tier["maker_fee_rate"]) * 1e4,
+              "taker_bps": float(api_tier["taker_fee_rate"]) * 1e4,
+              "source": f"venue get_transaction_summary fee_tier "
+                        f"{api_tier.get('pricing_tier')} (usd_to={lo:g})"}]
+    hi = F[F["vol30"] >= lo]
+    clusters = {}
+    for mk, g0 in hi.groupby("is_maker"):
+        for r, g in g0.groupby("rate"):
+            clusters.setdefault(bool(mk), []).append(
+                (float(r), float(g["vol30"].min()), float(g["vol30"].max()), len(g)))
+    for tr, tmin, tmax, tn in sorted(clusters.get(False, []), key=lambda x: x[1]):
+        mk = [c for c in clusters.get(True, []) if c[1] <= tmax and c[2] >= tmin]
+        mr = mk[0][0] if mk else None
+        vmin = min([tmin] + [c[1] for c in mk])
+        tiers.append({"min_30d_volume_usd": max(lo, vmin) if len(tiers) == 1 else vmin,
+                      "maker_bps": mr if mr is not None else tr,
+                      "taker_bps": tr,
+                      "source": f"inferred from {tn} taker"
+                                f"{' + ' + str(mk[0][3]) + ' maker' if mk else ''} fills "
+                                f"at rolling 30d vol {vmin:,.0f}-{max([tmax]+[c[2] for c in mk]):,.0f}"})
+    if len(tiers) > 1:
+        tiers[1]["min_30d_volume_usd"] = lo
+    # Pooled across assets: on every fill the three components are the same
+    # per contract whatever the asset, and they DO move over time (the
+    # regulatory part went 0.01-0.06 -> 0.00 in October), so the recent
+    # window matters more than the per-asset split.
+    recent = F[F["timestamp"] >= F["timestamp"].max() - recent_days * 86400]
+    ct = recent["size_contracts"]
+    pooled = {c: round(float((recent[f"{c}_commission"].fillna(0.0) / ct).median()), 4)
+              for c in ("venue", "clearing", "regulatory")}
+    comps = {str(a): dict(pooled) for a in sorted(set(F["asset"]))}
+    return {"tiers": tiers, "fixed_components_by_asset": comps,
+            "fixed_components_source": (f"median per contract over the {len(recent)} fills in the "
+                                        f"last {recent_days:g} days of the ledger, pooled across assets")}
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--params", default=os.path.join(REPO, "reports", "phase0_params.json"))
+    ap.add_argument("--fills", default=os.path.join(REPO, "data", "phase0", "fills_raw.parquet"))
+    ap.add_argument("--fee-tier", default=os.path.join(REPO, "data", "phase0", "fee_tier.json"))
     ap.add_argument("--out", default=OUT)
     ap.add_argument("--friction-out", default=os.path.join(
         REPO, "configs", "cost", "realized_friction_phase0.json"))
@@ -75,6 +142,20 @@ def main(argv=None) -> int:
             sched = build(json.load(fh))
     except (KeyError, TypeError, ValueError) as e:
         print(f"REFUSING: phase0 params incomplete ({type(e).__name__}: {e})")
+        return 2
+    # [P1R-1] tiers + fixed components from the fills — refuse rather than
+    # ship a schedule whose tier table was never derived (no defaults).
+    if not (os.path.exists(a.fills) and os.path.exists(a.fee_tier)):
+        print(f"REFUSING: {a.fills} / {a.fee_tier} missing — the tier table is "
+              "derived from the Phase 0 fills and the venue fee_tier (no defaults)")
+        return 2
+    try:
+        import pandas as pd
+        with open(a.fee_tier, encoding="utf-8") as fh:
+            api_tier = json.load(fh)["fee_tier"]
+        sched.update(build_tiers(pd.read_parquet(a.fills), api_tier))
+    except (KeyError, TypeError, ValueError, ImportError) as e:
+        print(f"REFUSING: tier derivation failed ({type(e).__name__}: {e})")
         return 2
     with open(a.out, "w", encoding="utf-8") as fh:
         json.dump(sched, fh, indent=1)

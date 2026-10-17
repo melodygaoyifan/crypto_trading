@@ -9,8 +9,19 @@ from typing import Any, Callable, Dict, Optional
 # whenever it is available.
 VENUE_FEE_STD: Dict[str, Dict[str, float]] = {
     "kraken": {"maker": 0.0016, "taker": 0.0026},
-    "coinbase": {"maker": 0.0000, "taker": 0.0003},
+    # [P1R-1] was {"maker": 0.0000, "taker": 0.0003} — the "0bps maker / 3bps
+    # taker" model the Phase 0 ledger audit REFUTED (actual: tier pct
+    # 6.5-10bps + $0.11/contract fixed). Derived from the venue schedule at
+    # import; the literal fallback is the schedule's own current (dearest) tier.
+    "coinbase": {"maker": 0.00095, "taker": 0.0010},
 }
+try:
+    from core.cde_fees import schedule_pct_fraction as _spf
+    _m, _t = _spf(True), _spf(False)
+    if _m and _t:
+        VENUE_FEE_STD["coinbase"] = {"maker": float(_m), "taker": float(_t)}
+except Exception:  # noqa: silent-swallow — keeps the literal fallback above (the dearest tier); never the 0/3 model
+    pass
 _DEFAULT_VENUE = "kraken"
 
 # [P169] Currencies a reported fee may be denominated in and still be taken at

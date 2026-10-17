@@ -56,9 +56,12 @@ class TestCoinbaseRoutedIsPricedOnCoinbase:
         assert venue == "coinbase"
         assert source == "coinbase_venue_schedule"
 
-    def test_the_correction_is_worth_about_23bps_of_taker_friction(self):
+    def test_the_correction_still_lowers_taker_friction(self):
         _m, taker, _v, _s = _resolve(True, True)
-        assert KRAKEN_TAKER - taker == pytest.approx(23.0)
+        # [P1R-1] was 23bps against the refuted 3bps Coinbase model; the
+        # measured pct rate leaves the Kraken tier still dearer, by less.
+        assert KRAKEN_TAKER - taker == pytest.approx(KRAKEN_TAKER - _COINBASE_TAKER_BPS)
+        assert KRAKEN_TAKER - taker > 0
 
     def test_kraken_tier_is_ignored_entirely_when_routed(self):
         # The blended Kraken numbers must not leak into a Coinbase price, even

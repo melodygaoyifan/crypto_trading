@@ -342,8 +342,19 @@ _CB_FEE_MODEL_WARNED = False
 
 # Coinbase US perp advertised schedule at the base tier. Documented here for
 # the size of the mispricing only — NOT wired into the alpha gate (see below).
-_COINBASE_MAKER_BPS = 0.0
-_COINBASE_TAKER_BPS = 3.0
+# [P1R-1] was 0.0 / 3.0 — the Coinbase model the Phase 0 ledger audit refuted.
+# Now the venue schedule's pct rate (tier from the rolling 30d volume); the
+# fixed per-contract term is added downstream by the [P315-FEE] block, which
+# may only RAISE this figure. Literal fallback = the dearest observed tier.
+_COINBASE_MAKER_BPS = 9.5
+_COINBASE_TAKER_BPS = 10.0
+try:
+    from core.cde_fees import schedule_pct_fraction as _spf
+    if _spf(True) and _spf(False):
+        _COINBASE_MAKER_BPS = float(_spf(True)) * 1e4
+        _COINBASE_TAKER_BPS = float(_spf(False)) * 1e4
+except Exception:  # noqa: silent-swallow — the literal dearest-tier fallback stands
+    pass
 
 
 def resolve_venue_fee_bps(
