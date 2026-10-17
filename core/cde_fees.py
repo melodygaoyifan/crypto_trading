@@ -294,7 +294,10 @@ def _contract_sizes() -> Dict[str, float]:
     [P310] Imported, never restated: the product id comes from
     `exchange.symbol_mapping.SYMBOL_MAP` and the size from
     `CoinbaseAdapter._CONTRACT_SIZE_FALLBACK`. A local copy of either would
-    drift the first time a contract rolls (they expire 2030-12-20).
+    drift the first time a contract rolls. [P1R-8] The product ids carry
+    "20DEC30" but the venue API reports contract_expiry 2089-12-30T16:00Z
+    for all three (Phase 0 product_specs) — the API is authoritative; no
+    code depends on either date.
     """
     out: Dict[str, float] = {}
     try:
