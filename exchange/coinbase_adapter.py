@@ -421,7 +421,25 @@ class CoinbaseAdapter(ExchangeAdapter):
             resp = client.get_order(order_id=order_id)
             order = _attr(resp, "order") or resp
             plain = _plain(order)
-            return plain if isinstance(plain, dict) else None
+            if not isinstance(plain, dict):
+                return None
+            # [P1R-2] the venue's own maker/taker verdict for the fill(s) of
+            # this order (Phase 0: "LIMIT" order type is NOT a maker fill —
+            # V15's 98.7% counted order types). Read-only; failure leaves the
+            # key absent and the ledger records liquidity_indicator=None.
+            try:
+                if float(plain.get("filled_size") or 0) > 0:
+                    fr = _plain(client.get_fills(order_ids=[order_id]))
+                    fills = (fr or {}).get("fills") or []
+                    lis = {str(f.get("liquidity_indicator") or "").upper()
+                           for f in fills if isinstance(f, dict)}
+                    lis.discard("")
+                    if lis:
+                        plain["_fill_liquidity"] = lis.pop() if len(lis) == 1 else "MIXED"
+            except Exception as e:  # noqa: silent-swallow — observation only; logged
+                logger.info(f"[COINBASE] get_fills {order_id} unavailable "
+                            f"({type(e).__name__}) — liquidity_indicator=None")
+            return plain
         except Exception as e:
             logger.warning(f"[COINBASE] get_order {order_id} failed: "
                            f"{type(e).__name__}: {e} — fill quality will "

@@ -76,6 +76,50 @@ def _f(v: Any, d: float = 0.0) -> float:
         return d
 
 
+# [P1R-2] Each fill-quality liquidity label is produced by exactly ONE
+# placement path, so the requested order type / post-only flag follow from it:
+#   maker          post-only LIMIT at the touch (the maker ladder)
+#   taker_cross    0.2%-through LIMIT after the maker ladder timed out
+#   direct         0.2%-through LIMIT with maker-first off
+#   market_urgent  MARKET (IOC) — the watchdog / FORCE_FLAT path (P383)
+ORDER_TYPE_BY_LIQUIDITY: Dict[str, Tuple[str, bool]] = {
+    "maker": ("LIMIT", True),
+    "taker_cross": ("LIMIT", False),
+    "direct": ("LIMIT", False),
+    "market_urgent": ("MARKET", False),
+}
+
+
+def classify_intent_type(position_before: Any, target: Any,
+                         cause: Optional[str] = None) -> Optional[str]:
+    """[P1R-2] Intent class of one move, from the signed contract count before
+    and the signed target (the Phase 0 taxonomy): NEW_ENTRY / ESCALATE /
+    PARTIAL_EXIT / FULL_EXIT / FLIP / REBALANCE (no net change: a re-place)
+    / RESTART_RECONCILE (cause names a startup reconcile). None when either
+    side is unknown — absence is never a class (P2)."""
+    try:
+        p, t = float(position_before), float(target)
+    except (TypeError, ValueError):  # noqa: silent-swallow — unknown input is None by contract (P2)
+        return None
+    if p != p or t != t:
+        return None
+    if cause and "restart" in str(cause).lower():
+        return "RESTART_RECONCILE"
+    if p == 0 and t == 0:
+        return "REBALANCE"
+    if p == 0:
+        return "NEW_ENTRY"
+    if t == 0:
+        return "FULL_EXIT"
+    if (p > 0) != (t > 0):
+        return "FLIP"
+    if abs(t) > abs(p):
+        return "ESCALATE"
+    if abs(t) < abs(p):
+        return "PARTIAL_EXIT"
+    return "REBALANCE"
+
+
 class CoinbaseSleeve:
     """LIVE Coinbase perp sleeve: venue-reconciled state + the sole order
     driver (`manage_to_signal`/`execute_target`), with its own risk guard
@@ -1052,7 +1096,8 @@ class CoinbaseSleeve:
     # distinguishable from a pre-P423 row (no key at all) so the reader can
     # count unlabeled post-P423 fills as the ledger defect they are.
     _ORDER_CTX_KEYS = ("decider", "src", "cause", "intent_direction",
-                       "alpha_bps", "target_contracts")
+                       "alpha_bps", "target_contracts", "target_direction",
+                       "intent_type")
 
     def set_order_context(self, asset: str, **ctx: Any) -> None:
         """[P423] Stamp the next fill(s) for `asset` with decider/cause."""
@@ -1129,7 +1174,30 @@ class CoinbaseSleeve:
                 rec["position_before"] = (int(_pb) if _pb is not None
                                           else (0 if getattr(self, "_reconcile_ok", False)
                                                 else None))
+                if (rec.get("intent_type") is None and rec["position_before"] is not None
+                        and rec.get("target_contracts") is not None):
+                    rec["intent_type"] = classify_intent_type(
+                        rec["position_before"], rec["target_contracts"], rec.get("cause"))
             except Exception:  # noqa: silent-swallow — the stamp is optional; the P290 record stays honest without it
+                pass
+            # [P1R-2] what was REQUESTED (each liquidity label is produced by
+            # exactly one placement path, so this is exact by construction)
+            # and the tier context the fee was charged under.
+            _ot = ORDER_TYPE_BY_LIQUIDITY.get(str(liquidity))
+            rec["order_type"] = _ot[0] if _ot else None
+            rec["post_only_requested"] = _ot[1] if _ot else None
+            rec["liquidity_indicator"] = None     # the VENUE's verdict, set below
+            rec["rolling_30d_volume_usd"] = None
+            rec["fee_tier_taker_bps"] = None
+            try:
+                from core.cde_fees import (load_venue_fee_schedule,
+                                           rolling_30d_volume_usd_from_ledger)
+                _vol = rolling_30d_volume_usd_from_ledger(use_cache=False)
+                rec["rolling_30d_volume_usd"] = None if _vol is None else round(_vol, 2)
+                _vfs = load_venue_fee_schedule()
+                if _vfs is not None and _vfs.tiers:
+                    rec["fee_tier_taker_bps"] = _vfs.rate_bps(False, _vol)
+            except Exception:  # noqa: silent-swallow — tier context is optional; absence stays None
                 pass
             try:
                 if (decision_bid and decision_ask and decision_bid > 0
@@ -1174,6 +1242,9 @@ class CoinbaseSleeve:
                     _dir = 1.0 if side == "BUY" else -1.0
                     rec["realized_slippage_bps"] = round(
                         (_fill - decision_mid) / decision_mid * 1e4 * _dir, 3)
+            if rec["status"] == "filled":
+                _li = op.get("_fill_liquidity")
+                rec["liquidity_indicator"] = _li if isinstance(_li, str) else None
             path = self._fill_quality_path()
             os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
             with open(path, "a", encoding="utf-8") as f:
@@ -3024,6 +3095,17 @@ class CoinbaseSleeve:
                     "reason": "reconcile_failed"}
         cur = self.signed_contracts(asset)
         delta = int(round(target_signed_contracts - cur))
+        # [P1R-2] the order context carries the REAL target contracts and the
+        # intent class of THIS move (P423's target_contracts was the signed
+        # DIRECTION the driver passed, R-8). Labelling only; never blocks.
+        try:
+            _octx = (getattr(self, "_order_context", None) or {}).get(asset)
+            if _octx is not None:
+                _octx["target_contracts"] = int(round(target_signed_contracts))
+                _octx["intent_type"] = classify_intent_type(
+                    cur, target_signed_contracts, _octx.get("cause"))
+        except Exception:  # noqa: silent-swallow — labelling only (Iron Law 7)
+            pass
         # [P265] The no-order paths must still sweep stale ENTRY limits. An
         # unfilled marketable limit from a previous tick otherwise rests
         # through every NOOP/BLOCKED tick and can fill against a dead signal

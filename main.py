@@ -96,11 +96,19 @@ _LOG_FMT = logging.Formatter(
 _console_handler = logging.StreamHandler()
 _console_handler.setFormatter(_LOG_FMT)
 
-# Rotating file handler: 10 MB x 5 backups = 50 MB max
+# Rotating file handler: 10 MB per file.
+# [P1R-2] backupCount 5 -> 100: the engine writes ~10 MB/day (measured
+# 2026-10-13..17), so 5 backups kept ~5 days and the Phase 0 audit found the
+# logs only reached back to ~10-12. 100 x 10 MB ~= 1 GB ~= 90+ days (33 GB
+# free on the volume). Override with HMATS_LOG_BACKUP_COUNT.
+try:
+    _LOG_BACKUPS = max(5, int(os.environ.get("HMATS_LOG_BACKUP_COUNT", "100")))
+except ValueError:  # noqa: silent-swallow — a malformed override keeps the 90-day default
+    _LOG_BACKUPS = 100
 _file_handler = RotatingFileHandler(
     _LOG_DIR / "hmats.log",
     maxBytes=10 * 1024 * 1024,
-    backupCount=5,
+    backupCount=_LOG_BACKUPS,
     encoding="utf-8",
 )
 _file_handler.setFormatter(_LOG_FMT)
@@ -4008,6 +4016,39 @@ def sleeve_exit_status(venue_status, ok_name: str) -> str:
     return "EXIT_FAILED"
 
 
+def funding_accrual_rows(positions, funding_rate_8h, contract_size_fn,
+                         hour_ts: int, last_hour_by_asset) -> list:
+    """[P1R-2] Pure: one estimated funding row per held asset not yet accrued
+    for `hour_ts`. Sign convention: funding_est_usd > 0 = the position PAID
+    (long pays positive funding, short receives it). A position whose rate
+    or price is unknown gets a row with funding_est_usd=None — absence is
+    never a zero (P2)."""
+    out = []
+    for asset, pos in (positions or {}).items():
+        try:
+            ct = float((pos or {}).get("signed_contracts") or 0.0)
+        except (TypeError, ValueError):  # noqa: silent-swallow — unreadable position skipped
+            continue
+        if ct == 0 or int((last_hour_by_asset or {}).get(asset, 0)) >= int(hour_ts):
+            continue
+        px = (pos or {}).get("current_price") or (pos or {}).get("entry_vwap")
+        cs = None
+        try:
+            cs = float(contract_size_fn(asset)) if callable(contract_size_fn) else None
+        except Exception:  # noqa: silent-swallow — size unknown -> estimate None
+            cs = None
+        r8 = (funding_rate_8h or {}).get(asset)
+        notional = abs(ct) * cs * float(px) if (cs and px) else None
+        rate_h = (float(r8) / 8.0) if r8 is not None else None
+        est = (rate_h * notional * (1.0 if ct > 0 else -1.0)
+               if (rate_h is not None and notional is not None) else None)
+        out.append({"hour_ts": int(hour_ts), "asset": asset,
+                    "signed_contracts": ct, "price": px, "notional_usd": notional,
+                    "funding_rate_hourly": rate_h, "funding_est_usd": est,
+                    "source": "ESTIMATE_FROM_VENUE_RATE (no venue payment ledger)"})
+    return out
+
+
 async def sleeve_fast_risk_action(sleeve, asset: str, action_name: str,
                                   enabled: bool):
     """[P227] FastRiskTick's inter-tick safety net, for the Coinbase sleeve.
@@ -4079,7 +4120,18 @@ async def sleeve_fast_risk_action(sleeve, asset: str, action_name: str,
                         f"|contracts|={abs(cur)} — 1-contract granularity, "
                         f"cannot halve (venue-resting stop still protects)")
             _tgt = int(cur / 2)  # truncates toward zero = a genuine reduce
-            res = await sleeve.execute_target(asset, _tgt, urgent=True)
+            # [P1R-2] P423 stamped only the EXIT_ONLY branch; the two live
+            # REDUCE_50 fills of 2026-10-14/15 recorded cause=None. Stamp it.
+            _soc = getattr(sleeve, "set_order_context", None)
+            if callable(_soc):
+                _soc(asset, decider="fast_risk_watchdog", src="fast_risk",
+                     cause="risk_exit:fast_risk_reduce", target_contracts=_tgt)
+            try:
+                res = await sleeve.execute_target(asset, _tgt, urgent=True)
+            finally:
+                _coc = getattr(sleeve, "clear_order_context", None)
+                if callable(_coc):
+                    _coc(asset)
             _vs = res.get('status')
             _rf = getattr(sleeve, "request_stop_followup", None)  # [P382]
             if callable(_rf):
@@ -19565,6 +19617,51 @@ class HMATSProductionRunner:
     # -----------------------------------------------------------------
     # [Section D] FastRiskTick action handler -EXIT/REDUCE only
     # -----------------------------------------------------------------
+    def _accrue_funding_hourly(self) -> None:
+        """[P1R-2] Append one row per held sleeve position per UTC hour to
+        data/funding_accrual.jsonl: the venue's current hourly funding rate x
+        position notional x 1h. The venue exposes NO funding-payment ledger
+        (Phase 0: UNAVAILABLE), so this is an ESTIMATE and says so on every
+        row. Observation only; never raises; at most one row per asset-hour
+        (restart-safe: the last written hour is read back from the file)."""
+        try:
+            sl = getattr(self, "_coinbase_sleeve", None)
+            if sl is None or not getattr(sl, "_reconcile_ok", False):
+                return
+            hour = int(time.time() // 3600) * 3600
+            done = getattr(self, "_funding_accrual_last_hour", None)
+            path = os.path.join(os.environ.get("HMATS_DATA_DIR", "data"), "funding_accrual.jsonl")
+            if done is None:
+                done = {}
+                try:
+                    with open(path, encoding="utf-8") as fh:
+                        for line in fh:
+                            try:
+                                r = json.loads(line)
+                                done[r["asset"]] = max(done.get(r["asset"], 0), int(r["hour_ts"]))
+                            except (ValueError, KeyError, TypeError):  # noqa: silent-swallow — torn line skipped
+                                continue
+                except FileNotFoundError:  # noqa: silent-swallow — first run starts an empty ledger
+                    pass
+                self._funding_accrual_last_hour = done
+            rates = getattr(self, "_coinbase_funding_8h", {}) or {}
+            from core.cde_fees import _contract_sizes as _ccs
+            _cde_cs = _ccs()
+            rows = funding_accrual_rows(
+                getattr(sl, "_last_positions", None) or {}, rates,
+                _cde_cs.get, hour, done)
+            if not rows:
+                return
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+            with open(path, "a", encoding="utf-8") as fh:
+                for r in rows:
+                    fh.write(json.dumps(r) + "\n")
+                    done[r["asset"]] = hour
+        except Exception as e:  # noqa: silent-swallow — logged; an observation ledger never touches the loop
+            if not getattr(self, "_funding_accrual_warned", False):
+                self._funding_accrual_warned = True
+                logger.warning(f"[P1R-2] funding accrual failed ({type(e).__name__}: {e})")
+
     async def _handle_fast_risk_action(self, asset: str, result, market_data: Dict[str, Any]):
         """Execute FastRiskTick REDUCE/EXIT actions between 4H ticks.
 
@@ -25524,7 +25621,11 @@ class HMATSProductionRunner:
                                                     _oc_intent, "direction", 0.0) or 0.0),
                                                 alpha_bps=float(getattr(
                                                     _oc_intent, "alpha_estimated_bps", 0.0) or 0.0),
-                                                target_contracts=_m_dir)
+                                                # [P1R-8] this is the signed
+                                                # DIRECTION; the real contract
+                                                # target is stamped inside
+                                                # execute_target (P1R-2).
+                                                target_direction=_m_dir)
                                         except Exception:  # noqa: silent-swallow — labelling only (Iron Law 7)
                                             pass
                                         try:
@@ -25933,6 +26034,8 @@ class HMATSProductionRunner:
                     # [GATE-6] Check for emergency flatten during inter-tick sleep
                     if await self._check_and_execute_force_flat():
                         break
+                    # [P1R-2] hourly funding accrual ledger (observation only)
+                    self._accrue_funding_hourly()
                     remaining = deadline_ts - time.monotonic()
                     if self.fast_risk_tick and remaining > 0:
                         for frt_asset in self.config.assets:
