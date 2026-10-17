@@ -19375,6 +19375,7 @@ class HMATSProductionRunner:
             "TRADE GATE",
             "P0 SAFETY",
             "P0 SHORT BLOCK",
+            "P1 2 FRICTION",            # [P1-2] entry filter (enforce, tighten-only): hold, never flatten
             "RISK GOVERNOR",
             "CONFIDENCE GATE",
             "GAMBLER GATE",

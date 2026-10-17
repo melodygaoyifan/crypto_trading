@@ -94,7 +94,7 @@ class RealizedFrictionModel:
             self.ema = {a.upper(): {k: float(x) for k, x in v.items()}
                         for a, v in dict(d.get("ema", {})).items()}
             self.last_ingest_ts = float(d.get("last_ingest_ts", 0.0))
-        except FileNotFoundError:
+        except FileNotFoundError:  # noqa: silent-swallow — no state yet = cold start from the static values
             pass
         except Exception as e:  # noqa: silent-swallow — logged; EMA restarts from the static values
             logger.warning("[P1-2] friction EMA state unreadable (%s) — restarting "
@@ -161,7 +161,7 @@ class RealizedFrictionModel:
                             from exchange.coinbase_adapter import CoinbaseAdapter
                             from exchange.symbol_mapping import SYMBOL_MAP
                             pid = SYMBOL_MAP["coinbase"]["perp"].get(str(r.get("asset")).upper())
-                            cs = CoinbaseAdapter._CONTRACT_SIZE_FALLBACK.get(pid)
+                            cs = CoinbaseAdapter._CONTRACT_SIZE_FALLBACK.get(pid) if pid else None
                             if cs:
                                 fee_bps = fee / (abs(ct) * cs * px) * 1e4
                         except Exception:  # noqa: silent-swallow — no contract size = fee term not updated for this fill
@@ -170,7 +170,7 @@ class RealizedFrictionModel:
                                              r.get("realized_slippage_bps")):
                         n += 1
                     newest = max(newest, ts)
-        except FileNotFoundError:
+        except FileNotFoundError:  # noqa: silent-swallow — no fill ledger yet: nothing to learn from
             return 0
         except Exception as e:  # noqa: silent-swallow — logged; EMA keeps its previous values
             logger.warning("[P1-2] fill-ledger ingest failed (%s)", e)
