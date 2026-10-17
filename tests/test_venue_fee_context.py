@@ -164,7 +164,8 @@ class TestBothCallSitesShareTheResolver:
         src = self._main()
         init = src.index("_venue_fee_resolved = None")
         first_use = src.index("_venue_fee_resolved = (maker_fee_bps")
-        guard = src.index("if self._fee_blending_enabled and hasattr(self.engine, 'guarantees'):")
+        # [P1-1] the block is no longer gated on the Kraken+ blender
+        guard = src.index("from core.paper_fee_service import venue_fee_std as _vfs_std\n")
         assert init < guard < first_use, (
             "the fee_context builder can be reached with _venue_fee_resolved "
             "undefined"
@@ -172,7 +173,10 @@ class TestBothCallSitesShareTheResolver:
 
     def test_unresolved_tick_keeps_the_conservative_tier(self):
         src = self._main()
-        assert '_fee_venue, _fee_source = "kraken", "kraken_plus_fee_blender"' in src
+        # [P1-1] the unresolved fallback is the STANDARD Kraken schedule
+        # (16/26bps), never the Kraken+ free-tier blend (0bps at ~$0 volume).
+        assert '_fee_venue, _fee_source = "kraken", "kraken_standard_schedule"' in src
+        assert '_fc.blender.apply' not in src
 
 
 class TestTelemetryExposesTheVenue:

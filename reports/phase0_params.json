@@ -1,0 +1,361 @@
+{
+ "generated_at": "2026-10-17T18:51:43.096386+00:00",
+ "venue": "coinbase_cfm (CDE US perp-style futures)",
+ "data_range": {
+  "from": "2026-06-13T05:09:28.312422Z",
+  "to": "2026-10-15T08:04:08.508886Z",
+  "n_fills": 211,
+  "n_orders": 186,
+  "n_rt": 90,
+  "open_rt": {
+   "BTC": {
+    "pos": -2.0,
+    "since": "2026-10-13T13:20:18.600823+00:00",
+    "entry_notional": 3294.05
+   }
+  },
+  "reconciliation": "FIFO end position BTC -2 / others flat == venue list_futures_positions (BTC SHORT 2)"
+ },
+ "fee_model_fit": {
+  "rate_bps": 8.294,
+  "min_fee_per_contract_usd": 0.098,
+  "fit_error_pct": 9.05,
+  "fit_note": "pooled OLS across tier changes; the per-fill commission_detail_total breakdown is exact and supersedes the fit",
+  "structure_from_commission_detail": "commission = client_commission (pct of notional, tier-dependent) + venue $0.10/ct + clearing $0.01-0.05/ct; ADDITIVE per contract, not a minimum",
+  "current_tier": {
+   "name": "Intro",
+   "taker_bps": 10.0,
+   "maker_bps": 9.5,
+   "fixed_per_contract_usd": 0.11,
+   "thirty_day_volume_usd": 9600.65,
+   "has_promo_fee": false
+  },
+  "historical_pct_part_median_bps": {
+   "2026-06_taker": 9.0,
+   "2026-07_taker": 8.0,
+   "2026-08_maker": 6.5,
+   "2026-08_taker": 8.0,
+   "2026-09_maker": 6.5,
+   "2026-09_taker": 7.0,
+   "2026-10_maker": 9.5,
+   "2026-10_taker": 10.0
+  },
+  "fixed_share_of_total_fees": 0.282,
+  "maker_discount_observed": {
+   "same_month_2026_08_pct_part_bps": {
+    "maker": 6.5,
+    "taker": 7.999999999999999
+   },
+   "current_tier_bps": 0.5,
+   "note": "small: 0.5bps at current tier, 1.5bps at the Aug tier; maker fills ALSO earned spread (median -0.6..-1.6bps vs taker +0.4..+4bps)"
+  },
+  "system_model_error_pct": {
+   "current_model_cde_fee_bps": 10.32,
+   "model_in_force_at_fill_time": -32.65,
+   "legacy_venue_fee_std_0_3bps": -80.35,
+   "current_tier_fills_only_oct": -13.83
+  }
+ },
+ "product_specs": {
+  "BTC": {
+   "product_id": "BIP-20DEC30-CDE",
+   "contract_size": 0.01,
+   "tick": "0.01",
+   "min_contracts": "1",
+   "funding_interval": "3600s",
+   "api_contract_expiry": "2089-12-30T16:00:00Z",
+   "price_at_pull": 81490.0
+  },
+  "ETH": {
+   "product_id": "ETP-20DEC30-CDE",
+   "contract_size": 0.1,
+   "tick": "0.01",
+   "min_contracts": "1",
+   "funding_interval": "3600s",
+   "api_contract_expiry": "2089-12-30T16:00:00Z",
+   "price_at_pull": 2415.5
+  },
+  "SOL": {
+   "product_id": "SLP-20DEC30-CDE",
+   "contract_size": 5.0,
+   "tick": "0.01",
+   "min_contracts": "1",
+   "funding_interval": "3600s",
+   "api_contract_expiry": "2089-12-30T16:00:00Z",
+   "price_at_pull": 103.83
+  }
+ },
+ "per_asset": {
+  "BTC": {
+   "n_rt": 41,
+   "rt_fee_bps": 20.34,
+   "rt_spread_bps": 1.17,
+   "rt_spread_source": "decision_mid where recorded (post-2026-08-18), else 1m-bar (H+L)/2 proxy",
+   "rt_funding_bps_per_bar": 0.064,
+   "rt_funding_n": 5,
+   "rt_funding_source": "ESTIMATE_FROM_RATES (venue payments UNAVAILABLE)",
+   "all_in_cost_bps": 21.83,
+   "median_alpha_bps": -23.86,
+   "mean_alpha_bps": -41.23,
+   "net_bps": -47.77,
+   "win_rate_gross": 0.244,
+   "break_even_hold_bars": "NONE_AMONG_SUFFICIENT_BUCKETS",
+   "break_even_detail": [
+    "1:INSUFFICIENT(n=7)",
+    "2:NEGATIVE(n=11)",
+    "3-4:INSUFFICIENT(n=8)",
+    "5-8:INSUFFICIENT(n=7)",
+    "9+:INSUFFICIENT(n=8)"
+   ],
+   "fills_per_rt": 2.46,
+   "median_hold_bars": 2.43,
+   "min_fee_dominated_pct": 0.0,
+   "sum_gross_pnl_usd": -71.25,
+   "sum_fee_usd": 70.77
+  },
+  "ETH": {
+   "n_rt": 23,
+   "rt_fee_bps": 31.37,
+   "rt_spread_bps": 2.61,
+   "rt_spread_source": "decision_mid where recorded (post-2026-08-18), else 1m-bar (H+L)/2 proxy",
+   "rt_funding_bps_per_bar": 0.384,
+   "rt_funding_n": 6,
+   "rt_funding_source": "ESTIMATE_FROM_RATES (venue payments UNAVAILABLE)",
+   "all_in_cost_bps": 32.12,
+   "median_alpha_bps": -24.03,
+   "mean_alpha_bps": -7.01,
+   "net_bps": -53.05,
+   "win_rate_gross": 0.217,
+   "break_even_hold_bars": "INSUFFICIENT",
+   "break_even_detail": [
+    "1:INSUFFICIENT(n=8)",
+    "2:INSUFFICIENT(n=2)",
+    "3-4:INSUFFICIENT(n=4)",
+    "5-8:INSUFFICIENT(n=3)",
+    "9+:INSUFFICIENT(n=6)"
+   ],
+   "fills_per_rt": 3.78,
+   "median_hold_bars": 3.0,
+   "min_fee_dominated_pct": 1.33,
+   "sum_gross_pnl_usd": -2.75,
+   "sum_fee_usd": 45.12
+  },
+  "SOL": {
+   "n_rt": 24,
+   "rt_fee_bps": 24.62,
+   "rt_spread_bps": 1.36,
+   "rt_spread_source": "decision_mid where recorded (post-2026-08-18), else 1m-bar (H+L)/2 proxy",
+   "rt_funding_bps_per_bar": 0.425,
+   "rt_funding_n": 4,
+   "rt_funding_source": "ESTIMATE_FROM_RATES (venue payments UNAVAILABLE)",
+   "all_in_cost_bps": 26.62,
+   "median_alpha_bps": -40.14,
+   "mean_alpha_bps": -16.46,
+   "net_bps": -64.42,
+   "win_rate_gross": 0.333,
+   "break_even_hold_bars": "INSUFFICIENT",
+   "break_even_detail": [
+    "1:INSUFFICIENT(n=6)",
+    "2:INSUFFICIENT(n=4)",
+    "3-4:INSUFFICIENT(n=4)",
+    "5-8:INSUFFICIENT(n=2)",
+    "9+:INSUFFICIENT(n=8)"
+   ],
+   "fills_per_rt": 2.67,
+   "median_hold_bars": 3.0,
+   "min_fee_dominated_pct": 0.0,
+   "sum_gross_pnl_usd": 140.1,
+   "sum_fee_usd": 30.58
+  },
+  "XRP": {
+   "n_rt": 2,
+   "rt_fee_bps": 17.96,
+   "rt_spread_bps": -12.42,
+   "rt_spread_source": "decision_mid where recorded (post-2026-08-18), else 1m-bar (H+L)/2 proxy",
+   "rt_funding_bps_per_bar": 0.361,
+   "rt_funding_n": 2,
+   "rt_funding_source": "ESTIMATE_FROM_RATES (venue payments UNAVAILABLE)",
+   "all_in_cost_bps": 47.68,
+   "median_alpha_bps": -508.66,
+   "mean_alpha_bps": -508.66,
+   "net_bps": -556.34,
+   "win_rate_gross": 0.0,
+   "break_even_hold_bars": "INSUFFICIENT",
+   "break_even_detail": [
+    "1:INSUFFICIENT(n=0)",
+    "2:INSUFFICIENT(n=0)",
+    "3-4:INSUFFICIENT(n=0)",
+    "5-8:INSUFFICIENT(n=0)",
+    "9+:INSUFFICIENT(n=2)"
+   ],
+   "fills_per_rt": 2.0,
+   "median_hold_bars": 117.11,
+   "min_fee_dominated_pct": 0.0,
+   "sum_gross_pnl_usd": -71.95,
+   "sum_fee_usd": 2.55
+  }
+ },
+ "per_asset_regime": {
+  "BTC|MOMENTUM_RALLY": {
+   "n": 1,
+   "median_alpha_bps": 62.76,
+   "all_in_cost_bps": 21.83,
+   "verdict": "INSUFFICIENT"
+  },
+  "BTC|QUIET_ACCUMULATION": {
+   "n": 31,
+   "median_alpha_bps": -23.86,
+   "all_in_cost_bps": 21.59,
+   "verdict": "NEGATIVE"
+  },
+  "BTC|STEADY_UPTREND": {
+   "n": 1,
+   "median_alpha_bps": -82.68,
+   "all_in_cost_bps": 33.41,
+   "verdict": "INSUFFICIENT"
+  },
+  "BTC|WEAK_CONSOLIDATION": {
+   "n": 8,
+   "median_alpha_bps": -25.84,
+   "all_in_cost_bps": 21.42,
+   "verdict": "INSUFFICIENT"
+  },
+  "ETH|EXTREME_VOLATILITY": {
+   "n": 1,
+   "median_alpha_bps": 217.34,
+   "all_in_cost_bps": 24.38,
+   "verdict": "INSUFFICIENT"
+  },
+  "ETH|NEUTRAL_DRIFT": {
+   "n": 3,
+   "median_alpha_bps": -10.27,
+   "all_in_cost_bps": 30.34,
+   "verdict": "INSUFFICIENT"
+  },
+  "ETH|QUIET_ACCUMULATION": {
+   "n": 18,
+   "median_alpha_bps": -42.85,
+   "all_in_cost_bps": 33.42,
+   "verdict": "NEGATIVE"
+  },
+  "ETH|WEAK_CONSOLIDATION": {
+   "n": 1,
+   "median_alpha_bps": -156.56,
+   "all_in_cost_bps": 34.91,
+   "verdict": "INSUFFICIENT"
+  },
+  "SOL|NEUTRAL_DRIFT": {
+   "n": 2,
+   "median_alpha_bps": -113.71,
+   "all_in_cost_bps": 24.16,
+   "verdict": "INSUFFICIENT"
+  },
+  "SOL|QUIET_ACCUMULATION": {
+   "n": 17,
+   "median_alpha_bps": -26.17,
+   "all_in_cost_bps": 26.95,
+   "verdict": "NEGATIVE"
+  },
+  "SOL|STEADY_UPTREND": {
+   "n": 1,
+   "median_alpha_bps": 245.01,
+   "all_in_cost_bps": 19.33,
+   "verdict": "INSUFFICIENT"
+  },
+  "SOL|WEAK_CONSOLIDATION": {
+   "n": 4,
+   "median_alpha_bps": -144.16,
+   "all_in_cost_bps": 25.08,
+   "verdict": "INSUFFICIENT"
+  },
+  "XRP|MOMENTUM_RALLY": {
+   "n": 1,
+   "median_alpha_bps": -999.72,
+   "all_in_cost_bps": 29.46,
+   "verdict": "INSUFFICIENT"
+  },
+  "XRP|WEAK_CONSOLIDATION": {
+   "n": 1,
+   "median_alpha_bps": -17.59,
+   "all_in_cost_bps": 65.9,
+   "verdict": "INSUFFICIENT"
+  }
+ },
+ "fill_composition": {
+  "ESCALATE": {
+   "n_orders": 28,
+   "n_fills": 37,
+   "fee_usd": 19.61,
+   "realized_gross_pnl_usd": 0.0
+  },
+  "FLIP": {
+   "n_orders": 58,
+   "n_fills": 66,
+   "fee_usd": 59.36,
+   "realized_gross_pnl_usd": -175.45
+  },
+  "FULL_EXIT": {
+   "n_orders": 32,
+   "n_fills": 37,
+   "fee_usd": 26.96,
+   "realized_gross_pnl_usd": 107.5
+  },
+  "NEW_ENTRY": {
+   "n_orders": 33,
+   "n_fills": 36,
+   "fee_usd": 28.16,
+   "realized_gross_pnl_usd": 0.0
+  },
+  "PARTIAL_EXIT": {
+   "n_orders": 32,
+   "n_fills": 32,
+   "fee_usd": 19.55,
+   "realized_gross_pnl_usd": 81.42
+  },
+  "REBALANCE": {
+   "n_orders": 3,
+   "n_fills": 3,
+   "fee_usd": 0.84,
+   "realized_gross_pnl_usd": -2.69
+  },
+  "RESTART_RECONCILE": {
+   "n_orders": 0,
+   "n_fills": 0,
+   "fee_usd": 0.0,
+   "note": "not separable from the venue ledger; classes are position-INFERRED (181/186 orders), 5 ledger-verified"
+  },
+  "UNKNOWN": {
+   "n_orders": 0,
+   "n_fills": 0,
+   "fee_usd": 0.0,
+   "note": "not separable from the venue ledger; classes are position-INFERRED (181/186 orders), 5 ledger-verified"
+  }
+ },
+ "netting": {
+  "asset_ticks_with_ge2_orders": 20,
+  "of_which_opposite_direction": 18,
+  "one_contract_fills": 120,
+  "one_contract_fee_usd": 59.43
+ },
+ "recommended": {
+  "NO_TRADE_BAND_FRAC": null,
+  "NO_TRADE_BAND_FRAC_status": "INSUFFICIENT: REBALANCE (<25% delta) orders n=3 (P75=0.20). All same-sign resizes n=63 have |delta| P25/P50/P75 = 0.50/0.50/1.00: at 1-4 contracts any band in [0.15,0.35] is non-binding",
+  "MIN_HOLD_BARS": null,
+  "MIN_HOLD_BARS_status": "INSUFFICIENT: every hold bucket except BTC '2' (n=11, NEGATIVE) has n<10; no break_even_hold_bars computable",
+  "MIN_EXIT_CONTRACTS": null,
+  "MIN_EXIT_CONTRACTS_status": "NOT_ACHIEVABLE: both fee components scale per contract, so fee_bps is independent of exit size (~10-15bps/leg) and can never reach 20% of all-in cost at any contract count",
+  "SCALE_OUT_TRANCHES": null,
+  "SCALE_OUT_TRANCHES_status": "NO FEE BASIS: no per-order minimum (min-fee-dominated fills 0.47%), so tranching adds no fee per contract",
+  "friction_rt_bps": {
+   "BTC": 21.83,
+   "ETH": 32.12,
+   "SOL": 26.62
+  },
+  "friction_rt_bps_note": "median realized all-in (fee + spread + funding estimate) Jun-Oct; most fills were at cheaper tiers than today",
+  "friction_rt_bps_current_tier_projection": {
+   "BTC": 23.87,
+   "ETH": 31.72,
+   "SOL": 25.6
+  }
+ }
+}

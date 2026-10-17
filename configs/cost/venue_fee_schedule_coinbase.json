@@ -1,0 +1,19 @@
+{
+ "venue": "coinbase_cde",
+ "rate_bps_maker": 9.5,
+ "rate_bps_taker": 10.0,
+ "fixed_per_contract_usd": 0.11,
+ "min_fee_per_contract_usd": 0.0,
+ "contract_size": {
+  "BTC": 0.01,
+  "ETH": 0.1,
+  "SOL": 5.0
+ },
+ "provenance": {
+  "source": "reports/phase0_params.json (HMATS Phase 0 cost audit)",
+  "generated_from": "2026-10-17T18:51:43.096386+00:00",
+  "tier": "Intro",
+  "thirty_day_volume_usd": 9600.65,
+  "note": "current tier is the MOST expensive (Intro, 30d vol <$10k); a cheaper tier only makes this schedule overcharge (P167 safe side)"
+ }
+}

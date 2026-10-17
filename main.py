@@ -6765,15 +6765,9 @@ class HMATSProductionRunner:
                     # [P0-FIX] Apply free-tier blending: if monthly volume < $10K,
                     # fees are 0. Use the fee blender to get the actual effective rate
                     # instead of raw exchange tier.
-                    try:
-                        from execution.fees import get_fee_calculator
-                        _fc = get_fee_calculator()
-                        _monthly_vol = _fc.tracker.get_monthly_volume()
-                        _taker = _fc.blender.apply(_btc_fees.get("taker", 0.0026), _monthly_vol) * 10000
-                        _maker = _fc.blender.apply(_btc_fees.get("maker", 0.0016), _monthly_vol) * 10000
-                        logger.info(f"  [P0-FIX] Blended fees: taker={_taker:.1f}bps, maker={_maker:.1f}bps (vol=${_monthly_vol:,.0f})")
-                    except Exception as _blend_err:
-                        logger.debug(f"  [P0-FIX] Fee blending failed, using exchange rates: {_blend_err}")
+                    # [P1-1] Kraken+ free-tier blending removed: it does not
+                    # apply to Kraken Pro, and it priced this tier at 0bps.
+                    # The exchange-reported tier is used as-is.
                     if _taker >= 0 and _maker >= 0:
                         from execution.passive_aggressive import update_fee_tier_from_exchange
                         update_fee_tier_from_exchange(taker_bps=_taker, maker_bps=_maker)
@@ -12795,14 +12789,25 @@ class HMATSProductionRunner:
         _venue_fee_resolved = None
 
         # Update alpha gate friction + trade gate edge based on monthly volume (Kraken+ fee tier)
-        if self._fee_blending_enabled and hasattr(self.engine, 'guarantees'):
+        # [P1-1] Decoupled from the Kraken+ fee blender. This block used to
+        # run only `if self._fee_blending_enabled` (i.e. only if the blender
+        # module imported), and its Kraken leg — the "conservative fallback"
+        # every venue-fee failure path below falls back to — was the blender
+        # at the Kraken+ monthly volume, which since the 2026-06-13 cutover
+        # is ~$0, i.e. the FREE TIER: 0bps. The Kraken leg is now the
+        # standard Kraken schedule (core.paper_fee_service.VENUE_FEE_STD),
+        # so a failure overcharges instead of pricing a free trade (P167).
+        # monthly_vol is kept only for the volume-tier displays/trade gates.
+        if hasattr(self.engine, 'guarantees'):
             try:
-                from execution.fees import get_fee_calculator
+                from core.paper_fee_service import venue_fee_std as _vfs_std
 
-                monthly_vol = get_monthly_volume()
-                fee_calc = get_fee_calculator()
-                maker_fee_bps = fee_calc.blender.apply(0.0016, monthly_vol) * 10000.0
-                taker_fee_bps = fee_calc.blender.apply(0.0026, monthly_vol) * 10000.0
+                try:
+                    monthly_vol = float(get_monthly_volume()) if FEE_BLENDING_AVAILABLE else 0.0
+                except Exception:  # noqa: silent-swallow — volume is display-only here; 0.0 = unknown
+                    monthly_vol = 0.0
+                maker_fee_bps = _vfs_std("kraken", True) * 10000.0
+                taker_fee_bps = _vfs_std("kraken", False) * 10000.0
                 # [P155e] This block runs per-asset, so friction CAN be priced
                 # for the venue this asset will actually execute on. Kraken's
                 # tier is the default for everything, which over-charges every
@@ -12840,7 +12845,10 @@ class HMATSProductionRunner:
                     if (_vf_venue == "coinbase" and bool(getattr(
                             self.config, "coinbase_per_contract_fees", False))):
                         try:
-                            from core.cde_fees import cde_fee_bps as _cfb
+                            # [P1-1] the Phase-0 venue schedule (pct + fixed
+                            # per contract); falls back to the CDE_FEE_BPS table
+                            # for assets it does not cover.
+                            from core.cde_fees import venue_fee_bps as _cfb
                             # [P321b] market_data carries the price under
                             # "current_price"; "price" is not a key any
                             # producer writes, so this silently fell back to
@@ -12967,13 +12975,15 @@ class HMATSProductionRunner:
 
         # P2-02: Build fee_context for timing engine tier-aware mode selection
         _fee_context = None
-        if self._fee_blending_enabled:
+        if True:  # [P1-1] no longer gated on the Kraken+ blender
             try:
-                from execution.fees import get_fee_calculator
-                _fc = get_fee_calculator()
-                _monthly = _fc.tracker.get_monthly_volume()
-                _maker_fee_bps = _fc.blender.apply(0.0016, _monthly) * 10000.0
-                _taker_fee_bps = _fc.blender.apply(0.0026, _monthly) * 10000.0
+                from core.paper_fee_service import venue_fee_std as _vfs_std2
+                try:
+                    _monthly = float(get_monthly_volume()) if FEE_BLENDING_AVAILABLE else 0.0
+                except Exception:  # noqa: silent-swallow — display-only
+                    _monthly = 0.0
+                _maker_fee_bps = _vfs_std2("kraken", True) * 10000.0
+                _taker_fee_bps = _vfs_std2("kraken", False) * 10000.0
                 # [P172] Reuse the venue decision the alpha gate already made
                 # this tick rather than re-deriving it (or, as before, ignoring
                 # it). When it is None the block above did not run, so keep the
@@ -12982,15 +12992,17 @@ class HMATSProductionRunner:
                 if _venue_fee_resolved is not None:
                     _maker_fee_bps, _taker_fee_bps, _fee_venue, _fee_source = _venue_fee_resolved
                 else:
-                    _fee_venue, _fee_source = "kraken", "kraken_plus_fee_blender"
+                    _fee_venue, _fee_source = "kraken", "kraken_standard_schedule"
                 _fee_context = {
-                    "in_free_tier": _fc.blender.is_in_free_tier(_monthly),
-                    "fee_weight": _fc.blender.compute_weight(_monthly),
+                    # [P1-1] Kraken Pro has no Kraken+ free tier, and the
+                    # directional venue is Coinbase — no free tier applies.
+                    "in_free_tier": False,
+                    "fee_weight": 1.0,
                     "monthly_volume_usd": _monthly,
                     "maker_fee_bps": _maker_fee_bps,
                     "taker_fee_bps": _taker_fee_bps,
-                    # Provenance, not decoration: "kraken_plus_fee_blender" now
-                    # only appears on numbers that came from the blender.
+                    # Provenance, not decoration ([P1-1]: the blender no
+                    # longer prices anything on this path).
                     "fee_source": _fee_source,
                     "venue": _fee_venue,
                     "tier_config": self.config.timing_engine_config or {},

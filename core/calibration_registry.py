@@ -160,6 +160,30 @@ REGISTRY: Tuple[Calibration, ...] = (
             "undercharging spends money (P167)."),
     ),
     Calibration(
+        # [P1-1] The live per-leg fee for routed assets (core.cde_fees.
+        # venue_fee_bps). The file is written by the producer from the Phase 0
+        # ledger audit; no fee number is typed in code.
+        symbol="core.cde_fees._SCHEDULE_PATH",
+        measured_on="2026-10-17",
+        producer=("python -X utf8 scripts/export_venue_fee_schedule.py "
+                  "  # from reports/phase0_params.json; validate with "
+                  "scripts/replay_fee_model.py"),
+        source=("Phase 0 cost audit: 211 venue fills (commission_detail_total "
+                "= pct-of-notional + venue $0.10/ct + clearing) + "
+                "get_transaction_summary fee tier (Intro 10.0/9.5bps)"),
+        staleness_days=30,
+        staleness_reason=(
+            "The pct term is a 30-DAY-VOLUME tier: it moved 9.0 -> 6.5 -> 10.0 "
+            "bps across Jun-Oct 2026. A month is the tier's own window."),
+        revision_rule=(
+            "Re-export from a fresh Phase 0 run only. The current tier is the "
+            "most expensive one, so a stale file overcharges (P167 safe side); "
+            "a re-export at a CHEAPER tier is a loosening and needs its own "
+            "P-entry."),
+        stamp_measured_on="_SCHEDULE_MEASURED_ON",
+        stamp_measured_by="_SCHEDULE_MEASURED_BY",
+    ),
+    Calibration(
         symbol="defense.constitution.CDE_SPREAD_BPS_MEASURED",
         measured_on="2026-08-27",   # [P420] breadth XRP/BNB added, trio re-read as control
         producer=("python -X utf8 scripts/coinbase_probe_stop_support.py "

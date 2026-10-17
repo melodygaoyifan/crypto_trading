@@ -343,7 +343,8 @@ def resolve_seat_edge(asset: str, seat: str, direction: float,
     # case open, because None was read as "not supplied" rather than as
     # "cannot price". A safety interlock must not have an opt-out that its
     # own default selects.
-    from core.cde_fees import cde_fee_bps
+    # [P1-1] the same fee function the gate prices with
+    from core.cde_fees import venue_fee_bps
     _px_ok = price is not None
     if _px_ok:
         try:
@@ -356,7 +357,7 @@ def resolve_seat_edge(asset: str, seat: str, direction: float,
             _px_ok = math.isfinite(_px) and _px > 0.0
         except (TypeError, ValueError):
             _px_ok = False
-    if not _px_ok or cde_fee_bps(asset, price, is_maker=False) is None:
+    if not _px_ok or venue_fee_bps(asset, price, is_maker=False) is None:
         logger.warning(
             "[P321b] %s: honest fee not priceable (px=%r) — NOT applying "
             "the calibrated alpha either; the two must move together",

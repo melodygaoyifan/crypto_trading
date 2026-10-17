@@ -149,6 +149,101 @@ for _a in CDE_FEE_ASSUMED:
 CDE_FEE_BPS_VENUE_QUOTE: Dict[str, float] = {"SOL": 10.90, "XRP": 9.03, "BNB": 8.69}
 
 
+# =============================================================================
+# [P1-1] VENUE FEE SCHEDULE — the structure read off the venue's own ledger
+# =============================================================================
+#
+# Phase 0 (reports/HMATS_PHASE0_COST_AUDIT.md) read every fill's
+# `commission_detail_total`: commission = client_commission (a % of notional,
+# set by the 30-day-volume tier) + venue $0.10/ct + clearing $0.01-0.05/ct.
+# BOTH earlier models were half right: P315's flat-per-contract and P334's
+# pure percentage. The table above (CDE_FEE_BPS) is the P334 percentage-only
+# model and, measured against all 211 fills, was +10.3% overall but -13.8%
+# at the CURRENT tier (BTC 9.87bps taker modelled vs 11.35 actual), because it
+# has no fixed term and was calibrated at a cheaper tier.
+#
+# The schedule is loaded from configs/cost/venue_fee_schedule_coinbase.json, which
+# scripts/export_venue_fee_schedule.py writes from phase0_params.json — no fee
+# number is typed in code. Absent/unreadable file -> None, and cde_fee_bps
+# falls back to CDE_FEE_BPS above (the pre-P1-1 behavior), logged once.
+import json as _json
+import os as _os
+from dataclasses import dataclass as _dataclass
+
+_SCHEDULE_MEASURED_ON = "2026-10-17"
+_SCHEDULE_MEASURED_BY = ("scripts/export_venue_fee_schedule.py <- reports/phase0_params.json "
+                         "(Phase 0: 211 venue fills + get_transaction_summary)")
+_SCHEDULE_PATH = _os.path.join(
+    _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
+    "configs", "cost", "venue_fee_schedule_coinbase.json")
+
+
+@_dataclass(frozen=True)
+class VenueFeeSchedule:
+    venue: str
+    rate_bps_maker: float
+    rate_bps_taker: float
+    fixed_per_contract_usd: float
+    min_fee_per_contract_usd: float
+    contract_size: Dict[str, float]
+
+    def fee_usd(self, asset: str, contracts: float, price: float,
+                is_maker: bool) -> float:
+        cs = self.contract_size[str(asset).upper()]
+        n = abs(float(contracts))
+        notional = n * cs * float(price)
+        rate = self.rate_bps_maker if is_maker else self.rate_bps_taker
+        fee = notional * rate / 1e4 + self.fixed_per_contract_usd * n
+        return max(fee, self.min_fee_per_contract_usd * n)
+
+    def fee_bps(self, asset: str, contracts: float, price: float,
+                is_maker: bool) -> float:
+        n = abs(float(contracts))
+        notional = n * self.contract_size[str(asset).upper()] * float(price)
+        if not notional > 0:
+            return float("inf")
+        return self.fee_usd(asset, n, price, is_maker) / notional * 1e4
+
+    def covers(self, asset: str) -> bool:
+        return str(asset).upper() in self.contract_size
+
+
+_SCHEDULE_CACHE: Dict[str, Optional[VenueFeeSchedule]] = {}
+_SCHEDULE_WARNED = {"missing": False}
+
+
+def load_venue_fee_schedule(path: Optional[str] = None,
+                            *, reload: bool = False) -> Optional[VenueFeeSchedule]:
+    """The Phase-0-derived schedule, or None (callers keep CDE_FEE_BPS)."""
+    p = path or _os.environ.get("HMATS_VENUE_FEE_SCHEDULE") or _SCHEDULE_PATH
+    if not reload and p in _SCHEDULE_CACHE:
+        return _SCHEDULE_CACHE[p]
+    sched: Optional[VenueFeeSchedule] = None
+    try:
+        with open(p, encoding="utf-8") as fh:
+            d = _json.load(fh)
+        sched = VenueFeeSchedule(
+            venue=str(d["venue"]),
+            rate_bps_maker=float(d["rate_bps_maker"]),
+            rate_bps_taker=float(d["rate_bps_taker"]),
+            fixed_per_contract_usd=float(d["fixed_per_contract_usd"]),
+            min_fee_per_contract_usd=float(d.get("min_fee_per_contract_usd", 0.0)),
+            contract_size={str(k).upper(): float(v)
+                           for k, v in dict(d["contract_size"]).items()},
+        )
+        if not (sched.rate_bps_taker > 0 and sched.rate_bps_maker > 0):
+            raise ValueError("non-positive rate")
+    except Exception as e:  # noqa: silent-swallow — logged once; caller falls back to CDE_FEE_BPS
+        if not _SCHEDULE_WARNED["missing"]:
+            _SCHEDULE_WARNED["missing"] = True
+            logger.warning("[P1-1] venue fee schedule unavailable at %s (%s: %s) — "
+                           "pricing falls back to the CDE_FEE_BPS percentage table",
+                           p, type(e).__name__, e)
+        sched = None
+    _SCHEDULE_CACHE[p] = sched
+    return sched
+
+
 def _contract_sizes() -> Dict[str, float]:
     """asset -> CDE contract size, DERIVED from the two existing sources.
 
@@ -224,3 +319,39 @@ def cde_fee_bps(asset: str, price: float, *, is_maker: bool,
             else "measured_venue_preview" if a in CDE_FEE_PREVIEW
             else "measured_fill_quality")
     return sched["maker" if is_maker else "taker"], prov
+
+
+def venue_fee_bps(asset: str, price: float, *, is_maker: bool,
+                  contract_size: Optional[float] = None) -> Optional[Tuple[float, str]]:
+    """[P1-1] Per-LEG fee in bps from the Phase-0 VENUE SCHEDULE.
+
+    Live pricing entry point (alpha gate, seat-alpha interlock). Kept separate
+    from `cde_fee_bps` on purpose: training/funding_legs_lab.py calls
+    `cde_fee_bps(asset, 1.0, contract_size=1.0)` to read a constant per-asset
+    RATE, and the schedule's fixed per-contract term would turn that probe
+    into ~1,100bps/leg. training/ is off-limits in Phase 1, so the legacy
+    percentage table stays where the lab reads it.
+
+    Per-contract bps is independent of the contract COUNT (both fee terms are
+    linear in contracts), so one contract prices any order size exactly.
+    Falls back to `cde_fee_bps` (table) for assets the schedule does not
+    cover or when it cannot load; None when the price is unusable (P2).
+    """
+    a = str(asset or "").upper().strip()
+    try:
+        px = float(price)
+    except (TypeError, ValueError):  # noqa: silent-swallow — caller logs the unpriceable tick (P202)
+        return None
+    if not (px > 0) or px != px:
+        return None
+    vfs = load_venue_fee_schedule()
+    if vfs is None or not vfs.covers(a):
+        return cde_fee_bps(a, px, is_maker=is_maker, contract_size=contract_size)
+    cs = contract_size if contract_size else vfs.contract_size[a]
+    notional = float(cs) * px
+    if not notional > 0:
+        return None
+    rate = vfs.rate_bps_maker if is_maker else vfs.rate_bps_taker
+    bps = rate + vfs.fixed_per_contract_usd / notional * 1e4
+    bps = max(bps, vfs.min_fee_per_contract_usd / notional * 1e4)
+    return bps, "venue_fee_schedule_phase0"
