@@ -3,6 +3,7 @@
   "2026-08-18T16:03:15.849784+00:00",
   "2026-10-17T16:03:15.849784+00:00"
  ],
+ "volume_usd": 10413.0,
  "assets": {
   "BTC": {
    "n_directional": 356,
@@ -10,17 +11,17 @@
    "n_skipped_pre_p321_leg": 0,
    "counts_observable": true,
    "min_leg_delta_bps_all_ticks": {
-    "p427_as_written": 1.3987281576913766,
-    "p427_with_ratchet": 1.3987281576913766
+    "p427_as_written": -0.6012718423086234,
+    "p427_with_ratchet": 0.0
    },
    "p427_as_written": {
-    "leg_delta_bps_median": 1.529907860609903,
+    "leg_delta_bps_median": -0.470092139390097,
     "newly_pass": 0,
     "newly_fail": 0,
     "newly_fail_unknown": 126
    },
    "p427_with_ratchet": {
-    "leg_delta_bps_median": 1.529907860609903,
+    "leg_delta_bps_median": 0.0,
     "newly_pass": 0,
     "newly_fail": 0,
     "newly_fail_unknown": 126
@@ -32,11 +33,11 @@
    "n_skipped_pre_p321_leg": 0,
    "counts_observable": true,
    "min_leg_delta_bps_all_ticks": {
-    "p427_as_written": -0.5485125241278741,
+    "p427_as_written": -2.548512524127874,
     "p427_with_ratchet": 0.0
    },
    "p427_as_written": {
-    "leg_delta_bps_median": -0.07108432496128891,
+    "leg_delta_bps_median": -2.071084324961289,
     "newly_pass": 0,
     "newly_fail": 0,
     "newly_fail_unknown": 165
@@ -54,11 +55,11 @@
    "n_skipped_pre_p321_leg": 0,
    "counts_observable": false,
    "min_leg_delta_bps_all_ticks": {
-    "p427_as_written": -2.738084395999101,
+    "p427_as_written": -4.738084395999101,
     "p427_with_ratchet": 0.0
    },
    "p427_as_written": {
-    "leg_delta_bps_median": -2.384028834105754,
+    "leg_delta_bps_median": -4.384028834105754,
     "newly_pass": 0,
     "newly_fail": 0,
     "newly_fail_unknown": 355

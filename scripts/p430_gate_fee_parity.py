@@ -39,7 +39,7 @@ import urllib.request
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-from core.cde_fees import cde_fee_bps, venue_fee_bps  # noqa: E402
+from core.cde_fees import cde_fee_bps, load_venue_fee_schedule, venue_fee_bps  # noqa: E402
 
 PAIRS = {"BTC": "XBTUSD", "ETH": "ETHUSD", "SOL": "SOLUSD"}
 LEG_RE = re.compile(r"friction ([\d.]+)bps = 2x([\d.]+)bps/leg \+ ([\d.]+)bps hold")
@@ -61,18 +61,29 @@ def price_at(ts_list, px_list, ts):
     return px_list[i] if i >= 0 else None
 
 
+VOLUME_USD = 0.0  # rolling 30d traded notional -> fee tier; 0 = Intro (dearest)
+
+
 def fees(asset, px):
     tbl = cde_fee_bps(asset, px, is_maker=False)[0]
-    ven = venue_fee_bps(asset, px, is_maker=False, rolling_30d_volume_usd=0.0)[0]
+    ven = venue_fee_bps(asset, px, is_maker=False, rolling_30d_volume_usd=VOLUME_USD)[0]
     old = max(MODELLED_OLD, tbl)
-    new = max(MODELLED_NEW, ven)
+    # P1R-1's modelled taker leg is the schedule's pct rate AT THE TIER
+    # (10.0 Intro, 8.0 from $10k), not a constant
+    vfs = load_venue_fee_schedule()
+    mod_new = vfs.rate_bps(False, VOLUME_USD) if vfs else MODELLED_NEW
+    new = max(mod_new, ven)
     return old, new, max(new, tbl)
 
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--days", type=float, default=60.0)
+    ap.add_argument("--volume-usd", type=float, default=0.0,
+                    help="rolling 30d volume for the tier (live 2026-10-17: 10413 -> 8.0bps tier)")
     args = ap.parse_args(argv)
+    global VOLUME_USD
+    VOLUME_USD = args.volume_usd
     tp = os.path.join(REPO, "data", "phase0", "gate_replay_ticks.json")
     if not os.path.exists(tp):
         print("REFUSING: data/phase0/gate_replay_ticks.json missing (not a verdict)")
@@ -80,7 +91,7 @@ def main(argv=None) -> int:
     ticks = json.load(open(tp, encoding="utf-8"))
     end = max(dt.datetime.fromisoformat(t["t"]) for t in ticks)
     start = end - dt.timedelta(days=args.days)
-    out = {"window": [start.isoformat(), end.isoformat()], "assets": {}}
+    out = {"window": [start.isoformat(), end.isoformat()], "volume_usd": VOLUME_USD, "assets": {}}
     any_loosen = False
     for a in ("BTC", "ETH", "SOL"):
         ts_l, px_l = kraken_4h(a)
@@ -174,7 +185,7 @@ def main(argv=None) -> int:
                 any_loosen = True
         out["assets"][a] = res
     print(json.dumps(out, indent=1))
-    rp = os.path.join(REPO, "reports", "p430_gate_fee_parity.json")
+    rp = os.path.join(REPO, "reports", f"p430_gate_fee_parity_vol{int(VOLUME_USD)}.json")
     with open(rp, "w", encoding="utf-8") as fh:
         json.dump(out, fh, indent=1)
     print("VERDICT:", "LOOSENS (deploy blocked)" if any_loosen else "ratchet never loosens")
