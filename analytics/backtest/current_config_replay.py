@@ -196,7 +196,12 @@ def decisions(closes, funding, etf_rows, skew_rows, start_ts, end_ts, cfg):
                                             book_target, causal_funding_z, regime_label)
     from defense.trend_rule_shadow import donchian_labels
     from core.seat_alpha import REGIMEBOOK_ALPHA_BPS_PER_ROUND_TRIP, skew_contra_alpha_bps
-    import main as m
+    import importlib
+    # Dynamic on purpose: the seat decisions live in main.py (one
+    # implementation, P172), and a STATIC import from analytics/ would pull
+    # main.py's whole import graph into the CRITICAL_DIRS mypy scan (+189
+    # findings measured) — the P342b scan-surface trap.
+    m = importlib.import_module("main")
     etf = {a: EtfState(etf_rows.get(a) or []) for a in ("BTC", "ETH")}
     skew = {a: SkewState(skew_rows.get(a) or []) for a in skew_rows}
     out = {}
@@ -514,7 +519,7 @@ def main(argv=None) -> int:
     end = min(closes[x][-1][0] for x in ASSETS) if a.end is None else \
         dt.datetime.fromisoformat(a.end).replace(tzinfo=dt.timezone.utc).timestamp()
     dec = decisions(closes, funding, inp.get("etf") or {}, inp.get("skew") or {}, start, end, cfg)
-    gmm = {}
+    gmm: Dict[str, List[Tuple[float, str]]] = {}
     for asset, tt, reg in inp.get("regimes") or []:
         if asset in ASSETS and tt and reg:
             gmm.setdefault(asset, []).append((dt.datetime.fromisoformat(tt).timestamp(), reg))

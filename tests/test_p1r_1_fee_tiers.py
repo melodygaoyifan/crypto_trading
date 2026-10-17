@@ -93,10 +93,15 @@ class TestLedgerVolume:
 
 
 class TestFallbackModels:
-    def test_paper_fee_std_is_no_longer_zero_three(self):
-        from core.paper_fee_service import venue_fee_std
-        assert venue_fee_std("coinbase", is_maker=True) > 0.0
-        assert venue_fee_std("coinbase", is_maker=False) > 0.0003
+    def test_paper_fee_std_is_frozen_because_training_reads_it(self):
+        """BLOCKED by iron rule 1: training/train_drl_full.py uses
+        VENUE_FEE_STD as the DRL trainer's fee source, so it stays at the
+        refuted 0/3bps until training/ may change. Pinned so a future edit
+        is a deliberate training decision, not a side effect."""
+        from core.paper_fee_service import VENUE_FEE_STD
+        assert VENUE_FEE_STD["coinbase"] == {"maker": 0.0000, "taker": 0.0003}
+        src = open("training/train_drl_full.py", encoding="utf-8").read()
+        assert "from core.paper_fee_service import VENUE_FEE_STD" in src
 
     def test_execution_service_constants_off_the_refuted_model(self):
         from core.execution_service import _COINBASE_MAKER_BPS, _COINBASE_TAKER_BPS

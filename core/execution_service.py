@@ -350,9 +350,10 @@ _COINBASE_MAKER_BPS = 9.5
 _COINBASE_TAKER_BPS = 10.0
 try:
     from core.cde_fees import schedule_pct_fraction as _spf
-    if _spf(True) and _spf(False):
-        _COINBASE_MAKER_BPS = float(_spf(True)) * 1e4
-        _COINBASE_TAKER_BPS = float(_spf(False)) * 1e4
+    _spf_m, _spf_t = _spf(True), _spf(False)
+    if _spf_m and _spf_t:
+        _COINBASE_MAKER_BPS = float(_spf_m) * 1e4
+        _COINBASE_TAKER_BPS = float(_spf_t) * 1e4
 except Exception:  # noqa: silent-swallow — the literal dearest-tier fallback stands
     pass
 

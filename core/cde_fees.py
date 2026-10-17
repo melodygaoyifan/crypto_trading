@@ -170,7 +170,7 @@ import json as _json
 import os as _os
 from dataclasses import dataclass as _dataclass
 
-_SCHEDULE_MEASURED_ON = "2026-10-18"
+_SCHEDULE_MEASURED_ON = "2026-10-17"
 _SCHEDULE_MEASURED_BY = ("scripts/export_venue_fee_schedule.py <- reports/phase0_params.json + data/phase0/fills_raw.parquet (tiers, fixed components) "
                          "(Phase 0: 211 venue fills + get_transaction_summary)")
 _SCHEDULE_PATH = _os.path.join(
@@ -444,15 +444,15 @@ def rolling_30d_volume_usd_from_ledger(path: Optional[str] = None,
                     r = _json.loads(line)
                     if not isinstance(r, dict) or r.get("status") != "filled":
                         continue
-                    ts = float(r.get("ts"))
+                    ts = float(r["ts"])
                     if not (t_now - 30 * 86400.0 <= ts <= t_now):
                         continue
                     cs = sizes.get(str(r.get("asset") or "").upper())
-                    px = float(r.get("fill_avg_price"))
-                    n = abs(float(r.get("contracts")))
+                    px = float(r["fill_avg_price"])
+                    n = abs(float(r["contracts"]))
                     if cs and px > 0:
                         total += n * cs * px
-                except (TypeError, ValueError):  # noqa: silent-swallow — a malformed row adds no volume (understates -> dearer tier)
+                except (TypeError, ValueError, KeyError):  # noqa: silent-swallow — a malformed row adds no volume (understates -> dearer tier)
                     continue
     except FileNotFoundError:  # noqa: silent-swallow — absence returns None and the schedule prices the dearest tier
         total = None

@@ -71,12 +71,8 @@ class TestReproducesMeasuredFills:
         """Anti-regression on the FINDING itself. VENUE_FEE_STD says taker
         3.0bps; if a future edit makes the honest number agree with that, the
         per-contract model has been silently defeated."""
-        # [P1R-1] VENUE_FEE_STD["coinbase"] itself was corrected off 3.0 to the
-        # venue schedule; the finding is pinned against the REFUTED literal,
-        # and the fallback model must no longer carry it.
         from core.paper_fee_service import VENUE_FEE_STD
-        assert VENUE_FEE_STD["coinbase"]["taker"] * 1e4 > 3.0
-        modeled = 3.0                                             # the refuted model
+        modeled = VENUE_FEE_STD["coinbase"]["taker"] * 1e4      # 3.0
         honest = cde_fee_bps("BTC", 64435.0, is_maker=False)[0]
         assert honest > 3 * modeled, (
             f"honest BTC taker fee {honest:.2f}bps is no longer >3x the "

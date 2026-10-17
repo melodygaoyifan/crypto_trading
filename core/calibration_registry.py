@@ -166,11 +166,13 @@ REGISTRY: Tuple[Calibration, ...] = (
         symbol="core.cde_fees._SCHEDULE_PATH",
         measured_on="2026-10-17",
         producer=("python -X utf8 scripts/export_venue_fee_schedule.py "
-                  "  # from reports/phase0_params.json; validate with "
-                  "scripts/replay_fee_model.py"),
+                  "  # from reports/phase0_params.json + data/phase0/fills_raw.parquet "
+                  "+ data/phase0/fee_tier.json; validate with scripts/replay_fee_model.py"),
         source=("Phase 0 cost audit: 211 venue fills (commission_detail_total "
-                "= pct-of-notional + venue $0.10/ct + clearing) + "
-                "get_transaction_summary fee tier (Intro 10.0/9.5bps)"),
+                "= pct-of-notional + venue $0.10/ct + clearing + regulatory) + "
+                "get_transaction_summary fee tier (Intro 10.0/9.5bps); [P1R-1] "
+                "tiers 8.0/7.5 from 10k and 7.0/6.5 from 50.4k rolling 30d volume "
+                "inferred from the fills"),
         staleness_days=30,
         staleness_reason=(
             "The pct term is a 30-DAY-VOLUME tier: it moved 9.0 -> 6.5 -> 10.0 "

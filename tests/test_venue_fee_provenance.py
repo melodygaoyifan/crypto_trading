@@ -74,17 +74,15 @@ class TestVenueScheduleSelection:
         assert venue_fee_std("kraken", is_maker=False) == 0.0026
 
     def test_coinbase_rates(self):
-        # [P1R-1] moved off the refuted 0/3bps model: the Coinbase fallback is
-        # the venue schedule's pct rate (Phase 0 ledger audit), never 0/3.
-        from core.cde_fees import schedule_pct_fraction
-        assert venue_fee_std("coinbase", is_maker=True) == pytest.approx(schedule_pct_fraction(True))
-        assert venue_fee_std("coinbase", is_maker=False) == pytest.approx(schedule_pct_fraction(False))
-        assert venue_fee_std("coinbase", is_maker=False) >= 0.0006   # dearer than the refuted 3bps x2
+        assert venue_fee_std("coinbase", is_maker=True) == 0.0000
+        assert venue_fee_std("coinbase", is_maker=False) == 0.0003
 
-    def test_coinbase_taker_is_cheaper_than_kraken(self):
-        # [P1R-1] the old "8x cheaper" pinned the refuted 3bps; the measured
-        # pct rate (7-10bps) is still below Kraken's 26bps taker.
-        assert venue_fee_std("kraken", is_maker=False) > venue_fee_std("coinbase", is_maker=False)
+    def test_coinbase_taker_is_far_cheaper_than_kraken(self):
+        # The whole reason the hardcode mattered: post-cutover the model was
+        # pricing the wrong exchange by nearly an order of magnitude.
+        assert venue_fee_std("kraken", is_maker=False) > (
+            8 * venue_fee_std("coinbase", is_maker=False)
+        )
 
     @pytest.mark.parametrize("venue", ["KRAKEN", "Kraken", "  kraken  ", "kRaKeN"])
     def test_venue_match_is_case_and_whitespace_insensitive(self, venue):
@@ -146,7 +144,7 @@ class TestVenueFeeWins:
     def test_modelled_fee_is_retained_alongside_the_measured_one(self):
         # Keeping both is what makes model error measurable after the fact.
         r = _build(venue="coinbase", venue_fee_usd=3.10, venue_fee_currency="USD")
-        assert r["modelled_fee_usd"] == pytest.approx(NOTIONAL * venue_fee_std("coinbase", is_maker=False))  # [P1R-1] schedule, not 0/3
+        assert r["modelled_fee_usd"] == pytest.approx(NOTIONAL * 0.0003)
         assert r["trade_fee_usd"] == 3.10
         assert r["modelled_fee_usd"] != r["trade_fee_usd"]
 
@@ -290,7 +288,7 @@ class TestDisabledIsNotModelled:
     def test_disabled_still_reports_the_venue_and_schedule(self):
         r = _build(fee_blending_enabled=False, venue="coinbase")
         assert r["venue"] == "coinbase"
-        assert r["fee_std"] == venue_fee_std("coinbase", is_maker=False)  # MARKET -> taker [P1R-1]
+        assert r["fee_std"] == 0.0003  # MARKET -> taker
 
 
 class TestMakerIsAnAssumption:
@@ -320,7 +318,7 @@ class TestMakerIsAnAssumption:
         r = _build(order_type="LIMIT", venue="coinbase", venue_fee_usd=3.00,
                    venue_fee_currency="USD")
         assert r["is_maker"] is True          # what we assumed
-        assert r["fee_std"] == venue_fee_std("coinbase", is_maker=True)  # what the assumption implied [P1R-1]
+        assert r["fee_std"] == 0.0            # what the assumption implied
         assert r["trade_fee_usd"] == 3.00     # what was actually charged
         assert r["fee_source"] == "venue"
 
@@ -330,7 +328,7 @@ class TestModelledFeeUsesTheRightVenue:
 
     def test_coinbase_market_is_not_priced_at_kraken(self):
         r = _build(venue="coinbase", order_type="MARKET")
-        assert r["trade_fee_usd"] == pytest.approx(NOTIONAL * venue_fee_std("coinbase", is_maker=False))  # [P1R-1]
+        assert r["trade_fee_usd"] == pytest.approx(NOTIONAL * 0.0003)
         assert r["trade_fee_usd"] != pytest.approx(NOTIONAL * 0.0026)
 
     def test_kraken_path_is_unchanged(self):
