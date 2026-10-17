@@ -1,0 +1,1357 @@
+{
+ "generated_at": "2026-10-17T20:25:08.026604+00:00",
+ "pre_registered_rule": "(written before the first run; the report\nprints it first and it may not be edited after a result exists):\n  * If, for all three assets, median gross alpha per RT <= median all-in\n    cost per RT  ->  NO_EDGE_AT_CURRENT_COST.\n  * If an asset's median gross alpha > median all-in cost AND the bootstrap\n    95% CI lower bound of its median net per RT > 0  ->  that asset is\n    EDGE_CONFIRMED_BACKTEST.\n  * Otherwise UNCERTAIN, with the number of live RTs needed (from the\n    bootstrap CI width) converted to weeks at the replay's RT frequency.\n  * Counterfactuals (A: FLIP off; B: MIN_HOLD_BARS in {2,3,6}) can only be\n    HYPOTHESIS_SUPPORTED / NOT_SUPPORTED; they never change a parameter.\n  * Live expectation = replay x 0.3-0.5 (industry decay rule of thumb).",
+ "window": {
+  "start": "2025-10-17T00:00:00+00:00",
+  "end": "2026-10-17T16:00:00+00:00",
+  "days": 365.7,
+  "price_source": "Binance 4H parquet to its last bar, Kraken 4H after"
+ },
+ "inputs": {
+  "maker_share": 0.46938775510204084,
+  "maker_share_source": "current config fills since 2026-08-27",
+  "taker_spread_bps": {
+   "BTC": 0.6357279084551812,
+   "ETH": 2.0695364238410594,
+   "SOL": 9.471377442816583e-13
+  },
+  "gate_threshold_min_observed": {
+   "BTC": 17.0,
+   "ETH": 26.0,
+   "SOL": 23.0
+  },
+  "equity0": 10800.0,
+  "live_cfg": {
+   "fractions": {
+    "BTC": 0.2,
+    "ETH": 0.15,
+    "SOL": 0.095
+   },
+   "flip_persist": 2,
+   "resize_persist": 2,
+   "cooldown": 2,
+   "etf_derisk_assets": [
+    "BTC",
+    "ETH"
+   ],
+   "etf_decide_assets": [],
+   "skew_seat_assets": [
+    "BTC"
+   ],
+   "gate_thresh": {
+    "BTC": 17.0,
+    "ETH": 26.0,
+    "SOL": 23.0
+   }
+  },
+  "fee_tiers": [
+   [
+    0.0,
+    9.5,
+    10.0
+   ],
+   [
+    10000.0,
+    7.5,
+    8.0
+   ],
+   [
+    50364.950000000004,
+    6.5,
+    7.0
+   ]
+  ],
+  "fixed_per_contract": {
+   "BTC": 0.11,
+   "ETH": 0.11,
+   "SOL": 0.11
+  }
+ },
+ "verdict": "UNCERTAIN",
+ "per_asset_verdict": {
+  "BTC": {
+   "verdict": "UNCERTAIN",
+   "n_rt": 12,
+   "median_gross_alpha_bps": 133.9156824453186,
+   "median_all_in_cost_bps": 18.410943069748114,
+   "median_net_bps": 93.48613905319525,
+   "ci95_median_net": [
+    -566.9435595441042,
+    1236.2354529214015
+   ],
+   "rt_per_week": 0.22971741112123972,
+   "rts_needed": 1117,
+   "weeks_needed": 4810.3
+  },
+  "ETH": {
+   "verdict": "NO_EDGE_ASSET",
+   "n_rt": 11,
+   "median_gross_alpha_bps": -19.90738925698025,
+   "median_all_in_cost_bps": 36.95371719931903,
+   "median_net_bps": -44.59241478092433,
+   "ci95_median_net": [
+    -503.4519528267482,
+    310.71145200719354
+   ],
+   "rt_per_week": 0.21057429352780307,
+   "rts_needed": null,
+   "weeks_needed": null
+  },
+  "SOL": {
+   "verdict": "NO_EDGE_ASSET",
+   "n_rt": 7,
+   "median_gross_alpha_bps": -60.69434328720563,
+   "median_all_in_cost_bps": 21.79616043829759,
+   "median_net_bps": -86.66489666391784,
+   "ci95_median_net": [
+    -111.06789704493976,
+    30.192034536734923
+   ],
+   "rt_per_week": 0.1340018231540565,
+   "rts_needed": null,
+   "weeks_needed": null
+  }
+ },
+ "decider_mix": {
+  "BTC": {
+   "skew_contra": 2195
+  },
+  "ETH": {
+   "regimebook": 1838,
+   "etf_derisk": 357
+  },
+  "SOL": {
+   "regimebook": 2195
+  }
+ },
+ "tables": {
+  "per_asset": {
+   "BTC": {
+    "n_rt": 12,
+    "median_gross_alpha_bps": 133.9156824453186,
+    "median_all_in_cost_bps": 18.410943069748114,
+    "median_net_bps": 93.48613905319525,
+    "sum_net_usd": 1012.3300316019805,
+    "win_rate_net": 0.5,
+    "median_hold_bars": 186.0,
+    "fills_per_rt": 2.6666666666666665,
+    "status": "OK"
+   },
+   "ETH": {
+    "n_rt": 11,
+    "median_gross_alpha_bps": -19.90738925698025,
+    "median_all_in_cost_bps": 36.95371719931903,
+    "median_net_bps": -44.59241478092433,
+    "sum_net_usd": 128.07081337705264,
+    "win_rate_net": 0.36363636363636365,
+    "median_hold_bars": 54.0,
+    "fills_per_rt": 4.363636363636363,
+    "status": "OK"
+   },
+   "SOL": {
+    "n_rt": 7,
+    "median_gross_alpha_bps": -60.69434328720563,
+    "median_all_in_cost_bps": 21.79616043829759,
+    "median_net_bps": -86.66489666391784,
+    "sum_net_usd": 200.41461556660607,
+    "win_rate_net": 0.2857142857142857,
+    "median_hold_bars": 5.0,
+    "fills_per_rt": 2.142857142857143,
+    "status": "INSUFFICIENT"
+   }
+  },
+  "per_asset_hold": {
+   "BTC / 9+": {
+    "n_rt": 12,
+    "median_gross_alpha_bps": 133.9156824453186,
+    "median_all_in_cost_bps": 18.410943069748114,
+    "median_net_bps": 93.48613905319525,
+    "sum_net_usd": 1012.3300316019805,
+    "win_rate_net": 0.5,
+    "median_hold_bars": 186.0,
+    "fills_per_rt": 2.6666666666666665,
+    "status": "OK"
+   },
+   "ETH / 9+": {
+    "n_rt": 11,
+    "median_gross_alpha_bps": -19.90738925698025,
+    "median_all_in_cost_bps": 36.95371719931903,
+    "median_net_bps": -44.59241478092433,
+    "sum_net_usd": 128.07081337705264,
+    "win_rate_net": 0.36363636363636365,
+    "median_hold_bars": 54.0,
+    "fills_per_rt": 4.363636363636363,
+    "status": "OK"
+   },
+   "SOL / 1": {
+    "n_rt": 3,
+    "median_gross_alpha_bps": -89.07159986296782,
+    "median_all_in_cost_bps": 20.489835962563184,
+    "median_net_bps": -110.8677603012654,
+    "sum_net_usd": -35.94786712581152,
+    "win_rate_net": 0.0,
+    "median_hold_bars": 1.0,
+    "fills_per_rt": 2.0,
+    "status": "INSUFFICIENT"
+   },
+   "SOL / 5-8": {
+    "n_rt": 1,
+    "median_gross_alpha_bps": 56.762092793681354,
+    "median_all_in_cost_bps": 26.57005825694643,
+    "median_net_bps": 30.192034536734923,
+    "sum_net_usd": 2.4467624788569986,
+    "win_rate_net": 1.0,
+    "median_hold_bars": 5.0,
+    "fills_per_rt": 2.0,
+    "status": "INSUFFICIENT"
+   },
+   "SOL / 9+": {
+    "n_rt": 3,
+    "median_gross_alpha_bps": -60.69434328720563,
+    "median_all_in_cost_bps": 25.97055337671221,
+    "median_net_bps": -86.66489666391784,
+    "sum_net_usd": 233.91572021356058,
+    "win_rate_net": 0.3333333333333333,
+    "median_hold_bars": 58.0,
+    "fills_per_rt": 2.3333333333333335,
+    "status": "INSUFFICIENT"
+   }
+  },
+  "per_asset_gmm_regime": {
+   "BTC / STEADY_UPTREND": {
+    "n_rt": 1,
+    "median_gross_alpha_bps": 590.5256306683583,
+    "median_all_in_cost_bps": 9.887333280499968,
+    "median_net_bps": 580.6382973878583,
+    "sum_net_usd": 166.42170687177673,
+    "win_rate_net": 1.0,
+    "median_hold_bars": 228.0,
+    "fills_per_rt": 5.0,
+    "status": "INSUFFICIENT"
+   },
+   "BTC / UNKNOWN": {
+    "n_rt": 9,
+    "median_gross_alpha_bps": -193.27504840848,
+    "median_all_in_cost_bps": 18.749234215415903,
+    "median_net_bps": -217.79264422115358,
+    "sum_net_usd": 390.90406069125663,
+    "win_rate_net": 0.3333333333333333,
+    "median_hold_bars": 144.0,
+    "fills_per_rt": 2.4444444444444446,
+    "status": "INSUFFICIENT"
+   },
+   "BTC / WEAK_CONSOLIDATION": {
+    "n_rt": 2,
+    "median_gross_alpha_bps": 1232.323521004003,
+    "median_all_in_cost_bps": 61.47918859380028,
+    "median_net_bps": 1170.8443324102027,
+    "sum_net_usd": 455.00426403894716,
+    "win_rate_net": 1.0,
+    "median_hold_bars": 237.0,
+    "fills_per_rt": 2.5,
+    "status": "INSUFFICIENT"
+   },
+   "ETH / NEUTRAL_DRIFT": {
+    "n_rt": 1,
+    "median_gross_alpha_bps": -324.8336749285888,
+    "median_all_in_cost_bps": 50.35350478064467,
+    "median_net_bps": -375.1871797092334,
+    "sum_net_usd": -62.49545378621862,
+    "win_rate_net": 0.0,
+    "median_hold_bars": 54.0,
+    "fills_per_rt": 2.0,
+    "status": "INSUFFICIENT"
+   },
+   "ETH / QUIET_ACCUMULATION": {
+    "n_rt": 4,
+    "median_gross_alpha_bps": 172.79711609366908,
+    "median_all_in_cost_bps": 46.24451881548622,
+    "median_net_bps": 133.0595186131346,
+    "sum_net_usd": 427.9340620946029,
+    "win_rate_net": 0.5,
+    "median_hold_bars": 79.0,
+    "fills_per_rt": 4.5,
+    "status": "INSUFFICIENT"
+   },
+   "ETH / STEADY_UPTREND": {
+    "n_rt": 1,
+    "median_gross_alpha_bps": -469.59382935348737,
+    "median_all_in_cost_bps": 33.858123473260854,
+    "median_net_bps": -503.4519528267482,
+    "sum_net_usd": -88.68311183562699,
+    "win_rate_net": 0.0,
+    "median_hold_bars": 24.0,
+    "fills_per_rt": 2.0,
+    "status": "INSUFFICIENT"
+   },
+   "ETH / UNKNOWN": {
+    "n_rt": 5,
+    "median_gross_alpha_bps": -8.312655862297772,
+    "median_all_in_cost_bps": 33.85657811849349,
+    "median_net_bps": -39.255030845432685,
+    "sum_net_usd": -148.68468309570468,
+    "win_rate_net": 0.4,
+    "median_hold_bars": 71.0,
+    "fills_per_rt": 5.2,
+    "status": "INSUFFICIENT"
+   },
+   "SOL / QUIET_ACCUMULATION": {
+    "n_rt": 4,
+    "median_gross_alpha_bps": -75.96862485379573,
+    "median_all_in_cost_bps": 22.89777200063307,
+    "median_net_bps": -98.8663968544288,
+    "sum_net_usd": -32.79580371778611,
+    "win_rate_net": 0.25,
+    "median_hold_bars": 9.5,
+    "fills_per_rt": 2.0,
+    "status": "INSUFFICIENT"
+   },
+   "SOL / UNKNOWN": {
+    "n_rt": 2,
+    "median_gross_alpha_bps": -71.2920335646388,
+    "median_all_in_cost_bps": 21.142998200430387,
+    "median_net_bps": -92.4350317650692,
+    "sum_net_usd": -17.826427023770695,
+    "win_rate_net": 0.0,
+    "median_hold_bars": 1.0,
+    "fills_per_rt": 2.0,
+    "status": "INSUFFICIENT"
+   },
+   "SOL / VOLATILE_CHOP": {
+    "n_rt": 1,
+    "median_gross_alpha_bps": 2986.4694415777976,
+    "median_all_in_cost_bps": 107.93663217333838,
+    "median_net_bps": 2878.5328094044594,
+    "sum_net_usd": 251.03684630816286,
+    "win_rate_net": 1.0,
+    "median_hold_bars": 295.0,
+    "fills_per_rt": 3.0,
+    "status": "INSUFFICIENT"
+   }
+  },
+  "per_asset_book_regime": {
+   "BTC / bear": {
+    "n_rt": 6,
+    "median_gross_alpha_bps": 444.39205109374,
+    "median_all_in_cost_bps": 18.410943069748114,
+    "median_net_bps": 414.6760637387536,
+    "sum_net_usd": 702.5400772920477,
+    "win_rate_net": 0.5,
+    "median_hold_bars": 240.0,
+    "fills_per_rt": 2.6666666666666665,
+    "status": "INSUFFICIENT"
+   },
+   "BTC / bull": {
+    "n_rt": 1,
+    "median_gross_alpha_bps": 331.6194132344143,
+    "median_all_in_cost_bps": 1.092831385751623,
+    "median_net_bps": 330.52658184866266,
+    "sum_net_usd": 75.82988106073225,
+    "win_rate_net": 1.0,
+    "median_hold_bars": 90.0,
+    "fills_per_rt": 3.0,
+    "status": "INSUFFICIENT"
+   },
+   "BTC / peace": {
+    "n_rt": 5,
+    "median_gross_alpha_bps": -193.27504840848,
+    "median_all_in_cost_bps": 23.849113342397615,
+    "median_net_bps": -217.79264422115358,
+    "sum_net_usd": 233.9600732492006,
+    "win_rate_net": 0.4,
+    "median_hold_bars": 144.0,
+    "fills_per_rt": 2.6,
+    "status": "INSUFFICIENT"
+   },
+   "ETH / bull": {
+    "n_rt": 3,
+    "median_gross_alpha_bps": -324.8336749285888,
+    "median_all_in_cost_bps": 37.69886819384756,
+    "median_net_bps": -375.1871797092334,
+    "sum_net_usd": -173.51068585077866,
+    "win_rate_net": 0.0,
+    "median_hold_bars": 30.0,
+    "fills_per_rt": 2.0,
+    "status": "INSUFFICIENT"
+   },
+   "ETH / peace": {
+    "n_rt": 8,
+    "median_gross_alpha_bps": 128.80378403526106,
+    "median_all_in_cost_bps": 35.40514765890626,
+    "median_net_bps": 94.85573794403409,
+    "sum_net_usd": 301.5814992278313,
+    "win_rate_net": 0.5,
+    "median_hold_bars": 81.5,
+    "fills_per_rt": 5.25,
+    "status": "INSUFFICIENT"
+   },
+   "SOL / bull": {
+    "n_rt": 7,
+    "median_gross_alpha_bps": -60.69434328720563,
+    "median_all_in_cost_bps": 21.79616043829759,
+    "median_net_bps": -86.66489666391784,
+    "sum_net_usd": 200.41461556660607,
+    "win_rate_net": 0.2857142857142857,
+    "median_hold_bars": 5.0,
+    "fills_per_rt": 2.142857142857143,
+    "status": "INSUFFICIENT"
+   }
+  },
+  "per_asset_decider": {
+   "BTC / skew_contra": {
+    "n_rt": 12,
+    "median_gross_alpha_bps": 133.9156824453186,
+    "median_all_in_cost_bps": 18.410943069748114,
+    "median_net_bps": 93.48613905319525,
+    "sum_net_usd": 1012.3300316019805,
+    "win_rate_net": 0.5,
+    "median_hold_bars": 186.0,
+    "fills_per_rt": 2.6666666666666665,
+    "status": "OK"
+   },
+   "ETH / regimebook": {
+    "n_rt": 11,
+    "median_gross_alpha_bps": -19.90738925698025,
+    "median_all_in_cost_bps": 36.95371719931903,
+    "median_net_bps": -44.59241478092433,
+    "sum_net_usd": 128.07081337705264,
+    "win_rate_net": 0.36363636363636365,
+    "median_hold_bars": 54.0,
+    "fills_per_rt": 4.363636363636363,
+    "status": "OK"
+   },
+   "SOL / regimebook": {
+    "n_rt": 7,
+    "median_gross_alpha_bps": -60.69434328720563,
+    "median_all_in_cost_bps": 21.79616043829759,
+    "median_net_bps": -86.66489666391784,
+    "sum_net_usd": 200.41461556660607,
+    "win_rate_net": 0.2857142857142857,
+    "median_hold_bars": 5.0,
+    "fills_per_rt": 2.142857142857143,
+    "status": "INSUFFICIENT"
+   }
+  }
+ },
+ "stats": {
+  "n_fills": 85,
+  "fee_usd": 129.3029604978571,
+  "spread_usd": 6.385350746237308,
+  "carry_usd": -18.196358777915467,
+  "carry_bars_covered": 3181,
+  "carry_bars_uncovered": 159,
+  "end_equity": 11998.603629978,
+  "open_positions": {
+   "BTC": -2
+  }
+ },
+ "counterfactuals": {
+  "cfA_flip_off": {
+   "n_rt": {
+    "BTC": 12,
+    "ETH": 11,
+    "SOL": 7
+   },
+   "net_usd": {
+    "BTC": 838.4886792605373,
+    "ETH": 117.38157106069941,
+    "SOL": 209.47533561762648
+   },
+   "delta_net_usd_vs_base": {
+    "BTC": -173.8413523414432,
+    "ETH": -10.68924231635323,
+    "SOL": 9.060720051020411
+   },
+   "delta_total_usd": -175.46987460677605,
+   "end_equity": 11822.16304623865,
+   "verdict": "NOT_SUPPORTED"
+  },
+  "cfB_min_hold_2": {
+   "n_rt": {
+    "BTC": 12,
+    "ETH": 11,
+    "SOL": 7
+   },
+   "net_usd": {
+    "BTC": 976.2099847978774,
+    "ETH": 121.80682839027847,
+    "SOL": 164.43551081286628
+   },
+   "delta_net_usd_vs_base": {
+    "BTC": -36.12004680410314,
+    "ETH": -6.263984986774176,
+    "SOL": -35.97910475373979
+   },
+   "delta_total_usd": -78.3631365446171,
+   "end_equity": 11920.240493433392,
+   "verdict": "NOT_SUPPORTED"
+  },
+  "cfB_min_hold_3": {
+   "n_rt": {
+    "BTC": 12,
+    "ETH": 11,
+    "SOL": 7
+   },
+   "net_usd": {
+    "BTC": 976.2099847978774,
+    "ETH": 121.80682839027847,
+    "SOL": 157.65859483799895
+   },
+   "delta_net_usd_vs_base": {
+    "BTC": -36.12004680410314,
+    "ETH": -6.263984986774176,
+    "SOL": -42.756020728607126
+   },
+   "delta_total_usd": -85.14005251948444,
+   "end_equity": 11913.46357745852,
+   "verdict": "NOT_SUPPORTED"
+  },
+  "cfB_min_hold_6": {
+   "n_rt": {
+    "BTC": 12,
+    "ETH": 11,
+    "SOL": 7
+   },
+   "net_usd": {
+    "BTC": 1007.1422522929406,
+    "ETH": 113.07165654553496,
+    "SOL": 146.07768098553973
+   },
+   "delta_net_usd_vs_base": {
+    "BTC": -5.187779309039911,
+    "ETH": -14.99915683151768,
+    "SOL": -54.336934581066345
+   },
+   "delta_total_usd": -74.52387072162394,
+   "end_equity": 11924.079759256374,
+   "verdict": "NOT_SUPPORTED"
+  }
+ },
+ "maker_share_sensitivity": {
+  "maker_0.346": {
+   "verdict": [
+    "UNCERTAIN",
+    {
+     "BTC": {
+      "verdict": "UNCERTAIN",
+      "n_rt": 12,
+      "median_gross_alpha_bps": 133.9156824453186,
+      "median_all_in_cost_bps": 18.683983822629646,
+      "median_net_bps": 93.20863973872429,
+      "ci95_median_net": [
+       -567.2229922280137,
+       1235.972491215944
+      ],
+      "rt_per_week": 0.22971741112123972,
+      "rts_needed": 1123,
+      "weeks_needed": 4836.4
+     },
+     "ETH": {
+      "verdict": "NO_EDGE_ASSET",
+      "n_rt": 11,
+      "median_gross_alpha_bps": -19.90738925698025,
+      "median_all_in_cost_bps": 37.59624684420986,
+      "median_net_bps": -45.225882280461114,
+      "ci95_median_net": [
+       -504.0711630477862,
+       310.0657651407567
+      ],
+      "rt_per_week": 0.21057429352780307,
+      "rts_needed": null,
+      "weeks_needed": null
+     },
+     "SOL": {
+      "verdict": "NO_EDGE_ASSET",
+      "n_rt": 7,
+      "median_gross_alpha_bps": -60.69434328720563,
+      "median_all_in_cost_bps": 21.918998676162346,
+      "median_net_bps": -86.78790997208183,
+      "ci95_median_net": [
+       -111.19072188717242,
+       30.06829659427241
+      ],
+      "rt_per_week": 0.1340018231540565,
+      "rts_needed": null,
+      "weeks_needed": null
+     }
+    }
+   ],
+   "stats": {
+    "n_fills": 85,
+    "fee_usd": 129.96932790648998,
+    "spread_usd": 7.870190385150797,
+    "carry_usd": -18.196358777915467,
+    "carry_bars_covered": 3181,
+    "carry_bars_uncovered": 159,
+    "end_equity": 11996.452422930457,
+    "open_positions": {
+     "BTC": -2
+    }
+   },
+   "per_asset": {
+    "BTC": {
+     "n_rt": 12,
+     "median_gross_alpha_bps": 133.9156824453186,
+     "median_all_in_cost_bps": 18.683983822629646,
+     "median_net_bps": 93.20863973872429,
+     "sum_net_usd": 1011.6295251633112,
+     "win_rate_net": 0.5,
+     "median_hold_bars": 186.0,
+     "fills_per_rt": 2.6666666666666665,
+     "status": "OK"
+    },
+    "ETH": {
+     "n_rt": 11,
+     "median_gross_alpha_bps": -19.90738925698025,
+     "median_all_in_cost_bps": 37.59624684420986,
+     "median_net_bps": -45.225882280461114,
+     "sum_net_usd": 126.74426883060904,
+     "win_rate_net": 0.36363636363636365,
+     "median_hold_bars": 54.0,
+     "fills_per_rt": 4.363636363636363,
+     "status": "OK"
+    },
+    "SOL": {
+     "n_rt": 7,
+     "median_gross_alpha_bps": -60.69434328720563,
+     "median_all_in_cost_bps": 21.918998676162346,
+     "median_net_bps": -86.78790997208183,
+     "sum_net_usd": 200.33389498874877,
+     "win_rate_net": 0.2857142857142857,
+     "median_hold_bars": 5.0,
+     "fills_per_rt": 2.142857142857143,
+     "status": "INSUFFICIENT"
+    }
+   }
+  },
+  "maker_0.697": {
+   "verdict": [
+    "UNCERTAIN",
+    {
+     "BTC": {
+      "verdict": "UNCERTAIN",
+      "n_rt": 12,
+      "median_gross_alpha_bps": 133.9156824453186,
+      "median_all_in_cost_bps": 17.9072673309311,
+      "median_net_bps": 93.99803945913219,
+      "ci95_median_net": [
+       -566.4280926695355,
+       1236.720535935124
+      ],
+      "rt_per_week": 0.22971741112123972,
+      "rts_needed": 1104,
+      "weeks_needed": 4753.7
+     },
+     "ETH": {
+      "verdict": "NO_EDGE_ASSET",
+      "n_rt": 11,
+      "median_gross_alpha_bps": -19.90738925698025,
+      "median_all_in_cost_bps": 35.76844873596021,
+      "median_net_bps": -43.42386317286385,
+      "ci95_median_net": [
+       -502.3097014878074,
+       311.90254456779064
+      ],
+      "rt_per_week": 0.21057429352780307,
+      "rts_needed": null,
+      "weeks_needed": null
+     },
+     "SOL": {
+      "verdict": "NO_EDGE_ASSET",
+      "n_rt": 7,
+      "median_gross_alpha_bps": -60.69434328720563,
+      "median_all_in_cost_bps": 21.569561882739283,
+      "median_net_bps": -86.43797515780587,
+      "ci95_median_net": [
+       -110.84132320017943,
+       30.420292769001612
+      ],
+      "rt_per_week": 0.1340018231540565,
+      "rts_needed": null,
+      "weeks_needed": null
+     }
+    }
+   ],
+   "stats": {
+    "n_fills": 85,
+    "fee_usd": 128.07998982619003,
+    "spread_usd": 3.646294244426673,
+    "carry_usd": -18.12725097594797,
+    "carry_bars_covered": 3181,
+    "carry_bars_uncovered": 159,
+    "end_equity": 11994.438864953443,
+    "open_positions": {
+     "BTC": -2
+    }
+   },
+   "per_asset": {
+    "BTC": {
+     "n_rt": 12,
+     "median_gross_alpha_bps": 133.9156824453186,
+     "median_all_in_cost_bps": 17.9072673309311,
+     "median_net_bps": 93.99803945913219,
+     "sum_net_usd": 1002.1675710827233,
+     "win_rate_net": 0.5,
+     "median_hold_bars": 186.0,
+     "fills_per_rt": 2.6666666666666665,
+     "status": "OK"
+    },
+    "ETH": {
+     "n_rt": 11,
+     "median_gross_alpha_bps": -19.90738925698025,
+     "median_all_in_cost_bps": 35.76844873596021,
+     "median_net_bps": -43.42386317286385,
+     "sum_net_usd": 133.83947933746524,
+     "win_rate_net": 0.36363636363636365,
+     "median_hold_bars": 54.0,
+     "fills_per_rt": 4.363636363636363,
+     "status": "OK"
+    },
+    "SOL": {
+     "n_rt": 7,
+     "median_gross_alpha_bps": -60.69434328720563,
+     "median_all_in_cost_bps": 21.569561882739283,
+     "median_net_bps": -86.43797515780587,
+     "sum_net_usd": 200.56352006624923,
+     "win_rate_net": 0.2857142857142857,
+     "median_hold_bars": 5.0,
+     "fills_per_rt": 2.142857142857143,
+     "status": "INSUFFICIENT"
+    }
+   }
+  }
+ },
+ "live_expectation_note": "live ~= replay x 0.3-0.5 (industry decay rule of thumb, not a measurement)",
+ "round_trips": [
+  {
+   "asset": "SOL",
+   "entry_ts": 1761537600.0,
+   "exit_ts": 1761552000.0,
+   "direction": 1,
+   "decider": "regimebook",
+   "regime": "bull",
+   "n_fills": 2,
+   "hold_bars": 1.0,
+   "entry_notional_usd": 1021.6500000000001,
+   "gross_usd": -9.100000000000108,
+   "gross_alpha_bps": -89.07159986296782,
+   "fee_bps": 21.59701043829659,
+   "spread_bps": 1.000649361424376e-12,
+   "funding_bps": 0.19915000000000002,
+   "all_in_cost_bps": 21.79616043829759,
+   "net_bps": -110.8677603012654,
+   "net_usd": -11.326804731178783,
+   "carry_uncovered_bars": 0,
+   "gmm_regime": "UNKNOWN"
+  },
+  {
+   "asset": "BTC",
+   "entry_ts": 1760659200.0,
+   "exit_ts": 1761566400.0,
+   "direction": -1,
+   "decider": "skew_contra",
+   "regime": "bear",
+   "n_fills": 4,
+   "hold_bars": 63.0,
+   "entry_notional_usd": 2138.7799999999997,
+   "gross_usd": -103.92449999999998,
+   "gross_alpha_bps": -485.9055162288781,
+   "fee_bps": 22.062361445901548,
+   "spread_bps": 0.6910408337402221,
+   "funding_bps": -4.004168064225867,
+   "all_in_cost_bps": 18.749234215415903,
+   "net_bps": -504.65475044429405,
+   "net_usd": -107.9345487155247,
+   "carry_uncovered_bars": 0,
+   "gmm_regime": "UNKNOWN"
+  },
+  {
+   "asset": "BTC",
+   "entry_ts": 1761566400.0,
+   "exit_ts": 1761739200.0,
+   "direction": 1,
+   "decider": "skew_contra",
+   "regime": "peace",
+   "n_fills": 2,
+   "hold_bars": 12.0,
+   "entry_notional_usd": 1153.6202,
+   "gross_usd": -22.296600000000037,
+   "gross_alpha_bps": -193.27504840848,
+   "fee_bps": 21.24891335951974,
+   "spread_bps": 0.66813037448445,
+   "funding_bps": 2.6005520786693923,
+   "all_in_cost_bps": 24.51759581267358,
+   "net_bps": -217.79264422115358,
+   "net_usd": -25.124999378493605,
+   "carry_uncovered_bars": 0,
+   "gmm_regime": "UNKNOWN"
+  },
+  {
+   "asset": "BTC",
+   "entry_ts": 1761739200.0,
+   "exit_ts": 1765713600.0,
+   "direction": -1,
+   "decider": "skew_contra",
+   "regime": "bear",
+   "n_fills": 3,
+   "hold_bars": 276.0,
+   "entry_notional_usd": 2202.2236000000003,
+   "gross_usd": 415.0235999999997,
+   "gross_alpha_bps": 1884.5661267093844,
+   "fee_bps": 19.68825631789726,
+   "spread_bps": 0.6110788960462341,
+   "funding_bps": -48.53589954032142,
+   "all_in_cost_bps": -28.236564326377923,
+   "net_bps": 1912.8026910357623,
+   "net_usd": 421.2419228342464,
+   "carry_uncovered_bars": 0,
+   "gmm_regime": "UNKNOWN"
+  },
+  {
+   "asset": "ETH",
+   "entry_ts": 1764820800.0,
+   "exit_ts": 1765843200.0,
+   "direction": 1,
+   "decider": "regimebook",
+   "regime": "peace",
+   "n_fills": 4,
+   "hold_bars": 71.0,
+   "entry_notional_usd": 1924.207,
+   "gross_usd": -102.71100000000011,
+   "gross_alpha_bps": -533.7835274479311,
+   "fee_bps": 25.8693250979627,
+   "spread_bps": 2.1376268257803153,
+   "funding_bps": 10.518036891950812,
+   "all_in_cost_bps": 38.52498881569383,
+   "net_bps": -572.3085162636249,
+   "net_usd": -110.12400531540808,
+   "carry_uncovered_bars": 0,
+   "gmm_regime": "UNKNOWN"
+  },
+  {
+   "asset": "ETH",
+   "entry_ts": 1767369600.0,
+   "exit_ts": 1767830400.0,
+   "direction": 1,
+   "decider": "regimebook",
+   "regime": "peace",
+   "n_fills": 2,
+   "hold_bars": 32.0,
+   "entry_notional_usd": 1543.32,
+   "gross_usd": 41.039999999999964,
+   "gross_alpha_bps": 265.9202239328199,
+   "fee_bps": 26.91778286619834,
+   "spread_bps": 2.225444003506611,
+   "funding_bps": 7.810490329614078,
+   "all_in_cost_bps": 36.95371719931903,
+   "net_bps": 228.96650673350086,
+   "net_usd": 35.33685891719466,
+   "carry_uncovered_bars": 0,
+   "gmm_regime": "UNKNOWN"
+  },
+  {
+   "asset": "ETH",
+   "entry_ts": 1768348800.0,
+   "exit_ts": 1768924800.0,
+   "direction": 1,
+   "decider": "regimebook",
+   "regime": "peace",
+   "n_fills": 6,
+   "hold_bars": 40.0,
+   "entry_notional_usd": 2317.139,
+   "gross_usd": -132.4100000000002,
+   "gross_alpha_bps": -571.4374493718338,
+   "fee_bps": 25.618713052111733,
+   "spread_bps": 2.1334919681558837,
+   "funding_bps": 6.104373098225874,
+   "all_in_cost_bps": 33.85657811849349,
+   "net_bps": -605.2940274903274,
+   "net_usd": -140.255039756491,
+   "carry_uncovered_bars": 0,
+   "gmm_regime": "UNKNOWN"
+  },
+  {
+   "asset": "BTC",
+   "entry_ts": 1765713600.0,
+   "exit_ts": 1768996800.0,
+   "direction": 1,
+   "decider": "skew_contra",
+   "regime": "bear",
+   "n_fills": 2,
+   "hold_bars": 228.0,
+   "entry_notional_usd": 1787.2,
+   "gross_usd": -11.400199999999849,
+   "gross_alpha_bps": -63.78804834377713,
+   "fee_bps": 21.93027291921693,
+   "spread_bps": 0.6724982948779297,
+   "funding_bps": 57.16348418440018,
+   "all_in_cost_bps": 79.76625539849505,
+   "net_bps": -143.55430374227217,
+   "net_usd": -25.65602516481888,
+   "carry_uncovered_bars": 0,
+   "gmm_regime": "UNKNOWN"
+  },
+  {
+   "asset": "BTC",
+   "entry_ts": 1768996800.0,
+   "exit_ts": 1772625600.0,
+   "direction": -1,
+   "decider": "skew_contra",
+   "regime": "bear",
+   "n_fills": 3,
+   "hold_bars": 252.0,
+   "entry_notional_usd": 2515.0327,
+   "gross_usd": 381.6907000000005,
+   "gross_alpha_bps": 1517.637126547104,
+   "fee_bps": 20.672813485624634,
+   "spread_bps": 0.6234563290083622,
+   "funding_bps": -3.223617890552674,
+   "all_in_cost_bps": 18.072651924080322,
+   "net_bps": 1499.5644746230237,
+   "net_usd": 377.1453689435225,
+   "carry_uncovered_bars": 0,
+   "gmm_regime": "UNKNOWN"
+  },
+  {
+   "asset": "ETH",
+   "entry_ts": 1772640000.0,
+   "exit_ts": 1773964800.0,
+   "direction": 1,
+   "decider": "regimebook",
+   "regime": "peace",
+   "n_fills": 6,
+   "hold_bars": 92.0,
+   "entry_notional_usd": 1919.9640000000002,
+   "gross_usd": -1.596000000000068,
+   "gross_alpha_bps": -8.312655862297772,
+   "fee_bps": 29.835188044979926,
+   "spread_bps": 2.195329905002281,
+   "funding_bps": -1.0881429668472944,
+   "all_in_cost_bps": 30.94237498313491,
+   "net_bps": -39.255030845432685,
+   "net_usd": -7.536824604212033,
+   "carry_uncovered_bars": 0,
+   "gmm_regime": "UNKNOWN"
+  },
+  {
+   "asset": "BTC",
+   "entry_ts": 1772625600.0,
+   "exit_ts": 1774699200.0,
+   "direction": 1,
+   "decider": "skew_contra",
+   "regime": "peace",
+   "n_fills": 2,
+   "hold_bars": 144.0,
+   "entry_notional_usd": 2133.3419999999996,
+   "gross_usd": -143.75789999999984,
+   "gross_alpha_bps": -673.8624186839235,
+   "fee_bps": 21.966302396303405,
+   "spread_bps": 0.6519189604087057,
+   "funding_bps": -7.707508398786974,
+   "all_in_cost_bps": 14.910712957925139,
+   "net_bps": -688.7731316418486,
+   "net_usd": -146.93886502030844,
+   "carry_uncovered_bars": 0,
+   "gmm_regime": "UNKNOWN"
+  },
+  {
+   "asset": "BTC",
+   "entry_ts": 1774699200.0,
+   "exit_ts": 1775649600.0,
+   "direction": -1,
+   "decider": "skew_contra",
+   "regime": "bear",
+   "n_fills": 2,
+   "hold_bars": 66.0,
+   "entry_notional_usd": 1989.5841,
+   "gross_usd": -160.6694999999998,
+   "gross_alpha_bps": -807.5531966705997,
+   "fee_bps": 23.636488871093768,
+   "spread_bps": 0.7018908145275966,
+   "funding_bps": -2.5931167427755386,
+   "all_in_cost_bps": 21.745262942845827,
+   "net_bps": -829.2984596134455,
+   "net_usd": -164.99590294014035,
+   "carry_uncovered_bars": 0,
+   "gmm_regime": "UNKNOWN"
+  },
+  {
+   "asset": "ETH",
+   "entry_ts": 1775606400.0,
+   "exit_ts": 1776988800.0,
+   "direction": 1,
+   "decider": "regimebook",
+   "regime": "peace",
+   "n_fills": 8,
+   "hold_bars": 96.0,
+   "entry_notional_usd": 2273.1100000000006,
+   "gross_usd": 78.69999999999999,
+   "gross_alpha_bps": 346.22169626634866,
+   "fee_bps": 26.85744798616729,
+   "spread_bps": 2.2342620797697523,
+   "funding_bps": -7.950311995503955,
+   "all_in_cost_bps": 21.141398070433087,
+   "net_bps": 325.0802981959156,
+   "net_usd": 73.89432766321177,
+   "carry_uncovered_bars": 0,
+   "gmm_regime": "UNKNOWN"
+  },
+  {
+   "asset": "ETH",
+   "entry_ts": 1777680000.0,
+   "exit_ts": 1778198400.0,
+   "direction": 1,
+   "decider": "regimebook",
+   "regime": "peace",
+   "n_fills": 2,
+   "hold_bars": 36.0,
+   "entry_notional_usd": 1606.9410000000003,
+   "gross_usd": -3.1990000000001104,
+   "gross_alpha_bps": -19.90738925698025,
+   "fee_bps": 25.098579448245363,
+   "spread_bps": 2.194056662552872,
+   "funding_bps": -2.6076105868541535,
+   "all_in_cost_bps": 24.68502552394408,
+   "net_bps": -44.59241478092433,
+   "net_usd": -7.165737960047332,
+   "carry_uncovered_bars": 0,
+   "gmm_regime": "QUIET_ACCUMULATION"
+  },
+  {
+   "asset": "SOL",
+   "entry_ts": 1778068800.0,
+   "exit_ts": 1778904000.0,
+   "direction": 1,
+   "decider": "regimebook",
+   "regime": "bull",
+   "n_fills": 2,
+   "hold_bars": 58.0,
+   "entry_notional_usd": 898.7,
+   "gross_usd": -8.200000000000074,
+   "gross_alpha_bps": -91.24290642038582,
+   "fee_bps": 22.3374715859416,
+   "spread_bps": 1.0005402396156651e-12,
+   "funding_bps": -2.5124809613886714,
+   "all_in_cost_bps": 19.82499062455393,
+   "net_bps": -111.06789704493976,
+   "net_usd": -9.981671907428735,
+   "carry_uncovered_bars": 0,
+   "gmm_regime": "QUIET_ACCUMULATION"
+  },
+  {
+   "asset": "BTC",
+   "entry_ts": 1775649600.0,
+   "exit_ts": 1778932800.0,
+   "direction": 1,
+   "decider": "skew_contra",
+   "regime": "peace",
+   "n_fills": 5,
+   "hold_bars": 228.0,
+   "entry_notional_usd": 2866.1855,
+   "gross_usd": 169.25560000000038,
+   "gross_alpha_bps": 590.5256306683583,
+   "fee_bps": 21.649580171760604,
+   "spread_bps": 0.6945699318828928,
+   "funding_bps": -12.456816823143528,
+   "all_in_cost_bps": 9.887333280499968,
+   "net_bps": 580.6382973878583,
+   "net_usd": 166.42170687177673,
+   "carry_uncovered_bars": 0,
+   "gmm_regime": "STEADY_UPTREND"
+  },
+  {
+   "asset": "SOL",
+   "entry_ts": 1779393600.0,
+   "exit_ts": 1779408000.0,
+   "direction": 1,
+   "decider": "regimebook",
+   "regime": "bull",
+   "n_fills": 2,
+   "hold_bars": 1.0,
+   "entry_notional_usd": 878.3,
+   "gross_usd": -4.699999999999989,
+   "gross_alpha_bps": -53.51246726630979,
+   "fee_bps": 20.498735962562183,
+   "spread_bps": 1.002436431449971e-12,
+   "funding_bps": -0.0089,
+   "all_in_cost_bps": 20.489835962563184,
+   "net_bps": -74.00230322887298,
+   "net_usd": -6.499622292591913,
+   "carry_uncovered_bars": 0,
+   "gmm_regime": "UNKNOWN"
+  },
+  {
+   "asset": "BTC",
+   "entry_ts": 1778932800.0,
+   "exit_ts": 1780228800.0,
+   "direction": -1,
+   "decider": "skew_contra",
+   "regime": "bull",
+   "n_fills": 3,
+   "hold_bars": 90.0,
+   "entry_notional_usd": 2294.2143,
+   "gross_usd": 76.08060000000026,
+   "gross_alpha_bps": 331.6194132344143,
+   "fee_bps": 20.1499014939539,
+   "spread_bps": 0.6634636730229578,
+   "funding_bps": -19.720533781225235,
+   "all_in_cost_bps": 1.092831385751623,
+   "net_bps": 330.52658184866266,
+   "net_usd": 75.82988106073225,
+   "carry_uncovered_bars": 0,
+   "gmm_regime": "WEAK_CONSOLIDATION"
+  },
+  {
+   "asset": "BTC",
+   "entry_ts": 1780228800.0,
+   "exit_ts": 1780401600.0,
+   "direction": 1,
+   "decider": "skew_contra",
+   "regime": "peace",
+   "n_fills": 2,
+   "hold_bars": 12.0,
+   "entry_notional_usd": 2218.1337,
+   "gross_usd": -134.2820999999998,
+   "gross_alpha_bps": -605.3832553015168,
+   "fee_bps": 18.035987996925304,
+   "spread_bps": 0.6542289338741266,
+   "funding_bps": 5.158896411598184,
+   "all_in_cost_bps": 23.849113342397615,
+   "net_bps": -629.2323686439144,
+   "net_usd": -139.57215220198898,
+   "carry_uncovered_bars": 0,
+   "gmm_regime": "UNKNOWN"
+  },
+  {
+   "asset": "SOL",
+   "entry_ts": 1782993600.0,
+   "exit_ts": 1783195200.0,
+   "direction": 1,
+   "decider": "regimebook",
+   "regime": "bull",
+   "n_fills": 2,
+   "hold_bars": 14.0,
+   "entry_notional_usd": 823.8,
+   "gross_usd": -5.0,
+   "gross_alpha_bps": -60.69434328720563,
+   "fee_bps": 24.812444569961997,
+   "spread_bps": 1.0020754970168938e-12,
+   "funding_bps": 1.1581088067492111,
+   "all_in_cost_bps": 25.97055337671221,
+   "net_bps": -86.66489666391784,
+   "net_usd": -7.139454187173551,
+   "carry_uncovered_bars": 0,
+   "gmm_regime": "QUIET_ACCUMULATION"
+  },
+  {
+   "asset": "SOL",
+   "entry_ts": 1783281600.0,
+   "exit_ts": 1783353600.0,
+   "direction": 1,
+   "decider": "regimebook",
+   "regime": "bull",
+   "n_fills": 2,
+   "hold_bars": 5.0,
+   "entry_notional_usd": 810.4000000000001,
+   "gross_usd": 4.5999999999999375,
+   "gross_alpha_bps": 56.762092793681354,
+   "fee_bps": 25.015459737695668,
+   "spread_bps": 1.0079784215514782e-12,
+   "funding_bps": 1.554598519249753,
+   "all_in_cost_bps": 26.57005825694643,
+   "net_bps": 30.192034536734923,
+   "net_usd": 2.4467624788569986,
+   "carry_uncovered_bars": 0,
+   "gmm_regime": "QUIET_ACCUMULATION"
+  },
+  {
+   "asset": "BTC",
+   "entry_ts": 1780401600.0,
+   "exit_ts": 1784030400.0,
+   "direction": -1,
+   "decider": "skew_contra",
+   "regime": "bear",
+   "n_fills": 2,
+   "hold_bars": 252.0,
+   "entry_notional_usd": 2083.8516,
+   "gross_usd": 198.50190000000012,
+   "gross_alpha_bps": 952.5721505312572,
+   "fee_bps": 19.767608478512788,
+   "spread_bps": 0.6425173840266064,
+   "funding_bps": -40.744406551061545,
+   "all_in_cost_bps": -20.33428068852215,
+   "net_bps": 972.9064312197794,
+   "net_usd": 202.7392623347627,
+   "carry_uncovered_bars": 0,
+   "gmm_regime": "UNKNOWN"
+  },
+  {
+   "asset": "ETH",
+   "entry_ts": 1783180800.0,
+   "exit_ts": 1784937600.0,
+   "direction": 1,
+   "decider": "regimebook",
+   "regime": "peace",
+   "n_fills": 6,
+   "hold_bars": 122.0,
+   "entry_notional_usd": 1987.7340000000002,
+   "gross_usd": 72.65200000000009,
+   "gross_alpha_bps": 365.5016214443184,
+   "fee_bps": 32.0622030012105,
+   "spread_bps": 2.2363792495504127,
+   "funding_bps": 20.491587186363958,
+   "all_in_cost_bps": 54.79016943712487,
+   "net_bps": 310.71145200719354,
+   "net_usd": 61.76117173440668,
+   "carry_uncovered_bars": 0,
+   "gmm_regime": "QUIET_ACCUMULATION"
+  },
+  {
+   "asset": "ETH",
+   "entry_ts": 1785888000.0,
+   "exit_ts": 1788393600.0,
+   "direction": 1,
+   "decider": "regimebook",
+   "regime": "peace",
+   "n_fills": 8,
+   "hold_bars": 174.0,
+   "entry_notional_usd": 2058.607,
+   "gross_usd": 413.39800000000025,
+   "gross_alpha_bps": 2008.1443422663979,
+   "fee_bps": 33.24714872826179,
+   "spread_bps": 2.416761356682179,
+   "funding_bps": 50.448939287586214,
+   "all_in_cost_bps": 86.11284937253018,
+   "net_bps": 1922.0314928938676,
+   "net_usd": 395.6707485491766,
+   "carry_uncovered_bars": 67,
+   "gmm_regime": "QUIET_ACCUMULATION"
+  },
+  {
+   "asset": "ETH",
+   "entry_ts": 1788480000.0,
+   "exit_ts": 1788912000.0,
+   "direction": 1,
+   "decider": "regimebook",
+   "regime": "bull",
+   "n_fills": 2,
+   "hold_bars": 30.0,
+   "entry_notional_usd": 1755.2570000000003,
+   "gross_usd": -15.715000000000206,
+   "gross_alpha_bps": -89.5310487296174,
+   "fee_bps": 28.216826408570697,
+   "spread_bps": 2.1864111397360695,
+   "funding_bps": 7.295630645540795,
+   "all_in_cost_bps": 37.69886819384756,
+   "net_bps": -127.22991692346496,
+   "net_usd": -22.332120228933036,
+   "carry_uncovered_bars": 0,
+   "gmm_regime": "QUIET_ACCUMULATION"
+  },
+  {
+   "asset": "ETH",
+   "entry_ts": 1789171200.0,
+   "exit_ts": 1789516800.0,
+   "direction": 1,
+   "decider": "regimebook",
+   "regime": "bull",
+   "n_fills": 2,
+   "hold_bars": 24.0,
+   "entry_notional_usd": 1761.501,
+   "gross_usd": -82.71899999999974,
+   "gross_alpha_bps": -469.59382935348737,
+   "fee_bps": 27.81458349603954,
+   "spread_bps": 2.1446756336870236,
+   "funding_bps": 3.8988643435342922,
+   "all_in_cost_bps": 33.858123473260854,
+   "net_bps": -503.4519528267482,
+   "net_usd": -88.68311183562699,
+   "carry_uncovered_bars": 0,
+   "gmm_regime": "STEADY_UPTREND"
+  },
+  {
+   "asset": "BTC",
+   "entry_ts": 1784030400.0,
+   "exit_ts": 1789560000.0,
+   "direction": 1,
+   "decider": "skew_contra",
+   "regime": "peace",
+   "n_fills": 2,
+   "hold_bars": 384.0,
+   "entry_notional_usd": 1885.3496999999998,
+   "gross_usd": 402.15030000000013,
+   "gross_alpha_bps": 2133.0276287735915,
+   "fee_bps": 25.11425584519911,
+   "spread_bps": 0.7466023824851946,
+   "funding_bps": 96.00468757416463,
+   "all_in_cost_bps": 121.86554580184894,
+   "net_bps": 2011.1620829717426,
+   "net_usd": 379.1743829782149,
+   "carry_uncovered_bars": 92,
+   "gmm_regime": "WEAK_CONSOLIDATION"
+  },
+  {
+   "asset": "ETH",
+   "entry_ts": 1790035200.0,
+   "exit_ts": 1790812800.0,
+   "direction": 1,
+   "decider": "regimebook",
+   "regime": "bull",
+   "n_fills": 2,
+   "hold_bars": 54.0,
+   "entry_notional_usd": 1665.7140000000002,
+   "gross_usd": -54.10799999999994,
+   "gross_alpha_bps": -324.8336749285888,
+   "fee_bps": 23.202898613582214,
+   "spread_bps": 2.160572055564335,
+   "funding_bps": 24.990034111498122,
+   "all_in_cost_bps": 50.35350478064467,
+   "net_bps": -375.1871797092334,
+   "net_usd": -62.49545378621862,
+   "carry_uncovered_bars": 0,
+   "gmm_regime": "NEUTRAL_DRIFT"
+  },
+  {
+   "asset": "SOL",
+   "entry_ts": 1787227200.0,
+   "exit_ts": 1791475200.0,
+   "direction": 1,
+   "decider": "regimebook",
+   "regime": "bull",
+   "n_fills": 3,
+   "hold_bars": 295.0,
+   "entry_notional_usd": 872.0999999999999,
+   "gross_usd": 260.4499999999997,
+   "gross_alpha_bps": 2986.4694415777976,
+   "fee_bps": 24.894990159806614,
+   "spread_bps": 1.155214639210769e-12,
+   "funding_bps": 83.04164201353062,
+   "all_in_cost_bps": 107.93663217333838,
+   "net_bps": 2878.5328094044594,
+   "net_usd": 251.03684630816286,
+   "carry_uncovered_bars": 0,
+   "gmm_regime": "VOLATILE_CHOP"
+  },
+  {
+   "asset": "SOL",
+   "entry_ts": 1791792000.0,
+   "exit_ts": 1791806400.0,
+   "direction": 1,
+   "decider": "regimebook",
+   "regime": "bull",
+   "n_fills": 2,
+   "hold_bars": 1.0,
+   "entry_notional_usd": 1126.0,
+   "gross_usd": -15.899999999999892,
+   "gross_alpha_bps": -141.20781527530988,
+   "fee_bps": 19.328597709065864,
+   "spread_bps": 9.980291887427703e-13,
+   "funding_bps": 0.39999999999999997,
+   "all_in_cost_bps": 19.72859770906686,
+   "net_bps": -160.93641298437674,
+   "net_usd": -18.121440102040822,
+   "carry_uncovered_bars": 0,
+   "gmm_regime": "QUIET_ACCUMULATION"
+  }
+ ]
+}
