@@ -1,0 +1,28 @@
+{
+ "per_asset": {
+  "BTC": {
+   "rt_fee_bps": 20.34,
+   "rt_spread_bps": 1.17,
+   "median_hold_bars": 2.43,
+   "n_rt": 41
+  },
+  "ETH": {
+   "rt_fee_bps": 31.37,
+   "rt_spread_bps": 2.61,
+   "median_hold_bars": 3.0,
+   "n_rt": 23
+  },
+  "SOL": {
+   "rt_fee_bps": 24.62,
+   "rt_spread_bps": 1.36,
+   "median_hold_bars": 3.0,
+   "n_rt": 24
+  }
+ },
+ "MIN_HOLD_BARS": null,
+ "provenance": {
+  "source": "reports/phase0_params.json",
+  "generated_from": "2026-10-17T18:51:43.096386+00:00",
+  "note": "rt_fee/rt_spread are medians over Jun-Oct RTs (mostly cheaper tiers); the model floors the fee term at 2x the current venue schedule"
+ }
+}

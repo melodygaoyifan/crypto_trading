@@ -1813,6 +1813,18 @@ class ProductionConfig:
     # The live profile sets "shadow" by operator decision; default stays
     # "enforce" so every other profile is byte-identical.
     bitbeast_veto_mode: str = "enforce"
+    # [P1-2] Round-trip ALL-IN friction gate (execution/cost/realized_friction).
+    # off | shadow | enforce. Default SHADOW: computes the gate threshold with
+    # only the friction term replaced by the realized all-in friction and logs
+    # SAME / WOULD_SUPPRESS / WOULD_ALLOW; changes no order. enforce is
+    # TIGHTEN-ONLY (it can add a veto when the realized friction rejects an
+    # entry the modelled friction passed; it never removes one). Unknown ->
+    # shadow. Switching to enforce is gated on the P1-7 48h shadow read.
+    realized_friction_gate_mode: str = "shadow"
+    # [P1-4] Contract-granularity sizing: floor(target / 1-contract notional)
+    # that rounds to 0 must not be bumped up to 1 contract. off | shadow |
+    # enforce; default SHADOW (logs WOULD_SUPPRESS, still sizes 1).
+    contract_floor_sizing_mode: str = "shadow"
     # [P352] Minimum whale COUNT behind `whale_net_pressure` before the whale
     # filter is allowed to veto. `net_pressure` is a RATIO — (buy-sell)/(buy+sell)
     # over the whales seen in the last hour — so it says which way they leaned
@@ -2320,6 +2332,13 @@ class ProductionConfig:
             bitbeast_veto_mode=(
                 "shadow" if str(data.get("bitbeast_veto_mode", "enforce")
                                 ).strip().lower() == "shadow" else "enforce"),
+            # [P1-2]/[P1-4] off | shadow | enforce; unknown -> shadow
+            realized_friction_gate_mode=(
+                lambda _v: _v if _v in ("off", "shadow", "enforce") else "shadow")(
+                str(data.get("realized_friction_gate_mode", "shadow")).strip().lower()),
+            contract_floor_sizing_mode=(
+                lambda _v: _v if _v in ("off", "shadow", "enforce") else "shadow")(
+                str(data.get("contract_floor_sizing_mode", "shadow")).strip().lower()),
             # [P352] sample-size floor for the whale veto
             coinbase_whale_filter_min_whales=int(
                 data.get("coinbase_whale_filter_min_whales", 2)),
@@ -2896,6 +2915,9 @@ _SLEEVE_ENTRY_QUALITY_VETOES = ("[VETO]", "[OP_BUDGET]", "[GAMBLER_GATE]",
     # entries only"; FIX-C3 "Only latch for NEW ENTRIES"); the P338/P341
     # class, two entries later. Keys absent from the live profile (latent).
     "[CONFIDENCE_GATE]", "[AUTO_RECOVERY_LATCH]",
+    # [P1-2] realized all-in friction gate (enforce mode, tighten-only): an
+    # ENTRY filter — a held position survives it, a flip closes the old leg.
+    "[P1-2-FRICTION]",
                                 # 0.20) is an ENTRY-quality veto and position-
                                 # blind; it reached the sleeve as
                                 # "[TRADE_GATE] VOLUME_CONTRACTING" (and via
@@ -14284,6 +14306,9 @@ class HMATSProductionRunner:
         _diag_record('engine_decide', called=True, output={'system_mode': getattr(intent, 'system_mode', 'N/A'), 'direction': getattr(intent, 'direction', 'N/A'), 'target_exposure': getattr(intent, 'target_exposure', 'N/A'), 'veto_active': getattr(intent, 'veto_active', False), 'is_actionable': getattr(intent, 'is_actionable', False), 'intent_id': intent.intent_id}, consumed=True, note='CORE DECISION')
         # ===== DIAG_END: Engine Decide =====
 
+        # [P1-2] Realized all-in friction gate (shadow | enforce).
+        self._apply_realized_friction_gate(asset, intent, agent_signals, market_data)
+
         # [VC-0] Capture original exposure for cumulative multiplier monitoring
         _vc0_original_exposure = abs(intent.target_exposure) if (intent.is_actionable and not intent.veto_active) else 0.0
 
@@ -21629,6 +21654,86 @@ class HMATSProductionRunner:
         except Exception:  # noqa: silent-swallow — pre-P383 module: persist the single instance as before
             _bd = getattr(self, "_bull_detector", None)
             return _bd.to_dict() if _bd else {}
+
+    def _apply_realized_friction_gate(self, asset, intent, agent_signals, market_data):
+        """[P1-2] Compare the alpha gate's decision with the same threshold
+        priced on the REALIZED all-in friction (execution/cost/
+        realized_friction.py). Only the friction term changes: the new
+        threshold is old_ev_threshold x new_friction / old_friction, so the
+        mode multiplier N, the short discount and the regime multiplier are
+        carried unchanged. defense/constitution.py is not touched.
+
+        shadow: log + ledger (data/realized_friction_shadow.jsonl) only.
+        enforce: TIGHTEN-ONLY — if the modelled gate passed and the realized
+        friction would reject, veto with "[P1-2-FRICTION]" (an entry-quality
+        veto for the sleeve: a held position survives, a flip closes the old
+        leg). It never un-vetoes. Any internal error in enforce -> veto
+        (fail-closed, NO_TRADE); in shadow -> log only.
+        """
+        mode = str(getattr(self.config, "realized_friction_gate_mode", "shadow") or "shadow").lower()
+        if mode not in ("shadow", "enforce"):
+            return None
+        rec = None
+        try:
+            ar = getattr(self.engine, "_last_alpha_result", None)
+            old_f = float(getattr(ar, "friction_total_bps", 0.0) or 0.0) if ar is not None else 0.0
+            if ar is None or old_f <= 0:
+                return None  # early-return gate path: no friction was priced, nothing to compare
+            from execution.cost.realized_friction import (get_realized_friction_model,
+                                                          shadow_threshold)
+            rf = get_realized_friction_model()
+            _now = time.time()
+            if _now - float(getattr(self, "_rf_last_ingest", 0.0) or 0.0) > 3600.0:
+                self._rf_last_ingest = _now
+                rf.ingest_fill_ledger()
+            side = float(getattr(intent, "direction", 0.0) or 0.0) or float(
+                agent_signals.get("quant_direction", 0.0) or 0.0)
+            f8 = (getattr(self, "_coinbase_funding_8h", {}) or {}).get(asset)
+            hourly = (float(f8) / 8.0) if f8 is not None else None
+            fr = self.engine.guarantees.alpha_calculator.FRICTION
+            lat_rt = 2.0 * float(getattr(fr, "latency_cost_bps", 2.0) or 0.0)
+            px = market_data.get("current_price", market_data.get("price"))
+            new_f, br = rf.friction_rt_bps(asset, side, latency_rt_bps=lat_rt,
+                                           funding_rate_hourly=hourly, price=px)
+            new_thr = shadow_threshold(getattr(ar, "ev_threshold_bps", 0.0), old_f,
+                                       getattr(ar, "min_alpha_bps_used", 0.0), new_f)
+            est = float(getattr(ar, "estimated_alpha_bps", 0.0) or 0.0)
+            old_pass = bool(getattr(ar, "passes_threshold", False))
+            new_pass = bool(new_thr is not None and est >= new_thr)
+            verdict = ("SAME" if old_pass == new_pass else
+                       ("WOULD_SUPPRESS" if old_pass else "WOULD_ALLOW"))
+            rec = {"ts": _now, "asset": asset, "mode": mode, "side": side,
+                   "alpha_bps": est, "old_friction_bps": old_f,
+                   "new_friction_bps": new_f, "old_threshold_bps": float(getattr(ar, "threshold_bps", 0.0) or 0.0),
+                   "new_threshold_bps": new_thr, "old_pass": old_pass,
+                   "new_pass": new_pass, "verdict": verdict, "breakdown": br}
+            logger.info(f"[P1-2-FRICTION] {asset}: {verdict} mode={mode} alpha={est:.1f} "
+                        f"friction old={old_f:.1f} new={new_f:.1f}bps "
+                        f"thr old={rec['old_threshold_bps']:.1f} new={new_thr if new_thr is None else round(new_thr, 1)}")
+            if mode == "enforce" and old_pass and not new_pass and not intent.veto_active:
+                intent.veto_active = True
+                intent.veto_reason = (f"[P1-2-FRICTION] realized all-in friction {new_f:.1f}bps "
+                                      f"-> threshold {new_thr:.1f} > alpha {est:.1f}")
+                rec["enforced"] = True
+        except Exception as e:  # noqa: silent-swallow — logged; enforce fails CLOSED below
+            logger.warning(f"[P1-2-FRICTION] {asset}: gate evaluation failed "
+                           f"({type(e).__name__}: {e})"
+                           + (" — NO_TRADE (fail-closed)" if mode == "enforce" else " — shadow only"))
+            if mode == "enforce" and not getattr(intent, "veto_active", False):
+                intent.veto_active = True
+                intent.veto_reason = f"[P1-2-FRICTION] evaluation failed ({type(e).__name__}) — fail-closed"
+            rec = {"ts": time.time(), "asset": asset, "mode": mode,
+                   "verdict": "ERROR", "error": f"{type(e).__name__}: {e}"}
+        try:
+            if rec is not None:
+                import json as _rfj
+                _p = os.path.join(os.environ.get("HMATS_DATA_DIR", "data"),
+                                  "realized_friction_shadow.jsonl")
+                with open(_p, "a", encoding="utf-8") as _fh:
+                    _fh.write(_rfj.dumps(rec, default=str) + "\n")
+        except Exception as _e:  # noqa: silent-swallow — the ledger is evidence, never order-path
+            logger.debug(f"[P1-2-FRICTION] ledger write failed: {_e}")
+        return rec
 
     def _export_dashboard_state(self, round_count: int, tick_count: int, asset_data: dict):
         """Export current system state as JSON for the Streamlit dashboard."""

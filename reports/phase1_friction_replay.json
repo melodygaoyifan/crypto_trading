@@ -1,0 +1,73 @@
+{
+ "window": [
+  "2026-06-19T16:00:00+00:00",
+  "2026-10-17T12:00:00+00:00"
+ ],
+ "per_asset": {
+  "BTC": {
+   "ticks": 365,
+   "approx_ticks": 153,
+   "old_pass": 153,
+   "new_pass": 47,
+   "median_old_friction": 28.4,
+   "median_new_friction": 28.636586830121487,
+   "newly_blocked_ticks": 106,
+   "newly_blocked_realized_net_usd": {
+    "n": 9,
+    "sum": -30.659560000000024,
+    "mean": -3.4066177777777806,
+    "t": -5.2295483950020705
+   },
+   "newly_allowed_ticks": 0,
+   "newly_allowed_fwd_net_bps": {
+    "n": 0
+   }
+  },
+  "ETH": {
+   "ticks": 263,
+   "approx_ticks": 123,
+   "old_pass": 123,
+   "new_pass": 121,
+   "median_old_friction": 34.0,
+   "median_new_friction": 38.7,
+   "newly_blocked_ticks": 2,
+   "newly_blocked_realized_net_usd": {
+    "n": 1,
+    "sum": -14.912984999999875,
+    "mean": -14.912984999999875,
+    "t": null
+   },
+   "newly_allowed_ticks": 0,
+   "newly_allowed_fwd_net_bps": {
+    "n": 0
+   }
+  },
+  "SOL": {
+   "ticks": 144,
+   "approx_ticks": 9,
+   "old_pass": 9,
+   "new_pass": 10,
+   "median_old_friction": 44.0,
+   "median_new_friction": 31.223162545819775,
+   "newly_blocked_ticks": 0,
+   "newly_blocked_realized_net_usd": {
+    "n": 0
+   },
+   "newly_allowed_ticks": 1,
+   "newly_allowed_fwd_net_bps": {
+    "n": 1,
+    "sum": -4.863350413873555,
+    "mean": -4.863350413873555,
+    "t": null
+   }
+  }
+ },
+ "rule": "see module docstring",
+ "newly_allowed_pooled": {
+  "n": 1,
+  "sum": -4.863350413873555,
+  "mean": -4.863350413873555,
+  "t": null
+ },
+ "verdict": "KEEP_SHADOW"
+}
