@@ -57,6 +57,8 @@ scripts/
 !scripts/skewetf_agree_check.py
 # [P1-6] weekly unit-economics KPI report: READ-ONLY venue calls (get_fills), places no orders
 !scripts/weekly_unit_economics.py
+# [P1-7] Phase 1 shadow report: read-only (ledgers, logs, get_fills)
+!scripts/phase1_shadow_report.py
 pytorch_build/
 deploy/
 data/diagnostics/
